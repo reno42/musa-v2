@@ -82,6 +82,21 @@ async function authenticate(req: Request): Promise<{ userId: string } | null> {
   return validateSupabaseSession(req);
 }
 
+// ── Bootstrap: returns true if zero API keys exist (first-time setup) ──
+async function isFirstSetup(): Promise<boolean> {
+  if (!db) return false;
+  try {
+    const { count, error } = await db
+      .from("api_keys")
+      .select("*", { count: "exact", head: true })
+      .eq("active", true);
+    if (error) return false;
+    return count === 0;
+  } catch {
+    return false;
+  }
+}
+
 // ── Templates ──
 async function createTemplate(name: string, w = 1080, h = 1080, canvasJson?: any, userId?: string) {
   const tpl = canvasJson
@@ -174,7 +189,9 @@ async function createApiKeyDB(name: string, userId: string) {
   if (!db) return null;
   const rawKey = `fd_${randomUUID().replace(/-/g, "")}`;
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
-  const row = { id: `key_${uid()}`, user_id: userId, name, key_hash: keyHash, key_prefix: rawKey.slice(0, 11), permissions: ["templates:read","templates:write","render","webhooks"] };
+  // Bootstrap: first key gets user_id = null (no real user yet)
+  const effectiveUserId = userId === "bootstrap" ? null : userId;
+  const row: any = { id: `key_${uid()}`, user_id: effectiveUserId, name, key_hash: keyHash, key_prefix: rawKey.slice(0, 11), permissions: ["templates:read","templates:write","render","webhooks"] };
   await db.from("api_keys").insert(row);
   return { ...row, fullKey: rawKey };
 }
@@ -403,9 +420,12 @@ export default async (req: Request, _ctx: Context) => {
       return json({ success: true, data: await listApiKeys(userId) });
     }
     if ((path === "/api-keys" || path === "/api/api-keys") && method === "POST") {
-      if (!userId) return err("Authentication required", 401);
+      // BOOTSTRAP: allow creating the first key without auth
+      const firstSetup = await isFirstSetup();
+      if (!userId && !firstSetup) return err("Authentication required", 401);
       const b = await body(req);
-      const key = await createApiKeyDB(b.name || "Default Key", userId);
+      const effectiveUserId = firstSetup && !userId ? "bootstrap" : userId!;
+      const key = await createApiKeyDB(b.name || "Default Key", effectiveUserId);
       return json({ success: true, data: key }, 201);
     }
     const keyMatch = path.match(/^\/api-keys\/([^/]+)$/);
