@@ -1,0 +1,80 @@
+{
+  "name": "Futuraria - API Manager",
+  "nodes": [
+    {
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [{ "mode": "everyHour" }]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [250, 100],
+      "typeVersion": 1
+    },
+    {
+      "name": "List Templates",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [450, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FUTURARIA_API_URL}}/api/templates",
+        "headers": {
+          "X-API-Key": "={{$env.FUTURARIA_API_KEY}}"
+        },
+        "responseFormat": "json"
+      },
+      "typeVersion": 4
+    },
+    {
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [450, 400],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FUTURARIA_API_URL}}/api/health",
+        "responseFormat": "json"
+      },
+      "typeVersion": 4
+    },
+    {
+      "name": "Check Status",
+      "type": "n8n-nodes-base.if",
+      "position": [650, 200],
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{$json.success}}", "value2": true }]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "position": [850, 200],
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "templateCount", "value": "={{$json.data.length}}" },
+            { "name": "status", "value": "API healthy" }
+          ]
+        }
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "List Templates", "type": "main", "index": 0 }]] },
+    "Manual Trigger": { "main": [[{ "node": "List Templates", "type": "main", "index": 0 }]] },
+    "List Templates": { "main": [[{ "node": "Check Status", "type": "main", "index": 0 }]] },
+    "Check Status": { "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

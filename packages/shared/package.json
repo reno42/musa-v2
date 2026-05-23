@@ -1,0 +1,14 @@
+{
+  "name": "@futuraria/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./components": "./components.ts",
+    "./api-types": "./api-types.ts",
+    "./styles": "./styles.ts",
+    "./collaboration": "./collaboration.ts"
+  }
+}

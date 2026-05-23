@@ -1,0 +1,99 @@
+{
+  "name": "Futuraria - Webhook Receiver",
+  "nodes": [
+    {
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "futuraria-events",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Switch Event",
+      "type": "n8n-nodes-base.switch",
+      "position": [450, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "value": "template.created" },
+            { "value": "template.updated" },
+            { "value": "render.complete" },
+            { "value": "version.created" },
+            { "value": "comment.created" },
+            { "value": "layer.updated" }
+          ]
+        },
+        "dataType": "string",
+        "value1": "={{$json.body.event}}"
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Log Template Created",
+      "type": "n8n-nodes-base.set",
+      "position": [650, 100],
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "action", "value": "New template created" },
+            { "name": "templateId", "value": "={{$json.body.payload.id}}" },
+            { "name": "templateName", "value": "={{$json.body.payload.name}}" }
+          ]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Log Render Complete",
+      "type": "n8n-nodes-base.set",
+      "position": [650, 300],
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "action", "value": "Design rendered" },
+            { "name": "renderId", "value": "={{$json.body.payload.id}}" },
+            { "name": "templateId", "value": "={{$json.body.payload.templateId}}" },
+            { "name": "format", "value": "={{$json.body.payload.format}}" }
+          ]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Log Comment",
+      "type": "n8n-nodes-base.set",
+      "position": [650, 500],
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "action", "value": "New comment" },
+            { "name": "commentId", "value": "={{$json.body.payload.id}}" },
+            { "name": "author", "value": "={{$json.body.payload.author}}" },
+            { "name": "text", "value": "={{$json.body.payload.text}}" }
+          ]
+        }
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Switch Event", "type": "main", "index": 0 }]] },
+    "Switch Event": {
+      "main": [
+        [{ "node": "Log Template Created", "type": "main", "index": 0 }],
+        [{ "node": "Log Template Created", "type": "main", "index": 0 }],
+        [{ "node": "Log Render Complete", "type": "main", "index": 0 }],
+        [{ "node": "Log Render Complete", "type": "main", "index": 0 }],
+        [{ "node": "Log Comment", "type": "main", "index": 0 }],
+        [{ "node": "Log Render Complete", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

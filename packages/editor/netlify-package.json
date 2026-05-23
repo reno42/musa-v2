@@ -1,0 +1,11 @@
+{
+  "name": "Futuraria Design",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mini-Figma: Design editor with REST API for content automation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "cd packages/editor && npm install && npm run build",
+    "dev": "cd packages/editor && npm run dev"
+  }
+}

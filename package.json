@@ -1,0 +1,15 @@
+{
+  "name": "futuraria-design",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mini-Figma: AI-first design tool with REST API, webhooks, and n8n integration for content automation",
+  "workspaces": [],
+  "scripts": {
+    "dev:editor": "cd packages/editor && npm run dev",
+    "dev:api": "cd packages/api && npm run dev",
+    "build:editor": "cd packages/editor && npx vite build",
+    "build:api": "cd packages/api && npm run build"
+  },
+  "keywords": ["design", "figma", "automation", "n8n", "fabricjs", "ai"],
+  "license": "MIT"
+}
