@@ -32,7 +32,7 @@ async function body(req: Request) { try { return await req.json(); } catch { ret
 function uid() { return randomUUID().slice(0, 8); }
 
 // ── Auth: Validate API Key ──
-async function validateApiKey(req: Request): Promise<{ userId: string } | null> {
+async function validateApiKey(req: Request): Promise<{ userId: string | null } | null> {
   const apiKey = req.headers.get("X-API-Key");
   if (!apiKey) return null;
 
@@ -180,7 +180,7 @@ async function fireWebhooks(event: string, payload: any) {
 }
 
 // ── API Key CRUD ──
-async function listApiKeys(userId: string) {
+async function listApiKeys(userId: string | null) {
   if (!db) return [];
   const { data } = await db.from("api_keys").select("id,name,key_prefix,permissions,last_used_at,active,created_at").eq("user_id", userId).eq("active", true).order("created_at", { ascending: false });
   return data || [];
@@ -195,7 +195,7 @@ async function createApiKeyDB(name: string, userId: string) {
   await db.from("api_keys").insert(row);
   return { ...row, fullKey: rawKey };
 }
-async function deleteApiKey(id: string, userId: string) {
+async function deleteApiKey(id: string, userId: string | null) {
   if (!db) return false;
   const { error } = await db.from("api_keys").update({ active: false }).eq("id", id).eq("user_id", userId);
   return !error;
@@ -416,22 +416,22 @@ export default async (req: Request, _ctx: Context) => {
 
     // ── API Keys (require auth) ──
     if ((path === "/api-keys" || path === "/api/api-keys") && method === "GET") {
-      if (!userId) return err("Authentication required", 401);
-      return json({ success: true, data: await listApiKeys(userId) });
+      if (!auth) return err("Authentication required", 401);
+      return json({ success: true, data: await listApiKeys(userId!) });
     }
     if ((path === "/api-keys" || path === "/api/api-keys") && method === "POST") {
       // BOOTSTRAP: allow creating the first key without auth
       const firstSetup = await isFirstSetup();
-      if (!userId && !firstSetup) return err("Authentication required", 401);
+      if (!auth && !firstSetup) return err("Authentication required", 401);
       const b = await body(req);
-      const effectiveUserId = firstSetup && !userId ? "bootstrap" : userId!;
+      const effectiveUserId = firstSetup && !auth ? "bootstrap" : userId!;
       const key = await createApiKeyDB(b.name || "Default Key", effectiveUserId);
       return json({ success: true, data: key }, 201);
     }
     const keyMatch = path.match(/^\/api-keys\/([^/]+)$/);
     if (keyMatch && method === "DELETE") {
-      if (!userId) return err("Authentication required", 401);
-      return (await deleteApiKey(keyMatch[1], userId)) ? json({ success: true }) : err("Not found", 404);
+      if (!auth) return err("Authentication required", 401);
+      return (await deleteApiKey(keyMatch[1], userId!)) ? json({ success: true }) : err("Not found", 404);
     }
 
     // ── Templates CRUD ──
@@ -772,8 +772,8 @@ export default async (req: Request, _ctx: Context) => {
       const b = await body(req);
       if (!b.name) return err("name is required");
       const auth = await authenticate(req);
-      const userId = auth?.userId || b.userId;
-      if (!userId) return err("userId or API key required", 401);
+      const userId = auth?.userId ?? b.userId ?? null;
+      if (!auth && !b.userId) return err("userId or API key required", 401);
       const key = await createApiKeyDB(b.name, userId);
       return json({ success: true, data: key }, 201);
     }
