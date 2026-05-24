@@ -3349,6 +3349,21 @@ export function useCanvas(opts: {
     pushUndoState();
   }, [applyAutoLayout, syncLayers, pushUndoState]);
 
+  /** Resize frame via PropertiesPanel — updates width/height + constraints + auto-layout. */
+  const resizeFrame = useCallback((frameId: string, newW: number, newH: number) => {
+    const c = fabricRef.current;
+    if (!c) return;
+    const bg = c.getObjects().find((o: any) => o.isFrameBg && o.frameId === frameId);
+    if (!bg) return;
+    bg.set({ width: newW, height: newH, scaleX: 1, scaleY: 1 });
+    const label = c.getObjects().find((o: any) => o.isFrameLabel && o.frameId === frameId);
+    if (label) label.set({ left: bg.left, top: (bg.top || 0) - 28 });
+    applyConstraintsToFrame(frameId, bg);
+    if ((bg as any).autoLayout?.enabled) applyAutoLayout(bg);
+    c.renderAll();
+    syncLayers();
+  }, [applyConstraintsToFrame, applyAutoLayout, syncLayers]);
+
   /** Update resizing mode on a child and re-layout parent. */
   const updateResizingMode = useCallback((obj: fabric.FabricObject, mode: ResizingMode) => {
     (obj as any).resizingMode = mode;
@@ -3785,6 +3800,7 @@ export function useCanvas(opts: {
     // Constraints
     frameSizeSnapshotRef,
     applyConstraintsToFrame,
+    resizeFrame,
     setConstraints,
     getConstraints,
     // Boolean Operations

@@ -45,6 +45,7 @@ interface Props {
   selectedObj: fabric.FabricObject | null;
   fabricRef: RefObject<fabric.Canvas | null>;
   onLayerUpdate: () => void;
+  onFrameResize?: (frameId: string, w: number, h: number) => void;
   variableBindings?: Record<string, string>;
   onDropVariable?: (variableId: string, property: string) => void;
   onUnbindVariable?: (property: string) => void;
@@ -58,7 +59,7 @@ interface Props {
   currentImageFitMode?: ImageFitMode;
 }
 
-export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variableBindings, onDropVariable, onUnbindVariable, gridStyles, activeGridStyleId, onApplyGridStyle, onRemoveGridStyle, onSetImageFitMode, currentImageFitMode }: Props) {
+export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, onFrameResize, variableBindings, onDropVariable, onUnbindVariable, gridStyles, activeGridStyleId, onApplyGridStyle, onRemoveGridStyle, onSetImageFitMode, currentImageFitMode }: Props) {
   const [, tick] = useState(0);
   const force = () => tick((n) => n + 1);
   const [fontsLoaded, setFontsLoaded] = useState<Set<string>>(new Set());
@@ -268,8 +269,35 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
       {/* ─── Layout ──────────────────────────────────────────────── */}
       <Section title="Layout">
         <div className="grid-2x2">
-          <InputGroup label="W" value={Math.round((obj.width || 0) * (obj.scaleX || 1))} onChange={(v) => set("scaleX", v / (obj.width || 1))} />
-          <InputGroup label="H" value={Math.round((obj.height || 0) * (obj.scaleY || 1))} onChange={(v) => set("scaleY", v / (obj.height || 1))} />
+          {((obj as any).isFrameBg && onFrameResize) ? (
+            <>
+              <InputGroup label="W" value={Math.round((obj.width || 0) * (obj.scaleX || 1))} onChange={(v) => {
+                if (v <= 0) return;
+                const fid = (obj as any).frameId;
+                const h = Math.round((obj.height || 0) * (obj.scaleY || 1));
+                obj.set({ width: v, height: h, scaleX: 1, scaleY: 1 });
+                fabricRef.current?.renderAll();
+                onLayerUpdate();
+                force();
+                onFrameResize(fid, v, h);
+              }} />
+              <InputGroup label="H" value={Math.round((obj.height || 0) * (obj.scaleY || 1))} onChange={(v) => {
+                if (v <= 0) return;
+                const fid = (obj as any).frameId;
+                const w = Math.round((obj.width || 0) * (obj.scaleX || 1));
+                obj.set({ width: w, height: v, scaleX: 1, scaleY: 1 });
+                fabricRef.current?.renderAll();
+                onLayerUpdate();
+                force();
+                onFrameResize(fid, w, v);
+              }} />
+            </>
+          ) : (
+            <>
+              <InputGroup label="W" value={Math.round((obj.width || 0) * (obj.scaleX || 1))} onChange={(v) => set("scaleX", v / ((obj.width as number) || 1))} />
+              <InputGroup label="H" value={Math.round((obj.height || 0) * (obj.scaleY || 1))} onChange={(v) => set("scaleY", v / ((obj.height as number) || 1))} />
+            </>
+          )}
         </div>
         <Row>
           <Label>scale</Label>

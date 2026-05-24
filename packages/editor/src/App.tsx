@@ -1224,6 +1224,9 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
             <PropertiesPanel
               selectedObj={selectedObj}
               fabricRef={fabricRef}
+              onFrameResize={(frameId: string, w: number, h: number) => {
+                canvas.resizeFrame(frameId, w, h);
+              }}
               onLayerUpdate={() => {
                 const c = fabricRef.current;
                 if (c) setLayers(c.getObjects().filter((o: any) => !o.isFrameVisual && !o.isFrameLabel && !o.isSectionLabel && !o.isSectionIndicator).map((o) => ({
