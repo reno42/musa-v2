@@ -46,6 +46,8 @@ export interface CanvasConfig {
   width: number;
   height: number;
   background: string;
+  objects?: any[];
+  viewport?: { zoom: number; x: number; y: number };
 }
 
 export type LayerType =

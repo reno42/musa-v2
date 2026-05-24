@@ -180,7 +180,25 @@ export async function applyLayerOverrides(
   const tpl = await getTemplate(templateId);
   if (!tpl) return null;
 
-  const layerMap = new Map(tpl.layers.map((l) => [l.name, l]));
+  // Build a name→object map. Prefer tpl.layers, but fall back to
+  // walking canvas.objects (which is how the editor saves templates).
+  const layerMap = new Map<string, any>();
+
+  if (tpl.layers && tpl.layers.length > 0) {
+    for (const l of tpl.layers) {
+      layerMap.set(l.name, l);
+    }
+  } else if (tpl.canvas.objects && tpl.canvas.objects.length > 0) {
+    // Walk canvas.objects recursively to find named layers
+    const walk = (objs: any[]) => {
+      for (const o of objs) {
+        const name = o.layerName || o.name;
+        if (name) layerMap.set(name, o);
+        if (o.objects && Array.isArray(o.objects)) walk(o.objects);
+      }
+    };
+    walk(tpl.canvas.objects);
+  }
 
   for (const [layerName, override] of Object.entries(overrides)) {
     const layer = layerMap.get(layerName);
@@ -189,19 +207,19 @@ export async function applyLayerOverrides(
     // Apply text overrides for text/textbox layers
     if (
       override.text !== undefined &&
-      (layer.type === "text" || (layer as any).type === "textbox")
+      (layer.type === "text" || (layer as any).type === "textbox" || (layer as any).type === "i-text")
     ) {
       (layer as any).text = override.text;
     }
     if (
       override.fontFamily !== undefined &&
-      (layer.type === "text" || (layer as any).type === "textbox")
+      (layer.type === "text" || (layer as any).type === "textbox" || (layer as any).type === "i-text")
     ) {
       (layer as any).fontFamily = override.fontFamily;
     }
     if (
       override.fontSize !== undefined &&
-      (layer.type === "text" || (layer as any).type === "textbox")
+      (layer.type === "text" || (layer as any).type === "textbox" || (layer as any).type === "i-text")
     ) {
       (layer as any).fontSize = override.fontSize;
     }

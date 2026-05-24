@@ -1,5 +1,21 @@
-// packages/api/src/routes/styles.ts
-// Styles CRUD (Sprint 3)
+/**
+ * Styles Routes
+ * ──────────────────────────────────────────────────────────────
+ * CRUD for reusable design styles (color palettes, text styles,
+ * effect presets). Styles can be applied across templates.
+ *
+ * @module routes/styles
+ *
+ * Database (Supabase: styles table):
+ *   - id TEXT PK          → style identifier (sty_xxxxxxxx)
+ *   - name TEXT           → human-readable name
+ *   - type TEXT           → 'color' | 'text' | 'effect' (CHECK constraint)
+ *   - data JSONB          → style definition (palette, typography, etc.)
+ *   - user_id UUID        → owner (FK → auth.users)
+ *   - created_at / updated_at TIMESTAMPTZ
+ *
+ * @webhook Fires: style.created
+ */
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
@@ -10,7 +26,20 @@ export const styleRoutes = Router();
 
 const memoryStore = new Map<string, any>();
 
-// Create style
+/**
+ * POST /api/styles
+ * ──────────────────────────────────────────────────────────────
+ * Create a new design style.
+ *
+ * @body {string} name   Human-readable name
+ * @body {string} type   'color' | 'text' | 'effect'
+ * @body {object} data   Style data (palette, font config, etc.)
+ *
+ * @returns {201} { success, data: Style }
+ *
+ * DB: INSERT INTO styles (id, name, type, data)
+ * In-memory fallback when Supabase unavailable.
+ */
 styleRoutes.post("/", validate(createStyleSchema), async (req, res) => {
   try {
     const style = {
@@ -40,7 +69,18 @@ styleRoutes.post("/", validate(createStyleSchema), async (req, res) => {
   }
 });
 
-// List styles
+/**
+ * GET /api/styles
+ * ──────────────────────────────────────────────────────────────
+ * List all styles, optionally filtered by type.
+ *
+ * @query {string} [type]  'color' | 'text' | 'effect'
+ *
+ * @returns {200} { success, data: Style[] }
+ *
+ * DB: SELECT data FROM styles [WHERE type = :type] ORDER BY created_at DESC
+ * In-memory fallback when Supabase unavailable.
+ */
 styleRoutes.get("/", async (req, res) => {
   try {
     const typeFilter = req.query.type as string | undefined;
@@ -52,16 +92,27 @@ styleRoutes.get("/", async (req, res) => {
       const { data } = await query;
       res.json({ success: true, data: (data || []).map((r: any) => r.data) });
     } else {
-      let styles = Array.from(memoryStore.values());
-      if (typeFilter) styles = styles.filter((s) => s.type === typeFilter);
-      res.json({ success: true, data: styles });
+      let allStyles = Array.from(memoryStore.values());
+      if (typeFilter) allStyles = allStyles.filter((s) => s.type === typeFilter);
+      res.json({ success: true, data: allStyles });
     }
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Get single style
+/**
+ * GET /api/styles/:id
+ * ──────────────────────────────────────────────────────────────
+ * Get a single style by ID.
+ *
+ * @param {string} id  Style ID (sty_xxxxxxxx)
+ *
+ * @returns {200} { success, data: Style }
+ * @returns {404} Style not found
+ *
+ * DB: SELECT data FROM styles WHERE id = :id
+ */
 styleRoutes.get("/:id", async (req, res) => {
   try {
     const db = getSupabase();
@@ -81,7 +132,21 @@ styleRoutes.get("/:id", async (req, res) => {
   }
 });
 
-// Update style
+/**
+ * PATCH /api/styles/:id
+ * ──────────────────────────────────────────────────────────────
+ * Partial update to a style.
+ *
+ * @param {string} id           Style ID
+ * @body {string} [name]        New name
+ * @body {string} [type]        New type
+ * @body {object} [data]        Merged into existing data
+ *
+ * @returns {200} { success, data: Style }
+ * @returns {404} Style not found
+ *
+ * DB: UPDATE styles SET data = :updated, name = :name WHERE id = :id
+ */
 styleRoutes.patch("/:id", validate(updateStyleSchema), async (req, res) => {
   try {
     const db = getSupabase();
@@ -114,7 +179,18 @@ styleRoutes.patch("/:id", validate(updateStyleSchema), async (req, res) => {
   }
 });
 
-// Delete style
+/**
+ * DELETE /api/styles/:id
+ * ──────────────────────────────────────────────────────────────
+ * Permanently remove a style.
+ *
+ * @param {string} id  Style ID
+ *
+ * @returns {200} { success: true }
+ * @returns {404} Style not found
+ *
+ * DB: DELETE FROM styles WHERE id = :id
+ */
 styleRoutes.delete("/:id", async (req, res) => {
   try {
     const db = getSupabase();

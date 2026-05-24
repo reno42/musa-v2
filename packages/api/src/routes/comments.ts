@@ -1,5 +1,26 @@
-// packages/api/src/routes/comments.ts
-// Comments CRUD with threads (Sprint 5)
+/**
+ * Comments Routes
+ * ──────────────────────────────────────────────────────────────
+ * CRUD for design review comments including threaded replies.
+ * Comments are pinned to specific canvas positions (x, y) and
+ * support resolution workflow (open → resolved).
+ *
+ * @module routes/comments
+ *
+ * Database (Supabase: comments table):
+ *   - id TEXT PK             → comment identifier (cmt_xxxxxxxx)
+ *   - template_id TEXT FK    → parent template (references templates.id, CASCADE delete)
+ *   - frame_id TEXT          → optional frame/page reference
+ *   - x DOUBLE PRECISION     → canvas x coordinate of pin
+ *   - y DOUBLE PRECISION     → canvas y coordinate of pin
+ *   - author TEXT            → commenter name
+ *   - text TEXT              → comment body
+ *   - thread JSONB           → array of { id, author, text, createdAt } replies
+ *   - resolved BOOLEAN       → resolution status
+ *   - created_at / updated_at TIMESTAMPTZ
+ *
+ * @webhook Fires: comment.created
+ */
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
@@ -15,7 +36,22 @@ export const commentRoutes = Router();
 
 const memoryStore = new Map<string, any>();
 
-// Create comment
+/**
+ * POST /api/comments
+ * ──────────────────────────────────────────────────────────────
+ * Create a comment pinned to a template at a specific position.
+ *
+ * @body {string}  templateId       Template to comment on
+ * @body {string}  [frameId]        Optional frame/page ID
+ * @body {number}  [x=0]            Canvas X coordinate
+ * @body {number}  [y=0]            Canvas Y coordinate
+ * @body {string}  author           Commenter display name
+ * @body {string}  text             Comment content
+ *
+ * @returns {201} { success, data: Comment }
+ *
+ * DB: INSERT INTO comments (id, template_id, frame_id, x, y, author, text, thread, resolved)
+ */
 commentRoutes.post("/", validate(createCommentSchema), async (req, res) => {
   try {
     const comment = {
@@ -55,7 +91,20 @@ commentRoutes.post("/", validate(createCommentSchema), async (req, res) => {
   }
 });
 
-// List comments for a template
+/**
+ * GET /api/comments?templateId=:id
+ * ──────────────────────────────────────────────────────────────
+ * List all comments for a given template, newest first.
+ * Optionally filter by resolution status.
+ *
+ * @query {string} templateId       Template ID (required)
+ * @query {string} [resolved]       'true' | 'false' filter
+ *
+ * @returns {200} { success, data: Comment[] }
+ * @returns {400} Missing templateId
+ *
+ * DB: SELECT * FROM comments WHERE template_id = :tid ORDER BY created_at DESC
+ */
 commentRoutes.get("/", async (req, res) => {
   try {
     const templateId = req.query.templateId as string;
@@ -106,7 +155,12 @@ commentRoutes.get("/", async (req, res) => {
   }
 });
 
-// Get single comment
+/**
+ * GET /api/comments/:id
+ * @param {string} id  Comment ID (cmt_xxxxxxxx)
+ * @returns {200} { success, data: Comment } | {404}
+ * DB: SELECT * FROM comments WHERE id = :id
+ */
 commentRoutes.get("/:id", async (req, res) => {
   try {
     const db = getSupabase();
@@ -140,7 +194,20 @@ commentRoutes.get("/:id", async (req, res) => {
   }
 });
 
-// Update comment (resolve/reopen/edit text)
+/**
+ * PATCH /api/comments/:id
+ * ──────────────────────────────────────────────────────────────
+ * Update comment (resolve, reopen, edit text, or update thread).
+ *
+ * @param {string}  id          Comment ID
+ * @body {boolean} [resolved]   Set resolution status
+ * @body {string}  [text]       Edit comment body
+ * @body {array}   [thread]     Replace entire thread
+ *
+ * @returns {200} { success, data: Comment } | {404}
+ *
+ * DB: UPDATE comments SET (resolved, text, thread, updated_at) WHERE id = :id
+ */
 commentRoutes.patch("/:id", validate(updateCommentSchema), async (req, res) => {
   try {
     const db = getSupabase();
@@ -192,7 +259,20 @@ commentRoutes.patch("/:id", validate(updateCommentSchema), async (req, res) => {
   }
 });
 
-// Add reply to comment thread
+/**
+ * POST /api/comments/:id/replies
+ * ──────────────────────────────────────────────────────────────
+ * Append a reply to a comment's thread array.
+ *
+ * @param {string} id      Comment ID
+ * @body {string} author   Reply author name
+ * @body {string} text     Reply content
+ *
+ * @returns {201} { success, data: { id, author, text, createdAt } }
+ * @returns {404} Comment not found
+ *
+ * DB: UPDATE comments SET thread = thread || :reply, updated_at = NOW() WHERE id = :id
+ */
 commentRoutes.post("/:id/replies", validate(createReplySchema), async (req, res) => {
   try {
     const db = getSupabase();
@@ -238,7 +318,12 @@ commentRoutes.post("/:id/replies", validate(createReplySchema), async (req, res)
   }
 });
 
-// Delete comment
+/**
+ * DELETE /api/comments/:id
+ * @param {string} id  Comment ID
+ * @returns {200} { success: true } | {404}
+ * DB: DELETE FROM comments WHERE id = :id
+ */
 commentRoutes.delete("/:id", async (req, res) => {
   try {
     const db = getSupabase();

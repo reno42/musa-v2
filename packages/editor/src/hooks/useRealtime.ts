@@ -13,6 +13,7 @@ import type {
   CanvasDelta,
 } from "@futuraria/shared";
 import { assignUserColor } from "@futuraria/shared";
+import { useToast } from "../components/Toast";
 
 // ─── Throttle helper ──────────────────────────────────────────────
 function throttle<T extends (...args: any[]) => void>(fn: T, ms: number): T {
@@ -75,6 +76,7 @@ export function useRealtime(opts: UseRealtimeOpts): UseRealtimeReturn {
   const userColorRef = useRef<string>("#6366f1");
   const isRemoteUpdateRef = useRef(false);
   const usersRef = useRef<UserPresence[]>([]);
+  const { addToast } = useToast();
 
   // Keep refs in sync
   useEffect(() => { usersRef.current = users; }, [users]);
@@ -179,6 +181,10 @@ export function useRealtime(opts: UseRealtimeOpts): UseRealtimeReturn {
               c.add(obj);
               c.renderAll();
             }
+            isRemoteUpdateRef.current = false;
+          }).catch((err: any) => {
+            console.error("[realtime] Failed to enliven remote object:", err);
+            addToast("warning", "Realtime glitch", "A remote edit could not be applied");
             isRemoteUpdateRef.current = false;
           });
           break;

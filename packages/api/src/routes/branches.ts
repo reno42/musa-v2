@@ -20,6 +20,22 @@ function saveBranches(templateId: string, branches: Branch[]) {
   branchStore.set(templateId, branches);
 }
 
+// ── Helper: get effective layers (canvas.objects fallback) ──
+function getEffectiveLayers(tpl: DesignTemplate): any[] {
+  if (tpl.layers && tpl.layers.length > 0) return tpl.layers;
+  const result: any[] = [];
+  const walk = (objs: any[]) => {
+    for (const o of objs) {
+      result.push(o);
+      if (o.objects && Array.isArray(o.objects)) walk(o.objects);
+    }
+  };
+  if (tpl.canvas?.objects && Array.isArray(tpl.canvas.objects)) {
+    walk(tpl.canvas.objects);
+  }
+  return result;
+}
+
 // ── List branches for a template ──
 branchRoutes.get("/:id/branches", async (req, res) => {
   try {
@@ -124,11 +140,11 @@ branchRoutes.post("/:id/branches/:branchId/merge", async (req, res) => {
     if (!sourceTemplate) return res.status(404).json({ success: false, error: "Source branch template not found" });
 
     // Layer-level merge strategy
-    const targetLayers = new Map(tpl.layers.map(l => [l.id, l]));
-    const sourceLayers = new Map(sourceTemplate.layers.map(l => [l.id, l]));
+    const targetLayers = new Map(getEffectiveLayers(tpl).map((l: any) => [l.id || l.layerId || "", l]));
+    const sourceLayers = new Map(getEffectiveLayers(sourceTemplate).map((l: any) => [l.id || l.layerId || "", l]));
 
     const conflicts: Array<{ layerId: string; layerName: string; source: any; target: any }> = [];
-    const mergedLayers = [...tpl.layers];
+    const mergedLayers = [...getEffectiveLayers(tpl)];
 
     for (const [layerId, sourceLayer] of sourceLayers) {
       const targetLayer = targetLayers.get(layerId);

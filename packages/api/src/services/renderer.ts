@@ -121,9 +121,63 @@ function renderLayerHTML(layer: any): string {
   }
 }
 
+// ── Canvas-objects → Layer[] fallback ──
+// Editor-saved templates store layers in canvas.objects, not tpl.layers.
+// This helper walks canvas.objects recursively to build a flat layer list.
+function canvasObjectsToLayers(canvas: any): any[] {
+  const result: any[] = [];
+  const walk = (objs: any[], parentX = 0, parentY = 0) => {
+    for (const o of objs) {
+      const layer = {
+        ...o,
+        x: (o.left ?? 0) + parentX,
+        y: (o.top ?? 0) + parentY,
+        width: (o.width ?? 0) * ((o.scaleX as number) ?? 1),
+        height: (o.height ?? 0) * ((o.scaleY as number) ?? 1),
+        rotation: o.angle ?? 0,
+        opacity: o.opacity ?? 1,
+        visible: o.visible !== false,
+        zIndex: 0,
+        // Map Fabric.js properties to renderer layer names
+        fill: o.fill,
+        stroke: o.stroke,
+        strokeWidth: o.strokeWidth,
+        cornerRadius: (o as any).rx,
+        fontFamily: o.fontFamily,
+        fontSize: o.fontSize,
+        fontWeight: o.fontWeight,
+        text: o.text,
+        align: o.textAlign,
+        lineHeight: o.lineHeight,
+        src: (o as any).src,
+        d: (o as any).path ? (typeof (o as any).path === "string" ? (o as any).path : (o as any).path?.join?.(" ") || "") : "",
+        fillRule: (o as any).fillRule,
+        strokeLinecap: (o as any).strokeLineCap,
+        x2: (o as any).x2,
+        y2: (o as any).y2,
+        children: [],
+      };
+      if (o.objects && Array.isArray(o.objects)) {
+        (layer as any).children = canvasObjectsToLayers({ objects: o.objects });
+      }
+      result.push(layer);
+    }
+  };
+  if (canvas?.objects && Array.isArray(canvas.objects)) {
+    walk(canvas.objects);
+  }
+  return result;
+}
+
+function getEffectiveLayers(template: DesignTemplate): any[] {
+  if (template.layers && template.layers.length > 0) return template.layers;
+  return canvasObjectsToLayers(template.canvas);
+}
+
 // ── Build full HTML for Puppeteer rendering ──
 function buildRenderHTML(template: DesignTemplate, scale: number): string {
-  const { canvas, layers } = template;
+  const { canvas } = template;
+  const layers = getEffectiveLayers(template);
 
   // Sort by zIndex (populate from array index if missing)
   const sorted = layers
@@ -152,7 +206,8 @@ function buildRenderHTML(template: DesignTemplate, scale: number): string {
 
 // ── Direct SVG generation (no Puppeteer) ──
 function buildSVG(template: DesignTemplate): string {
-  const { canvas, layers } = template;
+  const { canvas } = template;
+  const layers = getEffectiveLayers(template);
 
   const sorted = layers
     .map((l, i) => ({ ...l, zIndex: (l as any).zIndex ?? i }))

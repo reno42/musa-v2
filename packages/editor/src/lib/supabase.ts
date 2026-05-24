@@ -1,7 +1,21 @@
-// packages/editor/src/lib/supabase.ts
-// Frontend uses API-proxy mode: all Supabase operations go through /api/* endpoints.
-// The API key (generated via Settings Panel) is stored in localStorage and sent
-// with every request as X-API-Key header.
+/**
+ * Supabase & API Client (Editor)
+ * ──────────────────────────────────────────────────────────────
+ * The editor never talks to Supabase directly — all database
+ * operations go through the /api/* Express endpoints. This
+ * module provides:
+ *   - localStorage-based API key persistence
+ *   - apiFetch() wrapper with automatic X-API-Key header injection
+ *   - A no-op getSupabase() for backwards compatibility
+ *
+ * @module lib/supabase
+ *
+ * LocalStorage keys:
+ *   futuraria_api_key          → raw API key (fd_xxxxxxxx...)
+ *   futuraria_local_templates  → offline fallback store
+ *
+ * API calls: ALL /api/* endpoints (via apiFetch)
+ */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 

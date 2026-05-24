@@ -182,7 +182,10 @@ async function fireWebhooks(event: string, payload: any) {
 // ── API Key CRUD ──
 async function listApiKeys(userId: string | null) {
   if (!db) return [];
-  const { data } = await db.from("api_keys").select("id,name,key_prefix,permissions,last_used_at,active,created_at").eq("user_id", userId).eq("active", true).order("created_at", { ascending: false });
+  let query = db.from("api_keys").select("id,name,key_prefix,permissions,last_used_at,active,created_at").eq("active", true).order("created_at", { ascending: false });
+  if (userId) query = query.eq("user_id", userId);
+  else query = query.is("user_id", null);
+  const { data } = await query;
   return data || [];
 }
 async function createApiKeyDB(name: string, userId: string) {
@@ -193,11 +196,14 @@ async function createApiKeyDB(name: string, userId: string) {
   const effectiveUserId = userId === "bootstrap" ? null : userId;
   const row: any = { id: `key_${uid()}`, user_id: effectiveUserId, name, key_hash: keyHash, key_prefix: rawKey.slice(0, 11), permissions: ["templates:read","templates:write","render","webhooks"] };
   await db.from("api_keys").insert(row);
-  return { ...row, fullKey: rawKey };
+  return { id: row.id, name: row.name, key: rawKey, key_prefix: row.key_prefix, message: "Copy this key now. It won't be shown again." };
 }
 async function deleteApiKey(id: string, userId: string | null) {
   if (!db) return false;
-  const { error } = await db.from("api_keys").update({ active: false }).eq("id", id).eq("user_id", userId);
+  let query = db.from("api_keys").update({ active: false }).eq("id", id);
+  if (userId) query = query.eq("user_id", userId);
+  else query = query.is("user_id", null);
+  const { error } = await query;
   return !error;
 }
 

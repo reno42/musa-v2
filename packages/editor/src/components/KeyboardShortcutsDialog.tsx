@@ -47,8 +47,10 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
       { keys: "⌘X", description: "Cut" },
       { keys: "⌘D", description: "Duplicate" },
       { keys: "⌘A", description: "Select all" },
+      { keys: "⌘L", description: "Lock/Unlock layer" },
       { keys: "Delete / ⌫", description: "Delete selected" },
       { keys: "Esc", description: "Deselect / Cancel" },
+      { keys: "Enter", description: "Edit text / Finish pen" },
       { keys: "⌘R", description: "Rename layer" },
       { keys: "⌘S", description: "Save version" },
     ],
@@ -62,6 +64,7 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
       { keys: "⌘0", description: "Reset zoom to 100%" },
       { keys: "⌘1", description: "Zoom to fit all" },
       { keys: "⌘2", description: "Zoom to selection" },
+      { keys: "⌘\\", description: "Toggle side panels" },
       { keys: "⌘'", description: "Toggle grid overlay" },
       { keys: "⌘Y", description: "Toggle outline mode" },
       { keys: "⌘⇧S", description: "Toggle snap to grid" },
@@ -81,6 +84,8 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
       { keys: "⌘⇧G", description: "Ungroup" },
       { keys: "⇧A", description: "Auto Layout" },
       { keys: "N", description: "Next frame" },
+      { keys: "← ↑ ↓ →", description: "Nudge 1px" },
+      { keys: "⇧← ↑ ↓ →", description: "Nudge 10px" },
     ],
   },
   {
@@ -99,6 +104,7 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
     shortcuts: [
       { keys: "⌘P", description: "Toggle prototype preview" },
       { keys: "C", description: "Toggle comment mode" },
+      { keys: "⌘⇧K", description: "Component library" },
     ],
   },
   {
@@ -228,7 +234,7 @@ export function KeyboardShortcutsDialog({ isOpen, onClose }: Props) {
 
         {/* Footer */}
         <div className="shortcuts-footer">
-          <span>Press <kbd className="shortcut-key">?</kbd> or <kbd className="shortcut-key">Esc</kbd> to close</span>
+          <span>Press <kbd className="shortcut-key">Esc</kbd> to close</span>
         </div>
       </div>
     </div>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Inter, -apple-system, system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e8;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .header { margin-bottom: 20px; }
+    .header h1 { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+    .header p { font-size: 12px; color: #8888a0; margin-top: 4px; }
+    .selection-info {
+      background: #252540;
+      border: 1px solid #363660;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #555; flex-shrink: 0; transition: background 0.2s;
+    }
+    .dot.active { background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.4); }
+    .sel-text { font-size: 13px; color: #9999b0; }
+    .sel-text.active { color: #c0c0d8; }
+    .sel-text strong { color: #fff; font-weight: 600; }
+    .preview {
+      background: #252540; border: 1px solid #363660;
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;
+    }
+    .preview-title {
+      font-size: 11px; font-weight: 600; color: #8888a0;
+      text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { font-size: 11px; padding: 4px 10px; background: #303058; border-radius: 6px; color: #b0b0d0; }
+    .btn {
+      width: 100%; padding: 14px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none; border-radius: 10px; color: #fff;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s; letter-spacing: 0.3px;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .status { margin-top: 12px; font-size: 12px; color: #8888a0; text-align: center; min-height: 18px; }
+    .status.error { color: #f87171; }
+    .status.ok { color: #4ade80; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📖 Generador de Manual de Marca</h1>
+    <p>Selecciona un frame → Genera un manual de marca</p>
+  </div>
+
+  <div class="selection-info">
+    <div class="dot" id="dot"></div>
+    <div class="sel-text" id="selText">Sin frame seleccionado</div>
+  </div>
+
+  <div class="preview">
+    <div class="preview-title">Páginas a generar</div>
+    <div class="tags">
+      <span class="tag">Portada</span>
+      <span class="tag">Índice</span>
+      <span class="tag">Logotipo</span>
+      <span class="tag">Variantes</span>
+      <span class="tag">Tipografía</span>
+      <span class="tag">Paleta de colores</span>
+      <span class="tag">Grilla de construcción</span>
+      <span class="tag">📱 Redes sociales</span>
+      <span class="tag">🖨️ Mockups (28)</span>
+      <span class="tag">🎨 Design System (35)</span>
+    </div>
+  </div>
+
+  <button class="btn" id="goBtn" disabled>Generar Manual de Marca</button>
+  <div class="status" id="status"></div>
+
+  <script>
+    var dot = document.getElementById("dot");
+    var selText = document.getElementById("selText");
+    var goBtn = document.getElementById("goBtn");
+    var status = document.getElementById("status");
+    var hasSel = false;
+
+    goBtn.addEventListener("click", function() {
+      if (!hasSel) return;
+      goBtn.disabled = true;
+      status.textContent = "Generando...";
+      status.className = "status";
+      parent.postMessage({ pluginMessage: { type: "generate" } }, "*");
+    });
+
+    onmessage = function(e) {
+      var m = e.data.pluginMessage;
+      if (!m) return;
+      if (m.type === "selection") {
+        if (m.name) {
+          hasSel = true;
+          dot.className = "dot active";
+          selText.className = "sel-text active";
+          selText.innerHTML = "<strong>" + m.name + "</strong> \u00b7 " + m.children + " capas";
+          goBtn.disabled = false;
+        } else {
+          hasSel = false;
+          dot.className = "dot";
+          selText.className = "sel-text";
+          selText.textContent = "Selecciona un frame en Figma";
+          goBtn.disabled = true;
+        }
+      }
+      if (m.type === "status") { status.textContent = m.message; status.className = "status"; }
+      if (m.type === "done") { status.textContent = "\u2713 " + m.message; status.className = "status ok"; goBtn.disabled = false; goBtn.textContent = "Generar de nuevo"; }
+      if (m.type === "error") { status.textContent = m.message; status.className = "status error"; goBtn.disabled = false; }
+    };
+  </script>
+</body>
+</html>

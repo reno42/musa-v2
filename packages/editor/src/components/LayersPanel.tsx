@@ -1,3 +1,17 @@
+/**
+ * Layers Panel Component
+ * ──────────────────────────────────────────────────────────────
+ * Left sidebar listing canvas objects by z-order with
+ * visibility toggling, drag-to-reorder, rename, and lock.
+ * Supports grouping/ungrouping.
+ *
+ * @module components/LayersPanel
+ *
+ * State: Reads canvas objects → LayerInfo[]
+ * Events: Click → select object, Drag → reorder, Eye → toggle visibility
+ * DB:    None (canvas state is ephemeral, saved via useRemoteSync)
+ */
+
 import { useState } from "react";
 import type { LayerInfo, FrameInfo, PageInfo } from "../hooks/useCanvas";
 
@@ -22,6 +36,7 @@ interface Props {
   onDuplicate: () => void;
   onBringForward: () => void;
   onSendBackward: () => void;
+  onToggleLock: (layerId: string) => void;
   onExportFrame: (frameId: string, format: "png" | "jpg" | "svg") => void;
 }
 
@@ -37,7 +52,7 @@ export function LayersPanel({
   onAddPage, onSwitchPage, onRenamePage, onDeletePage,
   onAddFrame, onRenameFrame, onDeleteFrame,
   onDelete, onDuplicate, onBringForward, onSendBackward,
-  onExportFrame,
+  onToggleLock, onExportFrame,
 }: Props) {
   const [pagesOpen, setPagesOpen] = useState(true);
   const [expandedFrames, setExpandedFrames] = useState<Set<string>>(new Set());
@@ -164,6 +179,14 @@ export function LayersPanel({
                 >
                   <span className="tree-item-icon">{typeIcons[layer.type] || "□"}</span>
                   <span className="tree-item-name">{layer.name}</span>
+                  <button
+                    className="tree-lock-btn"
+                    onClick={(e) => { e.stopPropagation(); onToggleLock(layer.id); }}
+                    title={layer.locked ? "Unlock (⌘L)" : "Lock (⌘L)"}
+                    style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: layer.locked ? "#f59e0b" : "#555", fontSize: 13, padding: "0 4px" }}
+                  >
+                    {layer.locked ? "🔒" : "🔓"}
+                  </button>
                 </div>
               ))}
             </div>

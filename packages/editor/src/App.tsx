@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import * as fabric from "fabric";
 import { CanvasEditor } from "./components/CanvasEditor";
+import { CanvasRulers } from "./components/CanvasRulers";
 import { LayersPanel } from "./components/LayersPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { Toolbar } from "./components/Toolbar";
@@ -13,14 +14,19 @@ import { VersionHistoryPanel } from "./components/VersionHistoryPanel";
 import { PrototypePanel } from "./components/PrototypePanel";
 import { PrototypePreview } from "./components/PrototypePreview";
 import { BranchPanel } from "./components/BranchPanel";
+import { CssSpecsPanel } from "./components/CssSpecsPanel";
+import { BatchPanel } from "./components/BatchPanel";
+import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { Dashboard } from "./components/Dashboard";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { LoginPage } from "./components/LoginPage";
 import { AutoSaveIndicator } from "./components/AutoSaveIndicator";
+import { ToastProvider, useToast } from "./components/Toast";
 import { useCanvas } from "./hooks/useCanvas";
 import { usePrototype } from "./hooks/usePrototype";
 import { useAuth } from "./hooks/useAuth";
 import { useAutoSave } from "./hooks/useAutoSave";
+import { useRemoteSync } from "./hooks/useRemoteSync";
 import { getTemplate, createTemplate } from "./lib/templateApi";
 import type { ToolName, LayerInfo, FrameInfo, PageInfo } from "./hooks/useCanvas";
 import type { StyleDefinition, Comment, TemplateVersion } from "@futuraria/shared";
@@ -43,6 +49,7 @@ function setTemplateIdInUrl(id: string | null) {
 
 // ─── Main Editor Component ───────────────────────────────────────
 function Editor({ templateId, onBack }: { templateId: string; onBack: () => void }) {
+  const { addToast } = useToast();
   const [selectedObj, setSelectedObj] = useState<fabric.FabricObject | null>(null);
   const [layers, setLayers] = useState<LayerInfo[]>([]);
   const [pages, setPages] = useState<PageInfo[]>([]);
@@ -94,11 +101,17 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
 
   // Version History state
   const [versions, setVersions] = useState<TemplateVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
   const [showVersionPanel, setShowVersionPanel] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   // Right panel tab
-  const [rightPanelTab, setRightPanelTab] = useState<"properties" | "styles" | "components" | "prototype">("properties");
+  const [rightPanelTab, setRightPanelTab] = useState<"properties" | "styles" | "components" | "prototype" | "code" | "batch">("properties");
+
+  // Panel visibility
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [showRightPanel, setShowRightPanel] = useState(true);
 
   // Prototype state
   const [showPreview, setShowPreview] = useState(false);
@@ -127,7 +140,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
     setCanvasSize(size);
   }, []);
   const onCommentsChange = useCallback((c: Comment[]) => setComments(c), []);
-  const onVersionsChange = useCallback((v: TemplateVersion[]) => setVersions(v), []);
+  const onVersionsChange = useCallback((v: TemplateVersion[]) => { setVersions(v); setVersionsLoading(false); }, []);
 
   const canvas = useCanvas({
     onSelectionChange,
@@ -163,6 +176,46 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
     }),
   });
 
+  // ─── Remote Sync (poll for agent API changes) ─────────────────
+
+  const reloadCanvasFromTemplate = useCallback((tpl: any) => {
+    const c = fabricRef.current;
+    if (!c || !tpl || !tpl.canvas) return;
+
+    try {
+      if (tpl.canvas.objects && tpl.canvas.objects.length > 0) {
+        c.clear();
+        fabric.util.enlivenObjects(tpl.canvas.objects).then((objects: any[]) => {
+          for (const obj of objects) c.add(obj);
+          c.renderAll();
+        }).catch((err: any) => {
+          console.error("Failed to enliven objects from template:", err);
+                    addToast("warning", "Partial sync", "Some remote canvas objects could not be loaded");
+        });
+      }
+
+      if (tpl.canvas.viewport) {
+        const vp = tpl.canvas.viewport;
+        c.setViewportTransform([vp.zoom, 0, 0, vp.zoom, vp.x, vp.y]);
+        setZoom(vp.zoom);
+      }
+
+      if (tpl.name) setTemplateName(tpl.name);
+      if (tpl.pages) { canvas.pagesRef.current = tpl.pages; setPages(tpl.pages); }
+      if (tpl.frames) { canvas.framesRef.current = tpl.frames; setFrames(tpl.frames); }
+      if (tpl.styles) { canvas.stylesRef.current = tpl.styles; setStyles(tpl.styles); }
+    } catch (err) {
+      console.error("Failed to reload canvas from template:", err);
+      addToast("error", "Sync failed", "Could not apply remote changes to canvas");
+    }
+  }, [canvas]);
+
+  const { hasRemoteChanges, acceptRemoteChanges, dismissRemoteChanges } = useRemoteSync({
+    templateId,
+    intervalMs: 15000,
+    onExternalChange: reloadCanvasFromTemplate,
+  });
+
   // ─── Load template on startup ─────────────────────────────────
   useEffect(() => {
     if (!templateId) return;
@@ -189,6 +242,10 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
               for (const obj of objects) {
                 c.add(obj);
               }
+              c.renderAll();
+            }).catch((err: any) => {
+              console.error("[loadTemplate] Failed to enliven objects:", err);
+              addToast("warning", "Partial canvas load", "Some objects could not be restored from the template");
               c.renderAll();
             });
           }
@@ -233,9 +290,11 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
 
         // Load comments and versions
         canvas.loadComments(templateId);
+        setVersionsLoading(true);
         canvas.loadVersions(templateId);
       } catch (err) {
         console.error("[Editor] Failed to load template:", err);
+        addToast("error", "Failed to load template", (err as Error).message || "The template could not be loaded from the server");
       } finally {
         if (!cancelled) setLoadingTemplate(false);
       }
@@ -419,12 +478,24 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
         return;
       }
 
-      // Enter: finish pen path
-      if (e.code === "Enter" && tool === "pen") {
-        canvas.finishPenPath();
-        setTool("select");
-        canvas.setToolMode("select");
-        return;
+      // Enter: text editing or finish pen path
+      if (e.code === "Enter") {
+        if (tool === "pen") {
+          canvas.finishPenPath();
+          setTool("select");
+          canvas.setToolMode("select");
+          return;
+        }
+        // Enter text editing for selected Textbox
+        if (!isMeta && !isShift && !isAlt) {
+          const active = fabricRef.current?.getActiveObject();
+          if (active && (active.type === "textbox" || active.type === "text" || active.type === "i-text")) {
+            e.preventDefault();
+            (active as any).enterEditing?.();
+            fabricRef.current?.renderAll();
+            return;
+          }
+        }
       }
 
       // Cmd + key shortcuts
@@ -499,6 +570,15 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           canvas.ungroupSelected();
           return;
         }
+        // Cmd+L → Lock/Unlock selected layer
+        if (!isShift && !isAlt && e.code === "KeyL") {
+          e.preventDefault();
+          const sel = fabricRef.current?.getActiveObject();
+          if (sel && (sel as any).layerId) {
+            canvas.toggleLayerLock((sel as any).layerId);
+          }
+          return;
+        }
         // Cmd+] → Bring forward
         if (!isShift && !isAlt && e.code === "BracketRight") {
           e.preventDefault();
@@ -551,12 +631,16 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
         if (!isShift && !isAlt && e.code === "Digit1") {
           e.preventDefault();
           canvas.zoomToFit();
+          const c1 = fabricRef.current;
+          if (c1) setZoom(c1.getZoom());
           return;
         }
         // Cmd+2 → Zoom to selection
         if (!isShift && !isAlt && e.code === "Digit2") {
           e.preventDefault();
           canvas.zoomToSelection();
+          const c2 = fabricRef.current;
+          if (c2) setZoom(c2.getZoom());
           return;
         }
         // Cmd+' → Toggle grid
@@ -651,6 +735,21 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
         return;
       }
 
+      // Cmd+\ or Ctrl+\ → Toggle side panels
+      if (e.code === "Backslash" && (isMeta || e.ctrlKey)) {
+        e.preventDefault();
+        setShowLeftPanel(p => !p);
+        setShowRightPanel(p => !p);
+        return;
+      }
+
+      // Cmd+K or Cmd+/ → Keyboard shortcuts dialog
+      if (isMeta && !isShift && !isAlt && (e.code === "Slash" || e.code === "KeyK")) {
+        e.preventDefault();
+        setShowShortcuts(p => !p);
+        return;
+      }
+
       // Single-key tool shortcuts (no modifiers)
       if (!isMeta && !isAlt && !isShift) {
         switch (e.code) {
@@ -705,16 +804,14 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
     const el = document.querySelector(".canvas-area"); if (!el) return;
     const handler = (e: Event) => {
       const we = e as unknown as WheelEvent;
-      if (we.ctrlKey || we.metaKey) {
-        e.preventDefault();
-        const c = fabricRef.current; if (!c) return;
-        const delta = we.deltaY > 0 ? 0.9 : 1.1;
-        const newZoom = Math.max(0.05, Math.min(5, c.getZoom() * delta));
-        const pointer = c.getScenePoint(we);
-        c.zoomToPoint(new fabric.Point(pointer.x, pointer.y), newZoom);
-        setZoom(newZoom);
-        c.renderAll();
-      }
+      e.preventDefault();
+      const c = fabricRef.current; if (!c) return;
+      const delta = we.deltaY > 0 ? 0.9 : 1.1;
+      const newZoom = Math.max(0.05, Math.min(5, c.getZoom() * delta));
+      const pointer = c.getScenePoint(we);
+      c.zoomToPoint(new fabric.Point(pointer.x, pointer.y), newZoom);
+      setZoom(newZoom);
+      c.renderAll();
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
@@ -861,6 +958,29 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
 
       {/* ─── Settings Panel ──────────────────────────────────────── */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      {showShortcuts && <KeyboardShortcutsDialog isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />}
+
+      {/* ─── Remote Changes Toast ─────────────────────────────────── */}
+      {hasRemoteChanges && (
+        <div style={{
+          position: "fixed", top: 56, left: "50%", transform: "translateX(-50%)",
+          background: "#1e3a5f", border: "1px solid #3b82f6", borderRadius: 8,
+          padding: "10px 20px", zIndex: 1001, display: "flex", alignItems: "center", gap: 12,
+          boxShadow: "0 4px 20px rgba(59,130,246,0.3)",
+        }}>
+          <span style={{ color: "#93c5fd", fontSize: 13 }}>
+            🔄 Agent modified this design externally
+          </span>
+          <button onClick={acceptRemoteChanges} style={{
+            background: "#3b82f6", color: "#fff", border: "none", borderRadius: 4,
+            padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600,
+          }}>Reload</button>
+          <button onClick={dismissRemoteChanges} style={{
+            background: "transparent", color: "#888", border: "none",
+            cursor: "pointer", fontSize: 16, padding: "0 4px",
+          }}>✕</button>
+        </div>
+      )}
 
 
       {/* ─── Eyedropper preview swatch ──────────────────────────── */}
@@ -965,22 +1085,33 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
       })()}
 
       <div className="app" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        <LayersPanel
-          pages={pages} activePageId={activePageId}
-          frames={frames} activeFrameId={activeFrameId}
-          layers={layers} selectedLayer={selectedLayer} selectedFrameId={selectedFrameId}
-          onSelectLayer={(l) => {
-            const obj = fabricRef.current?.getObjects().find((o: any) => o.layerId === l.id);
-            if (obj) { fabricRef.current?.setActiveObject(obj); fabricRef.current?.renderAll(); }
-          }}
-          onSelectFrame={(fid) => { canvas.selectFrame(fid); setSelectedFrameId(fid); }}
-          onAddPage={canvas.addPage} onSwitchPage={canvas.switchPage}
-          onRenamePage={canvas.renamePage} onDeletePage={canvas.deletePage}
-          onAddFrame={canvas.addFrame} onRenameFrame={canvas.renameFrame} onDeleteFrame={canvas.deleteFrame}
-          onDelete={canvas.deleteSelected} onDuplicate={canvas.duplicateSelected}
-          onBringForward={canvas.bringForward} onSendBackward={canvas.sendBackward}
-          onExportFrame={canvas.exportFrame}
-        />
+        {showLeftPanel && (
+          <LayersPanel
+            pages={pages} activePageId={activePageId}
+            frames={frames} activeFrameId={activeFrameId}
+            layers={layers} selectedLayer={selectedLayer} selectedFrameId={selectedFrameId}
+            onSelectLayer={(l) => {
+              const obj = fabricRef.current?.getObjects().find((o: any) => o.layerId === l.id);
+              if (obj) { fabricRef.current?.setActiveObject(obj); fabricRef.current?.renderAll(); }
+            }}
+            onSelectFrame={(fid) => { canvas.selectFrame(fid); setSelectedFrameId(fid); }}
+            onAddPage={canvas.addPage} onSwitchPage={canvas.switchPage}
+            onRenamePage={canvas.renamePage} onDeletePage={canvas.deletePage}
+            onAddFrame={canvas.addFrame} onRenameFrame={canvas.renameFrame} onDeleteFrame={canvas.deleteFrame}
+            onDelete={canvas.deleteSelected} onDuplicate={canvas.duplicateSelected}
+            onBringForward={canvas.bringForward} onSendBackward={canvas.sendBackward}
+            onToggleLock={canvas.toggleLayerLock}
+            onExportFrame={canvas.exportFrame}
+          />
+        )}
+        {/* Left panel toggle button */}
+        <button
+          className="panel-toggle panel-toggle-left"
+          onClick={() => setShowLeftPanel(p => !p)}
+          title={showLeftPanel ? "Hide left panel (⌘\\)" : "Show left panel (⌘\\)"}
+        >
+          {showLeftPanel ? "◀" : "▶"}
+        </button>
 
         <Toolbar
           tool={tool} onToolChange={handleToolChange}
@@ -988,6 +1119,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           onExportSVG={canvas.exportSVG} onExportJSON={canvas.exportJSON}
           onZoomIn={() => applyZoom(z => Math.min(z * 1.2, 5))}
           onZoomOut={() => applyZoom(z => Math.max(z / 1.2, 0.05))}
+          onZoomToFit={() => { canvas.zoomToFit(); setZoom(fabricRef.current?.getZoom() || 1); }}
           zoom={zoom}
           canUndo={canUndo}
           canRedo={canRedo}
@@ -1013,7 +1145,9 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           ref={setContainerRef}
           style={{ position: "relative", overflow: "hidden" }}
         >
-          <CanvasEditor zoom={zoom} canvasRef={canvasRef} onCanvasReady={() => setCanvasMounted(true)} />
+          <CanvasEditor zoom={zoom} canvasRef={canvasRef} fabricRef={fabricRef} tool={tool} onCanvasReady={() => setCanvasMounted(true)}>
+            <CanvasRulers fabricRef={fabricRef} zoom={zoom} canvasWidth={canvasSize.width} canvasHeight={canvasSize.height} />
+          </CanvasEditor>
 
           {/* Comment pins overlay */}
           {comments.filter(c => !c.resolved).map((comment) => (
@@ -1032,7 +1166,17 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           ))}
         </div>
 
+        {/* Right panel toggle button */}
+        <button
+          className="panel-toggle panel-toggle-right"
+          onClick={() => setShowRightPanel(p => !p)}
+          title={showRightPanel ? "Hide right panel (⌘\\)" : "Show right panel (⌘\\)"}
+        >
+          {showRightPanel ? "▶" : "◀"}
+        </button>
+
         {/* Right panel with tabs */}
+        {showRightPanel && (
         <div className="properties-panel">
           <div className="panel-tabs">
             <button
@@ -1059,6 +1203,18 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
             >
               Prototype
             </button>
+            <button
+              className={`panel-tab ${rightPanelTab === "code" ? "active" : ""}`}
+              onClick={() => setRightPanelTab("code")}
+            >
+              Code
+            </button>
+            <button
+              className={`panel-tab ${rightPanelTab === "batch" ? "active" : ""}`}
+              onClick={() => setRightPanelTab("batch")}
+            >
+              Batch
+            </button>
           </div>
 
           {rightPanelTab === "properties" && (
@@ -1067,7 +1223,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
               fabricRef={fabricRef}
               onLayerUpdate={() => {
                 const c = fabricRef.current;
-                if (c) setLayers(c.getObjects().filter((o: any) => !o.isFrameVisual).map((o) => ({
+                if (c) setLayers(c.getObjects().filter((o: any) => !o.isFrameVisual && !o.isFrameLabel && !o.isSectionLabel && !o.isSectionIndicator).map((o) => ({
                   id: (o as any).layerId || "", name: (o as any).layerName || o.type || "",
                   type: o.type || "", visible: o.visible !== false, locked: o.selectable === false,
                   frameId: (o as any).frameId,
@@ -1119,7 +1275,21 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
               onStartPreview={() => setShowPreview(true)}
             />
           )}
+
+          {rightPanelTab === "code" && (
+            <CssSpecsPanel
+              selectedObj={selectedObj}
+              fabricRef={fabricRef}
+            />
+          )}
+
+          {rightPanelTab === "batch" && (
+            <BatchPanel
+              fabricRef={fabricRef}
+            />
+          )}
         </div>
+        )}
 
         {/* Prototype Preview overlay */}
         {showPreview && (
@@ -1171,7 +1341,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           <VersionHistoryPanel
             versions={versions}
             currentVersionId={versions[0]?.id || null}
-            isLoading={false}
+            isLoading={versionsLoading}
             onRestore={(id) => canvas.restoreVersion(id, templateId)}
             onSaveNamed={(msg) => canvas.createVersion(templateId, msg)}
             onClose={() => setShowVersionPanel(false)}
@@ -1249,15 +1419,17 @@ export default function App() {
 
   // Routing
   if (templateId) {
-    return <Editor templateId={templateId} onBack={handleBack} />;
+    return <ToastProvider><Editor templateId={templateId} onBack={handleBack} /></ToastProvider>;
   }
 
   return (
+    <ToastProvider>
     <Dashboard
       userId={userId}
       onSelectTemplate={handleSelectTemplate}
       onCreateNew={handleCreateNew}
     />
+    </ToastProvider>
   );
 }
 

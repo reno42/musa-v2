@@ -1,3 +1,16 @@
+/**
+ * Toolbar Component
+ * ──────────────────────────────────────────────────────────────
+ * Top toolbar with drawing tools, alignment, boolean operations,
+ * undo/redo, zoom controls, and export actions.
+ *
+ * @module components/Toolbar
+ *
+ * State: Consumes useCanvas hook; toggles tools, triggers align
+ * Events: Tool selection → canvas mode changes
+ *          Export click → PNG/SVG download from canvas
+ */
+
 import { useState, useRef, useEffect } from "react";
 import type { ToolName } from "../hooks/useCanvas";
 import type { BooleanOperation } from "@futuraria/shared";
@@ -13,6 +26,7 @@ interface Props {
   onExportJSON: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onZoomToFit: () => void;
   zoom: number;
   // Undo/Redo
   canUndo: boolean;
@@ -37,7 +51,7 @@ interface Props {
 export function Toolbar({
   tool, onToolChange,
   onExportPNG, onExportJPG, onExportSVG, onExportJSON,
-  onZoomIn, onZoomOut, zoom,
+  onZoomIn, onZoomOut, onZoomToFit, zoom,
   canUndo, canRedo, onUndo, onRedo,
   onAlign, onDistribute, hasMultiSelection,
   onAutoLayout,
@@ -315,6 +329,12 @@ export function Toolbar({
       </div>
       <button className="tool-btn" onClick={onZoomIn} title="Zoom In (+)">
         <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM12 10h-2v2H9v-2H7V9h2V7h1v2h2v1z" /></svg>
+      </button>
+
+      <button className="tool-btn" onClick={onZoomToFit} title="Fit to screen (⌘1)">
+        <svg viewBox="0 0 24 24">
+          <path d="M3 5v4h2V5h4V3H5a2 2 0 0 0-2 2zm16-2h-4v2h4v4h2V5a2 2 0 0 0-2-2zM5 19h4v2H5a2 2 0 0 1-2-2v-4h2v4zm14 0v-4h2v4a2 2 0 0 1-2 2h-4v-2h4z" />
+        </svg>
       </button>
 
       <Spacer />

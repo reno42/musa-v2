@@ -16,6 +16,10 @@ import { versionRoutes } from "./routes/versions";
 import { variableRoutes } from "./routes/variables";
 import { branchRoutes } from "./routes/branches";
 import { apiKeyRoutes } from "./routes/api-keys";
+import csvProxyRoutes from "./routes/csv-proxy";
+import batchRoutes from "./routes/batch-routes";
+import cssRoutes from "./routes/css-routes";
+import autoRenameRoutes from "./routes/auto-rename-routes";
 import { authenticate, crudRateLimit, renderRateLimit } from "./middleware";
 
 const app = express();
@@ -56,7 +60,7 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     version: "3.0.0",
-    features: ["templates", "layers", "render", "webhooks", "styles", "components", "comments", "versions", "variables", "sections", "branches"],
+    features: ["templates", "layers", "render", "webhooks", "styles", "components", "comments", "versions", "variables", "sections", "branches", "batch", "css-export", "auto-rename"],
   });
 });
 
@@ -64,9 +68,12 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/config", (_req, res) => {
   res.json({
     version: "3.0.0",
-    features: ["templates", "layers", "render", "webhooks", "styles", "components", "comments", "versions", "variables", "sections", "branches"],
+    features: ["templates", "layers", "render", "webhooks", "styles", "components", "comments", "versions", "variables", "sections", "branches", "csv-proxy", "batch", "css-export", "auto-rename"],
   });
 });
+
+// ── CSV Proxy (no auth required — Google Sheets fetch) ──
+app.use("/api", csvProxyRoutes);
 
 // ── Apply Authentication to all API routes ──
 app.use("/api/templates", authenticate);
@@ -88,6 +95,9 @@ app.use("/api/templates", layerRoutes);
 app.use("/api/templates", authenticate, crudRateLimit, branchRoutes);
 app.use("/api/templates", versionRoutes);
 app.use("/api/templates", renderRateLimit, renderRoutes);
+app.use("/api/templates", authenticate, crudRateLimit, batchRoutes);
+app.use("/api/templates", authenticate, crudRateLimit, cssRoutes);
+app.use("/api/templates", authenticate, crudRateLimit, autoRenameRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/styles", styleRoutes);
 app.use("/api/components", componentRoutes);

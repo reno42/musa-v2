@@ -32,9 +32,11 @@
 ### Design Export
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/templates/:id/export` | Get export data (for rendering) |
-| POST | `/api/templates/:id/export/upload` | Upload rendered image |
-| GET | `/api/templates/:id/export/svg` | Download as SVG |
+| POST | `/api/templates/:id/render` | Render template to PNG/JPG/SVG |
+| GET | `/api/templates/:id/render/:renderId` | Check render status |
+| GET | `/api/templates/:id/css` | Export CSS stylesheet (JSON or raw CSS) |
+| POST | `/api/templates/:id/batch` | Validate batch design CSV against template |
+| POST | `/api/templates/:id/auto-rename` | Generate rename plan for batch processing |
 
 ### Webhooks
 | Method | Endpoint | Description |
@@ -60,9 +62,8 @@ When events happen in Futuraria, webhooks fire to your registered URLs:
 |-------|---------|
 | `template.created` | `{ id, name, canvas, layers, metadata }` |
 | `template.updated` | `{ id, name, canvas, layers, metadata }` |
-| `render.complete` | `{ id, templateId, format, template }` |
-| `export.complete` | `{ id, templateId, format, imageData, width, height }` |
-| `export.requested` | `{ id, templateId, format, canvas, layers }` |
+| `render.complete` | `{ id, templateId, format, url, width, height }` |
+| `render.failed` | `{ id, templateId, format, error }` |
 | `version.created` | `{ id, templateId, versionNumber, data }` |
 | `comment.created` | `{ id, templateId, author, text, x, y }` |
 | `layer.updated` | `{ templateId, layer }` |
@@ -98,32 +99,32 @@ curl -X POST "https://your-app.netlify.app/api/webhooks" \
 ```
 
 ### 4. Trigger Export via n8n
-From n8n, call the export API:
+From n8n, call the render API:
 
 ```
-POST https://your-app.netlify.app/api/templates/{templateId}/export
+POST https://your-app.netlify.app/api/templates/{templateId}/render
 Body: { "format": "png", "scale": 2 }
 ```
 
-Or get SVG directly:
+Or get CSS directly:
 ```
-GET https://your-app.netlify.app/api/templates/{templateId}/export/svg
+GET https://your-app.netlify.app/api/templates/{templateId}/css?format=css
 ```
 
 ## Export Pipeline (Client → API → n8n)
 
 1. **User designs** in Futuraria Editor
-2. **Client renders** canvas to PNG/SVG using Fabric.js
-3. **Client uploads** to `/api/templates/:id/export/upload`
-4. **API fires webhook** `export.complete` with image data
-5. **n8n receives** webhook and processes the image
+2. **API renders** canvas to PNG/SVG via Puppeteer (or direct SVG generation)
+3. **API stores** result in Supabase Storage (design-exports bucket)
+4. **API fires webhook** `render.complete` with render data
+5. **n8n receives** webhook and processes the image/SVG
 6. **n8n stores** result (Supabase, S3, email, etc.)
 
 ## Example: Export and Email
 
 n8n workflow:
-1. Webhook Trigger (futuraria-export)
-2. Wait for `export.complete` event
+1. Webhook Trigger (futuraria-events)
+2. Wait for `render.complete` event
 3. Send email with image attachment
 4. Log to Google Sheets
 
@@ -131,10 +132,13 @@ n8n workflow:
 
 The API uses these tables (create via `supabase-setup.sql`):
 
-- `templates` — Design templates
-- `webhooks` — Registered webhooks
-- `api_keys` — API keys (hashed)
-- `styles` — Design styles
-- `components` — Component library
-- `comments` — Design comments
-- `template_versions` — Version history
+- `templates` — Design templates (id, name, data JSONB, user_id, timestamps)
+- `api_keys` — API keys with SHA-256 hashed keys (id, user_id UUID, key_hash, key_prefix, permissions, expires_at, active)
+- `render_logs` — Render job tracking (id, template_id, status, format, url, error)
+- `webhooks` — Registered webhook URLs (id, url, events, secret, user_id, active)
+- `styles` — Design styles (id, name, type, data JSONB)
+- `components` — Component library (id, name, data JSONB)
+- `comments` — Design comments with threads (id, template_id, x, y, author, text, thread JSONB, resolved)
+- `template_versions` — Version history snapshots (id, template_id, version_number, data JSONB, author, message)
+- `variables` — Design tokens / variables (id, template_id, data JSONB with collections+variables+bindings)
+- `design-exports` — Storage bucket for rendered images (public read, service_role write)

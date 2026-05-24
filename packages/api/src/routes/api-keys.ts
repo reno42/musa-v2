@@ -1,5 +1,30 @@
-// packages/api/src/routes/api-keys.ts
-// API Keys CRUD (Management)
+/**
+ * API Keys Management Routes
+ * ──────────────────────────────────────────────────────────────
+ * Secure API key generation with SHA-256 hashing. Keys are
+ * generated server-side and shown only once. Supports listing
+ * active keys, creating new ones, and soft-deletion (revoke).
+ *
+ * @module routes/api-keys
+ *
+ * Database (Supabase: api_keys table):
+ *   - id TEXT PK            → key identifier (key_xxxxxxxx)
+ *   - user_id UUID          → owner (FK → auth.users)
+ *   - name TEXT             → human-readable label
+ *   - key_hash TEXT UNIQUE  → SHA-256(raw_key)
+ *   - key_prefix TEXT       → first 11 chars for UI display
+ *   - permissions TEXT[]    → e.g. ['templates:read', 'render']
+ *   - last_used_at          → last authentication timestamp
+ *   - expires_at TIMESTAMPTZ → optional expiration
+ *   - active BOOLEAN        → soft-delete flag
+ *   - created_at TIMESTAMPTZ
+ *
+ * Authentication flow (middleware.ts):
+ *   1. Extract X-API-Key from header
+ *   2. SHA-256(raw key) → look up api_keys.key_hash
+ *   3. Check active=true, expires_at not past
+ *   4. Attach user_id + permissions to req.auth
+ */
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
@@ -8,7 +33,18 @@ import { getSupabase } from "../services/supabase";
 
 export const apiKeyRoutes = Router();
 
-// ── List API keys for current user ──
+/**
+ * GET /api/api-keys
+ * ──────────────────────────────────────────────────────────────
+ * List active API keys for the authenticated user. Never
+ * returns the raw key (only prefix for identification).
+ *
+ * @returns {200} { success, data: { id, name, key_prefix, permissions, last_used_at, active, created_at }[] }
+ * @returns {401} Not authenticated
+ *
+ * DB: SELECT id,name,key_prefix,permissions,last_used_at,active,created_at
+ *     FROM api_keys WHERE user_id = :uid AND active = true
+ */
 apiKeyRoutes.get("/", async (req, res) => {
   try {
     const userId = req.auth?.userId;
@@ -34,7 +70,21 @@ apiKeyRoutes.get("/", async (req, res) => {
   }
 });
 
-// ── Create new API key ──
+/**
+ * POST /api/api-keys
+ * ──────────────────────────────────────────────────────────────
+ * Generate a new API key. Returns the raw key ONLY ONCE in the
+ * response. After this, only the SHA-256 hash is stored.
+ *
+ * @body {string} [name="Default Key"]   Label for this key
+ *
+ * @returns {201} { success, data: { id, name, key, key_prefix, message } }
+ * @returns {401} Not authenticated
+ *
+ * DB: INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, permissions, active)
+ *
+ * ⚠️ The raw key is shown ONLY ONCE. The server only stores key_hash.
+ */
 apiKeyRoutes.post("/", async (req, res) => {
   try {
     const userId = req.auth?.userId;
@@ -83,7 +133,18 @@ apiKeyRoutes.post("/", async (req, res) => {
   }
 });
 
-// ── Revoke (delete) API key ──
+/**
+ * DELETE /api/api-keys/:id
+ * ──────────────────────────────────────────────────────────────
+ * Revoke an API key (soft-delete: sets active = false).
+ *
+ * @param {string} id  Key ID (key_xxxxxxxx)
+ *
+ * @returns {200} { success: true }
+ * @returns {401} Not authenticated
+ *
+ * DB: UPDATE api_keys SET active = false WHERE id = :id AND user_id = :uid
+ */
 apiKeyRoutes.delete("/:id", async (req, res) => {
   try {
     const userId = req.auth?.userId;

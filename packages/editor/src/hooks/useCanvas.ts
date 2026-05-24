@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import * as fabric from "fabric";
 import type { StyleDefinition, ComponentDefinition, Comment, CommentReply, TemplateVersion, LayoutConstraint, AutoLayoutConfig, ResizingMode, BooleanOperation, Variable, VariableCollection, VariableType, VariableScope, GridStyle, ImageFitMode } from "@futuraria/shared";
 import { performBooleanOperation } from "../lib/booleanOps";
+import { useToast } from "../components/Toast";
 
 // ─── Types ───────────────────────────────────────────────────────
 export type ToolName =
@@ -78,6 +79,7 @@ export function useCanvas(opts: {
   onCommentsChange?: (comments: Comment[]) => void;
   onVersionsChange?: (versions: TemplateVersion[]) => void;
 }) {
+  const { addToast } = useToast();
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -138,6 +140,7 @@ export function useCanvas(opts: {
 
   // ─── Version History State ───────────────────────────────────
   const versionsRef = useRef<TemplateVersion[]>([]);
+  const versionsLoadingRef = useRef(false);
   const versionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastVersionDataRef = useRef<string>("");
 
@@ -208,6 +211,10 @@ export function useCanvas(opts: {
       c.discardActiveObject();
       c.renderAll();
       syncLayers();
+      isRestoringRef.current = false;
+    }).catch((err: any) => {
+      console.error("[restoreState] Failed to enliven objects:", err);
+      addToast("error", "Undo/redo failed", "Canvas state could not be restored");
       isRestoringRef.current = false;
     });
   }, []);
@@ -298,6 +305,10 @@ export function useCanvas(opts: {
       c.add(pasteObj);
       c.setActiveObject(pasteObj);
       c.renderAll();
+      isRestoringRef.current = false;
+    }).catch((err: any) => {
+      console.error("[paste] Failed to enliven clipboard objects:", err);
+      addToast("error", "Paste failed", "Clipboard data could not be restored");
       isRestoringRef.current = false;
     });
   }, []);
@@ -839,6 +850,21 @@ export function useCanvas(opts: {
     }
   }, []);
 
+  /** Toggle lock/unlock for a layer. Locked layers can't be selected or moved. */
+  const toggleLayerLock = useCallback((layerId: string) => {
+    const c = fabricRef.current;
+    if (!c) return;
+
+    const obj = c.getObjects().find((o: any) => o.layerId === layerId);
+    if (obj) {
+      const locked = !obj.selectable;
+      obj.set({ selectable: locked, evented: locked });
+      if (locked) c.discardActiveObject();
+      c.renderAll();
+      syncLayers();
+    }
+  }, []);
+
   // Track when canvas element is mounted (so init effect re-runs after loading state clears)
   const [canvasMounted, setCanvasMounted] = useState(false);
 
@@ -858,6 +884,7 @@ export function useCanvas(opts: {
       controlsAboveOverlay: true,
     });
     fabricRef.current = c;
+    (canvasRef.current as any).__fabric = c;
 
     canvasSizeRef.current = { width: initialWidth, height: initialHeight };
     opts.onCanvasSizeChange?.({ width: initialWidth, height: initialHeight });
@@ -956,7 +983,7 @@ export function useCanvas(opts: {
 
     for (const obj of c.getObjects()) {
       const m = obj as any;
-      if (m.isFrameLabel || m.isSectionLabel || m.isSectionIndicator) continue;
+      if (m.isFrameVisual || m.isFrameLabel || m.isSectionLabel || m.isSectionIndicator) continue;
       const isFrame = !!m.isFrameBg;
       const isSection = !!m.isSectionBg;
       const layer: LayerInfo = {
@@ -1370,6 +1397,12 @@ export function useCanvas(opts: {
         fabric.util.enlivenObjects([data]).then(([obj]: any) => { if (obj) c.add(obj); })
       );
       Promise.all(promises).then(() => {
+        syncLayers();
+        c.renderAll();
+        if (showGridRef.current) renderGrid();
+      }).catch((err: any) => {
+        console.error("[switchPage] Failed to enliven page objects:", err);
+        addToast("error", "Page load failed", "Some page objects could not be restored");
         syncLayers();
         c.renderAll();
         if (showGridRef.current) renderGrid();
@@ -2486,6 +2519,7 @@ export function useCanvas(opts: {
         });
       } catch (e) {
         console.error("[Versions] Failed to sync:", e);
+        addToast("warning", "Version not saved", "Could not sync version snapshot to server");
       }
 
       opts.onVersionsChange?.(versionsRef.current);
@@ -2508,6 +2542,7 @@ export function useCanvas(opts: {
 
   /** Load version history from API. */
   const loadVersions = useCallback(async (templateId: string) => {
+    versionsLoadingRef.current = true;
     try {
       const res = await fetch(`/api/templates/${templateId}/versions`);
       const json = await res.json();
@@ -2517,6 +2552,10 @@ export function useCanvas(opts: {
       }
     } catch (e) {
       console.error("[Versions] Failed to load:", e);
+      addToast("error", "Failed to load version history", (e as Error).message);
+    } finally {
+      versionsLoadingRef.current = false;
+      opts.onVersionsChange?.(versionsRef.current);
     }
   }, []);
 
@@ -2534,6 +2573,7 @@ export function useCanvas(opts: {
         }
       } catch (e) {
         console.error("[Versions] Failed to restore:", e);
+        addToast("error", "Failed to restore version", "Could not load the selected version snapshot");
       }
     },
     [restoreState],
@@ -3678,6 +3718,7 @@ export function useCanvas(opts: {
     nextFrame,
     // Rename layer
     renameLayer,
+    toggleLayerLock,
     // Styles
     stylesRef,
     applyStyle,
@@ -3712,6 +3753,7 @@ export function useCanvas(opts: {
     syncComment,
     // Version History
     versionsRef,
+    versionsLoadingRef,
     createVersion,
     debouncedAutoVersion,
     loadVersions,

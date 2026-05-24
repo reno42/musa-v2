@@ -1,0 +1,224 @@
+
+
+
+
+
+
+
+
+
+.grilla-de-construccin {
+  /* --- Position & Layout --- */;
+  x: 0px;
+  y: 0px;
+  rotation: 0deg;
+  width: 1920px;
+  height: 1080px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Fill --- */;
+  background-color: #f7f7f9;
+  /* fill-rgb: 247, 247, 249 */;
+  /* fill-cmyk: C:1 M:1 Y:0 K:2 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.rectangle-3 {
+  /* --- Position & Layout --- */;
+  x: 58px;
+  y: 117px;
+  rotation: 0deg;
+  width: 446px;
+  height: 872px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 45px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Fill --- */;
+  background-color: #f0edec;
+  /* fill-rgb: 240, 237, 236 */;
+  /* fill-cmyk: C:0 M:1 Y:2 K:6 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.grilla-de-construccin {
+  /* --- Position & Layout --- */;
+  x: 105px;
+  y: 432px;
+  rotation: 0deg;
+  width: 399px;
+  height: 141px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Typography --- */;
+  font-family: 'Google Sans Flex';
+  font-size: 55px;
+  font-weight: 400;
+  line-height: auto;
+  letter-spacing: 0em;
+  text-align: left;
+  /* text-align-vertical: top */;
+  ;
+  /* --- Fill --- */;
+  background-color: #000000;
+  /* fill-rgb: 0, 0, 0 */;
+  /* fill-cmyk: C:0 M:0 Y:0 K:100 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.el-logotipo-es-el-elemento-ms-reconocibl {
+  /* --- Position & Layout --- */;
+  x: 105px;
+  y: 618px;
+  rotation: 0deg;
+  width: 353px;
+  height: 300px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Typography --- */;
+  font-family: 'Google Sans Flex';
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.52;
+  letter-spacing: 0em;
+  text-align: left;
+  /* text-align-vertical: top */;
+  ;
+  /* --- Fill --- */;
+  background-color: #525261;
+  /* fill-rgb: 82, 82, 97 */;
+  /* fill-cmyk: C:16 M:16 Y:0 K:62 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.el-10 {
+  /* --- Position & Layout --- */;
+  x: 1838px;
+  y: 1011px;
+  rotation: 0deg;
+  width: 42px;
+  height: 37px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Typography --- */;
+  font-family: 'Inter';
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.75;
+  letter-spacing: 0em;
+  text-align: left;
+  /* text-align-vertical: top */;
+  ;
+  /* --- Fill --- */;
+  background-color: #525261;
+  /* fill-rgb: 82, 82, 97 */;
+  /* fill-cmyk: C:16 M:16 Y:0 K:62 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.group-1 {
+  /* --- Position & Layout --- */;
+  x: 92px;
+  y: 159px;
+  rotation: 0deg;
+  width: 110px;
+  height: 21px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Fill --- */;
+  /* no fill */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.icon {
+  /* --- Position & Layout --- */;
+  x: 92px;
+  y: 159px;
+  rotation: 0deg;
+  width: 37px;
+  height: 21px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Fill --- */;
+  background-color: #000000;
+  /* fill-rgb: 0, 0, 0 */;
+  /* fill-cmyk: C:0 M:0 Y:0 K:100 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}
+
+.art_layer {
+  /* --- Position & Layout --- */;
+  x: 144px;
+  y: 160px;
+  rotation: 0deg;
+  width: 58px;
+  height: 20px;
+  ;
+  /* --- Appearance --- */;
+  opacity: 1;
+  border-radius: 0px;
+  visibility: visible;
+  mix-blend-mode: normal;
+  ;
+  /* --- Fill --- */;
+  background-color: #000000;
+  /* fill-rgb: 0, 0, 0 */;
+  /* fill-cmyk: C:0 M:0 Y:0 K:100 */;
+  /* fill-opacity: 1 */;
+  ;
+  /* --- Stroke --- */;
+  /* no stroke */
+}

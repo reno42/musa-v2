@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import type { Canvas as FabricCanvas } from "fabric";
 import { apiFetch } from "../lib/supabase";
+import { useToast } from "../components/Toast";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -36,6 +37,7 @@ export function useAutoSave({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef(false);
   const pendingRef = useRef(false);
+  const { addToast } = useToast();
 
   const performSave = useCallback(async () => {
     const c = fabricRef.current;
@@ -92,6 +94,7 @@ export function useAutoSave({
     } catch (err) {
       console.error("[AutoSave] Save failed:", err);
       setStatus("error");
+      addToast("error", "Auto-save failed", (err as Error).message || "Could not save changes to server");
 
       // Reset error after 5 seconds
       setTimeout(() => {

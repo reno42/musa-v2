@@ -1,5 +1,21 @@
-// packages/api/src/routes/components.ts
-// Components CRUD (Sprint 3)
+/**
+ * Components Routes
+ * ──────────────────────────────────────────────────────────────
+ * CRUD for reusable design components (templates with replaceable
+ * properties). Components can be instantiated as layers within
+ * design templates, with defaultValues populated from properties.
+ *
+ * @module routes/components
+ *
+ * Database (Supabase: components table):
+ *   - id TEXT PK          → component identifier (cmp_xxxxxxxx)
+ *   - name TEXT           → human-readable name
+ *   - data JSONB          → full component definition (canvas, layers, properties, defaultValues)
+ *   - user_id UUID        → owner (FK → auth.users)
+ *   - created_at / updated_at TIMESTAMPTZ
+ *
+ * @webhook Fires: component.created
+ */
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
@@ -10,7 +26,23 @@ export const componentRoutes = Router();
 
 const memoryStore = new Map<string, any>();
 
-// Create component
+/**
+ * POST /api/components
+ * ──────────────────────────────────────────────────────────────
+ * Create a new component. Builds defaultValues from property
+ * definitions automatically.
+ *
+ * @body {string}   name               Component name
+ * @body {string}   [description]      Human-readable description
+ * @body {object[]} properties         [{ id, label, type, defaultValue }]
+ * @body {object}   [canvas]           Fabric.js canvas JSON
+ * @body {object[]} [layers]           Layer array
+ * @body {string[]} [tags]             Categorization tags
+ *
+ * @returns {201} { success, data: Component }
+ *
+ * DB: INSERT INTO components (id, name, data)
+ */
 componentRoutes.post("/", validate(createComponentSchema), async (req, res) => {
   try {
     const component = {
@@ -50,7 +82,15 @@ componentRoutes.post("/", validate(createComponentSchema), async (req, res) => {
   }
 });
 
-// List components
+/**
+ * GET /api/components
+ * ──────────────────────────────────────────────────────────────
+ * List all components, newest first.
+ *
+ * @returns {200} { success, data: Component[] }
+ *
+ * DB: SELECT data FROM components ORDER BY created_at DESC
+ */
 componentRoutes.get("/", async (req, res) => {
   try {
     const db = getSupabase();
@@ -68,7 +108,12 @@ componentRoutes.get("/", async (req, res) => {
   }
 });
 
-// Get single component
+/**
+ * GET /api/components/:id
+ * @param {string} id  Component ID (cmp_xxxxxxxx)
+ * @returns {200} { success, data: Component } | {404}
+ * DB: SELECT data FROM components WHERE id = :id
+ */
 componentRoutes.get("/:id", async (req, res) => {
   try {
     const db = getSupabase();
@@ -92,7 +137,13 @@ componentRoutes.get("/:id", async (req, res) => {
   }
 });
 
-// Update component
+/**
+ * PATCH /api/components/:id
+ * @param {string} id        Component ID
+ * @body {object} partial    Fields to update (merged with existing)
+ * @returns {200} { success, data: Component } | {404}
+ * DB: UPDATE components SET data = :updated, name = :name WHERE id = :id
+ */
 componentRoutes.patch("/:id", validate(updateComponentSchema), async (req, res) => {
   try {
     const db = getSupabase();
@@ -132,7 +183,12 @@ componentRoutes.patch("/:id", validate(updateComponentSchema), async (req, res) 
   }
 });
 
-// Delete component
+/**
+ * DELETE /api/components/:id
+ * @param {string} id  Component ID
+ * @returns {200} { success: true } | {404}
+ * DB: DELETE FROM components WHERE id = :id
+ */
 componentRoutes.delete("/:id", async (req, res) => {
   try {
     const db = getSupabase();

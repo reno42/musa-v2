@@ -1,5 +1,23 @@
-// packages/api/src/routes/variables.ts
-// Variables / Design Tokens CRUD (Sprint 6)
+/**
+ * Variables / Design Tokens Routes
+ * ──────────────────────────────────────────────────────────────
+ * Design token management for templates. Stores collections,
+ * variable definitions, and bindings (variable→layer property
+ * mappings) in a single JSONB document per template.
+ *
+ * @module routes/variables
+ *
+ * Database (Supabase: variables table):
+ *   - id TEXT PK          → auto-generated (var_...)
+ *   - template_id TEXT FK → parent template (CASCADE delete)
+ *   - data JSONB          → { collections[], variables[], bindings{} }
+ *   - created_at / updated_at TIMESTAMPTZ
+ *
+ * Data structure:
+ *   collections: [{ id, name }]                       — logical groups
+ *   variables:   [{ id, name, type, value, collectionId }] — tokens
+ *   bindings:    { [layerName]: [{ variableId, property }] } — property links
+ */
 
 import { Router } from "express";
 import { getSupabase } from "../services/supabase";
@@ -8,8 +26,18 @@ export const variableRoutes = Router();
 
 const memoryStore = new Map<string, any>();
 
-// ─── GET /api/variables?templateId=... ──────────────────────────
-// Load all variables, collections, and bindings for a template
+/**
+ * GET /api/variables?templateId=:id
+ * ──────────────────────────────────────────────────────────────
+ * Load all variables, collections, and bindings for a template.
+ *
+ * @query {string} templateId  Template ID (required)
+ *
+ * @returns {200} { success, data: { collections, variables, bindings } }
+ * @returns {400} Missing templateId
+ *
+ * DB: SELECT data FROM variables WHERE template_id = :tid
+ */
 variableRoutes.get("/", async (req, res) => {
   try {
     const templateId = req.query.templateId as string;
@@ -41,8 +69,22 @@ variableRoutes.get("/", async (req, res) => {
   }
 });
 
-// ─── POST /api/variables ────────────────────────────────────────
-// Save all variables, collections, and bindings for a template
+/**
+ * POST /api/variables
+ * ──────────────────────────────────────────────────────────────
+ * Save (upsert) all variables, collections, and bindings for
+ * a template. Creates a new variables row or updates existing.
+ *
+ * @body {string}   templateId     Template ID (required)
+ * @body {object[]} [collections]  Collection definitions
+ * @body {object[]} [variables]    Variable definitions
+ * @body {object}   [bindings]     Layer→variable property map
+ *
+ * @returns {200} { success, data: { collections, variables, bindings } }
+ * @returns {400} Missing templateId
+ *
+ * DB: UPSERT (INSERT or UPDATE) variables data WHERE template_id = :tid
+ */
 variableRoutes.post("/", async (req, res) => {
   try {
     const { templateId, collections, variables, bindings } = req.body;
@@ -86,8 +128,17 @@ variableRoutes.post("/", async (req, res) => {
   }
 });
 
-// ─── DELETE /api/variables/:templateId ──────────────────────────
-// Delete all variables for a template
+/**
+ * DELETE /api/variables/:templateId
+ * ──────────────────────────────────────────────────────────────
+ * Remove all variable data for a template.
+ *
+ * @param {string} templateId  Template ID
+ *
+ * @returns {200} { success: true }
+ *
+ * DB: DELETE FROM variables WHERE template_id = :tid
+ */
 variableRoutes.delete("/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;

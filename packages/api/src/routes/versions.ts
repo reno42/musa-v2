@@ -1,5 +1,23 @@
-// packages/api/src/routes/versions.ts
-// Template version history (Sprint 5)
+/**
+ * Template Versions Routes
+ * ──────────────────────────────────────────────────────────────
+ * Version history management for design templates. Each save
+ * can create an immutable snapshot with auto-incrementing
+ * version numbers. Supports restore to any previous version.
+ *
+ * @module routes/versions
+ *
+ * Database (Supabase: template_versions table):
+ *   - id TEXT PK              → version identifier (ver_xxxxxxxx)
+ *   - template_id TEXT FK     → parent template (CASCADE delete)
+ *   - version_number INTEGER  → auto-incrementing (1, 2, 3...)
+ *   - data JSONB              → full DesignTemplate snapshot
+ *   - author TEXT             → who created this version
+ *   - message TEXT            → optional changelog message
+ *   - created_at TIMESTAMPTZ
+ *
+ * @webhook Fires: version.created
+ */
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
@@ -11,7 +29,23 @@ export const versionRoutes = Router();
 
 const memoryStore = new Map<string, any[]>();
 
-// Create version (save snapshot)
+/**
+ * POST /api/templates/:id/versions
+ * ──────────────────────────────────────────────────────────────
+ * Save a new version snapshot of the current template state.
+ * Version numbers auto-increment per template.
+ *
+ * @param {string} id        Template ID
+ * @body {object} [data]     Template data to snapshot (defaults to current state)
+ * @body {string} [author]   Version author name
+ * @body {string} [message]  Changelog message
+ *
+ * @returns {201} { success, data: Version }
+ * @returns {404} Template not found
+ *
+ * DB: SELECT MAX(version_number) + 1 FROM template_versions
+ *     INSERT INTO template_versions (id, template_id, version_number, data, author, message)
+ */
 versionRoutes.post("/:id/versions", validate(createVersionSchema), async (req, res) => {
   try {
     const templateId = req.params.id;
@@ -67,7 +101,20 @@ versionRoutes.post("/:id/versions", validate(createVersionSchema), async (req, r
   }
 });
 
-// List versions for a template
+/**
+ * GET /api/templates/:id/versions
+ * ──────────────────────────────────────────────────────────────
+ * List version history for a template with pagination.
+ *
+ * @param {string} id         Template ID
+ * @query {number} [limit=50] Max results (capped at 100)
+ * @query {number} [offset=0] Pagination offset
+ *
+ * @returns {200} { success, data: Version[], total, limit, offset }
+ *
+ * DB: SELECT * FROM template_versions WHERE template_id = :id
+ *     ORDER BY version_number DESC LIMIT :limit OFFSET :offset
+ */
 versionRoutes.get("/:id/versions", async (req, res) => {
   try {
     const templateId = req.params.id;
@@ -111,7 +158,13 @@ versionRoutes.get("/:id/versions", async (req, res) => {
   }
 });
 
-// Get single version
+/**
+ * GET /api/templates/:id/versions/:versionId
+ * @param {string} id          Template ID
+ * @param {string} versionId   Version ID (ver_xxxxxxxx)
+ * @returns {200} { success, data: Version } | {404}
+ * DB: SELECT * FROM template_versions WHERE id = :versionId
+ */
 versionRoutes.get("/:id/versions/:versionId", async (req, res) => {
   try {
     const db = getSupabase();
@@ -146,7 +199,21 @@ versionRoutes.get("/:id/versions/:versionId", async (req, res) => {
   }
 });
 
-// Restore version (replace template with version snapshot)
+/**
+ * POST /api/templates/:id/versions/:versionId/restore
+ * ──────────────────────────────────────────────────────────────
+ * Restore the template to a previous version snapshot.
+ * Replaces the current template data with the version's data.
+ *
+ * @param {string} id          Template ID
+ * @param {string} versionId   Version ID to restore from
+ *
+ * @returns {200} { success, data: DesignTemplate }
+ * @returns {404} Version or template not found
+ *
+ * DB: SELECT data FROM template_versions WHERE id = :versionId
+ *     UPDATE templates SET data = :restoredData WHERE id = :templateId
+ */
 versionRoutes.post("/:id/versions/:versionId/restore", async (req, res) => {
   try {
     const templateId = req.params.id;

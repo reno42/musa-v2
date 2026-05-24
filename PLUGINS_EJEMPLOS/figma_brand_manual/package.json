@@ -1,0 +1,21 @@
+{
+  "name": "brand-manual-generator",
+  "version": "3.1.0",
+  "description": "Figma Plugin — Brand Manual Generator + Design System Library. Generates an 8-page brand manual with 35 design system components from a selected frame.",
+  "main": "code.js",
+  "scripts": {
+    "test": "node test-harness.js ./code.js",
+    "test:legacy": "node test-figma.js",
+    "lint": "eslint code.js --no-error-on-unmatched-pattern",
+    "lint:fix": "eslint code.js --fix --no-error-on-unmatched-pattern",
+    "debug": "node test-harness.js ./code.js"
+  },
+  "keywords": ["figma", "plugin", "brand-manual", "design-system"],
+  "author": "Renzo + Lara",
+  "license": "MIT",
+  "devDependencies": {
+    "@figma/eslint-plugin-figma-plugins": "^1.0.0",
+    "@figma/plugin-typings": "^1.124.0",
+    "eslint": "^10.2.0"
+  }
+}

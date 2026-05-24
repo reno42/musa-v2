@@ -1,0 +1,14 @@
+{
+  "name": "batch-a-mator",
+  "version": "1.0.0",
+  "description": "Figma Plugin for Batch Automations",
+  "main": "code.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "npm run build -- --watch"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.124.0",
+    "typescript": "^5.9.3"
+  }
+}

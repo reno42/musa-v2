@@ -1,3 +1,17 @@
+/**
+ * Properties Panel Component
+ * ──────────────────────────────────────────────────────────────
+ * Right sidebar for editing selected object properties:
+ * position, size, rotation, opacity, fill, stroke, text styles,
+ * layout constraints, blend modes, filters, and effects.
+ *
+ * @module components/PropertiesPanel
+ *
+ * State: Selected Fabric.js object → reads/writes properties
+ * Events: Input change → immediate canvas update + debounced sync
+ * DB:    Via useRemoteSync hook (PUT /api/templates/:id)
+ */
+
 import { useState, useEffect, useCallback } from "react";
 import type { RefObject } from "react";
 import * as fabric from "fabric";
@@ -122,6 +136,71 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
     onLayerUpdate();
     force();
   }, [selectedObj, fabricRef, onLayerUpdate]);
+
+  // ─── Gradient helpers ──────────────────────────────────────────
+  const getFillDisplay = (fill: any): string => {
+    if (!fill) return "#000000";
+    // Fabric.js 6.x: Gradient instances have type 'linear' or 'radial' (NOT 'Gradient')
+    if (fill instanceof fabric.Gradient) return fill.colorStops?.[0]?.color || "#000000";
+    if (typeof fill === 'object' && (fill.type === 'linear' || fill.type === 'radial')) return fill.colorStops?.[0]?.color || "#000000";
+    return rgbToHex(fill as string);
+  };
+
+  const isGrad = (fill: any): fill is { type: string; gradientType?: string; colorStops: Array<{ offset: number; color: string }>; coords?: any } => {
+    return !!fill && typeof fill === 'object' && (fill.type === 'linear' || fill.type === 'radial');
+  };
+
+  const applyGradient = useCallback((gradType: "linear" | "radial", stops: Array<{ offset: number; color: string }>) => {
+    if (!selectedObj) return;
+    const w = (selectedObj.width || 200) * (selectedObj.scaleX || 1);
+    const h = (selectedObj.height || 200) * (selectedObj.scaleY || 1);
+    const coords = gradType === "linear"
+      ? { x1: 0, y1: 0, x2: w, y2: 0 }
+      : { x1: w / 2, y1: h / 2, r1: 0, x2: w / 2, y2: h / 2, r2: Math.max(w, h) / 2 };
+    const grad = new fabric.Gradient({ type: gradType, coords, colorStops: stops, gradientType: gradType } as any);
+    selectedObj.set("fill", grad as any);
+    fabricRef.current?.renderAll();
+    onLayerUpdate();
+    force();
+  }, [selectedObj, fabricRef, onLayerUpdate]);
+
+  const setFillType = useCallback((t: "solid" | "linear" | "radial") => {
+    if (!selectedObj) return;
+    if (t === "solid") {
+      selectedObj.set("fill", getFillDisplay(selectedObj.fill as any));
+    } else {
+      const cur = getFillDisplay(selectedObj.fill as any);
+      applyGradient(t, [{ offset: 0, color: cur }, { offset: 1, color: "#ffffff" }]);
+      return;
+    }
+    fabricRef.current?.renderAll();
+    onLayerUpdate();
+    force();
+  }, [selectedObj, fabricRef, onLayerUpdate, applyGradient]);
+
+  const updateGradStop = useCallback((idx: number, key: "offset" | "color", val: number | string) => {
+    if (!selectedObj || !isGrad(selectedObj.fill)) return;
+    const stops = [...selectedObj.fill.colorStops];
+    if (stops[idx]) { stops[idx] = { ...stops[idx], [key]: val as any }; }
+    applyGradient((selectedObj.fill.gradientType || "linear") as "linear" | "radial", stops);
+  }, [selectedObj, applyGradient]);
+
+  const addGradStop = useCallback(() => {
+    if (!selectedObj || !isGrad(selectedObj.fill) || selectedObj.fill.colorStops.length >= 5) return;
+    const stops = [...selectedObj.fill.colorStops, { offset: 0.75, color: "#888888" }];
+    stops.sort((a, b) => a.offset - b.offset);
+    applyGradient((selectedObj.fill.gradientType || "linear") as "linear" | "radial", stops);
+  }, [selectedObj, applyGradient]);
+
+  const removeGradStop = useCallback((idx: number) => {
+    if (!selectedObj || !isGrad(selectedObj.fill)) return;
+    const stops = selectedObj.fill.colorStops.filter((_: any, i: number) => i !== idx);
+    if (stops.length < 2) return;
+    applyGradient((selectedObj.fill.gradientType || "linear") as "linear" | "radial", stops);
+  }, [selectedObj, applyGradient]);
+
+  const currentFillType = isGrad(selectedObj?.fill as any) ? (selectedObj!.fill as any).gradientType || "linear" : "solid";
+  const gradientStops = isGrad(selectedObj?.fill as any) ? (selectedObj!.fill as any).colorStops : [];
 
   if (!selectedObj) {
     return (
@@ -346,12 +425,55 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
       <VariableBoundRow property="fill" label="Fill" bindings={variableBindings} onDropVariable={onDropVariable} onUnbindVariable={onUnbindVariable}>
         <Section title="Fill">
           {(isShape || isText || isClosedPath || isFrameBg) ? (
-            <div className="prop-color-preview">
-              <div className="color-swatch" style={{ background: (obj.fill as string) || "#000" }}>
-                <input type="color" value={rgbToHex(obj.fill as string)} onChange={(e) => set("fill", e.target.value)} />
-              </div>
-              <input className="prop-input" value={rgbToHex(obj.fill as string).replace("#", "").toUpperCase()} onChange={(e) => set("fill", `#${e.target.value}`)} style={{ fontWeight: "bold" }} />
-            </div>
+            <>
+              {/* Fill type selector */}
+              <Row>
+                <select className="prop-select" value={currentFillType} onChange={(e) => setFillType(e.target.value as any)}>
+                  <option value="solid">Solid</option>
+                  <option value="linear">Linear Gradient</option>
+                  <option value="radial">Radial Gradient</option>
+                </select>
+              </Row>
+
+              {currentFillType === "solid" ? (
+                <div className="prop-color-preview">
+                  <div className="color-swatch" style={{ background: (obj.fill as string) || "#000" }}>
+                    <input type="color" value={getFillDisplay(obj.fill as any)} onChange={(e) => set("fill", e.target.value)} />
+                  </div>
+                  <input className="prop-input" value={rgbToHex(obj.fill as string).replace("#", "").toUpperCase()} onChange={(e) => set("fill", `#${e.target.value}`)} style={{ fontWeight: "bold" }} />
+                </div>
+              ) : (
+                <>
+                  {/* Gradient visual preview */}
+                  <div style={{
+                    height: 18, borderRadius: 4, marginBottom: 4,
+                    background: isGrad(selectedObj?.fill)
+                      ? `${(selectedObj!.fill as any).gradientType || "linear"}-gradient(${gradientStops.map((s: any) => `${s.color} ${s.offset * 100}%`).join(", ")})`
+                      : "transparent",
+                  }} />
+                  {/* Gradient stops editor */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {gradientStops.map((stop: any, idx: number) => (
+                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div className="color-swatch" style={{ background: stop.color }}>
+                        <input type="color" value={stop.color} onChange={(e) => updateGradStop(idx, "color", e.target.value)} />
+                      </div>
+                      <span style={{ color: "#888", fontSize: 10, minWidth: 22 }}>{idx === 0 ? "Start" : idx === gradientStops.length - 1 ? "End" : `${Math.round(stop.offset * 100)}%`}</span>
+                      <input className="prop-range" type="range" min={0} max={100} value={Math.round(stop.offset * 100)} onChange={(e) => updateGradStop(idx, "offset", Number(e.target.value) / 100)} style={{ flex: 1 }} />
+                      {gradientStops.length > 2 && (
+                        <button onClick={() => removeGradStop(idx)} style={{ background: "none", border: "none", color: "#f44", cursor: "pointer", fontSize: 14, padding: "0 2px" }}>×</button>
+                      )}
+                    </div>
+                  ))}
+                  {gradientStops.length < 5 && (
+                    <button onClick={addGradStop} style={{ background: "#2a2a3a", border: "1px dashed #555", borderRadius: 4, color: "#aaa", cursor: "pointer", fontSize: 11, padding: "4px 8px", marginTop: 2 }}>
+                      + Add stop
+                    </button>
+                  )}
+                </div>
+              </>
+              )}
+            </>
           ) : (
             <div className="empty-state-sm">No fill</div>
           )}
