@@ -12,7 +12,7 @@
  * DB:    Via useRemoteSync hook (PUT /api/templates/:id)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { RefObject } from "react";
 import * as fabric from "fabric";
 import type { LayoutConstraint } from "@futuraria/shared";
@@ -62,6 +62,8 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
   const [, tick] = useState(0);
   const force = () => tick((n) => n + 1);
   const [fontsLoaded, setFontsLoaded] = useState<Set<string>>(new Set());
+  const [hexText, setHexText] = useState("");
+  const hexEditingRef = useRef(false);
 
   const loadFont = useCallback((fontName: string) => {
     if (fontsLoaded.has(fontName)) return;
@@ -87,6 +89,19 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
       c.off("selection:cleared", h);
     };
   }, [fabricRef]);
+
+  // Sync hex input from object fill when selection changes
+  useEffect(() => {
+    if (hexEditingRef.current) return;
+    if (typeof selectedObj?.fill === "string") {
+      const cleaned = rgbToHex(selectedObj.fill as string).replace("#", "").toUpperCase();
+      if (/^[0-9A-F]{6}$/.test(cleaned)) {
+        setHexText(cleaned);
+      } else {
+        setHexText("000000");
+      }
+    }
+  }, [selectedObj?.fill]);
 
   const set = useCallback((key: string, val: any) => {
     if (!selectedObj) return;
@@ -438,9 +453,30 @@ export function PropertiesPanel({ selectedObj, fabricRef, onLayerUpdate, variabl
               {currentFillType === "solid" ? (
                 <div className="prop-color-preview">
                   <div className="color-swatch" style={{ background: (obj.fill as string) || "#000" }}>
-                    <input type="color" value={getFillDisplay(obj.fill as any)} onChange={(e) => set("fill", e.target.value)} />
+                    <input type="color" value={(() => { const v = getFillDisplay(obj.fill as any); return /^#[0-9a-fA-F]{6}$/.test(v) ? v : "#000000"; })()} onChange={(e) => { hexEditingRef.current = false; set("fill", e.target.value); }} />
                   </div>
-                  <input className="prop-input" value={rgbToHex(obj.fill as string).replace("#", "").toUpperCase()} onChange={(e) => set("fill", `#${e.target.value}`)} style={{ fontWeight: "bold" }} />
+                  <input
+                    className="prop-input"
+                    value={hexText}
+                    onChange={(e) => {
+                      hexEditingRef.current = true;
+                      const raw = e.target.value.toUpperCase().replace(/[^0-9A-F]/g, "").slice(0, 6);
+                      setHexText(raw);
+                      if (raw.length === 6) {
+                        hexEditingRef.current = false;
+                        set("fill", `#${raw}`);
+                      }
+                    }}
+                    onBlur={() => {
+                      hexEditingRef.current = false;
+                      const current = typeof obj?.fill === "string"
+                        ? rgbToHex(obj.fill as string).replace("#", "").toUpperCase()
+                        : "000000";
+                      setHexText(/^[0-9A-F]{6}$/.test(current) ? current : "000000");
+                    }}
+                    onFocus={(e) => { hexEditingRef.current = true; e.target.select(); }}
+                    style={{ fontWeight: "bold" }}
+                  />
                 </div>
               ) : (
                 <>
@@ -904,7 +940,10 @@ function InputGroup({ label, value, onChange }: { label: string; value: number; 
 }
 function rgbToHex(color: string): string {
   if (!color) return "#000000";
-  if (color.startsWith("#")) return color.length === 4 ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}` : color;
+  if (color.startsWith("#")) {
+    if (/^#[0-9a-fA-F]{3}$/.test(color)) return `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+    return color;
+  }
   const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (!m) return "#000000";
   return `#${[m[1], m[2], m[3]].map((x) => parseInt(x).toString(16).padStart(2, "0")).join("")}`;

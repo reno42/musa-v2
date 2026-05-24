@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
+import { listLocalTemplates, saveLocal } from "../lib/templateApi";
 import type { DesignTemplate } from "@futuraria/shared";
 
 interface DashboardProps {
@@ -38,7 +39,21 @@ export function Dashboard({ userId, onSelectTemplate, onCreateNew }: DashboardPr
       }));
       setTemplates(cards);
     } catch (err: any) {
-      setError(err.message || "Failed to load templates");
+      const msg = err.message || "";
+      // Network error → offline mode with localStorage fallback
+      if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
+        const local = listLocalTemplates() as any[];
+        const cards: TemplateCard[] = local.map((t: any) => ({
+          id: t.id,
+          name: t.name || t.data?.name || "Untitled",
+          updatedAt: t.updatedAt || t.metadata?.updatedAt || "",
+          createdAt: t.createdAt || t.metadata?.createdAt || "",
+          layerCount: t.data?.layers?.length || t.layers?.length || 0,
+        }));
+        setTemplates(cards);
+      } else {
+        setError(msg || "Failed to load templates");
+      }
     } finally {
       setLoading(false);
     }
@@ -49,18 +64,31 @@ export function Dashboard({ userId, onSelectTemplate, onCreateNew }: DashboardPr
   }, [fetchTemplates]);
 
   const handleCreateNew = useCallback(async () => {
+    const name = `Untitled ${new Date().toLocaleDateString()}`;
     try {
       const res = await apiFetch<{ data: DesignTemplate }>("/api/templates", {
         method: "POST",
-        body: JSON.stringify({
-          name: `Untitled ${new Date().toLocaleDateString()}`,
-          width: 1080,
-          height: 1080,
-        }),
+        body: JSON.stringify({ name, width: 1080, height: 1080 }),
       });
       onSelectTemplate(res.data.id);
     } catch (err: any) {
-      setError(err.message || "Failed to create template");
+      const msg = err.message || "";
+      if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch") || msg.includes("500")) {
+        // Offline: create local template and navigate directly
+        const id = `tpl_local_${Date.now()}`;
+        saveLocal(id, {
+          name,
+          canvas: { objects: [], viewport: { zoom: 1, x: 0, y: 0 } },
+          metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+          width: 1080,
+          height: 1080,
+          pages: [{ id: "page1", name: "Page 1", frames: [] }],
+          frames: [],
+        });
+        onSelectTemplate(id);
+      } else {
+        setError(msg || "Failed to create template");
+      }
     }
   }, [onSelectTemplate]);
 

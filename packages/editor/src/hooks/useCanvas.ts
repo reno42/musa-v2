@@ -1492,6 +1492,7 @@ export function useCanvas(opts: {
       const newVptX = viewW / 2 - (fx + fw / 2) * zoom;
       const newVptY = viewH / 2 - (fy + fh / 2) * zoom;
       c.setViewportTransform([zoom, 0, 0, zoom, newVptX, newVptY]);
+      c.setActiveObject(visual);
       c.renderAll();
     }
     syncLayers();
@@ -1622,11 +1623,15 @@ export function useCanvas(opts: {
       (img as any).imageFilters = {};
       placeInFrame(img);
     };
+    imgEl.onerror = () => {
+      addToast("warning", "Image load failed", "The selected image could not be loaded");
+    };
     imgEl.src = src;
   }, []);
 
   const addSVG = useCallback((svgString: string) => {
-    (fabric.loadSVGFromString as any)(svgString).then((result: any) => {
+    (fabric.loadSVGFromString as any)(svgString)
+      .then((result: any) => {
       const objects = (result.objects || []).filter(Boolean) as fabric.FabricObject[];
       if (objects.length === 0) return;
       const id = uid();
@@ -1640,6 +1645,9 @@ export function useCanvas(opts: {
         (group as any).layerName = `svg_${id}`;
         placeInFrame(group);
       }
+    }).catch((err: any) => {
+      console.error("[SVG] Parse failed:", err);
+      addToast("warning", "SVG import failed", "Could not parse the SVG data");
     });
   }, []);
 
@@ -2551,8 +2559,11 @@ export function useCanvas(opts: {
         opts.onVersionsChange?.(versionsRef.current);
       }
     } catch (e) {
-      console.error("[Versions] Failed to load:", e);
-      addToast("error", "Failed to load version history", (e as Error).message);
+      const msg = (e as Error).message || "";
+      if (!msg.includes("fetch") && !msg.includes("NetworkError") && !msg.includes("Failed to fetch")) {
+        console.error("[Versions] Failed to load:", e);
+        addToast("error", "Failed to load version history", msg);
+      }
     } finally {
       versionsLoadingRef.current = false;
       opts.onVersionsChange?.(versionsRef.current);
@@ -2572,8 +2583,11 @@ export function useCanvas(opts: {
           restoreState(JSON.stringify(json.data));
         }
       } catch (e) {
-        console.error("[Versions] Failed to restore:", e);
-        addToast("error", "Failed to restore version", "Could not load the selected version snapshot");
+        const msg = (e as Error).message || "";
+        if (!msg.includes("fetch") && !msg.includes("NetworkError") && !msg.includes("Failed to fetch")) {
+          console.error("[Versions] Failed to restore:", e);
+          addToast("error", "Failed to restore version", msg);
+        }
       }
     },
     [restoreState],

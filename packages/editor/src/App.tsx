@@ -293,8 +293,11 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
         setVersionsLoading(true);
         canvas.loadVersions(templateId);
       } catch (err) {
-        console.error("[Editor] Failed to load template:", err);
-        addToast("error", "Failed to load template", (err as Error).message || "The template could not be loaded from the server");
+        // Only show toast for non-offline errors; blank canvas is expected offline
+        const msg = (err as Error).message || "";
+        if (!msg.includes("fetch") && !msg.includes("NetworkError") && !msg.includes("Failed to fetch")) {
+          addToast("error", "Failed to load template", msg);
+        }
       } finally {
         if (!cancelled) setLoadingTemplate(false);
       }

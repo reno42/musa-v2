@@ -22,7 +22,14 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const res = await apiFetch<{ data: TemplateFull }>(`/api/templates/${id}`);
     return res.data;
   } catch (err: any) {
-    if (err.message?.includes("404") || err.message?.includes("not found")) {
+    const msg = err.message || "";
+    // Network error or server down → try localStorage
+    if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch") || msg.includes("500")) {
+      const local = getLocalTemplate(id);
+      if (local) return local as TemplateFull;
+      return null;
+    }
+    if (msg.includes("404") || msg.includes("not found")) {
       return null;
     }
     throw err;

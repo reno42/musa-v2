@@ -66,10 +66,15 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const loadApiKeys = useCallback(async () => {
     setLoadingKeys(true);
     try {
-      const res = await authFetch<{ success: boolean; data: ApiKey[] }>("/api/api-keys");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await authFetch<{ success: boolean; data: ApiKey[] }>(
+        "/api/api-keys", { signal: controller.signal }
+      );
+      clearTimeout(timeout);
       if (res.success) setApiKeys(res.data);
     } catch (err: any) {
-      console.error("Failed to load API keys:", err.message);
+      if (err.name !== "AbortError") console.error("Failed to load API keys:", err.message);
     } finally {
       setLoadingKeys(false);
     }
@@ -79,10 +84,15 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const loadWebhooks = useCallback(async () => {
     setLoadingWebhooks(true);
     try {
-      const res = await authFetch<{ success: boolean; data: Webhook[] }>("/api/webhooks");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await authFetch<{ success: boolean; data: Webhook[] }>(
+        "/api/webhooks", { signal: controller.signal }
+      );
+      clearTimeout(timeout);
       if (res.success) setWebhooks(res.data);
     } catch (err: any) {
-      console.error("Failed to load webhooks:", err.message);
+      if (err.name !== "AbortError") console.error("Failed to load webhooks:", err.message);
     } finally {
       setLoadingWebhooks(false);
     }
