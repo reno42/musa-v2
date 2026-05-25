@@ -318,6 +318,9 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
     if (t === "rect") { canvas.addRect(); setTool("select"); canvas.setToolMode("select"); }
     else if (t === "ellipse") { canvas.addEllipse(); setTool("select"); canvas.setToolMode("select"); }
     else if (t === "line") { canvas.addLine(); setTool("select"); canvas.setToolMode("select"); }
+    else if (t === "triangle") { canvas.addTriangle(); setTool("select"); canvas.setToolMode("select"); }
+    else if (t === "star") { canvas.addStar(); setTool("select"); canvas.setToolMode("select"); }
+    else if (t === "polygon") { canvas.addPolygon(); setTool("select"); canvas.setToolMode("select"); }
     else if (t === "frame") { canvas.addFrame(); setTool("select"); canvas.setToolMode("select"); }
     else if (t === "text") { canvas.addText(); setTool("select"); canvas.setToolMode("select"); }
     else if (t === "image") {
@@ -922,14 +925,18 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
               onClick={() => setShowCommentsPanel(!showCommentsPanel)}
               title="Comments (C to add)"
             >
-              💬
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
             </button>
             <button
               className={`snap-btn ${showVersionPanel ? 'active' : ''}`}
               onClick={() => setShowVersionPanel(!showVersionPanel)}
               title="Version History"
             >
-              🕐
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+              </svg>
             </button>
           </div>
 
@@ -1087,7 +1094,11 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
         );
       })()}
 
-      <div className="app" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+      <div className="app" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+        style={{
+          gridTemplateColumns: `${showLeftPanel ? "240px" : "0px"} 48px 1fr ${showRightPanel ? "280px" : "0px"}`,
+        }}
+      >
         {showLeftPanel && (
           <LayersPanel
             pages={pages} activePageId={activePageId}
@@ -1113,7 +1124,11 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           onClick={() => setShowLeftPanel(p => !p)}
           title={showLeftPanel ? "Hide left panel (⌘\\)" : "Show left panel (⌘\\)"}
         >
-          {showLeftPanel ? "◀" : "▶"}
+          {showLeftPanel ? (
+            <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+          ) : (
+            <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+          )}
         </button>
 
         <Toolbar
@@ -1175,7 +1190,11 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           onClick={() => setShowRightPanel(p => !p)}
           title={showRightPanel ? "Hide right panel (⌘\\)" : "Show right panel (⌘\\)"}
         >
-          {showRightPanel ? "▶" : "◀"}
+          {showRightPanel ? (
+            <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+          ) : (
+            <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+          )}
         </button>
 
         {/* Right panel with tabs */}

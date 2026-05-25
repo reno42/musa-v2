@@ -57,6 +57,7 @@ html, body, #root { height: 100%; width: 100%; }
   height: calc(100vh - 44px);
   width: 100vw;
   margin-top: 44px;
+  transition: grid-template-columns 0.2s ease;
 }
 
 /* ===== LEFT SIDEBAR ===== */
@@ -1531,4 +1532,66 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .toast-close:hover {
   color: #e2e8f0;
+}
+
+/* ===== TOOLBAR CORNER MARKER ===== */
+.tool-btn.has-submenu {
+  position: relative;
+}
+.corner-marker {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.corner-marker svg {
+  width: 6px;
+  height: 6px;
+}
+
+/* ===== POPUP MENU ITEMS ===== */
+.popup-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.1s;
+  text-align: left;
+}
+.popup-item-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+.popup-item-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.popup-item-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+.popup-item-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+}
+.popup-item-shortcut {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: "SF Mono", monospace;
+  flex-shrink: 0;
 }

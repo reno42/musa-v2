@@ -7,7 +7,8 @@ import { useToast } from "../components/Toast";
 // ─── Types ───────────────────────────────────────────────────────
 export type ToolName =
   | "select" | "pencil" | "pen" | "rect" | "ellipse"
-  | "line" | "text" | "image" | "frame" | "hand"
+  | "line" | "triangle" | "star" | "polygon"
+  | "text" | "image" | "frame" | "hand"
   | "eyedropper";
 
 export interface LayerInfo {
@@ -1600,6 +1601,40 @@ export function useCanvas(opts: {
     const id = uid();
     const obj = new fabric.Line([200, 300, 500, 300], { stroke: "#ffffff", strokeWidth: 2 });
     (obj as any).layerName = `line_${id}`;
+    placeInFrame(obj);
+  }, []);
+
+  const addTriangle = useCallback(() => {
+    const id = uid();
+    const obj = new fabric.Triangle({ left: 200, top: 200, width: 150, height: 130, fill: "#f59e0b" });
+    (obj as any).layerName = `triangle_${id}`;
+    placeInFrame(obj);
+  }, []);
+
+  const addStar = useCallback(() => {
+    const id = uid();
+    const outerR = 60, innerR = 25;
+    const points = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = (Math.PI / 2) * 3 + (i * Math.PI) / 5;
+      points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
+    }
+    const obj = new fabric.Polygon(points, { left: 200, top: 200, fill: "#f59e0b", stroke: null });
+    (obj as any).layerName = `star_${id}`;
+    placeInFrame(obj);
+  }, []);
+
+  const addPolygon = useCallback(() => {
+    const id = uid();
+    const sides = 6, r = 60;
+    const points = [];
+    for (let i = 0; i < sides; i++) {
+      const angle = (Math.PI / 2) * 3 + (i * 2 * Math.PI) / sides;
+      points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
+    }
+    const obj = new fabric.Polygon(points, { left: 200, top: 200, fill: "#8b5cf6", stroke: null });
+    (obj as any).layerName = `polygon_${id}`;
     placeInFrame(obj);
   }, []);
 
@@ -3493,17 +3528,58 @@ export function useCanvas(opts: {
     const c = fabricRef.current; if (!c) return;
     const visual = c.getObjects().find((o: any) => o.isFrameVisual && o.frameId === fid && o.type === "rect");
     if (!visual) return;
-    const x = visual.left || 0, y = visual.top || 0;
-    const w = (visual.width || 0) * (visual.scaleX || 1);
-    const h = (visual.height || 0) * (visual.scaleY || 1);
-    const objs = c.getObjects().filter((o: any) => o.frameId === fid && (!o.isFrameVisual || o.isFrameBg));
-    const tc = document.createElement("canvas"); tc.width = w * 2; tc.height = h * 2;
-    const ctx = tc.getContext("2d")!; ctx.scale(2, 2);
-    const origVpt = c.viewportTransform;
-    c.setViewportTransform([1, 0, 0, 1, -x, -y]);
-    for (const obj of objs) obj.render(ctx);
-    c.setViewportTransform(origVpt);
-    downloadDataUrl(tc.toDataURL(format === "jpg" ? "jpeg" : format, 0.95), `${framesRef.current.find(f => f.id === fid)?.name || "frame"}.${format}`);
+
+    const frameW = (visual.width || 0) * (visual.scaleX || 1);
+    const frameH = (visual.height || 0) * (visual.scaleY || 1);
+    const frameX = visual.left || 0;
+    const frameY = visual.top || 0;
+
+    // Collect frame objects only (same filter as SVG: include bg, exclude label)
+    const frameObjs = c.getObjects().filter(
+      (o: any) => o.frameId === fid && (!o.isFrameVisual || o.isFrameBg)
+    );
+
+    if (frameObjs.length === 0) return;
+
+    const frameName = framesRef.current.find(f => f.id === fid)?.name || "frame";
+
+    // Serialize frame objects with positions relative to frame origin
+    const serialized = frameObjs.map((o: any) => {
+      const json = o.toJSON();
+      json.left = (o.left || 0) - frameX;
+      json.top = (o.top || 0) - frameY;
+      return json;
+    });
+
+    // Create temp canvas and enliven objects through Fabric's native pipeline
+    const tempEl = document.createElement("canvas");
+    const tempCanvas = new fabric.StaticCanvas(tempEl, {
+      width: frameW,
+      height: frameH,
+      renderOnAddRemove: false,
+    });
+
+    fabric.util.enlivenObjects(serialized)
+      .then((cloned: any[]) => {
+        for (const obj of cloned) {
+          if (obj && typeof obj === "object" && "render" in obj) {
+            tempCanvas.add(obj as fabric.FabricObject);
+          }
+        }
+        tempCanvas.renderAll();
+
+        const dataUrl = tempCanvas.toDataURL({
+          format: format === "jpg" ? "jpeg" : "png",
+          multiplier: 2,
+          quality: format === "jpg" ? 0.95 : undefined,
+        });
+
+        tempCanvas.dispose();
+        downloadDataUrl(dataUrl, `${frameName}.${format}`);
+      })
+      .catch((err: any) => {
+        console.error("[exportFrame] Failed to enliven objects:", err);
+      });
   }, []);
 
   const exportPNG = useCallback(() => { if (activeFrameIdRef.current) exportFrame(activeFrameIdRef.current, "png"); }, [exportFrame]);
@@ -3728,7 +3804,7 @@ export function useCanvas(opts: {
     addPage, switchPage, renamePage, deletePage,
     framesRef, activeFrameIdRef,
     addFrame, selectFrame, renameFrame, deleteFrame, exportFrame,
-    addRect, addEllipse, addLine, addText, addImage, addSVG,
+    addRect, addEllipse, addLine, addTriangle, addStar, addPolygon, addText, addImage, addSVG,
     handlePenClick, finishPenPath, clearPen,
     setToolMode,
     deleteSelected, duplicateSelected, bringForward, sendBackward,
