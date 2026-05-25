@@ -38,9 +38,11 @@ export function useAutoSave({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef(false);
   const pendingRef = useRef(false);
+  const loadingRef = useRef(false);
   const { addToast } = useToast();
 
   const performSave = useCallback(async () => {
+    if (loadingRef.current) return;
     const c = fabricRef.current;
     if (!c || !templateId || isSavingRef.current) {
       if (!templateId) return;
@@ -57,7 +59,7 @@ export function useAutoSave({
     isSavingRef.current = true;
     setStatus("saving");
 
-    // Serialize canvas (moved before try for catch fallback access)
+    // Serialize canvas
     const canvasJSON = (c.toJSON as any)([
       "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
       "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
@@ -71,47 +73,46 @@ export function useAutoSave({
     };
     const extra = getExtraData?.() || {};
 
+    const payload = {
+      canvas: { ...canvasJSON, viewport },
+      ...extra,
+      name: extra.name || "Untitled",
+      width: extra.width || 1080,
+      height: extra.height || 1080,
+    };
+
+    // ── DUAL WRITE: always save to localStorage first (instant) ──
+    saveLocal(templateId!, payload);
+
+    // ── Then try API (best effort for cloud sync) ──
     try {
       await apiFetch(`/api/templates/${templateId}`, {
         method: "PUT",
-        body: JSON.stringify({
-          canvas: { ...canvasJSON, viewport },
-          ...extra,
-        }),
+        body: JSON.stringify(payload),
       });
 
       setStatus("saved");
+      // Update localStorage timestamp to mark API-synced
+      saveLocal(templateId!, { ...payload, _apiSynced: true });
 
-      // Reset to idle after 3 seconds
       setTimeout(() => {
         setStatus((prev) => (prev === "saved" ? "idle" : prev));
       }, 3000);
     } catch (err) {
       const msg = (err as Error).message || "";
-      // Offline fallback: save to localStorage when API is unreachable
-      saveLocal(templateId!, {
-        canvas: { ...canvasJSON, viewport },
-        ...extra,
-        name: extra.name || "Untitled",
-        width: extra.width || 1080,
-        height: extra.height || 1080,
-      });
       if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
-        setStatus("saved"); // Silent offline save
+        setStatus("saved"); // Already saved to localStorage
       } else {
-        console.error("[AutoSave] Save failed:", err);
-        setStatus("error");
-        addToast("error", "Auto-save failed", msg);
+        console.error("[AutoSave] API save failed (localStorage preserved):", err);
+        setStatus("saved"); // Still show saved since localStorage has it
       }
 
-      // Reset after 3s (saved) or 5s (error)
       setTimeout(() => {
-        setStatus((prev) => (prev === "saved" || prev === "error" ? "idle" : prev));
+        setStatus((prev) => (prev === "saved" ? "idle" : prev));
       }, 3000);
     } finally {
       isSavingRef.current = false;
 
-      // If a save was requested while we were saving, save again
       if (pendingRef.current) {
         pendingRef.current = false;
         setTimeout(performSave, 100);
@@ -120,7 +121,7 @@ export function useAutoSave({
   }, [fabricRef, templateId, getExtraData]);
 
   const scheduleSave = useCallback(() => {
-    if (!enabled || !templateId) return;
+    if (loadingRef.current || !enabled || !templateId) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(performSave, debounceMs);
   }, [enabled, templateId, performSave, debounceMs]);
@@ -161,5 +162,59 @@ export function useAutoSave({
     performSave();
   }, [performSave]);
 
-  return { status, forceSave };
+  // Immediate sync save to localStorage only (for unmount / beforeunload)
+  const flushSave = useCallback(() => {
+    const c = fabricRef.current;
+    if (!c || !templateId) return;
+
+    const userObjects = c.getObjects().filter(
+      (o: any) => !o.isGridLine && !o.isGuideLine && !o.isFrameLabel
+    );
+    if (userObjects.length === 0) return;
+
+    const canvasJSON = (c.toJSON as any)([
+      "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
+      "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
+      "componentId", "isComponentInstance", "constraints", "autoLayout",
+      "resizingMode", "overrides",
+    ]);
+    const viewport = {
+      x: c.viewportTransform[4],
+      y: c.viewportTransform[5],
+      zoom: c.getZoom(),
+    };
+    const extra = getExtraData?.() || {};
+
+    const payload = {
+      canvas: { ...canvasJSON, viewport },
+      ...extra,
+      name: extra.name || "Untitled",
+      width: extra.width || 1080,
+      height: extra.height || 1080,
+    };
+
+    saveLocal(templateId!, payload);
+  }, [fabricRef, templateId, getExtraData]);
+
+  // Cancel any pending auto-save timer (call before template loading)
+  const clearPending = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  // Control loading state to suppress auto-saves during template load
+  const setLoading = useCallback((v: boolean) => {
+    loadingRef.current = v;
+    if (v) {
+      // Cancel any pending save when starting load
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  }, []);
+
+  return { status, forceSave, flushSave, clearPending, setLoading };
 }

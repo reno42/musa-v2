@@ -62,6 +62,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
   const [dragOver, setDragOver] = useState(false);
   const [templateName, setTemplateName] = useState("Untitled");
   const [loadingTemplate, setLoadingTemplate] = useState(true);
+  const pendingCanvasDataRef = useRef<any>(null); // holds canvas data until canvas mounts
 
   // Eyedropper state
   const [eyedropperColor, setEyedropperColor] = useState<string | null>(null);
@@ -161,7 +162,7 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
   });
 
   // ─── Auto-Save ────────────────────────────────────────────────
-  const { status: saveStatus, forceSave } = useAutoSave({
+  const { status: saveStatus, forceSave, flushSave, setLoading: setAutoSaveLoading } = useAutoSave({
     fabricRef,
     templateId,
     getExtraData: () => ({
@@ -175,6 +176,16 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
       },
     }),
   });
+
+  // ─── Persist on unload / refresh ──────────────────────────────
+  useEffect(() => {
+    const handler = () => flushSave();
+    window.addEventListener("beforeunload", handler);
+    return () => {
+      window.removeEventListener("beforeunload", handler);
+      flushSave(); // save on unmount (navigate back)
+    };
+  }, [flushSave]);
 
   // ─── Remote Sync (poll for agent API changes) ─────────────────
 
@@ -224,39 +235,15 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
 
     (async () => {
       setLoadingTemplate(true);
+      setAutoSaveLoading(true);
       try {
         const tpl = await getTemplate(templateId);
         if (cancelled || !tpl) return;
 
         setTemplateName(tpl.name);
 
-        // Load canvas JSON if present
-        const c = fabricRef.current;
-        if (c && tpl.canvas) {
-          const canvasData = tpl.canvas;
-
-          // If canvas has objects, load them
-          if (canvasData.objects && canvasData.objects.length > 0) {
-            c.clear();
-            await fabric.util.enlivenObjects(canvasData.objects).then((objects: any[]) => {
-              for (const obj of objects) {
-                c.add(obj);
-              }
-              c.renderAll();
-            }).catch((err: any) => {
-              console.error("[loadTemplate] Failed to enliven objects:", err);
-              addToast("warning", "Partial canvas load", "Some objects could not be restored from the template");
-              c.renderAll();
-            });
-          }
-
-          // Restore viewport
-          if (canvasData.viewport) {
-            const vp = canvasData.viewport;
-            c.setViewportTransform([vp.zoom, 0, 0, vp.zoom, vp.x, vp.y]);
-            setZoom(vp.zoom);
-          }
-        }
+        // Store canvas data for later (canvas hasn't mounted yet)
+        pendingCanvasDataRef.current = tpl.canvas || null;
 
         // Restore pages/frames if saved
         if (tpl.pages && tpl.pages.length > 0) {
@@ -299,12 +286,49 @@ function Editor({ templateId, onBack }: { templateId: string; onBack: () => void
           addToast("error", "Failed to load template", msg);
         }
       } finally {
+        setAutoSaveLoading(false);
         if (!cancelled) setLoadingTemplate(false);
       }
     })();
 
     return () => { cancelled = true; };
   }, [templateId]);
+
+  // ─── Load canvas objects once canvas is mounted ────────────────
+  useEffect(() => {
+    if (!canvasMounted) return;
+    const data = pendingCanvasDataRef.current;
+    if (!data) return;
+    pendingCanvasDataRef.current = null; // consume once
+
+    const c = fabricRef.current;
+    if (!c) return;
+
+    // Restore viewport
+    if (data.viewport) {
+      const vp = data.viewport;
+      c.setViewportTransform([vp.zoom, 0, 0, vp.zoom, vp.x, vp.y]);
+      setZoom(vp.zoom);
+    }
+
+    // If canvas has objects, load them
+    if (data.objects && data.objects.length > 0) {
+      setAutoSaveLoading(true); // suppress auto-save during object load
+      c.clear();
+      fabric.util.enlivenObjects(data.objects).then((objects: any[]) => {
+        for (const obj of objects) {
+          c.add(obj);
+        }
+        c.renderAll();
+        setAutoSaveLoading(false);
+      }).catch((err: any) => {
+        console.error("[loadTemplate] Failed to enliven objects:", err);
+        addToast("warning", "Partial canvas load", "Some objects could not be restored from the template");
+        c.renderAll();
+        setAutoSaveLoading(false);
+      });
+    }
+  }, [canvasMounted]);
 
   // ─── Prototype hook ────────────────────────────────────────────
   const prototype = usePrototype({

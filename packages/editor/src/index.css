@@ -172,8 +172,7 @@ html, body, #root { height: 100%; width: 100%; }
   align-items: center;
   padding-top: 10px;
   gap: 2px;
-  overflow-y: auto;
-  scrollbar-width: thin;
+  overflow: visible; /* must be visible so dropdowns aren't clipped */
 }
 
 .tool-btn {

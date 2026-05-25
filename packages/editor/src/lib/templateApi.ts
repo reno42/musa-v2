@@ -16,23 +16,59 @@ export interface TemplateFull extends DesignTemplate {
 
 /**
  * Fetch a complete template with all nested data.
+ * Prefers localStorage if it has newer data than the API (freemium resilience).
  */
 export async function getTemplate(id: string): Promise<TemplateFull | null> {
   try {
     const res = await apiFetch<{ data: TemplateFull }>(`/api/templates/${id}`);
-    return res.data;
+    const apiData = res.data;
+    const localData = getLocalTemplate(id);
+
+    // If localStorage has a newer version, prefer it
+    if (localData && apiData) {
+      const apiUpdated = (apiData as any).metadata?.updatedAt || "";
+      const localUpdated = localData.updatedAt || "";
+      if (localUpdated > apiUpdated && localData.canvas?.objects?.length > 0) {
+        console.log("[getTemplate] Local version is newer, using localStorage");
+        return {
+          ...apiData,
+          ...localData,
+          canvas: localData.canvas,
+          pages: localData.pages || (apiData as any).pages,
+          frames: localData.frames || (apiData as any).frames,
+          styles: localData.styles || (apiData as any).styles,
+          variables: localData.variables || (apiData as any).variables,
+          name: localData.name || apiData.name,
+        } as TemplateFull;
+      }
+    }
+
+    // If API returned empty canvas but localStorage has data
+    if (apiData && (!apiData.canvas?.objects || apiData.canvas.objects.length === 0) && localData?.canvas?.objects?.length > 0) {
+      console.log("[getTemplate] API has empty canvas, using localStorage");
+      return {
+        ...apiData,
+        ...localData,
+        canvas: localData.canvas,
+        pages: localData.pages || (apiData as any).pages,
+        frames: localData.frames || (apiData as any).frames,
+        styles: localData.styles || (apiData as any).styles,
+        variables: localData.variables || (apiData as any).variables,
+        name: localData.name || apiData.name,
+      } as TemplateFull;
+    }
+
+    return apiData;
   } catch (err: any) {
     const msg = err.message || "";
-    // Network error or server down → try localStorage
-    if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch") || msg.includes("500")) {
-      const local = getLocalTemplate(id);
-      if (local) return local as TemplateFull;
-      return null;
+    // Always try localStorage first for any error (freemium resilience)
+    const local = getLocalTemplate(id);
+    if (local) return local as TemplateFull;
+    // Only throw for non-404 errors if localStorage was also empty
+    if (!msg.includes("404") && !msg.includes("not found")) {
+      throw err;
     }
-    if (msg.includes("404") || msg.includes("not found")) {
-      return null;
-    }
-    throw err;
+    return null;
   }
 }
 
@@ -92,12 +128,42 @@ export async function duplicateTemplate(
 
 /**
  * List templates with pagination.
+ * Merges API results with localStorage to preserve locally-saved templates.
  */
 export async function listTemplates(
   limit = 50,
   offset = 0
 ): Promise<{ data: DesignTemplate[]; total: number }> {
-  return apiFetch(`/api/templates?limit=${limit}&offset=${offset}`);
+  try {
+    const result = await apiFetch<{ data: DesignTemplate[]; total: number }>(
+      `/api/templates?limit=${limit}&offset=${offset}`
+    );
+    // Merge with localStorage templates (don't lose local-only ones)
+    const localTemplates = listLocalTemplates();
+    const apiIds = new Set(result.data.map((t: any) => t.id));
+    const merged = [...result.data];
+    for (const local of localTemplates) {
+      if (!apiIds.has(local.id)) {
+        merged.push({
+          id: local.id,
+          name: local.name || "Untitled",
+          width: local.width || 1080,
+          height: local.height || 1080,
+          canvas: local.canvas,
+          pages: local.pages,
+          frames: local.frames,
+          styles: local.styles,
+          variables: local.variables,
+          metadata: { updatedAt: local.updatedAt },
+        } as any);
+      }
+    }
+    return { data: merged, total: merged.length };
+  } catch {
+    // API offline → show only localStorage templates
+    const local = listLocalTemplates();
+    return { data: local as any[], total: local.length };
+  }
 }
 
 // ─── Local storage fallback ────────────────────────────────

@@ -167,9 +167,9 @@ export function Toolbar({
                 <PopupBtn icon={<rect x="3" y="3" width="18" height="18" rx="2" />} label="Rectangle" shortcut="R" active={tool === "rect"} onClick={() => pickShape("rect")} />
                 <PopupBtn icon={<ellipse cx="12" cy="12" rx="10" ry="10" />} label="Ellipse" shortcut="O" active={tool === "ellipse"} onClick={() => pickShape("ellipse")} />
                 <PopupBtn icon={<line x1="5" y1="19" x2="19" y2="5" stroke="currentColor" strokeWidth="2" />} label="Line" shortcut="L" active={tool === "line"} onClick={() => pickShape("line")} />
-                <PopupBtn icon={<path d="M12 2L3 22h18L12 2z" />} label="Triangle" active={false} onClick={() => pickShape("triangle")} />
-                <PopupBtn icon={<path d="M12 2l3.1 9.5h9.9l-8 5.8 3 9.7-8-5.8-8 5.8 3-9.7-8-5.8h9.9z" />} label="Star" active={false} onClick={() => pickShape("star")} />
-                <PopupBtn icon={<path d="M12 2l4 4 4-4 4 4-4 4 4 4-4 4-4-4-4 4-4-4 4-4-4-4z" />} label="Polygon" active={false} onClick={() => pickShape("polygon")} />
+                <PopupBtn icon={<path d="M12 2L3 22h18L12 2z" />} label="Triangle" active={tool === "triangle"} onClick={() => pickShape("triangle")} />
+                <PopupBtn icon={<path d="M12 2l3.1 9.5h9.9l-8 5.8 3 9.7-8-5.8-8 5.8 3-9.7-8-5.8h9.9z" />} label="Star" active={tool === "star"} onClick={() => pickShape("star")} />
+                <PopupBtn icon={<path d="M12 2l4 4 4-4 4 4-4 4 4 4-4 4-4-4-4 4-4-4 4-4-4-4z" />} label="Polygon" active={tool === "polygon"} onClick={() => pickShape("polygon")} />
               </div>
             </div>
           </div>

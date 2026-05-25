@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
-import { listLocalTemplates, saveLocal } from "../lib/templateApi";
+import { listTemplates, saveLocal } from "../lib/templateApi";
 import type { DesignTemplate } from "@futuraria/shared";
 
 interface DashboardProps {
@@ -27,33 +27,17 @@ export function Dashboard({ userId, onSelectTemplate, onCreateNew }: DashboardPr
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch<{ data: DesignTemplate[]; total: number }>(
-        `/api/templates?limit=50&offset=0`
-      );
-      const cards: TemplateCard[] = res.data.map((t) => ({
+      const res = await listTemplates(50, 0);
+      const cards: TemplateCard[] = res.data.map((t: any) => ({
         id: t.id,
         name: t.name,
-        updatedAt: t.metadata.updatedAt,
-        createdAt: t.metadata.createdAt,
-        layerCount: t.layers?.length || 0,
+        updatedAt: t.metadata?.updatedAt || t.updatedAt || "",
+        createdAt: t.metadata?.createdAt || t.createdAt || "",
+        layerCount: t.layers?.length || t.canvas?.objects?.length || 0,
       }));
       setTemplates(cards);
     } catch (err: any) {
-      const msg = err.message || "";
-      // Network error → offline mode with localStorage fallback
-      if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
-        const local = listLocalTemplates() as any[];
-        const cards: TemplateCard[] = local.map((t: any) => ({
-          id: t.id,
-          name: t.name || t.data?.name || "Untitled",
-          updatedAt: t.updatedAt || t.metadata?.updatedAt || "",
-          createdAt: t.createdAt || t.metadata?.createdAt || "",
-          layerCount: t.data?.layers?.length || t.layers?.length || 0,
-        }));
-        setTemplates(cards);
-      } else {
-        setError(msg || "Failed to load templates");
-      }
+      setError((err as Error).message || "Failed to load templates");
     } finally {
       setLoading(false);
     }
