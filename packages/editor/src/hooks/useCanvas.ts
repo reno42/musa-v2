@@ -3510,8 +3510,52 @@ export function useCanvas(opts: {
   const exportJPG = useCallback(() => { if (activeFrameIdRef.current) exportFrame(activeFrameIdRef.current, "jpg"); }, [exportFrame]);
   const exportSVG = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
-    const blob = new Blob([c.toSVG()], { type: "image/svg+xml" });
-    downloadDataUrl(URL.createObjectURL(blob), "design.svg");
+    const fid = activeFrameIdRef.current;
+
+    if (!fid) {
+      const blob = new Blob([c.toSVG()], { type: "image/svg+xml" });
+      downloadDataUrl(URL.createObjectURL(blob), "design.svg");
+      return;
+    }
+
+    const visual = c.getObjects().find((o: any) => o.isFrameVisual && o.frameId === fid && o.type === "rect");
+    if (!visual) {
+      const blob = new Blob([c.toSVG()], { type: "image/svg+xml" });
+      downloadDataUrl(URL.createObjectURL(blob), "design.svg");
+      return;
+    }
+
+    const x = visual.left || 0, y = visual.top || 0;
+    const w = (visual.width || 0) * (visual.scaleX || 1);
+    const h = (visual.height || 0) * (visual.scaleY || 1);
+
+    const frameObjSet = new Set(
+      c.getObjects().filter((o: any) => o.frameId === fid && (!o.isFrameVisual || o.isFrameBg))
+    );
+
+    const excluded: any[] = [];
+    for (const obj of c.getObjects()) {
+      if (!frameObjSet.has(obj)) {
+        (obj as any).excludeFromExport = true;
+        excluded.push(obj);
+      }
+    }
+
+    const origBg = c.backgroundColor;
+    (c as any).backgroundColor = undefined;
+
+    const svg = c.toSVG({
+      width: w,
+      height: h,
+      viewBox: { x, y, width: w, height: h },
+    } as any);
+
+    (c as any).backgroundColor = origBg;
+    for (const obj of excluded) (obj as any).excludeFromExport = false;
+
+    const frameName = framesRef.current.find(f => f.id === fid)?.name || "frame";
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    downloadDataUrl(URL.createObjectURL(blob), `${frameName}.svg`);
   }, []);
   const exportJSON = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
