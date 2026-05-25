@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import type { Canvas as FabricCanvas } from "fabric";
 import { apiFetch } from "../lib/supabase";
 import { useToast } from "../components/Toast";
+import { saveLocal } from "../lib/templateApi";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -56,31 +57,25 @@ export function useAutoSave({
     isSavingRef.current = true;
     setStatus("saving");
 
+    // Serialize canvas (moved before try for catch fallback access)
+    const canvasJSON = (c.toJSON as any)([
+      "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
+      "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
+      "componentId", "isComponentInstance", "constraints", "autoLayout",
+      "resizingMode", "overrides",
+    ]);
+    const viewport = {
+      x: c.viewportTransform[4],
+      y: c.viewportTransform[5],
+      zoom: c.getZoom(),
+    };
+    const extra = getExtraData?.() || {};
+
     try {
-      // Serialize canvas
-      const canvasJSON = (c.toJSON as any)([
-        "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
-        "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
-        "componentId", "isComponentInstance", "constraints", "autoLayout",
-        "resizingMode", "overrides",
-      ]);
-
-      // Collect viewport state
-      const viewport = {
-        x: c.viewportTransform[4],
-        y: c.viewportTransform[5],
-        zoom: c.getZoom(),
-      };
-
-      const extra = getExtraData?.() || {};
-
       await apiFetch(`/api/templates/${templateId}`, {
         method: "PUT",
         body: JSON.stringify({
-          canvas: {
-            ...canvasJSON,
-            viewport,
-          },
+          canvas: { ...canvasJSON, viewport },
           ...extra,
         }),
       });
@@ -92,14 +87,27 @@ export function useAutoSave({
         setStatus((prev) => (prev === "saved" ? "idle" : prev));
       }, 3000);
     } catch (err) {
-      console.error("[AutoSave] Save failed:", err);
-      setStatus("error");
-      addToast("error", "Auto-save failed", (err as Error).message || "Could not save changes to server");
+      const msg = (err as Error).message || "";
+      // Offline fallback: save to localStorage when API is unreachable
+      saveLocal(templateId!, {
+        canvas: { ...canvasJSON, viewport },
+        ...extra,
+        name: extra.name || "Untitled",
+        width: extra.width || 1080,
+        height: extra.height || 1080,
+      });
+      if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
+        setStatus("saved"); // Silent offline save
+      } else {
+        console.error("[AutoSave] Save failed:", err);
+        setStatus("error");
+        addToast("error", "Auto-save failed", msg);
+      }
 
-      // Reset error after 5 seconds
+      // Reset after 3s (saved) or 5s (error)
       setTimeout(() => {
-        setStatus((prev) => (prev === "error" ? "idle" : prev));
-      }, 5000);
+        setStatus((prev) => (prev === "saved" || prev === "error" ? "idle" : prev));
+      }, 3000);
     } finally {
       isSavingRef.current = false;
 

@@ -3496,7 +3496,7 @@ export function useCanvas(opts: {
     const x = visual.left || 0, y = visual.top || 0;
     const w = (visual.width || 0) * (visual.scaleX || 1);
     const h = (visual.height || 0) * (visual.scaleY || 1);
-    const objs = c.getObjects().filter((o: any) => o.frameId === fid && !o.isFrameVisual);
+    const objs = c.getObjects().filter((o: any) => o.frameId === fid && (!o.isFrameVisual || o.isFrameBg));
     const tc = document.createElement("canvas"); tc.width = w * 2; tc.height = h * 2;
     const ctx = tc.getContext("2d")!; ctx.scale(2, 2);
     const origVpt = c.viewportTransform;
