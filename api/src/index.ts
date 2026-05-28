@@ -20,7 +20,6 @@ import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
 
 const app = express();
-const PORT = parseInt(process.env.PORT || "3001", 10);
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -49,10 +48,5 @@ app.use("/api/templates", colorRoutes);
 app.use("/api/templates", fontRoutes);
 app.use("/api/templates", componentRoutes);
 app.use("/api/webhooks", webhookRoutes);
-
-app.listen(PORT, () => {
-  console.log(`🚀 Futuraria API running at http://localhost:${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/api/health`);
-});
 
 export default app;

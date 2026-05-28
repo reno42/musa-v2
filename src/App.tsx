@@ -127,7 +127,7 @@ function App() {
   // Create new template
   const handleCreateTemplate = async (workspaceId: string) => {
     try {
-      const res = await fetch("http://localhost:3001/api/templates", {
+      const res = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
         body: JSON.stringify({ workspaceId, name: "Untitled", width: 1080, height: 1080 }),
@@ -142,7 +142,7 @@ function App() {
   // Open existing template
   const handleSelectTemplate = async (id: string) => {
     try {
-      const res = await fetch(`http://localhost:3001/api/templates/${id}`, {
+      const res = await fetch(`/api/templates/${id}`, {
         headers: { "x-api-key": "dev-key" },
       });
       const json = await res.json();

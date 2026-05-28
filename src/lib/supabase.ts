@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:3001";
+const API_BASE = "";
 
 export async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
   const fullUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
