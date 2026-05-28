@@ -27,6 +27,15 @@ interface UseAutoSaveOptions {
  * Skips save if canvas is empty.
  * Shows status: Saving... / Saved ✓ / Error saving
  */
+const CANVAS_EVENTS = [
+  "object:added",
+  "object:removed",
+  "object:modified",
+  "object:moving",
+  "object:scaling",
+  "object:rotating",
+] as const;
+
 export function useAutoSave({
   fabricRef,
   templateId,
@@ -126,35 +135,28 @@ export function useAutoSave({
     timerRef.current = setTimeout(performSave, debounceMs);
   }, [enabled, templateId, performSave, debounceMs]);
 
+  // ── Stable callback ref to avoid effect re-creation ──
+  const scheduleSaveRef = useRef(scheduleSave);
+  scheduleSaveRef.current = scheduleSave;
+
   // Attach canvas event listeners
   useEffect(() => {
     const c = fabricRef.current;
     if (!c || !enabled || !templateId) return;
 
-    const events = [
-      "object:added",
-      "object:removed",
-      "object:modified",
-      "object:moving",
-      "object:scaling",
-      "object:rotating",
-    ] as const;
+    const onChange = () => scheduleSaveRef.current();
 
-    // For moving/scaling/rotating, debounce on the "end" event (modified)
-    // For added/removed, debounce immediately
-    const onChange = () => scheduleSave();
-
-    for (const event of events) {
+    for (const event of CANVAS_EVENTS) {
       c.on(event, onChange);
     }
 
     return () => {
-      for (const event of events) {
+      for (const event of CANVAS_EVENTS) {
         c.off(event, onChange);
       }
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [fabricRef, enabled, templateId, scheduleSave]);
+  }, [fabricRef, enabled, templateId]);
 
   // Force save (for manual save triggers)
   const forceSave = useCallback(() => {

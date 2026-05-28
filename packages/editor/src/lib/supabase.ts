@@ -1,74 +1,11 @@
-/**
- * Supabase & API Client (Editor)
- * ──────────────────────────────────────────────────────────────
- * The editor never talks to Supabase directly — all database
- * operations go through the /api/* Express endpoints. This
- * module provides:
- *   - localStorage-based API key persistence
- *   - apiFetch() wrapper with automatic X-API-Key header injection
- *   - A no-op getSupabase() for backwards compatibility
- *
- * @module lib/supabase
- *
- * LocalStorage keys:
- *   futuraria_api_key          → raw API key (fd_xxxxxxxx...)
- *   futuraria_local_templates  → offline fallback store
- *
- * API calls: ALL /api/* endpoints (via apiFetch)
- */
+const API_BASE = "http://localhost:3001";
 
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-
-const STORED_KEY = "futuraria_api_key";
-
-/** Get the stored API key from localStorage (set via Settings Panel). */
-export function getStoredApiKey(): string | null {
-  try {
-    return localStorage.getItem(STORED_KEY);
-  } catch {
-    return null;
-  }
-}
-
-/** Store API key in localStorage. Called after key creation in Settings Panel. */
-export function setStoredApiKey(key: string): void {
-  try {
-    localStorage.setItem(STORED_KEY, key);
-  } catch {
-    // localStorage unavailable (SSR, private browsing)
-  }
-}
-
-/** Clear stored API key. */
-export function clearStoredApiKey(): void {
-  try {
-    localStorage.removeItem(STORED_KEY);
-  } catch {
-    // localStorage unavailable
-  }
-}
-
-/** Always returns null - offline mode. Frontend never talks to Supabase directly. */
-export function getSupabase(): SupabaseClient | null {
-  return null;
-}
-
-export { getSupabase as getSupabaseClient };
-
-/** API fetch wrapper — includes stored API key if available. */
-export async function apiFetch<T = any>(url: string, options: RequestInit = {}): Promise<T> {
-  const apiKey = getStoredApiKey();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
-  if (apiKey) {
-    headers["X-API-Key"] = apiKey;
-  }
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
+export async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
+  const fullUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
+  const res = await fetch(fullUrl, {
+    headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

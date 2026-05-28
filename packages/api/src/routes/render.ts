@@ -19,7 +19,7 @@
  */
 
 import { Router } from "express";
-import * as renderer from "../services/renderer";
+import * as renderer from "../services/renderer.js";
 
 export const renderRoutes = Router();
 

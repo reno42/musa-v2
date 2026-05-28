@@ -23,7 +23,8 @@
  */
 
 import { Router } from "express";
-import { registerWebhook, listWebhooks, deleteWebhook } from "../services/webhooks";
+import { registerWebhook, listWebhooks, deleteWebhook } from "../services/webhooks.js";
+import { validate, webhookSchema } from "../middleware/index.js";
 
 export const webhookRoutes = Router();
 
@@ -41,10 +42,10 @@ export const webhookRoutes = Router();
  *
  * DB: INSERT INTO webhooks
  */
-webhookRoutes.post("/", async (req, res) => {
+webhookRoutes.post("/", validate(webhookSchema), async (req, res) => {
   try {
     const { url, events, secret } = req.body;
-    const hook = await registerWebhook(url, events, req.auth?.userId, secret);
+    const hook = await registerWebhook(url, events, req.auth!.userId, secret);
     res.status(201).json({ success: true, data: hook });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -62,7 +63,7 @@ webhookRoutes.post("/", async (req, res) => {
  */
 webhookRoutes.get("/", async (req, res) => {
   try {
-    const hooks = await listWebhooks(req.auth?.userId);
+    const hooks = await listWebhooks(req.auth!.userId);
     res.json({ success: true, data: hooks });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -80,7 +81,7 @@ webhookRoutes.get("/", async (req, res) => {
  */
 webhookRoutes.delete("/:id", async (req, res) => {
   try {
-    await deleteWebhook(req.params.id, req.auth?.userId);
+    await deleteWebhook(req.params.id, req.auth!.userId);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

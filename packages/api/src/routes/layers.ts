@@ -13,7 +13,7 @@
  */
 
 import { Router } from "express";
-import * as templates from "../services/templates";
+import * as templates from "../services/templates.js";
 
 export const layerRoutes = Router();
 

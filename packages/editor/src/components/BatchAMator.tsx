@@ -1,0 +1,297 @@
+import { useReducer, useRef } from "react";
+
+interface BatchAMatorProps {
+  templateId: string | null;
+  onClose: () => void;
+}
+
+type BatchMode = "single-post" | "multi-post" | "carousel";
+
+type BatchState = {
+  mode: BatchMode;
+  csvText: string;
+  headers: string[];
+  rows: Record<string, string>[];
+  preview: Record<string, string>[];
+  generating: boolean;
+  results: any[] | null;
+  error: string;
+};
+
+type BatchAction =
+  | { type: "SET_MODE"; mode: BatchMode }
+  | { type: "SET_CSV"; csvText: string; headers: string[]; rows: Record<string, string>[]; preview: Record<string, string>[] }
+  | { type: "SET_GENERATING"; generating: boolean }
+  | { type: "SET_RESULTS"; results: any[] | null }
+  | { type: "SET_ERROR"; error: string };
+
+function batchReducer(state: BatchState, action: BatchAction): BatchState {
+  switch (action.type) {
+    case "SET_MODE": return { ...state, mode: action.mode, results: null };
+    case "SET_CSV": return { ...state, csvText: action.csvText, headers: action.headers, rows: action.rows, preview: action.preview };
+    case "SET_GENERATING": return { ...state, generating: action.generating };
+    case "SET_RESULTS": return { ...state, results: action.results };
+    case "SET_ERROR": return { ...state, error: action.error };
+  }
+}
+
+const API_BASE = "http://localhost:3001/api";
+
+export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
+  const [state, dispatch] = useReducer(batchReducer, {
+    mode: "single-post",
+    csvText: "",
+    headers: [],
+    rows: [],
+    preview: [],
+    generating: false,
+    results: null,
+    error: "",
+  });
+  const { mode, csvText, headers, rows, preview, generating, results, error } = state;
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
+    const lines = text.trim().split("\n").filter(Boolean);
+    if (lines.length < 2) return { headers: [], rows: [] };
+    const h = lines[0].split(",").map(s => s.trim().replace(/^"|"$/g, ""));
+    const r = lines.slice(1).map(line => {
+      const vals = line.split(",").map(s => s.trim().replace(/^"|"$/g, ""));
+      const obj: Record<string, string> = {};
+      h.forEach((k, i) => { obj[k] = vals[i] || ""; });
+      return obj;
+    });
+    return { headers: h, rows: r };
+  }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      const { headers: h, rows: r } = parseCSV(text);
+      dispatch({ type: "SET_CSV", csvText: text, headers: h, rows: r, preview: r.slice(0, 5) });
+    };
+    reader.readAsText(file);
+  }
+
+  function handleTextChange(text: string) {
+    const { headers: h, rows: r } = parseCSV(text);
+    dispatch({ type: "SET_CSV", csvText: text, headers: h, rows: r, preview: r.slice(0, 5) });
+  }
+
+  async function handleGenerate() {
+    if (!templateId || rows.length === 0) return;
+    dispatch({ type: "SET_GENERATING", generating: true });
+    dispatch({ type: "SET_ERROR", error: "" });
+    try {
+      const res = await fetch(`${API_BASE}/templates/${templateId}/batch/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        body: JSON.stringify({ data: rows }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      dispatch({ type: "SET_RESULTS", results: json.data });
+    } catch (err: any) {
+      dispatch({ type: "SET_ERROR", error: err.message });
+    }
+    dispatch({ type: "SET_GENERATING", generating: false });
+  }
+
+  return (
+    <div style={batchOverlayStyle}>
+      <div style={batchDialogStyle}>
+        {/* Header */}
+        <div style={batchHeaderStyle}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Batch-a-mator</h3>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#7a7a90", fontSize: 18, cursor: "pointer" }}>✕</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          {/* Mode tabs */}
+          <div style={{ display: "flex", gap: 4, marginBottom: 18, background: "#111118", borderRadius: 8, padding: 3 }}>
+            {([
+              ["single-post", "Post Único"],
+              ["multi-post", "Multi Posts"],
+              ["carousel", "Carruseles"],
+            ] as [BatchMode, string][]).map(([m, label]) => (
+              <button
+                type="button"
+                key={m}
+                onClick={() => dispatch({ type: "SET_MODE", mode: m })}
+                style={batchTabStyle(mode === m)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* CSV Upload */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={batchSectionLabelStyle}>CSV Data</div>
+            <button
+              type="button"
+              aria-label="Upload CSV file"
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const text = reader.result as string;
+                  const { headers: h, rows: r } = parseCSV(text);
+                  dispatch({ type: "SET_CSV", csvText: text, headers: h, rows: r, preview: r.slice(0, 5) });
+                };
+                reader.readAsText(file);
+              }}
+              style={batchDropZoneStyle}
+              onClick={() => fileRef.current?.click()}
+            >
+              <div style={{ fontSize: 20, marginBottom: 4 }}>📁</div>
+              <div style={{ fontSize: 12, color: "#5a5a70" }}>Drop CSV file or click to browse</div>
+              <input ref={fileRef} type="file" accept=".csv" aria-label="CSV file input" style={{ display: "none" }} onChange={handleFile} />
+            </button>
+            <textarea
+              aria-label="CSV data"
+              value={csvText}
+              onChange={e => handleTextChange(e.target.value)}
+              placeholder="Or paste CSV data here…&#10;Name,Title,Subtitle&#10;Post 1,Hello World,Welcome&#10;Post 2,Second Post,More content"
+              style={batchTextareaStyle}
+            />
+          </div>
+
+          {/* Column headers */}
+          {headers.length > 0 && (
+            <div style={{ marginBottom: 12, fontSize: 12, color: "#5a5a70" }}>
+              <span style={{ textTransform: "uppercase", letterSpacing: 1 }}>Columns: </span>
+              {headers.map(h => (
+                <span key={h} style={{ background: "#1c1c26", padding: "2px 6px", borderRadius: 3, margin: "0 2px", color: "#e4e4f0" }}>
+                  {h}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {preview.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={batchSectionLabelStyle}>
+                Preview (first {preview.length} of {rows.length} rows)
+              </div>
+              <div style={{ overflow: "auto", maxHeight: 150, border: "1px solid #1c1c26", borderRadius: 6 }}>
+                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#111118" }}>
+                      {headers.map(h => (
+                        <th key={h} style={{ padding: "4px 8px", textAlign: "left", color: "#5a5a70", fontWeight: 400, borderBottom: "1px solid #1c1c26" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row) => {
+                      const rowKey = headers.map(h => row[h] || "").join("-");
+                      return (
+                      <tr key={rowKey || `row-${preview.indexOf(row)}`}>
+                        {headers.map(h => (
+                          <td key={h} style={{ padding: "3px 8px", borderBottom: "1px solid #0e0e16" }}>{row[h]}</td>
+                        ))}
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div style={{ background: "#2a1015", color: "#f87171", padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 12 }}>
+              {error}
+            </div>
+          )}
+
+          {/* Generate button */}
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={!templateId || rows.length === 0 || generating}
+            style={batchGenerateBtnStyle(!templateId || rows.length === 0, generating)}
+          >
+            {generating ? "Generating…" : `Generate ${rows.length} Templates`}
+          </button>
+
+          {/* Results */}
+          {results && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+                Generated {results.length} templates
+              </div>
+              <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid #1c1c26", borderRadius: 6 }}>
+                {results.slice(0, 20).map((r: any, i: number) => (
+                  <div key={r.id} style={{ padding: "6px 10px", fontSize: 12, borderBottom: "1px solid #0e0e16", display: "flex", justifyContent: "space-between" }}>
+                    <span>{i + 1}. {r.name}</span>
+                    <span style={{ color: "#5a5a70" }}>{r.id}</span>
+                  </div>
+                ))}
+                {results.length > 20 && (
+                  <div style={{ padding: "6px 10px", fontSize: 12, color: "#5a5a70", textAlign: "center" }}>
+                    …and {results.length - 20} more
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const batchOverlayStyle: React.CSSProperties = {
+  position: "fixed", inset: 0, zIndex: 40,
+  display: "flex", alignItems: "center", justifyContent: "center",
+  background: "rgba(0,0,0,0.6)",
+};
+const batchDialogStyle: React.CSSProperties = {
+  background: "#0e0e16", border: "1px solid #1c1c26", borderRadius: 10,
+  width: 700, maxHeight: "85vh", overflow: "auto",
+  color: "#e4e4f0", fontFamily: "Inter, system-ui, sans-serif",
+};
+const batchHeaderStyle: React.CSSProperties = {
+  padding: "14px 18px", borderBottom: "1px solid #1c1c26",
+  display: "flex", alignItems: "center", justifyContent: "space-between",
+};
+function batchTabStyle(active: boolean): React.CSSProperties {
+  return {
+    flex: 1, padding: "6px 0", border: "none", borderRadius: 6,
+    background: active ? "#7c6fff" : "transparent",
+    color: active ? "#fff" : "#7a7a90",
+    fontSize: 12, cursor: "pointer", fontWeight: active ? 500 : 400,
+  };
+}
+const batchSectionLabelStyle: React.CSSProperties = {
+  fontSize: 12, color: "#5a5a70", marginBottom: 6,
+  textTransform: "uppercase", letterSpacing: 1,
+};
+const batchDropZoneStyle: React.CSSProperties = {
+  border: "1px dashed #2a2a3a", borderRadius: 8, padding: 20,
+  textAlign: "center", cursor: "pointer", marginBottom: 8,
+};
+const batchTextareaStyle: React.CSSProperties = {
+  width: "100%", height: 80, background: "#111118", border: "1px solid #1c1c26",
+  color: "#e4e4f0", borderRadius: 6, padding: 8, fontSize: 12,
+  fontFamily: "monospace", resize: "vertical",
+};
+function batchGenerateBtnStyle(disabled: boolean, generating: boolean): React.CSSProperties {
+  return {
+    width: "100%", padding: "10px 0", border: "none", borderRadius: 8,
+    background: disabled ? "#1c1c26" : "#7c6fff",
+    color: "#fff", fontSize: 13, fontWeight: 600,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: generating ? 0.7 : 1,
+  };
+}

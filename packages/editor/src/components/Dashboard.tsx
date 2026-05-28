@@ -1,233 +1,239 @@
-import { useState, useEffect, useCallback } from "react";
-import { apiFetch } from "../lib/supabase";
-import { listTemplates, saveLocal } from "../lib/templateApi";
-import type { DesignTemplate } from "@futuraria/shared";
+import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 
-interface DashboardProps {
-  userId: string;
-  onSelectTemplate: (templateId: string) => void;
-  onCreateNew: () => void;
-}
-
-interface TemplateCard {
+interface Template {
   id: string;
   name: string;
-  updatedAt: string;
-  createdAt: string;
-  thumbnail?: string;
-  layerCount: number;
+  width: number;
+  height: number;
+  workspaceId: string;
+  metadata: { createdAt: string; updatedAt: string };
 }
 
-export function Dashboard({ userId, onSelectTemplate, onCreateNew }: DashboardProps) {
-  const [templates, setTemplates] = useState<TemplateCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface Workspace {
+  id: string;
+  name: string;
+}
 
-  const fetchTemplates = useCallback(async () => {
+interface DashboardProps {
+  onSelectTemplate: (id: string) => void;
+  onCreateTemplate: (workspaceId: string) => void;
+}
+
+const API_BASE = "http://localhost:3001/api";
+
+async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${url}`, {
+    headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
+export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps) {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedWs, setSelectedWs] = useState<string | null>(null);
+  const [searchDisplay, setSearchDisplay] = useState("");
+  const searchRef = useRef("");
+  const loadingRef = useRef(true);
+  const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
+  const [, forceRender] = useReducer((x: number) => x + 1, 0);
+
+  const setLoading = useCallback((v: boolean) => {
+    loadingRef.current = v;
+    forceRender();
+  }, []);
+
+  const loadTemplates = useCallback(async (wsId?: string) => {
+    loadTemplatesRef.current = loadTemplates;
     setLoading(true);
-    setError(null);
     try {
-      const res = await listTemplates(50, 0);
-      const cards: TemplateCard[] = res.data.map((t: any) => ({
-        id: t.id,
-        name: t.name,
-        updatedAt: t.metadata?.updatedAt || t.updatedAt || "",
-        createdAt: t.metadata?.createdAt || t.createdAt || "",
-        layerCount: t.layers?.length || t.canvas?.objects?.length || 0,
-      }));
-      setTemplates(cards);
-    } catch (err: any) {
-      setError((err as Error).message || "Failed to load templates");
-    } finally {
-      setLoading(false);
-    }
+      const params = new URLSearchParams();
+      if (wsId) params.set("workspaceId", wsId);
+      if (searchRef.current) params.set("search", searchRef.current);
+      const qs = params.toString();
+      const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
+      setTemplates(res.data || []);
+    } catch { setTemplates([]); }
+    setLoading(false);
+  }, [setLoading]);
+
+  const handleSearch = useCallback((value: string) => {
+    setSearchDisplay(value);
+    searchRef.current = value;
+    loadTemplatesRef.current(selectedWs ?? undefined);
+  }, [selectedWs]);
+
+  const handleWsChange = useCallback((wsId: string | null) => {
+    setSelectedWs(wsId);
+    loadTemplatesRef.current(wsId ?? undefined);
   }, []);
 
   useEffect(() => {
-    fetchTemplates();
-  }, [fetchTemplates]);
+    apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
+      .then(r => { setWorkspaces(r.data || []); if (r.data?.[0]) { setSelectedWs(r.data[0].id); loadTemplatesRef.current(r.data[0].id); } })
+      .catch(() => {});
+  }, []);
 
-  const handleCreateNew = useCallback(async () => {
-    const name = `Untitled ${new Date().toLocaleDateString()}`;
+  const loading = loadingRef.current;
+
+  const handleDelete = async (id: string) => {
     try {
-      const res = await apiFetch<{ data: DesignTemplate }>("/api/templates", {
-        method: "POST",
-        body: JSON.stringify({ name, width: 1080, height: 1080 }),
-      });
-      onSelectTemplate(res.data.id);
-    } catch (err: any) {
-      const msg = err.message || "";
-      if (msg.includes("fetch") || msg.includes("NetworkError") || msg.includes("Failed to fetch") || msg.includes("500")) {
-        // Offline: create local template and navigate directly
-        const id = `tpl_local_${Date.now()}`;
-        saveLocal(id, {
-          name,
-          canvas: { objects: [], viewport: { zoom: 1, x: 0, y: 0 } },
-          metadata: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-          width: 1080,
-          height: 1080,
-          pages: [{ id: "page1", name: "Page 1", frames: [] }],
-          frames: [],
-        });
-        onSelectTemplate(id);
-      } else {
-        setError(msg || "Failed to create template");
-      }
-    }
-  }, [onSelectTemplate]);
+      await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+      setTemplates(prev => prev.filter(t => t.id !== id));
+    } catch { /* ignore */ }
+  };
 
-  const handleDelete = useCallback(
-    async (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (!confirm("Delete this template? This cannot be undone.")) return;
-      try {
-        await apiFetch(`/api/templates/${id}`, { method: "DELETE" });
-        setTemplates((prev) => prev.filter((t) => t.id !== id));
-      } catch (err: any) {
-        setError(err.message || "Failed to delete template");
-      }
-    },
-    []
-  );
-
-  const handleDuplicate = useCallback(
-    async (id: string, name: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      try {
-        const res = await apiFetch<{ data: DesignTemplate }>(
-          `/api/templates/${id}/duplicate`,
-          {
-            method: "POST",
-            body: JSON.stringify({ name: `${name} (copy)` }),
-          }
-        );
-        setTemplates((prev) => [
-          {
-            id: res.data.id,
-            name: res.data.name,
-            updatedAt: res.data.metadata.updatedAt,
-            createdAt: res.data.metadata.createdAt,
-            layerCount: res.data.layers?.length || 0,
-          },
-          ...prev,
-        ]);
-      } catch (err: any) {
-        setError(err.message || "Failed to duplicate template");
-      }
-    },
-    []
-  );
-
-  const formatDate = (iso: string) => {
+  const handleDuplicate = async (id: string) => {
     try {
-      return new Date(iso).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
-    } catch {
-      return iso;
-    }
+      const res = await apiFetch<{ success: boolean; data: Template }>(`/templates/${id}/duplicate`, { method: "POST", body: "{}" });
+      if (res.data) setTemplates(prev => [res.data, ...prev]);
+    } catch { /* ignore */ }
+  };
+
+  const handleExport = async (id: string, name: string) => {
+    try {
+      const res = await apiFetch<any>(`/templates/${id}/export`);
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${name}.futuraria.json`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch { /* ignore */ }
   };
 
   return (
-    <div className="dashboard">
-      <div className="dashboard-header">
-        <div className="dashboard-brand">
-          <svg width="32" height="32" viewBox="0 0 40 40" fill="none">
-            <rect width="40" height="40" rx="8" fill="#6366f1" />
-            <path d="M12 28V12h6l5 8 5-8h6v16h-5V18l-6 10-6-10v10z" fill="white" />
-          </svg>
-          <div>
-            <h1 className="dashboard-title">Futuraria Design</h1>
-            <p className="dashboard-subtitle">Your design templates</p>
-          </div>
-        </div>
-        <button className="btn-new-template" onClick={handleCreateNew}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="8" y1="2" x2="8" y2="14" />
-            <line x1="2" y1="8" x2="14" y2="8" />
-          </svg>
-          New Template
+    <div style={dashboardStyle}>
+      {/* Header */}
+      <div style={dashHeaderStyle}>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
+        <div style={{ flex: 1 }} />
+        <select
+          aria-label="Select workspace"
+          value={selectedWs || ""}
+          onChange={e => handleWsChange(e.target.value || null)}
+          style={selectStyle}
+        >
+          {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        <input
+          aria-label="Search templates"
+          placeholder="Search templates…"
+          value={searchDisplay}
+          onChange={e => handleSearch(e.target.value)}
+          style={{ ...inputStyle, width: 200 }}
+        />
+        <button
+          type="button"
+          onClick={() => selectedWs && onCreateTemplate(selectedWs)}
+          style={btnPrimary}
+          disabled={!selectedWs}
+        >
+          + New Template
         </button>
       </div>
 
-      {error && (
-        <div className="dashboard-error">
-          {error}
-          <button onClick={() => setError(null)}>✕</button>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="dashboard-loading">
-          <div className="spinner" />
-          <span>Loading templates...</span>
-        </div>
-      ) : templates.length === 0 ? (
-        <div className="dashboard-empty">
-          <div className="empty-icon">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#555" strokeWidth="1.5">
-              <rect x="6" y="6" width="36" height="36" rx="4" />
-              <line x1="24" y1="16" x2="24" y2="32" />
-              <line x1="16" y1="24" x2="32" y2="24" />
-            </svg>
-          </div>
-          <h2>No templates yet</h2>
-          <p>Create your first design template to get started.</p>
-          <button className="btn-new-template" onClick={handleCreateNew}>
-            Create Template
-          </button>
-        </div>
-      ) : (
-        <div className="dashboard-grid">
-          {templates.map((tpl) => (
-            <div
-              key={tpl.id}
-              className="template-card"
-              onClick={() => onSelectTemplate(tpl.id)}
+      {/* Template Grid */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        {loading ? (
+          <div style={{ textAlign: "center", color: "#5a5a70", padding: 60 }}>Loading…</div>
+        ) : templates.length === 0 ? (
+          <div style={{ textAlign: "center", color: "#5a5a70", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
+            <div>No templates yet. Create your first one!</div>
+            <button
+              type="button"
+              onClick={() => selectedWs && onCreateTemplate(selectedWs)}
+              style={{ ...btnPrimary, marginTop: 16 }}
+              disabled={!selectedWs}
             >
-              <div className="template-thumbnail">
-                <div className="template-thumbnail-placeholder">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#555" strokeWidth="1">
-                    <rect x="4" y="4" width="24" height="24" rx="2" />
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M4 22l6-6 4 4 6-6 8 8" />
-                  </svg>
-                  <span>{tpl.layerCount} element{tpl.layerCount !== 1 ? "s" : ""}</span>
+              + New Template
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+            {templates.map(t => (
+              <div
+                key={t.id}
+                style={cardStyle}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#7c6fff"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "#1c1c26"; }}
+              >
+                <button
+                  type="button"
+                  aria-label={`Open template ${t.name}`}
+                  onClick={() => onSelectTemplate(t.id)}
+                  style={cardBtnStyle}
+                >
+                  {/* Thumbnail placeholder */}
+                  <div style={thumbnailStyle}>
+                    {t.width}x{t.height}
+                  </div>
+                  <div style={{ padding: "8px 10px" }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                    <div style={{ fontSize: 12, color: "#5a5a70" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                  </div>
+                </button>
+                <div style={{ display: "flex", borderTop: "1px solid #1c1c26", fontSize: 12 }}>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }}>Delete</button>
                 </div>
               </div>
-              <div className="template-info">
-                <span className="template-name">{tpl.name}</span>
-                <span className="template-date">
-                  Updated {formatDate(tpl.updatedAt)}
-                </span>
-              </div>
-              <div className="template-actions">
-                <button
-                  className="template-action-btn"
-                  title="Duplicate"
-                  onClick={(e) => handleDuplicate(tpl.id, tpl.name, e)}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <rect x="1" y="3" width="8" height="8" rx="1" />
-                    <path d="M3 3V2a1 1 0 011-1h7a1 1 0 011 1v7a1 1 0 01-1 1h-1" />
-                  </svg>
-                </button>
-                <button
-                  className="template-action-btn danger"
-                  title="Delete"
-                  onClick={(e) => handleDelete(tpl.id, e)}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M2 4h10M5 4V3a1 1 0 011-1h2a1 1 0 011 1v1M4 4v7a1 1 0 001 1h4a1 1 0 001-1V4" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+const dashboardStyle: React.CSSProperties = {
+  height: "100vh", background: "#0a0a0f", color: "#e4e4f0",
+  fontFamily: "Inter, system-ui, sans-serif", display: "flex", flexDirection: "column",
+};
+
+const dashHeaderStyle: React.CSSProperties = {
+  padding: "16px 20px", borderBottom: "1px solid #1c1c26",
+  display: "flex", alignItems: "center", gap: 16,
+};
+
+const thumbnailStyle: React.CSSProperties = {
+  background: "#111118", height: 140, borderRadius: "4px 4px 0 0",
+  display: "flex", alignItems: "center", justifyContent: "center",
+  color: "#2a2a3a", fontSize: 32,
+};
+
+const selectStyle: React.CSSProperties = {
+  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
+  borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none",
+};
+
+const inputStyle: React.CSSProperties = {
+  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
+  borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none",
+};
+
+const btnPrimary: React.CSSProperties = {
+  background: "#7c6fff", border: "none", color: "#fff",
+  borderRadius: 6, padding: "6px 16px", fontSize: 12, cursor: "pointer", fontWeight: 500,
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#0e0e16", border: "1px solid #1c1c26", borderRadius: 6,
+  cursor: "pointer", overflow: "hidden", transition: "border-color 0.15s",
+  display: "flex", flexDirection: "column",
+};
+
+const cardBtnStyle: React.CSSProperties = {
+  display: "flex", flexDirection: "column", width: "100%",
+  background: "none", border: "none", color: "inherit",
+  cursor: "pointer", padding: 0, textAlign: "left",
+  fontFamily: "inherit", fontSize: "inherit",
+};
+
+const cardAction: React.CSSProperties = {
+  flex: 1, background: "none", border: "none", borderRight: "1px solid #1c1c26",
+  color: "#7a7a90", fontSize: 12, cursor: "pointer", padding: "4px 0",
+};

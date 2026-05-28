@@ -1,130 +1,56 @@
-/**
- * Styles Routes
- * ──────────────────────────────────────────────────────────────
- * CRUD for reusable design styles (color palettes, text styles,
- * effect presets). Styles can be applied across templates.
- *
- * @module routes/styles
- *
- * Database (Supabase: styles table):
- *   - id TEXT PK          → style identifier (sty_xxxxxxxx)
- *   - name TEXT           → human-readable name
- *   - type TEXT           → 'color' | 'text' | 'effect' (CHECK constraint)
- *   - data JSONB          → style definition (palette, typography, etc.)
- *   - user_id UUID        → owner (FK → auth.users)
- *   - created_at / updated_at TIMESTAMPTZ
- *
- * @webhook Fires: style.created
- */
-
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
-import { getSupabase } from "../services/supabase";
-import { validate, createStyleSchema, updateStyleSchema } from "../middleware";
+import { store } from "../services/store.js";
+import { z } from "zod";
+import { validate } from "../middleware/validate.js";
 
 export const styleRoutes = Router();
 
-const memoryStore = new Map<string, any>();
+const createSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: z.enum(["fill", "stroke", "text", "effect"]),
+  properties: z.record(z.string(), z.any()),
+});
 
-/**
- * POST /api/styles
- * ──────────────────────────────────────────────────────────────
- * Create a new design style.
- *
- * @body {string} name   Human-readable name
- * @body {string} type   'color' | 'text' | 'effect'
- * @body {object} data   Style data (palette, font config, etc.)
- *
- * @returns {201} { success, data: Style }
- *
- * DB: INSERT INTO styles (id, name, type, data)
- * In-memory fallback when Supabase unavailable.
- */
-styleRoutes.post("/", validate(createStyleSchema), async (req, res) => {
+const updateSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  properties: z.record(z.string(), z.any()).optional(),
+});
+
+const applySchema = z.object({
+  layerNames: z.array(z.string()).min(1),
+});
+
+styleRoutes.post("/:id/styles", validate(createSchema), async (req, res) => {
   try {
-    const style = {
-      id: `sty_${uuid().slice(0, 8)}`,
-      ...req.body,
-      metadata: {
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    };
-
-    const db = getSupabase();
-    if (db) {
-      await db.from("styles").insert({
-        id: style.id,
-        name: style.name,
-        type: style.type,
-        data: style,
-      });
-    } else {
-      memoryStore.set(style.id, style);
-    }
-
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const style = { id: `sty_${uuid().slice(0, 12)}`, ...req.body };
+    tpl.styles.push(style);
+    tpl.metadata.updatedAt = new Date().toISOString();
     res.status(201).json({ success: true, data: style });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * GET /api/styles
- * ──────────────────────────────────────────────────────────────
- * List all styles, optionally filtered by type.
- *
- * @query {string} [type]  'color' | 'text' | 'effect'
- *
- * @returns {200} { success, data: Style[] }
- *
- * DB: SELECT data FROM styles [WHERE type = :type] ORDER BY created_at DESC
- * In-memory fallback when Supabase unavailable.
- */
-styleRoutes.get("/", async (req, res) => {
+styleRoutes.get("/:id/styles", async (req, res) => {
   try {
-    const typeFilter = req.query.type as string | undefined;
-    const db = getSupabase();
-
-    if (db) {
-      let query = db.from("styles").select("data").order("created_at", { ascending: false });
-      if (typeFilter) query = query.eq("type", typeFilter);
-      const { data } = await query;
-      res.json({ success: true, data: (data || []).map((r: any) => r.data) });
-    } else {
-      let allStyles = Array.from(memoryStore.values());
-      if (typeFilter) allStyles = allStyles.filter((s) => s.type === typeFilter);
-      res.json({ success: true, data: allStyles });
-    }
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const search = (req.query.search as string || "").toLowerCase();
+    const list = search ? tpl.styles.filter(s => s.name.toLowerCase().includes(search)) : tpl.styles;
+    res.json({ success: true, data: list, total: list.length });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * GET /api/styles/:id
- * ──────────────────────────────────────────────────────────────
- * Get a single style by ID.
- *
- * @param {string} id  Style ID (sty_xxxxxxxx)
- *
- * @returns {200} { success, data: Style }
- * @returns {404} Style not found
- *
- * DB: SELECT data FROM styles WHERE id = :id
- */
-styleRoutes.get("/:id", async (req, res) => {
+styleRoutes.get("/:id/styles/:styleId", async (req, res) => {
   try {
-    const db = getSupabase();
-    let style: any = null;
-
-    if (db) {
-      const { data } = await db.from("styles").select("data").eq("id", req.params.id).single();
-      style = data?.data || null;
-    } else {
-      style = memoryStore.get(req.params.id) || null;
-    }
-
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const style = tpl.styles.find(s => s.id === req.params.styleId);
     if (!style) return res.status(404).json({ success: false, error: "Style not found" });
     res.json({ success: true, data: style });
   } catch (err: any) {
@@ -132,78 +58,58 @@ styleRoutes.get("/:id", async (req, res) => {
   }
 });
 
-/**
- * PATCH /api/styles/:id
- * ──────────────────────────────────────────────────────────────
- * Partial update to a style.
- *
- * @param {string} id           Style ID
- * @body {string} [name]        New name
- * @body {string} [type]        New type
- * @body {object} [data]        Merged into existing data
- *
- * @returns {200} { success, data: Style }
- * @returns {404} Style not found
- *
- * DB: UPDATE styles SET data = :updated, name = :name WHERE id = :id
- */
-styleRoutes.patch("/:id", validate(updateStyleSchema), async (req, res) => {
+styleRoutes.put("/:id/styles/:styleId", validate(updateSchema), async (req, res) => {
   try {
-    const db = getSupabase();
-    let existing: any = null;
-
-    if (db) {
-      const { data } = await db.from("styles").select("data").eq("id", req.params.id).single();
-      existing = data?.data || null;
-    } else {
-      existing = memoryStore.get(req.params.id) || null;
-    }
-
-    if (!existing) return res.status(404).json({ success: false, error: "Style not found" });
-
-    const updated = {
-      ...existing,
-      ...req.body,
-      metadata: { ...existing.metadata, updatedAt: new Date().toISOString() },
-    };
-
-    if (db) {
-      await db.from("styles").update({ data: updated, name: updated.name }).eq("id", req.params.id);
-    } else {
-      memoryStore.set(req.params.id, updated);
-    }
-
-    res.json({ success: true, data: updated });
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const style = tpl.styles.find(s => s.id === req.params.styleId);
+    if (!style) return res.status(404).json({ success: false, error: "Style not found" });
+    Object.assign(style, req.body);
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.json({ success: true, data: style });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * DELETE /api/styles/:id
- * ──────────────────────────────────────────────────────────────
- * Permanently remove a style.
- *
- * @param {string} id  Style ID
- *
- * @returns {200} { success: true }
- * @returns {404} Style not found
- *
- * DB: DELETE FROM styles WHERE id = :id
- */
-styleRoutes.delete("/:id", async (req, res) => {
+styleRoutes.delete("/:id/styles/:styleId", async (req, res) => {
   try {
-    const db = getSupabase();
-    if (db) {
-      const { error } = await db.from("styles").delete().eq("id", req.params.id);
-      if (error) return res.status(500).json({ success: false, error: error.message });
-    } else {
-      if (!memoryStore.has(req.params.id)) {
-        return res.status(404).json({ success: false, error: "Style not found" });
-      }
-      memoryStore.delete(req.params.id);
-    }
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const idx = tpl.styles.findIndex(s => s.id === req.params.styleId);
+    if (idx === -1) return res.status(404).json({ success: false, error: "Style not found" });
+    tpl.styles.splice(idx, 1);
+    tpl.metadata.updatedAt = new Date().toISOString();
     res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+styleRoutes.post("/:id/styles/:styleId/apply", validate(applySchema), async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    const style = tpl.styles.find(s => s.id === req.params.styleId);
+    if (!style) return res.status(404).json({ success: false, error: "Style not found" });
+
+    const walk = (objs: any[]) => {
+      for (const o of objs) {
+        const name = o.layerName || o.name;
+        if (req.body.layerNames.includes(name)) {
+          for (const [k, v] of Object.entries(style.properties)) {
+            o[k] = v;
+          }
+          if (style.type !== "text") (o as any).styleId = style.id;
+        }
+        if (o.objects && Array.isArray(o.objects)) walk(o.objects);
+      }
+    };
+    walk(tpl.canvas.objects);
+    for (const f of tpl.frames) walk(f.objects);
+
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.json({ success: true, data: { applied: req.body.layerNames.length } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

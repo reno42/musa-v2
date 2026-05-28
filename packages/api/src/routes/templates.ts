@@ -19,13 +19,15 @@
  */
 
 import { Router } from "express";
-import * as templates from "../services/templates";
+import { v4 as uuid } from "uuid";
+import * as templates from "../services/templates.js";
+import { store } from "../services/store.js";
 import {
   validate,
   createTemplateSchema,
   updateTemplateSchema,
   duplicateTemplateSchema,
-} from "../middleware";
+} from "../middleware/index.js";
 
 export const templateRoutes = Router();
 
@@ -47,8 +49,8 @@ export const templateRoutes = Router();
  */
 templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
   try {
-    const { name, width, height, canvas } = req.body;
-    const tpl = await templates.createTemplate(name, width || 1080, height || 1080, canvas, req.auth?.userId);
+    const { name, width, height, canvas, workspaceId } = req.body;
+    const tpl = await templates.createTemplate(name, width || 1080, height || 1080, canvas, req.auth!.userId, workspaceId);
     res.status(201).json({ success: true, data: tpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -71,8 +73,11 @@ templateRoutes.get("/", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const search = (req.query.search as string || "").toLowerCase();
+    const workspaceId = req.query.workspaceId as string || undefined;
 
-    const result = await templates.listTemplatesPaginated(limit, offset);
+    const result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
+
     res.json({
       success: true,
       data: result.data,
@@ -174,6 +179,112 @@ templateRoutes.post("/:id/duplicate", validate(duplicateTemplateSchema), async (
     const tpl = await templates.duplicateTemplate(req.params.id, req.body.name, req.auth?.userId);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
     res.status(201).json({ success: true, data: tpl });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/templates/bulk/delete — delete multiple templates
+templateRoutes.post("/bulk/delete", async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: "ids array required" });
+    }
+    const deleted: string[] = [];
+    const notFound: string[] = [];
+    for (const id of ids) {
+      const ok = await templates.deleteTemplate(id);
+      if (ok) deleted.push(id);
+      else notFound.push(id);
+    }
+    res.json({ success: true, data: { deleted, notFound, count: deleted.length } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/templates/:id/frames/bulk/delete — delete multiple frames
+templateRoutes.post("/:id/frames/bulk/delete", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: "ids array required" });
+    }
+    const deleted: string[] = [];
+    for (const id of ids) {
+      const idx = tpl.frames.findIndex((f: any) => f.id === id);
+      if (idx !== -1) { tpl.frames.splice(idx, 1); deleted.push(id); }
+    }
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.json({ success: true, data: { deleted, count: deleted.length } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/templates/:id/export — export template as .futuraria JSON
+templateRoutes.get("/:id/export", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const exportData = {
+      format: "futuraria/v1",
+      exportedAt: new Date().toISOString(),
+      template: {
+        name: tpl.name,
+        width: tpl.width,
+        height: tpl.height,
+        canvas: tpl.canvas,
+        frames: tpl.frames,
+        styles: tpl.styles,
+        variables: tpl.variables,
+        metadata: tpl.metadata,
+      },
+    };
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${tpl.name}.futuraria.json"`);
+    res.json(exportData);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/templates/import — import a .futuraria JSON file
+templateRoutes.post("/import", async (req, res) => {
+  try {
+    const { format, template: tplData, workspaceId } = req.body;
+
+    if (format !== "futuraria/v1") {
+      return res.status(400).json({ success: false, error: "Invalid format. Expected 'futuraria/v1'" });
+    }
+    if (!tplData || !tplData.name) {
+      return res.status(400).json({ success: false, error: "template.name required" });
+    }
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: "workspaceId required" });
+    }
+
+    const newTpl = store.createTemplate({
+      workspaceId,
+      name: tplData.name,
+      width: tplData.width || 1080,
+      height: tplData.height || 1080,
+      canvas: tplData.canvas || { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
+      userId: req.auth!.userId,
+    });
+
+    // Restore additional data
+    if (tplData.frames) newTpl.frames = tplData.frames;
+    if (tplData.styles) newTpl.styles = tplData.styles;
+    if (tplData.variables) newTpl.variables = tplData.variables;
+
+    res.status(201).json({ success: true, data: newTpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

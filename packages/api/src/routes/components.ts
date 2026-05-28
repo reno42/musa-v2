@@ -1,206 +1,169 @@
-/**
- * Components Routes
- * ──────────────────────────────────────────────────────────────
- * CRUD for reusable design components (templates with replaceable
- * properties). Components can be instantiated as layers within
- * design templates, with defaultValues populated from properties.
- *
- * @module routes/components
- *
- * Database (Supabase: components table):
- *   - id TEXT PK          → component identifier (cmp_xxxxxxxx)
- *   - name TEXT           → human-readable name
- *   - data JSONB          → full component definition (canvas, layers, properties, defaultValues)
- *   - user_id UUID        → owner (FK → auth.users)
- *   - created_at / updated_at TIMESTAMPTZ
- *
- * @webhook Fires: component.created
- */
-
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
-import { getSupabase } from "../services/supabase";
-import { validate, createComponentSchema, updateComponentSchema } from "../middleware";
+import { store } from "../services/store.js";
+import { z } from "zod";
+import { validate } from "../middleware/validate.js";
 
 export const componentRoutes = Router();
 
-const memoryStore = new Map<string, any>();
+const createSchema = z.object({
+  name: z.string().min(1).max(200),
+  layerNames: z.array(z.string()).min(1),
+  description: z.string().max(500).optional(),
+});
 
-/**
- * POST /api/components
- * ──────────────────────────────────────────────────────────────
- * Create a new component. Builds defaultValues from property
- * definitions automatically.
- *
- * @body {string}   name               Component name
- * @body {string}   [description]      Human-readable description
- * @body {object[]} properties         [{ id, label, type, defaultValue }]
- * @body {object}   [canvas]           Fabric.js canvas JSON
- * @body {object[]} [layers]           Layer array
- * @body {string[]} [tags]             Categorization tags
- *
- * @returns {201} { success, data: Component }
- *
- * DB: INSERT INTO components (id, name, data)
- */
-componentRoutes.post("/", validate(createComponentSchema), async (req, res) => {
+const updateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(500).optional(),
+  properties: z.record(z.string(), z.any()).optional(),
+});
+
+// POST /api/templates/:id/components — create component from layers
+componentRoutes.post("/:id/components", validate(createSchema), async (req, res) => {
   try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const { name, layerNames, description } = req.body;
+
+    // Find the layers to turn into a component
+    const layers: any[] = [];
+    for (const ln of layerNames) {
+      const idx = tpl.canvas.objects.findIndex((o: any) => (o.layerName || o.name) === ln);
+      if (idx !== -1) {
+        layers.push(...tpl.canvas.objects.splice(idx, 1));
+      }
+    }
+
+    if (layers.length === 0) {
+      return res.status(400).json({ success: false, error: "No matching layers found" });
+    }
+
     const component = {
-      id: `cmp_${uuid().slice(0, 8)}`,
-      name: req.body.name,
-      description: req.body.description || "",
-      properties: req.body.properties || [],
-      defaultValues: {} as Record<string, any>,
-      canvas: req.body.canvas,
-      layers: req.body.layers,
-      metadata: {
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        tags: req.body.tags || [],
-      },
+      id: `cmp_${uuid().slice(0, 12)}`,
+      name,
+      description: description || "",
+      layers,
+      instances: [] as string[],
+      createdAt: new Date().toISOString(),
     };
 
-    // Build defaultValues from properties
-    for (const prop of component.properties) {
-      component.defaultValues[prop.id] = prop.defaultValue;
-    }
-
-    const db = getSupabase();
-    if (db) {
-      await db.from("components").insert({
-        id: component.id,
-        name: component.name,
-        data: component,
-      });
-    } else {
-      memoryStore.set(component.id, component);
-    }
-
+    tpl.components.push(component);
+    tpl.metadata.updatedAt = new Date().toISOString();
     res.status(201).json({ success: true, data: component });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * GET /api/components
- * ──────────────────────────────────────────────────────────────
- * List all components, newest first.
- *
- * @returns {200} { success, data: Component[] }
- *
- * DB: SELECT data FROM components ORDER BY created_at DESC
- */
-componentRoutes.get("/", async (req, res) => {
+// GET /api/templates/:id/components — list components
+componentRoutes.get("/:id/components", async (req, res) => {
   try {
-    const db = getSupabase();
-    if (db) {
-      const { data } = await db
-        .from("components")
-        .select("data")
-        .order("created_at", { ascending: false });
-      res.json({ success: true, data: (data || []).map((r: any) => r.data) });
-    } else {
-      res.json({ success: true, data: Array.from(memoryStore.values()) });
-    }
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    res.json({ success: true, data: tpl.components, total: tpl.components.length });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * GET /api/components/:id
- * @param {string} id  Component ID (cmp_xxxxxxxx)
- * @returns {200} { success, data: Component } | {404}
- * DB: SELECT data FROM components WHERE id = :id
- */
-componentRoutes.get("/:id", async (req, res) => {
+// POST /api/templates/:id/components/:compId/instantiate — place instance
+componentRoutes.post("/:id/components/:compId/instantiate", async (req, res) => {
   try {
-    const db = getSupabase();
-    let component: any = null;
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
 
-    if (db) {
-      const { data } = await db
-        .from("components")
-        .select("data")
-        .eq("id", req.params.id)
-        .single();
-      component = data?.data || null;
+    const comp = tpl.components.find((c: any) => c.id === req.params.compId);
+    if (!comp) return res.status(404).json({ success: false, error: "Component not found" });
+
+    const { x = 100, y = 100 } = req.body;
+
+    // Clone layers at target position
+    const clones = comp.layers.map((layer: any) => {
+      const clone = JSON.parse(JSON.stringify(layer));
+      clone.layerName = `${comp.name}_instance_${uuid().slice(0, 6)}`;
+      clone.left = (clone.left || 0) + x;
+      clone.top = (clone.top || 0) + y;
+      clone.componentId = comp.id;
+      return clone;
+    });
+
+    // If single layer, push directly; if multiple, group them
+    if (clones.length === 1) {
+      tpl.canvas.objects.push(clones[0]);
     } else {
-      component = memoryStore.get(req.params.id) || null;
+      const group = {
+        type: "group",
+        layerName: `${comp.name}_instance`,
+        left: x, top: y, width: 0, height: 0,
+        objects: clones,
+        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
+        componentId: comp.id,
+      };
+      tpl.canvas.objects.push(group);
     }
 
-    if (!component) return res.status(404).json({ success: false, error: "Component not found" });
-    res.json({ success: true, data: component });
+    comp.instances.push(clones.length === 1 ? clones[0].layerName : `${comp.name}_instance`);
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.status(201).json({ success: true, data: { instances: comp.instances.length } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * PATCH /api/components/:id
- * @param {string} id        Component ID
- * @body {object} partial    Fields to update (merged with existing)
- * @returns {200} { success, data: Component } | {404}
- * DB: UPDATE components SET data = :updated, name = :name WHERE id = :id
- */
-componentRoutes.patch("/:id", validate(updateComponentSchema), async (req, res) => {
+// PUT /api/templates/:id/components/:compId — update component (propagate to instances)
+componentRoutes.put("/:id/components/:compId", validate(updateSchema), async (req, res) => {
   try {
-    const db = getSupabase();
-    let existing: any = null;
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
 
-    if (db) {
-      const { data } = await db
-        .from("components")
-        .select("data")
-        .eq("id", req.params.id)
-        .single();
-      existing = data?.data || null;
-    } else {
-      existing = memoryStore.get(req.params.id) || null;
-    }
+    const comp = tpl.components.find((c: any) => c.id === req.params.compId);
+    if (!comp) return res.status(404).json({ success: false, error: "Component not found" });
 
-    if (!existing) return res.status(404).json({ success: false, error: "Component not found" });
+    if (req.body.name) comp.name = req.body.name;
+    if (req.body.description !== undefined) comp.description = req.body.description;
 
-    const updated = {
-      ...existing,
-      ...req.body,
-      metadata: { ...existing.metadata, updatedAt: new Date().toISOString() },
-    };
+    // Propagate property changes to all instances
+    if (req.body.properties) {
+      const props = req.body.properties;
 
-    if (db) {
-      await db
-        .from("components")
-        .update({ data: updated, name: updated.name })
-        .eq("id", req.params.id);
-    } else {
-      memoryStore.set(req.params.id, updated);
-    }
-
-    res.json({ success: true, data: updated });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-/**
- * DELETE /api/components/:id
- * @param {string} id  Component ID
- * @returns {200} { success: true } | {404}
- * DB: DELETE FROM components WHERE id = :id
- */
-componentRoutes.delete("/:id", async (req, res) => {
-  try {
-    const db = getSupabase();
-    if (db) {
-      const { error } = await db.from("components").delete().eq("id", req.params.id);
-      if (error) return res.status(500).json({ success: false, error: error.message });
-    } else {
-      if (!memoryStore.has(req.params.id)) {
-        return res.status(404).json({ success: false, error: "Component not found" });
+      // Update source layers
+      for (const layer of comp.layers) {
+        Object.assign(layer, props);
       }
-      memoryStore.delete(req.params.id);
+
+      // Propagate to instances
+      const walk = (objs: any[]) => {
+        for (const o of objs) {
+          if (o.componentId === comp.id) {
+            Object.assign(o, props);
+          }
+          if (o.objects && Array.isArray(o.objects)) walk(o.objects);
+        }
+      };
+      walk(tpl.canvas.objects);
+      for (const f of tpl.frames) walk(f.objects);
     }
+
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.json({ success: true, data: comp });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/templates/:id/components/:compId
+componentRoutes.delete("/:id/components/:compId", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const idx = tpl.components.findIndex((c: any) => c.id === req.params.compId);
+    if (idx === -1) return res.status(404).json({ success: false, error: "Component not found" });
+
+    tpl.components.splice(idx, 1);
+    tpl.metadata.updatedAt = new Date().toISOString();
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

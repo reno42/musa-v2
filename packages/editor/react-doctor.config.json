@@ -1,0 +1,6 @@
+{
+  "ignore": {
+    "rules": ["deslop/unused-file"],
+    "files": ["node_modules/**", "dist/**", ".vite/**", "*.cjs"]
+  }
+}

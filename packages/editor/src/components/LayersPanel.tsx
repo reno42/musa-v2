@@ -1,228 +1,158 @@
-/**
- * Layers Panel Component
- * ──────────────────────────────────────────────────────────────
- * Left sidebar listing canvas objects by z-order with
- * visibility toggling, drag-to-reorder, rename, and lock.
- * Supports grouping/ungrouping.
- *
- * @module components/LayersPanel
- *
- * State: Reads canvas objects → LayerInfo[]
- * Events: Click → select object, Drag → reorder, Eye → toggle visibility
- * DB:    None (canvas state is ephemeral, saved via useRemoteSync)
- */
+import { useState, useEffect } from "react";
+import type { FabricObject, Canvas } from "fabric";
 
-import { useState } from "react";
-import type { LayerInfo, FrameInfo, PageInfo } from "../hooks/useCanvas";
-
-interface Props {
-  pages: PageInfo[];
-  activePageId: string;
-  frames: FrameInfo[];
-  activeFrameId: string;
-  layers: LayerInfo[];
-  selectedLayer: LayerInfo | null;
-  selectedFrameId: string | null;
-  onSelectLayer: (layer: LayerInfo) => void;
-  onSelectFrame: (frameId: string) => void;
-  onAddPage: () => void;
-  onSwitchPage: (pageId: string) => void;
-  onRenamePage: (pageId: string, name: string) => void;
-  onDeletePage: (pageId: string) => void;
-  onAddFrame: () => void;
-  onRenameFrame: (frameId: string, name: string) => void;
-  onDeleteFrame: (frameId: string) => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onBringForward: () => void;
-  onSendBackward: () => void;
-  onToggleLock: (layerId: string) => void;
-  onExportFrame: (frameId: string, format: "png" | "jpg" | "svg") => void;
+interface LayersPanelProps {
+  canvasRef: React.RefObject<Canvas | null>;
+  selectedObjects: FabricObject[];
+  onSelect?: (layerName: string) => void;
+  onDelete?: (layerName: string) => void;
 }
 
-const typeIcons: Record<string, string> = {
-  frame: "▢", rect: "▭", ellipse: "○", textbox: "T", "i-text": "T",
-  image: "🖼", group: "📁", path: "✎", line: "╱",
-};
+interface LayerItem {
+  name: string;
+  type: string;
+  visible: boolean;
+  locked: boolean;
+  ref: FabricObject;
+}
 
-export function LayersPanel({
-  pages, activePageId, frames, activeFrameId, layers,
-  selectedLayer, selectedFrameId,
-  onSelectLayer, onSelectFrame,
-  onAddPage, onSwitchPage, onRenamePage, onDeletePage,
-  onAddFrame, onRenameFrame, onDeleteFrame,
-  onDelete, onDuplicate, onBringForward, onSendBackward,
-  onToggleLock, onExportFrame,
-}: Props) {
-  const [pagesOpen, setPagesOpen] = useState(true);
-  const [expandedFrames, setExpandedFrames] = useState<Set<string>>(new Set());
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingValue, setEditingValue] = useState("");
-  const [contextMenu, setContextMenu] = useState<{ id: string; type: "page" | "frame"; x: number; y: number } | null>(null);
-
-  const toggleFrame = (frameId: string) => {
-    setExpandedFrames(prev => {
-      const next = new Set(prev);
-      next.has(frameId) ? next.delete(frameId) : next.add(frameId);
-      return next;
-    });
+function iconForType(t: string): string {
+  const m: Record<string, string> = {
+    rect: "▢", Rect: "▢", ellipse: "○", Ellipse: "○",
+    triangle: "△", Triangle: "△", polygon: "⬡", Polygon: "⬡",
+    line: "╱", Line: "╱", text: "T", "i-text": "T", IText: "T", Textbox: "T",
+    group: "▣", Group: "▣", image: "🖼", Image: "🖼",
+    star: "★", Star: "★", path: "↗", Path: "↗",
   };
+  return m[t] || "▪";
+}
 
-  const startRename = (id: string, currentName: string) => {
-    setEditingId(id);
-    setEditingValue(currentName);
-    setContextMenu(null);
-  };
+export function LayersPanel({ canvasRef, selectedObjects, onSelect, onDelete }: LayersPanelProps) {
+  const [layers, setLayers] = useState<LayerItem[]>([]);
 
-  const finishRename = (type: "page" | "frame") => {
-    if (editingId && editingValue.trim()) {
-      if (type === "page") onRenamePage(editingId, editingValue.trim());
-      else onRenameFrame(editingId, editingValue.trim());
-    }
-    setEditingId(null);
-  };
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const refresh = () => {
+      const items: LayerItem[] = [];
+      const objs = [...c.getObjects()].reverse();
+      for (const o of objs) {
+        if ((o as any).isGridLine) continue;
+        items.push({
+          name: (o as any).layerName || (o as any).name || `${o.type}_${Math.random().toString(36).slice(2, 6)}`,
+          type: o.type || "unknown",
+          visible: o.visible !== false,
+          locked: !!(o as any).lockMovementX,
+          ref: o,
+        });
+      }
+      setLayers(items);
+    };
+    setTimeout(refresh, 0);
+    c.on("object:added", refresh);
+    c.on("object:removed", refresh);
+    c.on("object:modified", refresh);
+    return () => { c.off("object:added", refresh); c.off("object:removed", refresh); c.off("object:modified", refresh); };
+  }, [canvasRef]);
 
-  const handleContextMenu = (e: React.MouseEvent, id: string, type: "page" | "frame") => {
-    e.preventDefault();
-    setContextMenu({ id, type, x: e.clientX, y: e.clientY });
-  };
-
-  const getFrameLayers = (frameId: string) => {
-    return layers.filter(l => l.frameId === frameId);
-  };
+  const selNames = new Set(selectedObjects.map((o: any) => o.layerName || o.name || ""));
 
   return (
-    <div className="sidebar" onClick={() => setContextMenu(null)}>
-      <div className="sidebar-header">
-        <span>Design</span>
-        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>v0.3</span>
+    <div style={panelStyle}>
+      <div style={layersHeaderStyle}>
+        Layers ({layers.length})
       </div>
-
-      {/* ─── Pages ─── */}
-      <div className="tree-section">
-        <div className="tree-title" onClick={() => setPagesOpen(!pagesOpen)}>
-          {pagesOpen ? "▼" : "▶"} Pages
-          <button className="tree-add-btn" onClick={(e) => { e.stopPropagation(); onAddPage(); }} title="Add Page">+</button>
-        </div>
-        {pagesOpen && pages.map((page) => (
-          <div
-            key={page.id}
-            className={`tree-item sub ${activePageId === page.id ? "active" : ""}`}
-            onClick={() => onSwitchPage(page.id)}
-            onContextMenu={(e) => handleContextMenu(e, page.id, "page")}
-          >
-            <span className="tree-item-icon">📄</span>
-            {editingId === page.id ? (
-              <input
-                className="tree-rename-input"
-                value={editingValue}
-                onChange={(e) => setEditingValue(e.target.value)}
-                onBlur={() => finishRename("page")}
-                onKeyDown={(e) => { if (e.key === "Enter") finishRename("page"); if (e.key === "Escape") setEditingId(null); }}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span className="tree-item-name">{page.name}</span>
-            )}
-            <span className="tree-item-count">{page.frames.length}f</span>
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        {layers.length === 0 && (
+          <div style={{ padding: 20, color: "#4a4a60", fontSize: 12, textAlign: "center" }}>
+            No layers yet
           </div>
-        ))}
-      </div>
-
-      {/* ─── Frames (for active page) ─── */}
-      <div className="tree-section" style={{ flex: 1, overflow: "auto" }}>
-        <div className="tree-title">
-          <span>Frames</span>
-          <button className="tree-add-btn" onClick={onAddFrame} title="Add Frame">+</button>
-        </div>
-        {frames.map((frame) => {
-          const isExpanded = expandedFrames.has(frame.id);
-          const isActive = activeFrameId === frame.id;
-          const isSelected = selectedFrameId === frame.id;
-          const frameLayers = getFrameLayers(frame.id);
-
+        )}
+        {layers.map((l, i) => {
+          const isSel = selNames.has(l.name);
           return (
-            <div key={frame.id}>
-              <div
-                className={`tree-item sub ${isActive ? "active" : ""} ${isSelected ? "selected" : ""}`}
-                onClick={() => { onSelectFrame(frame.id); toggleFrame(frame.id); }}
-                onContextMenu={(e) => handleContextMenu(e, frame.id, "frame")}
+            <div
+              key={l.name + i}
+              style={layerItemStyle(isSel, l.visible)}
+            >
+              <button
+                type="button"
+                aria-label={`Select layer ${l.name}`}
+                onClick={() => {
+                  const c = canvasRef.current;
+                  if (!c) return;
+                  c.discardActiveObject();
+                  c.setActiveObject(l.ref);
+                  c.requestRenderAll();
+                  onSelect?.(l.name);
+                }}
+                style={layerSelectBtnStyle}
               >
-                <span className="tree-expand">{isExpanded ? "▼" : "▶"}</span>
-                <span className="tree-item-icon">▢</span>
-                {editingId === frame.id ? (
-                  <input
-                    className="tree-rename-input"
-                    value={editingValue}
-                    onChange={(e) => setEditingValue(e.target.value)}
-                    onBlur={() => finishRename("frame")}
-                    onKeyDown={(e) => { if (e.key === "Enter") finishRename("frame"); if (e.key === "Escape") setEditingId(null); }}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="tree-item-name">{frame.name}</span>
-                )}
-                <span className="tree-item-count">{frameLayers.length}</span>
-                <div className="tree-item-actions">
-                  <button className="tree-action-btn" onClick={(e) => { e.stopPropagation(); onExportFrame(frame.id, "png"); }} title="Export PNG">↓</button>
-                </div>
-              </div>
-
-              {/* Frame layers */}
-              {isExpanded && frameLayers.map((layer) => (
-                <div
-                  key={layer.id}
-                  className={`tree-item sub-sub ${selectedLayer?.id === layer.id ? "active" : ""}`}
-                  onClick={() => onSelectLayer(layer)}
-                >
-                  <span className="tree-item-icon">{typeIcons[layer.type] || "□"}</span>
-                  <span className="tree-item-name">{layer.name}</span>
-                  <button
-                    className="tree-lock-btn"
-                    onClick={(e) => { e.stopPropagation(); onToggleLock(layer.id); }}
-                    title={layer.locked ? "Unlock (⌘L)" : "Lock (⌘L)"}
-                    style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: layer.locked ? "#f59e0b" : "#555", fontSize: 13, padding: "0 4px" }}
-                  >
-                    {layer.locked ? "🔒" : "🔓"}
-                  </button>
-                </div>
-              ))}
+                <span style={{ width: 16, textAlign: "center", fontSize: 12, opacity: 0.7 }}>{iconForType(l.type)}</span>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e4e4f0" }}>{l.name}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Toggle visibility for ${l.name}`}
+                onClick={e => { e.stopPropagation(); l.ref.set("visible", !l.visible); l.ref.canvas?.requestRenderAll(); }}
+                style={tinyBtn(l.visible ? "👁" : "—")}
+              />
+              <button
+                type="button"
+                aria-label={`Toggle lock for ${l.name}`}
+                onClick={e => { e.stopPropagation(); const lk = !(l.ref as any).lockMovementX; (l.ref as any).set({ lockMovementX: lk, lockMovementY: lk, lockRotation: lk, selectable: !lk, evented: !lk }); l.ref.canvas?.requestRenderAll(); }}
+                style={tinyBtn(l.locked ? "🔒" : "🔓")}
+              />
+              <button
+                type="button"
+                aria-label={`Delete layer ${l.name}`}
+                onClick={e => {
+                  e.stopPropagation();
+                  const c = canvasRef.current;
+                  if (!c) return;
+                  c.remove(l.ref);
+                  c.requestRenderAll();
+                  onDelete?.(l.name);
+                }}
+                style={{ ...tinyBtn("✕"), color: "#f87171" }}
+              />
             </div>
           );
         })}
       </div>
-
-      {/* ─── Quick actions ─── */}
-      <div className="sidebar-footer">
-        <button className="sidebar-btn" onClick={onDuplicate} title="Duplicate">⧉</button>
-        <button className="sidebar-btn" onClick={onBringForward} title="Bring Forward">↑</button>
-        <button className="sidebar-btn" onClick={onSendBackward} title="Send Backward">↓</button>
-        <button className="sidebar-btn danger" onClick={onDelete} title="Delete">🗑</button>
-      </div>
-
-      {/* ─── Context Menu ─── */}
-      {contextMenu && (
-        <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }}>
-          <button onClick={() => startRename(contextMenu.id, contextMenu.type === "page"
-            ? pages.find(p => p.id === contextMenu.id)?.name || ""
-            : frames.find(f => f.id === contextMenu.id)?.name || ""
-          )}>Rename</button>
-          {contextMenu.type === "frame" && (
-            <>
-              <button onClick={() => { onExportFrame(contextMenu.id, "png"); setContextMenu(null); }}>Export PNG</button>
-              <button onClick={() => { onExportFrame(contextMenu.id, "jpg"); setContextMenu(null); }}>Export JPG</button>
-              <button onClick={() => { onExportFrame(contextMenu.id, "svg"); setContextMenu(null); }}>Export SVG</button>
-            </>
-          )}
-          <button className="danger" onClick={() => {
-            if (contextMenu.type === "page") onDeletePage(contextMenu.id);
-            else onDeleteFrame(contextMenu.id);
-            setContextMenu(null);
-          }}>Delete</button>
-        </div>
-      )}
     </div>
   );
 }
+
+function tinyBtn(icon: string): React.CSSProperties {
+  return { background: "none", border: "none", color: "#5a5a70", fontSize: 10, cursor: "pointer", padding: 0, lineHeight: 1, width: 18, textAlign: "center" };
+}
+
+const layersHeaderStyle: React.CSSProperties = {
+  padding: "6px 10px", borderBottom: "1px solid #1c1c26",
+  fontSize: 12, color: "#5a5a70", textTransform: "uppercase", letterSpacing: 1,
+};
+
+function layerItemStyle(isSel: boolean, visible: boolean): React.CSSProperties {
+  return {
+    display: "flex", alignItems: "center", gap: 4,
+    padding: "3px 8px", cursor: "pointer",
+    background: isSel ? "#17171f" : "transparent",
+    borderLeft: isSel ? "2px solid #7c6fff" : "2px solid transparent",
+    opacity: visible ? 1 : 0.4,
+    fontSize: 12,
+  };
+}
+
+const layerSelectBtnStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 4, flex: 1,
+  background: "none", border: "none", color: "inherit",
+  cursor: "pointer", padding: 0, fontFamily: "inherit", fontSize: "inherit",
+};
+
+const panelStyle: React.CSSProperties = {
+  width: 200, height: "100%", background: "#0a0a0f", color: "#e4e4f0",
+  fontFamily: "Inter, system-ui, sans-serif", fontSize: 12,
+  display: "flex", flexDirection: "column",
+  borderLeft: "1px solid #1c1c26",
+};
