@@ -19,7 +19,7 @@ interface DashboardProps {
   onCreateTemplate: (workspaceId: string) => void;
 }
 
-const API_BASE = "http://localhost:3001/api";
+const API_BASE = "/api";
 
 async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {

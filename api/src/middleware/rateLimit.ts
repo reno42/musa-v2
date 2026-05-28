@@ -11,7 +11,7 @@ const MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX || "100", 10);
 const WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10); // 1 minute
 
 export function rateLimit(req: Request, res: Response, next: NextFunction) {
-  const ip = req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown";
+  const ip = req.headers["x-forwarded-for"] as string || req.socket?.remoteAddress || "unknown";
   const now = Date.now();
 
   let entry = store.get(ip);
@@ -36,13 +36,10 @@ export function rateLimit(req: Request, res: Response, next: NextFunction) {
     });
   }
 
+  // Lazy cleanup: delete stale entries on each request
+  for (const [key, e] of store) {
+    if (now > e.resetAt) store.delete(key);
+  }
+
   next();
 }
-
-// Clean up expired entries periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of store) {
-    if (now > entry.resetAt) store.delete(key);
-  }
-}, 60_000);

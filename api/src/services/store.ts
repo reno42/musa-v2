@@ -185,11 +185,6 @@ class Store {
       createdAt: new Date().toISOString(),
     };
     this.renderJobs.set(job.id, job);
-    setTimeout(() => {
-      job.status = "complete";
-      job.url = `/exports/${templateId}/${job.id}.${format}`;
-      job.completedAt = new Date().toISOString();
-    }, 500);
     return job;
   }
 
