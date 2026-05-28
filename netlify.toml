@@ -1,0 +1,9 @@
+[build]
+  base = "packages/editor"
+  command = "npm install && npm run build"
+  publish = "packages/editor/dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
