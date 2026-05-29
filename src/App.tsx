@@ -239,6 +239,7 @@ function App() {
           onUpdate={() => callCanvas("pushHistory")}
         />
         <LayersPanel
+          key={layersCanvasRef.current ? "ready" : "loading"}
           canvasRef={layersCanvasRef as React.RefObject<FabricCanvas | null>}
           selectedObjects={selectedObjects}
           onFrameCreate={() => callCanvas("createFrame", "New Frame", 100, 100, 400, 300)}
