@@ -74,12 +74,14 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
 
   const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox";
   const isRectType = obj.type === "rect" || obj.type === "Rect" || (obj as any).isFrameVisual;
+  const isFrameType = !!(obj as any).isFrameVisual;
+  const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;
 
   return (
     <div key={resetKey} style={panelStyle}>
       {/* Header */}
       <div style={propsHeaderStyle}>
-        <span>{obj.type || "Object"}</span>
+        <span>{isFrameType ? "Frame" : (obj.type || "Object")}{isFrameType ? ` (${frameObjCount} objects)` : ""}</span>
         <span style={{ display: "flex", gap: 6 }}>
           <button
             type="button"
@@ -105,6 +107,88 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
         </span>
       </div>
 
+      {/* Frame Name */}
+      {isFrameType && (
+        <Section label="Frame Name">
+          <div style={{ padding: "0 10px 6px" }}>
+            <input
+              aria-label="Frame name"
+              key={`fname-${resetKey}`}
+              defaultValue={(obj as any).frameName || ""}
+              onBlur={e => {
+                const val = e.target.value.trim();
+                if (val) {
+                  commit("frameName", val);
+                  commit("layerName", val);
+                }
+              }}
+              style={inputStyle}
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* Background (Frame) */}
+      {isFrameType && (
+        <Section label="Background">
+          <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
+            <input
+              type="color"
+              aria-label="Frame background color"
+              key={`fbgcolor-${resetKey}`}
+              defaultValue={(obj as any).frameFill || "#ffffff"}
+              onBlur={e => {
+                commit("frameFill", e.target.value);
+                commit("fill", e.target.value);
+              }}
+              style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+            />
+            <input
+              aria-label="Frame background hex"
+              key={`fbghex-${resetKey}`}
+              defaultValue={(obj as any).frameFill || "#ffffff"}
+              onBlur={e => {
+                commit("frameFill", e.target.value);
+                commit("fill", e.target.value);
+              }}
+              style={inputStyle}
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* Border (Frame) */}
+      {isFrameType && (
+        <Section label="Border">
+          <div style={{ padding: "0 10px 0" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="color"
+                aria-label="Frame border color"
+                key={`fscolor-${resetKey}`}
+                defaultValue={(obj as any).frameStroke || "#6366f1"}
+                onBlur={e => {
+                  commit("frameStroke", e.target.value);
+                  commit("stroke", e.target.value);
+                }}
+                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+              />
+              <input
+                aria-label="Frame border hex"
+                key={`fshex-${resetKey}`}
+                defaultValue={(obj as any).frameStroke || "#6366f1"}
+                onBlur={e => {
+                  commit("frameStroke", e.target.value);
+                  commit("stroke", e.target.value);
+                }}
+                style={inputStyle}
+              />
+            </div>
+            <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
+          </div>
+        </Section>
+      )}
+
       {/* Position & Size */}
       <Section label="Position & Size">
         <Row label="X" defaultValue={fieldX} onChange={v => commit("left", Number(v))} />
@@ -128,38 +212,41 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
         </div>
       </Section>
 
-      {/* Fill */}
-      <Section label="Fill">
-        <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
-          <input
-            type="color"
-            aria-label="Fill color"
-            key={`fillcolor-${resetKey}`}
-            defaultValue={fieldFill.match(/^#[0-9a-fA-F]{6}$/) ? fieldFill : "#000000"}
-            onBlur={e => commit("fill", e.target.value)}
-            style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
-          />
-          <input
-            aria-label="Fill color hex"
-            key={`fillhex-${resetKey}`}
-            defaultValue={fieldFill}
-            onBlur={e => commit("fill", e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-      </Section>
-
-      {/* Stroke */}
-      <Section label="Stroke">
-        <div style={{ padding: "0 10px 0" }}>
-          <div style={{ display: "flex", gap: 6 }}>
+      {/* Fill (hidden for frames) */}
+      {!isFrameType && (
+        <Section label="Fill">
+          <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
             <input
               type="color"
-              aria-label="Stroke color"
-              key={`strokecolor-${resetKey}`}
-              defaultValue={fieldStroke.match(/^#[0-9a-fA-F]{6}$/) ? fieldStroke : "#000000"}
-              onBlur={e => commit("stroke", e.target.value)}
+              aria-label="Fill color"
+              key={`fillcolor-${resetKey}`}
+              defaultValue={fieldFill.match(/^#[0-9a-fA-F]{6}$/) ? fieldFill : "#000000"}
+              onBlur={e => commit("fill", e.target.value)}
               style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+            />
+            <input
+              aria-label="Fill color hex"
+              key={`fillhex-${resetKey}`}
+              defaultValue={fieldFill}
+              onBlur={e => commit("fill", e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* Stroke (hidden for frames) */}
+      {!isFrameType && (
+        <Section label="Stroke">
+          <div style={{ padding: "0 10px 0" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="color"
+                aria-label="Stroke color"
+                key={`strokecolor-${resetKey}`}
+                defaultValue={fieldStroke.match(/^#[0-9a-fA-F]{6}$/) ? fieldStroke : "#000000"}
+                onBlur={e => commit("stroke", e.target.value)}
+                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
             />
             <input
               aria-label="Stroke color hex"
@@ -172,6 +259,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
           <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
         </div>
       </Section>
+      )}
 
       {/* Corner Radius (rect only) */}
       {isRectType && (

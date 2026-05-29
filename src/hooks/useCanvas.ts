@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from "react";
-import { Canvas, FabricObject, Rect, Ellipse, Line, Triangle, Polygon, IText, Point, Path, Group } from "fabric";
+import { Canvas, FabricObject, Rect, Ellipse, Line, Triangle, Polygon, IText, Point, Path, Group, StaticCanvas, FabricImage } from "fabric";
 
 export type ToolName =
   | "select"
@@ -18,7 +18,8 @@ export type ToolName =
   | "eyedropper";
 
 const SNAP_HISTORY_LIMIT = 50;
-const EXTRA_PROPS = ["layerId", "layerName", "frameId", "styleId", "isGridLine", "isFrameLabel"];
+const FRAME_MAX = 50;
+const EXTRA_PROPS = ["layerId", "layerName", "frameId", "isFrameVisual", "isFrameLabel", "frameName", "frameFill", "frameStroke", "styleId", "isGridLine"];
 
 function canvasToJSON(c: Canvas): any {
   return (c as any).toJSON(EXTRA_PROPS);
@@ -221,22 +222,30 @@ export function useCanvas() {
         obj = new Polygon(pts, { fill: color, left: cx, top: cy, originX: "center", originY: "center" });
         break;
       }
-      case "frame":
-        obj = new Rect({ left: x, top: y, width: w, height: h, fill: "#ffffff", stroke: "#999999", strokeWidth: 1.5, rx: 0, ry: 0 });
-        (obj as any).isFrameLabel = true;
-        (obj as any).frameName = `Frame_${Date.now() % 1000}`;
+      case "frame": {
+        const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        obj = new Rect({ left: x, top: y, width: w, height: h, fill: "#ffffff", stroke: "#6366f1", strokeWidth: 2, rx: 0, ry: 0 });
+        (obj as any).isFrameVisual = true;
+        (obj as any).frameId = frameId;
+        (obj as any).frameName = `Frame ${Date.now() % 1000}`;
+        (obj as any).frameFill = "#ffffff";
+        (obj as any).frameStroke = "#6366f1";
+        (obj as any).layerName = (obj as any).frameName;
         break;
+      }
     }
     if (obj && !(obj as any).isFrameLabel) (obj as any).layerName = name;
     return obj;
   }
 
-  // --- Init canvas ---
-  const initCanvas = useCallback((el: HTMLCanvasElement, container: HTMLDivElement, width = 1080, height = 1080) => {
+  // --- Init canvas (infinite, no fixed size) ---
+  const initCanvas = useCallback((el: HTMLCanvasElement, container: HTMLDivElement, _width?: number, _height?: number) => {
     containerRef.current = container;
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
     const c = new Canvas(el, {
-      width, height,
-      backgroundColor: "#e8e8e8",
+      width: w, height: h,
+      backgroundColor: "transparent",
       selection: true,
       preserveObjectStacking: true,
     });
@@ -348,7 +357,50 @@ export function useCanvas() {
     c.on("selection:created", updateSelection);
     c.on("selection:updated", updateSelection);
     c.on("selection:cleared", () => setSelectedObjects([]));
-    c.on("object:modified", () => { if (!isUndoRedoRef.current) pushHistory(); });
+    c.on("object:modified", (opt: any) => {
+      if (!isUndoRedoRef.current) {
+        // Frame member sync: detect if object entered/exited a frame
+        const obj = opt.target;
+        if (obj && !(obj as any).isFrameVisual) {
+          const frames = c.getObjects().filter((o: any) => o.isFrameVisual);
+          let foundFrameId: string | null = null;
+          for (const f of frames) {
+            const fb = f.getBoundingRect();
+            const ob = obj.getBoundingRect();
+            // Check if object center is inside frame bounds
+            const ocx = ob.left + ob.width / 2;
+            const ocy = ob.top + ob.height / 2;
+            if (ocx >= fb.left && ocx <= fb.left + fb.width && ocy >= fb.top && ocy <= fb.top + fb.height) {
+              foundFrameId = (f as any).frameId;
+              break;
+            }
+          }
+          (obj as any).frameId = foundFrameId;
+        }
+        pushHistory();
+      }
+    });
+
+    // Frame move: move contained children
+    let frameMoveDelta = { x: 0, y: 0 };
+    c.on("object:moving", (opt: any) => {
+      const obj = opt.target;
+      if ((obj as any).isFrameVisual) {
+        const fid = (obj as any).frameId;
+        if (!fid) return;
+        const dx = (obj.left ?? 0) - (((obj as any)._prevLeft) ?? obj.left ?? 0);
+        const dy = (obj.top ?? 0) - (((obj as any)._prevTop) ?? obj.top ?? 0);
+        (obj as any)._prevLeft = obj.left;
+        (obj as any)._prevTop = obj.top;
+        if (dx === 0 && dy === 0) return;
+        // Move all children
+        const children = c.getObjects().filter((o: any) => o.frameId === fid && !o.isFrameVisual);
+        for (const child of children) {
+          child.set({ left: (child.left ?? 0) + dx, top: (child.top ?? 0) + dy });
+          child.setCoords();
+        }
+      }
+    });
 
     // Snap-to-grid on moving
     c.on("object:moving", (opt: any) => {
@@ -674,6 +726,145 @@ export function useCanvas() {
     pushHistory();
   }, [pushHistory]);
 
+  // --- Frame Management ---
+
+  const getFrames = useCallback((): any[] => {
+    const c = canvasRef.current;
+    if (!c) return [];
+    return c.getObjects().filter((o: any) => o.isFrameVisual);
+  }, []);
+
+  const getFrameCount = useCallback((): number => {
+    const c = canvasRef.current;
+    if (!c) return 0;
+    return c.getObjects().filter((o: any) => o.isFrameVisual).length;
+  }, []);
+
+  const getFrameObjects = useCallback((frameId: string): FabricObject[] => {
+    const c = canvasRef.current;
+    if (!c) return [];
+    return c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
+  }, []);
+
+  const getFreeObjects = useCallback((): FabricObject[] => {
+    const c = canvasRef.current;
+    if (!c) return [];
+    return c.getObjects().filter((o: any) => !o.frameId && !o.isFrameVisual && !o.isGridLine);
+  }, []);
+
+  const createFrame = useCallback((name: string, x: number, y: number, w: number, h: number) => {
+    const c = canvasRef.current;
+    if (!c) return null;
+    const count = c.getObjects().filter((o: any) => o.isFrameVisual).length;
+    if (count >= FRAME_MAX) return null;
+    const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const frame = new Rect({
+      left: x, top: y, width: w, height: h,
+      fill: "#ffffff", stroke: "#6366f1", strokeWidth: 2, rx: 0, ry: 0,
+    });
+    (frame as any).isFrameVisual = true;
+    (frame as any).frameId = frameId;
+    (frame as any).frameName = name || `Frame ${count + 1}`;
+    (frame as any).frameFill = "#ffffff";
+    (frame as any).frameStroke = "#6366f1";
+    (frame as any).layerName = (frame as any).frameName;
+    c.add(frame);
+    c.setActiveObject(frame);
+    c.requestRenderAll();
+    pushHistory();
+    return frame;
+  }, [pushHistory]);
+
+  const deleteFrame = useCallback((frameId: string) => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const frame = c.getObjects().find((o: any) => o.frameId === frameId);
+    if (!frame) return;
+    // Remove frame and all its children
+    const children = c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
+    c.remove(frame, ...children);
+    c.discardActiveObject();
+    c.requestRenderAll();
+    pushHistory();
+  }, [pushHistory]);
+
+  const renameFrame = useCallback((frameId: string, name: string) => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const frame = c.getObjects().find((o: any) => o.frameId === frameId);
+    if (!frame) return;
+    (frame as any).frameName = name;
+    (frame as any).layerName = name;
+    c.requestRenderAll();
+  }, []);
+
+  const moveObjectToFrame = useCallback((objectId: string, frameId: string | null) => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const obj = c.getObjects().find((o: any) => o.layerName === objectId || o.name === objectId);
+    if (!obj || (obj as any).isFrameVisual) return;
+    (obj as any).frameId = frameId;
+    c.requestRenderAll();
+    pushHistory();
+  }, [pushHistory]);
+
+  // --- Frame-Scoped Export ---
+
+  const exportFramePNG = useCallback(async (frameId: string, scale = 2): Promise<Blob | null> => {
+    const c = canvasRef.current;
+    if (!c) return null;
+    const frame = c.getObjects().find((o: any) => o.frameId === frameId && o.isFrameVisual);
+    if (!frame) return null;
+    const children = c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
+    if (children.length === 0) return null;
+
+    // Create temp canvas sized to frame
+    const fw = (frame.width ?? 0) * (frame.scaleX ?? 1);
+    const fh = (frame.height ?? 0) * (frame.scaleY ?? 1);
+    const sc = new StaticCanvas(document.createElement("canvas"), {
+      width: fw * scale, height: fh * scale,
+      backgroundColor: (frame as any).frameFill || "#ffffff",
+    });
+    sc.setZoom(scale);
+
+    // Clone children with relative positions
+    const clones: any[] = [];
+    const fl = frame.left ?? 0, ft = frame.top ?? 0;
+    for (const obj of children) {
+      const json = (obj as any).toJSON(EXTRA_PROPS);
+      if (!json) continue;
+      const clone = await FabricObject.fromObject(json);
+      clone.set({
+        left: (obj.left ?? 0) - fl,
+        top: (obj.top ?? 0) - ft,
+      });
+      clones.push(clone);
+    }
+    sc.add(...clones);
+    sc.requestRenderAll();
+
+    const dataUrl = sc.toDataURL({ format: "png", multiplier: 1 });
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    sc.dispose();
+    return blob;
+  }, []);
+
+  const exportAllFramesPNG = useCallback(async (): Promise<{ name: string; blob: Blob }[]> => {
+    const c = canvasRef.current;
+    if (!c) return [];
+    const frames = c.getObjects().filter((o: any) => o.isFrameVisual);
+    const results: { name: string; blob: Blob }[] = [];
+    for (const frame of frames) {
+      const fid = (frame as any).frameId;
+      const blob = await exportFramePNG(fid);
+      if (blob) {
+        results.push({ name: (frame as any).frameName || fid, blob });
+      }
+    }
+    return results;
+  }, [exportFramePNG]);
+
   return {
     canvasRef, containerRef,
     tool, setTool, zoom, zoomIn, zoomOut, zoomToFit,
@@ -684,5 +875,11 @@ export function useCanvas() {
     group, ungroup, deleteSelected, copySelected, pasteObject, duplicateSelected,
     toggleLock, showGrid, toggleSnap, setGridSize, pushHistory,
     align, distribute, booleanOp, autoLayout,
+    // Frame management
+    getFrames, getFrameCount, getFrameObjects, getFreeObjects,
+    createFrame, deleteFrame, renameFrame, moveObjectToFrame,
+    // Frame-scoped export
+    exportFramePNG, exportAllFramesPNG,
+    FRAME_MAX,
   };
 }

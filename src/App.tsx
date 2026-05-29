@@ -79,6 +79,7 @@ function App() {
 
   // Proxy ref for LayersPanel — populated from canvas on window
   const layersCanvasRef = useRef<FabricCanvas | null>(null);
+  const frameCountRef = useRef(0);
 
   // Sync with CanvasEditor via polling window.__canvasControls
   useEffect(() => {
@@ -95,6 +96,10 @@ function App() {
       // Populate the layers canvas proxy ref
       if (ctrl._canvas && !layersCanvasRef.current) {
         layersCanvasRef.current = ctrl._canvas;
+      }
+      // Update frame count
+      if (typeof ctrl.getFrameCount === "function") {
+        frameCountRef.current = ctrl.getFrameCount();
       }
     }, 200);
     return () => clearInterval(id);
@@ -176,6 +181,25 @@ function App() {
           onExportPNG={async () => { const blob = await callCanvas("exportPNG", 2); if (blob) downloadBlob(blob, "design.png"); }}
           onExportSVG={() => { const svg = callCanvas("exportSVG"); if (svg) downloadText(svg, "design.svg", "image/svg+xml"); }}
           onExportJSON={() => { const json = callCanvas("exportJSON"); if (json) downloadText(json, "design.json", "application/json"); }}
+          onExportFrame={async () => {
+            const frames = callCanvas("getFrames");
+            if (frames && frames.length > 0) {
+              const blob = await callCanvas("exportFramePNG", (frames[0] as any).frameId, 2);
+              if (blob) downloadBlob(blob, `${(frames[0] as any).frameName || "frame"}.png`);
+            }
+          }}
+          onExportAllFrames={async () => {
+            const results = await callCanvas("exportAllFramesPNG");
+            if (results && results.length > 0) {
+              for (const r of results) {
+                downloadBlob(r.blob, `${r.name}.png`);
+                await new Promise(res => setTimeout(res, 200));
+              }
+            }
+          }}
+          onExportPDF={() => { /* future */ }}
+          frameCount={frameCountRef.current}
+          frameMax={callCanvas("FRAME_MAX") || 50}
           onZoomIn={() => callCanvas("zoomIn")}
           onZoomOut={() => callCanvas("zoomOut")}
           onZoomToFit={() => callCanvas("zoomToFit")}
@@ -217,6 +241,10 @@ function App() {
         <LayersPanel
           canvasRef={layersCanvasRef as React.RefObject<FabricCanvas | null>}
           selectedObjects={selectedObjects}
+          onFrameCreate={() => callCanvas("createFrame", "New Frame", 100, 100, 400, 300)}
+          onFrameDelete={(frameId: string) => callCanvas("deleteFrame", frameId)}
+          onFrameRename={(frameId: string, name: string) => callCanvas("renameFrame", frameId, name)}
+          onMoveToFrame={(objectId: string, frameId: string | null) => callCanvas("moveObjectToFrame", objectId, frameId)}
         />
       </div>
 

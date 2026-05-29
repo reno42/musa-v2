@@ -31,6 +31,11 @@ interface Props {
   onExportPNG: () => void;
   onExportSVG: () => void;
   onExportJSON: () => void;
+  onExportFrame: () => void;
+  onExportAllFrames: () => void;
+  onExportPDF: () => void;
+  frameCount: number;
+  frameMax: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomToFit: () => void;
@@ -49,6 +54,8 @@ interface Props {
 export function Toolbar({
   tool, onToolChange,
   onExportPNG, onExportSVG, onExportJSON,
+  onExportFrame, onExportAllFrames,
+  frameCount, frameMax,
   onZoomIn, onZoomOut, onZoomToFit, zoom,
   history, onUndo, onRedo,
   onAlign, onDistribute, selection,
@@ -160,7 +167,17 @@ export function Toolbar({
 
       {/* ─── Export Group ─── */}
       <div className="export-group">
-        <button type="button" className="tool-btn" onClick={onExportPNG} title="Export PNG" aria-label="Export PNG">
+        {frameCount > 0 && (
+          <>
+            <button type="button" className="tool-btn" onClick={onExportFrame} title="Export First Frame as PNG" aria-label="Export Frame PNG">
+              <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM2 2v20h20V2z" fillRule="evenodd" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg>
+            </button>
+            <button type="button" className="tool-btn" onClick={onExportAllFrames} title={`Export All Frames (${frameCount}/${frameMax})`} aria-label="Export All Frames">
+              <svg viewBox="0 0 24 24"><rect x="2" y="2" width="8" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" /><rect x="14" y="2" width="8" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" /><rect x="2" y="14" width="8" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" /><rect x="14" y="14" width="8" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M5 5v2m2-2v2M5 12v2m2-2v2M5 19v2m2-2v2" fill="none" stroke="currentColor" strokeWidth="0.8" opacity="0.5" /></svg>
+            </button>
+          </>
+        )}
+        <button type="button" className="tool-btn" onClick={onExportPNG} title="Export Canvas PNG" aria-label="Export PNG">
           <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
         </button>
         <button type="button" className="tool-btn" onClick={onExportSVG} title="Export SVG" aria-label="Export SVG">

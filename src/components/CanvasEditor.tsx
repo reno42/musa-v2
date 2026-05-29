@@ -20,6 +20,8 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     group, ungroup, deleteSelected,
     copySelected, pasteObject, duplicateSelected,
     toggleLock, showGrid, align, distribute, booleanOp, autoLayout,
+    getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
+    exportFramePNG, exportAllFramesPNG, FRAME_MAX,
   } = useCanvas();
 
   const mountRef = useRef<HTMLCanvasElement>(null);
@@ -42,10 +44,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   // Step 1: Init canvas on mount (no template load, no setLoading)
   useEffect(() => {
     if (!mountRef.current || !containerRef.current) return;
-    const tj = templateJsonRef.current;
-    const w = tj?.width || 1080;
-    const h = tj?.height || 1080;
-    const c = initCanvas(mountRef.current, containerRef.current, w, h);
+    const c = initCanvas(mountRef.current, containerRef.current);
     fabricRef.current = c;
     initDoneRef.current = true;
 
@@ -108,15 +107,19 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       align, distribute, booleanOp, autoLayout,
       selectedObjects,
       _canvas: fabricRef.current,
+      // Frame management
+      getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
+      exportFramePNG, exportAllFramesPNG,
+      FRAME_MAX,
     };
-  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects]);
+  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#1e1e2e" }}>
       <canvas ref={mountRef} style={{ display: "block" }} />
       {/* Zoom badge */}
       <div style={badgeStyle(true)}>
-        {Math.round(zoom * 100)}%
+        {Math.round(zoom * 100)}% · Frames: {getFrameCount()}/{FRAME_MAX}
         {saveStatus === "saving" && " · Saving…"}
         {saveStatus === "saved" && " · Saved"}
         {saveStatus === "error" && " · Error"}
