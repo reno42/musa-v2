@@ -1,18 +1,101 @@
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Fabric.js canvas editor for the Futuraria Design platform. Full WYSIWYG design tool with 14 drawing tools, boolean operations, alignment/distribution, auto-layout, frame management, layers panel, properties inspector, batch generation (3 modes), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Scores 100/100 on react-doctor health audit.
-**Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, or React best-practice refactors.
+**Description:** React + Fabric.js canvas editor for the Futuraria Design platform. Full WYSIWYG design tool with 14 drawing tools, boolean operations, alignment/distribution, auto-layout, frame management, layers panel, properties inspector, batch generation (3 modes), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Scores 100/100 on react-doctor health audit. Deployed on Netlify with Supabase persistence (freemium model).
+**Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
 
 ## Overview
 
-You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application that wraps Fabric.js v6 for a full WYSIWYG design experience. The editor talks to the Futuraria API at `localhost:3001` and implements localStorage fallback for offline resilience.
+You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application that wraps Fabric.js v6 for a full WYSIWYG design experience. The editor is deployed on **Netlify** with a serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write freemium model: Supabase when configured, in-memory fallback when not).
 
 **React-Doctor Score:** 100/100 (clean bill of health)
-**Base URL (dev):** `http://localhost:5173`
-**Start command:** `cd packages/editor && npm run dev`
+**Production URL:** `https://futuraria.netlify.app`
+**Dev URL:** `http://localhost:5173` (Vite dev server)
+**API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
+**MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
+**Start command:** `npm run dev` (from project root)
+
+## Project Structure (Flat)
+
+```
+design-main/
+├── src/                          — React frontend (Vite)
+│   ├── App.tsx                   — Root, useReducer, routing
+│   ├── components/
+│   │   ├── Dashboard.tsx         — Template gallery, workspace selector
+│   │   ├── CanvasEditor.tsx      — Fabric.js mount + template loader
+│   │   ├── Toolbar.tsx           — 14 drawing tools + controls
+│   │   ├── PropertiesPanel.tsx   — Object inspector
+│   │   ├── LayersPanel.tsx       — Layer manager
+│   │   ├── BatchAMator.tsx       — Batch generation (3 modes)
+│   │   ├── KeyboardShortcuts.tsx — Shortcuts modal
+│   │   ├── Toast.tsx             — Toast notifications
+│   │   └── toolbar/              — Toolbar sub-components
+│   ├── hooks/
+│   │   ├── useCanvas.ts          — Fabric.js canvas operations (689 lines)
+│   │   ├── useAutoSave.ts        — Dual-write auto-save (223 lines)
+│   │   └── useDropdowns.ts       — Dropdown state
+│   └── lib/
+│       ├── templateApi.ts        — API client + localStorage fallback
+│       └── supabase.ts           — Fetch wrapper (API_BASE = "")
+├── api/                          — Express API (serverless via Netlify Functions)
+│   ├── src/
+│   │   ├── index.ts              — Express app factory
+│   │   ├── server.ts             — Local dev server entry
+│   │   ├── routes/
+│   │   │   ├── templates.ts      — Template CRUD
+│   │   │   └── workspaces.ts     — Workspace CRUD
+│   │   ├── services/
+│   │   │   ├── templates.ts      — Template service (Supabase dual-write)
+│   │   │   ├── store.ts          — In-memory store (fallback)
+│   │   │   └── supabase.ts       — Supabase admin client (service_role)
+│   │   ├── middleware/
+│   │   │   ├── auth.ts           — API key / Bearer token auth
+│   │   │   └── rateLimit.ts      — Rate limiting (100 req/15s window)
+│   │   └── types.ts              — Shared TypeScript types
+│   └── package.json
+├── netlify/
+│   └── functions/
+│       ├── api.mjs               — Express → Netlify Function bridge
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 10 tools)
+├── netlify.toml                  — Netlify build + redirects
+├── package.json                  — Root: Vite + React deps
+├── vite.config.ts
+└── tsconfig.json
+```
+
+## Deployment Architecture
+
+```
+Browser / AI Agent
+  │
+  ▼
+Netlify CDN (futuraria.netlify.app)
+  ├── /*               → dist/index.html (SPA)
+  ├── /api/*           → /.netlify/functions/api  (Express → JSON)
+  └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
+         │
+         ▼
+Supabase (PostgreSQL)
+  ├── workspaces table  (id, name, owner_id, data JSONB, timestamps)
+  └── templates table   (id, name, workspace_id, data JSONB, user_id, timestamps)
+```
+
+### Freemium Model (Dual-Write Persistence)
+
+Every CRUD operation follows the same pattern:
+
+```
+Try Supabase first → ✓ Return result
+                   → ✗ Fall through to in-memory store
+Write operations:  in-memory store first → then Supabase.upsert() (non-blocking)
+```
+
+- **Supabase configured** (env vars in Netlify): Full cloud persistence across cold starts
+- **No Supabase**: In-memory only — survives container lifetime, resets on cold start
+- **MCP calls same services** — identical dual-write behavior, no separate code path
 
 ## Architecture
 
@@ -70,6 +153,25 @@ Template load:
     → If localStorage is newer → prefer localStorage
     → If API has empty canvas → fall back to localStorage
 ```
+
+### MCP (Model Context Protocol)
+
+AI agents connect to `https://futuraria.netlify.app/mcp` to discover and invoke 10 tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_workspaces` | List workspaces (Supabase-first) |
+| `create_workspace` | Create workspace (store + Supabase upsert) |
+| `list_templates` | List templates with workspace filter + search |
+| `get_template` | Full template with canvas, frames, styles |
+| `create_template` | Create template in a workspace |
+| `update_template` | Update name or canvas data |
+| `delete_template` | Permanently delete |
+| `duplicate_template` | Independent copy |
+| `export_template` | Export as .futuraria JSON |
+| `import_template` | Import .futuraria JSON (store + Supabase upsert) |
+
+**Protocol:** SSE init (GET) → JSON-RPC calls (POST). Same auth via `x-api-key` header. Same freemium dual-write as REST API.
 
 ### Key Pattern: Ref-based Search
 
@@ -214,7 +316,7 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
   1. Listens to Fabric.js events: `object:added/removed/modified/moving/scaling/rotating`
   2. Debounces 2s before `performSave()`
   3. **Always saves to localStorage first** (instant, primary)
-  4. **Then PUT to API** (best-effort cloud sync)
+  4. **Then PUT to API** (best-effort cloud sync via `/api/templates/:id`)
   5. API failures are silent — localStorage already has the data
 - **Exports:** `status` (idle/saving/saved/error), `forceSave()`, `flushSave()`, `clearPending()`, `setLoading(bool)`
 - **Custom serialization:** Preserves Fabric.js metadata (layerId, layerName, frameId, styleId, componentId, etc.)
@@ -239,7 +341,7 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
 
 ### supabase.ts
 - **File:** `src/lib/supabase.ts` (12 lines)
-- **Role:** Thin fetch wrapper with `API_BASE = "http://localhost:3001"` and default headers
+- **Role:** Thin fetch wrapper with `API_BASE = ""` (relative URLs for cloud deployment) and default headers
 
 ## Keyboard Shortcuts
 
@@ -297,6 +399,8 @@ When modifying editor files, follow these rules:
 6. **All buttons need `type="button"`** and `aria-label`
 7. **Keep component files focused** — extract sub-components to separate files (e.g., toolbar/ directory)
 8. **Dual-write pattern**: localStorage first, API second — never lose user data to network errors
+9. **API calls use relative URLs** (`/api/...`) — works on any domain (Netlify redirects to function)
+10. **MCP tools must follow dual-write** — always upsert to Supabase after store writes (non-blocking catch)
 
 ## Dependencies
 
@@ -313,25 +417,27 @@ Dev: `vite@5`, `typescript@5`, `@vitejs/plugin-react@4`
 ## Start Commands
 
 ```bash
-# Development
-cd packages/editor && npm run dev          # → http://localhost:5173
+# Development (frontend only — Vite dev server)
+npm run dev                              # → http://localhost:5173
 
-# Build
-cd packages/editor && npm run build        # tsc + vite build
+# Local API (optional — for testing without Netlify)
+cd api && npm run dev                    # → http://localhost:3001
 
-# Preview build
-cd packages/editor && npm run preview
+# Build (Vite)
+npm run build                            # tsc + vite build → dist/
 
-# Full stack (API + Editor)
-cd packages/api && npx tsx src/index.ts &   # → http://localhost:3001
-cd packages/editor && npm run dev           # → http://localhost:5173
+# Build + functions (as Netlify does)
+npm run build:functions && npm run build
+
+# Preview production build
+npm run preview
 ```
 
 ## Key Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/App.tsx` | 250 | Root component, useReducer, routing |
+| `src/App.tsx` | ~250 | Root component, useReducer, routing |
 | `src/hooks/useCanvas.ts` | 689 | Fabric.js canvas operations |
 | `src/hooks/useAutoSave.ts` | 223 | Dual-write auto-save |
 | `src/components/Toolbar.tsx` | 176 | Toolbar shell |
@@ -344,5 +450,11 @@ cd packages/editor && npm run dev           # → http://localhost:5173
 | `src/lib/templateApi.ts` | 207 | API client + localStorage |
 | `src/lib/supabase.ts` | 12 | Fetch wrapper |
 | `src/hooks/useDropdowns.ts` | ~80 | Dropdown state (useReducer) |
-| `package.json` | 35 | Config + react-doctor ignore rules |
+| `api/src/services/templates.ts` | 192 | Template service (Supabase dual-write) |
+| `api/src/services/store.ts` | — | In-memory store (fallback) |
+| `api/src/services/supabase.ts` | — | Supabase admin client |
+| `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
+| `netlify/functions/mcp.mjs` | ~337 | MCP server (10 tools) |
+| `netlify.toml` | 22 | Build config + redirects |
+| `package.json` | 36 | Config + react-doctor ignore rules |
 | `vite.config.ts` | 12 | Vite + React plugin + alias |

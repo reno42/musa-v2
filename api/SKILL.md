@@ -1,65 +1,118 @@
 # Futuraria Design API — AI Agent Skill
 
 **Skill Name:** `futuraria-api`  
-**Description:** Full REST API for the Futuraria Design platform. Create, read, update, and delete workspaces, templates, frames, layers, styles, versions, comments, variables, components, and webhooks. Supports batch generation, CSS specs extraction, image upload, SVG path tools, boolean operations, alignment, distribution, auto-layout, and server-side rendering (PNG/JPG/SVG).  
-**Triggers:** Any task involving the Futuraria API, template management, batch generation, design automation, or backend operations.
+**Description:** Full REST API + MCP server for the Futuraria Design platform. Create, read, update, and delete workspaces, templates, frames, layers, styles, versions, comments, variables, components, and webhooks. Supports batch generation, CSS specs extraction, image upload, SVG path tools, boolean operations, alignment, distribution, auto-layout, and server-side rendering (PNG/JPG/SVG). Built on Express + Netlify Functions with Supabase dual-write persistence (freemium model: cloud DB when configured, in-memory fallback when not).  
+**Triggers:** Any task involving the Futuraria API, template management, batch generation, design automation, MCP integration, or backend operations.
 
 ---
 
 ## Overview
 
-You are an AI agent with full access to the Futuraria Design REST API. This API lets you create workspaces, templates, frames, and manipulate design elements using 100% of the available canvas tools.
+You are an AI agent with full access to the Futuraria Design API and MCP server. The API lets you create workspaces, templates, frames, and manipulate design elements using 100% of the available canvas tools. The MCP server exposes the same capabilities via JSON-RPC for AI agent consumption.
 
-**Base URL:** `http://localhost:3001/api`  
+**Cloud URL:** `https://futuraria.netlify.app/api`  
+**Dev URL:** `http://localhost:3001/api`  
 **Health:** `GET /api/health` → `{ "status": "ok", "timestamp": "..." }`  
-**Auth:** Auto-assigns `dev_user_default` in dev mode. Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` for production.  
+**MCP Endpoint:** `https://futuraria.netlify.app/mcp` (SSE + JSON-RPC, 10 tools)  
+**Auth:** Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` header. Falls back to `dev_user_default` if no auth provided.  
 **Rate Limit:** 100 requests per 15-second window (shared across all endpoints).  
-**Store:** In-memory Map store — data persists for the process lifetime, resets on server restart. No Supabase dependency in dev.  
+**Persistence:** Supabase-primary dual-write with in-memory Map store fallback.  
 **Response Format:** `{ "success": true|false, "data": ..., "error?": "message" }`
 
-**Start the server:** `cd packages/api && npx tsx src/index.ts`
+## Deployment Architecture
+
+```
+Browser / AI Agent
+  │
+  ▼
+Netlify CDN
+  ├── /api/*     → /.netlify/functions/api  (Express app → JSON)
+  └── /mcp       → /.netlify/functions/mcp   (JSON-RPC + SSE)
+         │
+         ▼
+Supabase (PostgreSQL)
+  ├── workspaces (id, name, owner_id, data JSONB, created_at, updated_at)
+  └── templates  (id, name, workspace_id, data JSONB, user_id, created_at, updated_at)
+```
+
+### Freemium Dual-Write Pattern
+
+**All CRUD operations** on templates and workspaces follow this pattern:
+
+```
+READ:  Supabase.select() first → return if found → fall back to in-memory store
+WRITE: in-memory store first → then Supabase.upsert() (non-blocking, catch+silent)
+DELETE: in-memory store first → then Supabase.delete() (non-blocking, catch+silent)
+```
+
+**When Supabase env vars are set in Netlify:**
+- Data persists across cold starts, redeploys, and container restarts
+- Workspace and template CRUD is fully durable
+
+**When Supabase is NOT configured (freemium/dev):**
+- Data lives only in the in-memory Map store
+- Survives the lifetime of the Netlify Function container
+- Resets on cold start (acceptable for dev/testing)
+
+The MCP server uses the **same service layer** (`templates.ts`, `store.ts`, `supabase.ts`) — identical dual-write behavior, no separate code path.
+
+## Start the Server
+
+```bash
+# Local development (Express + in-memory store)
+cd api && npm run dev                    # → http://localhost:3001/api
+
+# Type-check only (no runtime)
+cd api && npm run typecheck
+```
 
 ## Quick Start: Create a Full Design
 
 ```bash
+# Cloud (Netlify)
+BASE="https://futuraria.netlify.app/api"
+
+# Local dev
+# BASE="http://localhost:3001/api"
+
 # 1. Create a workspace
-curl -X POST http://localhost:3001/api/workspaces \
+curl -X POST $BASE/workspaces \
   -H "Content-Type: application/json" \
   -d '{"name":"My Project","description":"Design system for landing page"}'
 # → { "success": true, "data": { "id": "ws_abcd1234", ... } }
 export WS="ws_abcd1234"
 
 # 2. Create a template
-curl -X POST http://localhost:3001/api/templates \
+curl -X POST $BASE/templates \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"Hero Section\",\"width\":1440,\"height\":900,\"workspaceId\":\"$WS\"}"
 # → { "success": true, "data": { "id": "tpl_xyz", ... } }
 export TPL="tpl_xyz"
 
 # 3. Create frames inside the template
-curl -X POST http://localhost:3001/api/templates/$TPL/frames \
+curl -X POST $BASE/templates/$TPL/frames \
   -H "Content-Type: application/json" \
   -d '{"name":"Desktop","x":0,"y":0,"width":1440,"height":900}'
 # → { "success": true, "data": { "id": "frame_...", ... } }
 export FRAME="frame_..."
 
 # 4. Draw shapes inside a frame
-curl -X POST http://localhost:3001/api/templates/$TPL/tools/draw \
+curl -X POST $BASE/templates/$TPL/tools/draw \
   -H "Content-Type: application/json" \
   -d "{\"tool\":\"rect\",\"x\":100,\"y\":50,\"width\":200,\"height\":60,\"fill\":\"#3B82F6\",\"layerName\":\"cta_bg\",\"frameId\":\"$FRAME\"}"
 
 # 5. Add text
-curl -X POST http://localhost:3001/api/templates/$TPL/tools/text \
+curl -X POST $BASE/templates/$TPL/tools/text \
   -H "Content-Type: application/json" \
   -d '{"text":"Get Started","x":130,"y":65,"fontSize":28,"fill":"#FFFFFF","layerName":"cta_text","frameId":"'$FRAME'"}'
 
 # 6. Align
-curl -X POST http://localhost:3001/api/templates/$TPL/tools/align \
+curl -X POST $BASE/templates/$TPL/tools/align \
   -H "Content-Type: application/json" \
   -d "{\"direction\":\"center-h\",\"targetLayerNames\":[\"cta_bg\",\"cta_text\"],\"frameId\":\"$FRAME\"}"
 
 # 7. Render
-curl -X POST http://localhost:3001/api/templates/$TPL/render \
+curl -X POST $BASE/templates/$TPL/render \
   -H "Content-Type: application/json" \
   -d '{"format":"png","scale":2}'
 ```
@@ -70,12 +123,12 @@ curl -X POST http://localhost:3001/api/templates/$TPL/render \
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/workspaces` | Create workspace |
-| `GET` | `/api/workspaces` | List your workspaces |
+| `POST` | `/api/workspaces` | Create workspace (store + Supabase) |
+| `GET` | `/api/workspaces` | List your workspaces (Supabase-first) |
 | `GET` | `/api/workspaces/:id` | Get workspace |
-| `PUT` | `/api/workspaces/:id` | Update workspace |
-| `DELETE` | `/api/workspaces/:id` | Delete workspace (cascades) |
-| `POST` | `/api/workspaces/:id/members` | Add member `{ userId }` |
+| `PUT` | `/api/workspaces/:id` | Update workspace (store + Supabase) |
+| `DELETE` | `/api/workspaces/:id` | Delete workspace (cascades, store + Supabase) |
+| `POST` | `/api/workspaces/:id/members` | Add member `{ userId }` (store + Supabase) |
 | `GET` | `/api/workspaces/:id/templates` | List templates in workspace |
 
 ```json
@@ -89,12 +142,12 @@ curl -X POST http://localhost:3001/api/templates/$TPL/render \
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/templates` | Create template |
-| `GET` | `/api/templates?limit&offset&workspaceId` | List templates |
-| `GET` | `/api/templates/:id` | Get template |
-| `PUT` | `/api/templates/:id` | Update template (full canvas) |
-| `DELETE` | `/api/templates/:id` | Delete template |
-| `POST` | `/api/templates/:id/duplicate` | Duplicate template |
+| `POST` | `/api/templates` | Create template (store + Supabase) |
+| `GET` | `/api/templates?limit&offset&workspaceId` | List templates (Supabase-first) |
+| `GET` | `/api/templates/:id` | Get template (Supabase-first) |
+| `PUT` | `/api/templates/:id` | Update template (store + Supabase) |
+| `DELETE` | `/api/templates/:id` | Delete template (store + Supabase) |
+| `POST` | `/api/templates/:id/duplicate` | Duplicate template (store + Supabase) |
 | `PATCH` | `/api/templates/:id/layers` | Batch layer override |
 | `PATCH` | `/api/templates/:id/layers/:name` | Single layer override |
 | `GET` | `/api/templates/:id/layers` | List layers |
@@ -245,6 +298,54 @@ All tool endpoints operate within a specific frame. Use `frameId` to target a fr
 ```json
 // POST body
 { "url": "https://hook.example.com", "events": ["template.created", "render.complete"], "secret?": "string" }
+```
+
+## MCP (Model Context Protocol) Server
+
+The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same template/workspace services via JSON-RPC for AI agents. Same auth, same dual-write, same rate limits.
+
+**Protocol:** SSE init (GET) → JSON-RPC calls (POST)
+
+### Available MCP Tools
+
+| Tool | Description | Persistence |
+|------|-------------|-------------|
+| `list_workspaces` | List workspaces | Supabase-first |
+| `create_workspace` | Create workspace | Store + Supabase upsert |
+| `list_templates` | List templates (workspace filter, search, pagination) | Supabase-first |
+| `get_template` | Full template with canvas, frames, styles | Supabase-first |
+| `create_template` | Create template in a workspace | Store + Supabase upsert |
+| `update_template` | Update name or canvas data | Store + Supabase upsert |
+| `delete_template` | Permanently delete | Store + Supabase delete |
+| `duplicate_template` | Independent copy | Store + Supabase upsert |
+| `export_template` | Export as .futuraria JSON | Supabase read |
+| `import_template` | Import .futuraria JSON into workspace | Store + Supabase upsert |
+
+**Auth:** Pass `x-api-key` or `Authorization: Bearer <key>` header with POST requests.
+
+### Example MCP Interaction
+
+```bash
+# 1. SSE init (GET)
+curl https://futuraria.netlify.app/mcp
+# → event: endpoint
+# → data: /mcp
+
+# 2. Initialize (POST)
+curl -X POST https://futuraria.netlify.app/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+
+# 3. List tools (POST)
+curl -X POST https://futuraria.netlify.app/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+
+# 4. Call a tool (POST)
+curl -X POST https://futuraria.netlify.app/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: dev-key" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_template","arguments":{"name":"Hero","workspaceId":"ws_abc","width":1440,"height":900}}}'
 ```
 
 ## Agent Workflow Patterns
@@ -501,3 +602,39 @@ All responses follow:
 - **Layer** is any object (shape, text, image, group) on the canvas or inside a frame
 - **frameId** parameter targets operations to a specific frame; omit for canvas root
 - **layerName** is the unique identifier for finding/modifying objects
+- **Dual-write**: All CRUD on templates/workspaces writes to in-memory store AND Supabase (when configured)
+- **MCP**: Same service layer as REST API — AI agents use JSON-RPC, humans use REST, same persistence
+
+## API Codebase Structure
+
+```
+api/src/
+├── index.ts           — Express app factory (exported for Netlify bridge)
+├── server.ts          — Local dev server entry (tsx watch)
+├── routes/
+│   ├── templates.ts   — Template CRUD routes (Supabase dual-write)
+│   └── workspaces.ts  — Workspace CRUD routes (Supabase dual-write)
+├── services/
+│   ├── templates.ts   — Template service (listFromSupabase, upsertSupabase, etc.)
+│   ├── store.ts       — In-memory Map store (fallback when Supabase unavailable)
+│   └── supabase.ts    — Supabase admin client (service_role key)
+├── middleware/
+│   ├── auth.ts        — API key / Bearer token auth
+│   ├── rateLimit.ts   — Rate limiting (lazy cleanup, no setInterval)
+│   └── validation.ts  — Zod schemas for request validation
+└── types.ts           — Shared TypeScript types
+```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `api/src/services/templates.ts` | Template CRUD with Supabase dual-write |
+| `api/src/services/store.ts` | In-memory Map store (all entities) |
+| `api/src/services/supabase.ts` | Supabase admin client (getSupabase) |
+| `api/src/routes/workspaces.ts` | Workspace REST routes (dual-write) |
+| `api/src/middleware/auth.ts` | Auth extraction (dev_user_default fallback) |
+| `api/src/middleware/rateLimit.ts` | 100 req/15s rate limiter |
+| `netlify/functions/api.mjs` | Express → Netlify Function bridge |
+| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 10 tools) |
+| `netlify.toml` | Build config + /api/* → /mcp → /* redirects |

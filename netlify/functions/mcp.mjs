@@ -1,5 +1,6 @@
 import * as templates from "../../api/src/services/templates.js";
 import { store } from "../../api/src/services/store.js";
+import { getSupabase } from "../../api/src/services/supabase.js";
 
 const MCP_TOOLS = [
   {
@@ -141,11 +142,33 @@ async function handleMethod(method, params, userId) {
   switch (method) {
     // ── Workspaces ──
     case "list_workspaces": {
+      const sb = getSupabase();
+      if (sb) {
+        try {
+          const { data } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
+          if (data?.length) {
+            const items = data.map(r => ({
+              ...r.data, id: r.id, name: r.name, ownerId: r.owner_id,
+              createdAt: r.created_at, updatedAt: r.updated_at,
+            }));
+            return { data: items, total: items.length };
+          }
+        } catch { /* fall through to store */ }
+      }
       const data = store.listWorkspaces(userId);
       return { data, total: data.length };
     }
     case "create_workspace": {
       const ws = store.createWorkspace({ name: params.name, description: params.description, ownerId: userId });
+      const sb = getSupabase();
+      if (sb) {
+        try {
+          await sb.from("workspaces").upsert({
+            id: ws.id, name: ws.name, owner_id: ws.ownerId,
+            data: ws, updated_at: new Date().toISOString(),
+          });
+        } catch { /* non-blocking */ }
+      }
       return ws;
     }
 
@@ -216,6 +239,16 @@ async function handleMethod(method, params, userId) {
       if (tplData.frames) newTpl.frames = tplData.frames;
       if (tplData.styles) newTpl.styles = tplData.styles;
       if (tplData.variables) newTpl.variables = tplData.variables;
+      // Dual-write to Supabase
+      const sb = getSupabase();
+      if (sb) {
+        try {
+          await sb.from("templates").upsert({
+            id: newTpl.id, name: newTpl.name, workspace_id: newTpl.workspaceId,
+            data: newTpl, user_id: userId, updated_at: new Date().toISOString(),
+          });
+        } catch { /* non-blocking */ }
+      }
       return newTpl;
     }
 
