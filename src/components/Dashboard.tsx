@@ -46,7 +46,6 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
   }, []);
 
   const loadTemplates = useCallback(async (wsId?: string) => {
-    loadTemplatesRef.current = loadTemplates;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -58,6 +57,8 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
     } catch { setTemplates([]); }
     setLoading(false);
   }, [setLoading]);
+
+  loadTemplatesRef.current = loadTemplates;
 
   const handleSearch = useCallback((value: string) => {
     setSearchDisplay(value);

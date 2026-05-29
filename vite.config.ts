@@ -8,4 +8,9 @@ export default defineConfig({
       "@futuraria/shared": "/src/shared",
     },
   },
+  server: {
+    proxy: {
+      "/api": "http://localhost:3001",
+    },
+  },
 });
