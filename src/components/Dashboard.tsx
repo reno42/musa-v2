@@ -35,9 +35,12 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
   const [searchDisplay, setSearchDisplay] = useState("");
+  const [creatingWs, setCreatingWs] = useState(false);
+  const [newWsName, setNewWsName] = useState("");
   const searchRef = useRef("");
   const loadingRef = useRef(true);
   const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
+  const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
 
   const setLoading = useCallback((v: boolean) => {
@@ -73,11 +76,38 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
 
   useEffect(() => {
     apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
-      .then(r => { setWorkspaces(r.data || []); if (r.data?.[0]) { setSelectedWs(r.data[0].id); loadTemplatesRef.current(r.data[0].id); } })
-      .catch(() => {});
+      .then(r => {
+        const wsList = r.data || [];
+        setWorkspaces(wsList);
+        if (wsList[0]) {
+          setSelectedWs(wsList[0].id);
+          loadTemplatesRef.current(wsList[0].id);
+        } else {
+          loadTemplatesRef.current();
+        }
+      })
+      .catch(() => loadTemplatesRef.current());
   }, []);
 
   const loading = loadingRef.current;
+
+  const handleCreateWorkspace = async () => {
+    const name = newWsName.trim();
+    if (!name) return;
+    try {
+      const res = await apiFetch<{ success: boolean; data: Workspace }>("/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      if (res.data) {
+        setWorkspaces(prev => [...prev, res.data]);
+        setSelectedWs(res.data.id);
+        setNewWsName("");
+        setCreatingWs(false);
+        loadTemplatesRef.current(res.data.id);
+      }
+    } catch { /* ignore */ }
+  };
 
   const handleDelete = async (id: string) => {
     try {
@@ -110,14 +140,34 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
       <div style={dashHeaderStyle}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
         <div style={{ flex: 1 }} />
-        <select
-          aria-label="Select workspace"
-          value={selectedWs || ""}
-          onChange={e => handleWsChange(e.target.value || null)}
-          style={selectStyle}
-        >
-          {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-        </select>
+        {creatingWs ? (
+          <input
+            ref={newWsInputRef}
+            aria-label="New workspace name"
+            placeholder="Workspace name…"
+            value={newWsName}
+            onChange={e => setNewWsName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleCreateWorkspace(); if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
+            onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
+            style={{ ...inputStyle, width: 160 }}
+            autoFocus
+          />
+        ) : (
+          <select
+            aria-label="Select workspace"
+            value={selectedWs || ""}
+            onChange={e => handleWsChange(e.target.value || null)}
+            style={selectStyle}
+          >
+            {workspaces.length === 0 && <option value="">No workspaces</option>}
+            {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        )}
+        {!creatingWs && (
+          <button type="button" onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }} style={btnSecondary}>
+            + Workspace
+          </button>
+        )}
         <input
           aria-label="Search templates"
           placeholder="Search templates…"
@@ -219,6 +269,11 @@ const inputStyle: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   background: "#7c6fff", border: "none", color: "#fff",
   borderRadius: 6, padding: "6px 16px", fontSize: 12, cursor: "pointer", fontWeight: 500,
+};
+
+const btnSecondary: React.CSSProperties = {
+  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
+  borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer",
 };
 
 const cardStyle: React.CSSProperties = {
