@@ -199,7 +199,7 @@ function App() {
           }}
           onExportPDF={() => { /* future */ }}
           frameCount={frameCountRef.current}
-          frameMax={callCanvas("FRAME_MAX") || 50}
+          frameMax={50}
           onZoomIn={() => callCanvas("zoomIn")}
           onZoomOut={() => callCanvas("zoomOut")}
           onZoomToFit={() => callCanvas("zoomToFit")}
