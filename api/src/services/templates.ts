@@ -3,6 +3,9 @@ import { getSupabase } from "./supabase.js";
 import { v4 as uuid } from "uuid";
 import type { DesignTemplate, FabricCanvas, LayerOverride } from "../types.js";
 
+/** UUID v4 format (used to validate user_id before Supabase upsert) */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type SupabaseTplRow = {
   id: string;
   name: string;
@@ -70,14 +73,18 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
   const sb = getSupabase();
   if (!sb) return false;
   try {
-    const { error } = await sb.from("templates").upsert({
+    const row: Record<string, any> = {
       id: tpl.id,
       name: tpl.name,
       workspace_id: tpl.workspaceId || null,
       data: tpl,
-      user_id: userId,
       updated_at: new Date().toISOString(),
-    });
+    };
+    // Only include user_id if it's a valid UUID (column type is uuid with FK to auth.users)
+    if (UUID_RE.test(userId)) {
+      row.user_id = userId;
+    }
+    const { error } = await sb.from("templates").upsert(row);
     if (error) {
       console.warn("[templates] Supabase upsert failed:", error.message);
       return false;

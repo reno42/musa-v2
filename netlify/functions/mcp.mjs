@@ -2,6 +2,9 @@ import * as templates from "../../api/src/services/templates.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 
+/** UUID v4 format — validates user_id before Supabase upsert */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const MCP_TOOLS = [
   {
     name: "list_workspaces",
@@ -163,10 +166,12 @@ async function handleMethod(method, params, userId) {
       const sb = getSupabase();
       if (sb) {
         try {
-          await sb.from("workspaces").upsert({
-            id: ws.id, name: ws.name, owner_id: ws.ownerId,
+          const row = {
+            id: ws.id, name: ws.name,
             data: ws, updated_at: new Date().toISOString(),
-          });
+          };
+          if (UUID_RE.test(userId)) row.user_id = userId;
+          await sb.from("workspaces").upsert(row);
         } catch { /* non-blocking */ }
       }
       return ws;
@@ -252,10 +257,12 @@ async function handleMethod(method, params, userId) {
       const sb = getSupabase();
       if (sb) {
         try {
-          await sb.from("templates").upsert({
+          const row = {
             id: newTpl.id, name: newTpl.name, workspace_id: newTpl.workspaceId,
-            data: newTpl, user_id: userId, updated_at: new Date().toISOString(),
-          });
+            data: newTpl, updated_at: new Date().toISOString(),
+          };
+          if (UUID_RE.test(userId)) row.user_id = userId;
+          await sb.from("templates").upsert(row);
         } catch { /* non-blocking */ }
       }
       return newTpl;
