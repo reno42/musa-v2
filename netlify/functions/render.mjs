@@ -12,23 +12,10 @@
  * @module functions/render
  */
 
-import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
+import { getTemplate } from "../../api/src/services/templates.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
-
-/** Fetch template from Supabase or fall back to in-memory store */
-async function getTemplate(id) {
-  const sb = getSupabase();
-  if (sb) {
-    try {
-      const { data, error } = await sb.from("templates")
-        .select("*").eq("id", id).single();
-      if (!error && data?.data) return data.data;
-    } catch { /* fall through */ }
-  }
-  return store.getTemplate(id);
-}
 
 /**
  * Build a self-contained HTML page that renders the template
