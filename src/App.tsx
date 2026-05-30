@@ -129,7 +129,7 @@ function App() {
     return ctrl[method](...args);
   }, []);
 
-  // Create new template — stay on dashboard so user sees the new template
+  // Create new template and open in editor
   const handleCreateTemplate = async (workspaceId: string) => {
     try {
       const res = await fetch("/api/templates", {
@@ -139,8 +139,12 @@ function App() {
       });
       const json = await res.json();
       if (json.success && json.data) {
-        // Return to dashboard to show the new template in the list
-        dispatch({ type: "SET_VIEW", view: "dashboard" });
+        const d = json.data;
+        dispatch({
+          type: "OPEN_TEMPLATE",
+          id: d.id,
+          json: { width: d.width, height: d.height, canvas: d.canvas, objects: d.canvas?.objects || [] },
+        });
       }
     } catch { /* ignore */ }
   };
