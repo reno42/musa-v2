@@ -14,7 +14,9 @@
  */
 
 import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const chromium = require("@sparticuz/chromium");
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
 
