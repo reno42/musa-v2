@@ -330,16 +330,47 @@ export function LayersPanel({
                 if (c) {
                   const frame = c.getObjects().find((o: any) => o.frameId === contextMenu.frameId && o.isFrameVisual);
                   if (frame) {
-                    const json = (frame as any).toJSON(["isFrameVisual", "frameId", "frameName", "frameFill", "frameStroke"]);
+                    const origFid = (frame as any).frameId;
+                    const origFill = (frame as any).frameFill || "#ffffff";
+                    const origStroke = (frame as any).frameStroke || "#6366f1";
+                    const origName = (frame as any).frameName || "Frame";
+                    const json = (frame as any).toJSON(["isFrameVisual", "frameId", "frameName", "frameFill", "frameStroke", "layerId", "layerName", "styleId"]);
                     // Duplicate frame
                     const newFrameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                     FabricObject.fromObject(json).then((clone: any) => {
                       clone.set({ left: (clone.left || 0) + 40, top: (clone.top || 0) + 40 });
+                      (clone as any).isFrameVisual = true;
                       (clone as any).frameId = newFrameId;
-                      (clone as any).frameName = `${(clone as any).frameName} (copy)`;
+                      (clone as any).frameName = `${origName} (copy)`;
+                      (clone as any).frameFill = origFill;
+                      (clone as any).frameStroke = origStroke;
+                      (clone as any).layerName = (clone as any).frameName;
                       c.add(clone);
-                      c.setActiveObject(clone);
-                      c.requestRenderAll();
+                      // Duplicate children
+                      const children = c.getObjects().filter((o: any) => o.frameId === origFid && !o.isFrameVisual);
+                      const childClones: Promise<void>[] = [];
+                      for (const child of children) {
+                        const cjson = (child as any).toJSON(["layerId", "layerName", "frameId", "styleId"]);
+                        if (cjson) {
+                          childClones.push(
+                            FabricObject.fromObject(cjson).then((cClone: any) => {
+                              const dx = (clone.left || 0) - (frame.left || 0);
+                              const dy = (clone.top || 0) - (frame.top || 0);
+                              cClone.set({
+                                left: (child.left || 0) + dx,
+                                top: (child.top || 0) + dy,
+                              });
+                              (cClone as any).frameId = newFrameId;
+                              (cClone as any).layerName = ((child as any).layerName || "") + "_copy";
+                              c.add(cClone);
+                            })
+                          );
+                        }
+                      }
+                      Promise.all(childClones).then(() => {
+                        c.setActiveObject(clone);
+                        c.requestRenderAll();
+                      });
                     });
                   }
                 }

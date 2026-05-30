@@ -306,21 +306,10 @@ export function useCanvas() {
         return;
       }
 
-      if (!drawStartRef.current) return;
-      const currentTool = toolRef.current;
-      const e = opt.e as any;
-      const end = (c as any).getScenePoint(e);
-      const start = drawStartRef.current;
-      drawStartRef.current = null;
-
-      const x = Math.min(start.x, end.x);
-      const y = Math.min(start.y, end.y);
-      const w = Math.abs(end.x - start.x);
-      const h = Math.abs(end.y - start.y);
-      if (w < 3 && h < 3) return;
-
-      // Text tool: single click adds text
-      if (currentTool === "text") {
+      // Text tool: single click adds text (doesn't need drawStartRef)
+      if (toolRef.current === "text") {
+        const e = opt.e as any;
+        const end = (c as any).getScenePoint(e);
         const text = new IText("Double-click to edit", {
           left: end.x, top: end.y,
           fontSize: 24, fontFamily: "Inter, sans-serif", fill: "#000000",
@@ -333,6 +322,19 @@ export function useCanvas() {
         pushHistory();
         return;
       }
+
+      if (!drawStartRef.current) return;
+      const currentTool = toolRef.current;
+      const e = opt.e as any;
+      const end = (c as any).getScenePoint(e);
+      const start = drawStartRef.current;
+      drawStartRef.current = null;
+
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const w = Math.abs(end.x - start.x);
+      const h = Math.abs(end.y - start.y);
+      if (w < 3 && h < 3) return;
 
       const obj = createShape(currentTool, x, y, w, h, start.x, start.y);
       if (obj) {
