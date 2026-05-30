@@ -1,24 +1,17 @@
 /**
- * Render Function — Server-side template rendering via Puppeteer
+ * Render Function — Template visualization via self-rendering HTML
  * ──────────────────────────────────────────────────────────────
- * Renders Futuraria design templates to PNG/JPG using headless
- * Chromium. Designed for Netlify Free tier (10s timeout, 50MB limit).
+ * Returns a self-contained HTML page that renders Futuraria design
+ * templates using Fabric.js in the browser. No server-side binaries
+ * required (avoids Chromium/libnss3 issues on Netlify Lambda).
  *
  * Endpoints:
- *   POST /api/render/:templateId  → synchronous render (returns image)
- *
- * Dependencies: chrome-aws-lambda, puppeteer-core
- * Chromium binary: ~44MB (external — not bundled by esbuild)
+ *   POST /api/render/:templateId  → returns self-rendering HTML page
+ *   GET  /api/render/:templateId/:jobId → poll/retrieve stored render
  *
  * @module functions/render
  */
 
-import puppeteer from "puppeteer-core";
-import _chromium from "@sparticuz/chromium";
-// esbuild CJS interop: handle both {default: {...}} and raw exports
-const chromium = (_chromium && _chromium.default && typeof _chromium.default === 'object' && 'args' in _chromium.default)
-  ? _chromium.default
-  : _chromium;
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
 
@@ -39,175 +32,151 @@ async function getTemplate(id) {
 
 /**
  * Build a self-contained HTML page that renders the template
- * via Fabric.js v5 CDN, then signals readiness via window.__renderDone.
- *
- * Uses Fabric.js v5 CDN for reliable global `fabric` object.
- * v5 StaticCanvas.loadFromJSON is compatible with v6 serialized JSON
- * for all core shape types (rect, circle, text, group, path, image).
+ * via Fabric.js v5 CDN with interactive UI for visualization
+ * and PNG download.
  */
-function buildRenderHtml(tpl, width, height) {
+function buildRenderPage(tpl, width, height, format, scale, templateId) {
   const canvasJson = typeof tpl.canvas === "string"
     ? tpl.canvas
     : JSON.stringify(tpl.canvas);
-  // Inject viewport and dimensions so loadFromJSON respects them
-  const injectJson = JSON.stringify({
-    ...JSON.parse(canvasJson),
-    width,
-    height,
-  });
+
+  const safeName = (tpl.name || templateId || "template")
+    .replace(/[<>:"/\\|?*]/g, "_");
 
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${safeName} — Futuraria Render</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
 <style>
-  body { margin:0; padding:0; overflow:hidden; background:#fff; }
-  canvas { display:block; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .toolbar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .toolbar h2 {
+    font-size: 16px;
+    margin-right: auto;
+    color: #333;
+  }
+  .toolbar button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.15s;
+  }
+  .btn-download { background:#3B82F6; color:#fff; }
+  .btn-download:hover { background:#2563EB; }
+  .btn-download-jpg { background:#059669; color:#fff; }
+  .btn-download-jpg:hover { background:#047857; }
+  .btn-download-svg { background:#7C3AED; color:#fff; }
+  .btn-download-svg:hover { background:#6D28D9; }
+  .canvas-wrap {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    padding: 20px;
+    overflow: auto;
+  }
+  .canvas-wrap canvas { display:block; }
+  .info {
+    margin-top: 12px;
+    font-size: 12px;
+    color: #888;
+  }
+  .status-msg {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .status-ok { background:#D1FAE5; color:#065F46; }
+  .status-err { background:#FEE2E2; color:#991B1B; }
 </style>
 </head>
 <body>
-<canvas id="c" width="${width}" height="${height}"></canvas>
+<div class="toolbar">
+  <h2>${safeName}</h2>
+  <button class="btn-download" onclick="downloadCanvas('png')">⬇ Download PNG</button>
+  <button class="btn-download-jpg" onclick="downloadCanvas('jpg')">⬇ Download JPG</button>
+  <button class="btn-download-svg" onclick="downloadSvg()">⬇ Download SVG</button>
+  <span id="status" class="status-msg status-ok">Rendered ✓</span>
+</div>
+<div class="canvas-wrap">
+  <canvas id="c" width="${width}" height="${height}"></canvas>
+</div>
+<div class="info">
+  ${width}×${height}px · scale ${scale}× · ${format.toUpperCase()}
+</div>
+
 <script>
 (function() {
-  var canvas = new fabric.StaticCanvas('c', {
-    width: ${width},
-    height: ${height},
-    renderOnAddRemove: false
+  var width = ${width};
+  var height = ${height};
+  var format = "${format}";
+
+  var fabricCanvas = new fabric.StaticCanvas('c', {
+    width: width,
+    height: height,
+    renderOnAddRemove: true,
+    backgroundColor: '#ffffff'
   });
-  var json = ${injectJson};
-  canvas.loadFromJSON(json, function() {
-    canvas.renderAll();
-    // Double-render to ensure all async objects (images) settle
+
+  fabricCanvas.loadFromJSON(${canvasJson}, function() {
+    fabricCanvas.renderAll();
+    // Double render for async objects
     setTimeout(function() {
-      canvas.renderAll();
-      window.__renderDone = true;
-    }, 300);
+      fabricCanvas.renderAll();
+    }, 200);
   });
+
+  // ── Download helpers ──
+  window.downloadCanvas = function(fmt) {
+    var dataUrl;
+    if (fmt === 'jpg') {
+      dataUrl = fabricCanvas.toDataURL({ format: 'jpeg', quality: 0.92, multiplier: 1 });
+    } else {
+      dataUrl = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+    }
+    var a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = '${safeName}.' + fmt;
+    a.click();
+  };
+
+  window.downloadSvg = function() {
+    var svg = fabricCanvas.toSVG();
+    var blob = new Blob([svg], { type: 'image/svg+xml' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '${safeName}.svg';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 })();
 </script>
 </body></html>`;
-}
-
-/** Build a simple HTML page for SVG export (no browser needed) */
-function buildSvgHtml(tpl, width, height) {
-  const canvasJson = typeof tpl.canvas === "string"
-    ? tpl.canvas
-    : JSON.stringify(tpl.canvas);
-  const injectJson = JSON.stringify({
-    ...JSON.parse(canvasJson),
-    width,
-    height,
-  });
-
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
-<style>body{margin:0;padding:0;overflow:hidden}</style>
-</head>
-<body>
-<canvas id="c" width="${width}" height="${height}"></canvas>
-<script>
-(function() {
-  var canvas = new fabric.StaticCanvas('c', { width:${width}, height:${height} });
-  canvas.loadFromJSON(${injectJson}, function() {
-    canvas.renderAll();
-    window.__svg = canvas.toSVG();
-    window.__renderDone = true;
-  });
-})();
-</script></body></html>`;
-}
-
-// ─── Render engine (synchronous — returns result directly) ─────
-
-async function doRenderSync(templateId, format, scale, providedTemplate) {
-  const t0 = Date.now();
-  try {
-    // 1. Load template (from provided data, Supabase, or in-memory fallback)
-    const tpl = providedTemplate || await getTemplate(templateId);
-    if (!tpl) {
-      return { status: "failed", error: "Template not found", elapsedMs: Date.now() - t0 };
-    }
-
-    const baseW = tpl.width || 1080;
-    const baseH = tpl.height || 1080;
-    const width = Math.round(baseW * scale);
-    const height = Math.round(baseH * scale);
-    const isSvg = format === "svg";
-
-    // 2. Build render HTML
-    const html = isSvg
-      ? buildSvgHtml(tpl, width, height)
-      : buildRenderHtml(tpl, width, height);
-
-    // 3. Launch headless Chromium via @sparticuz/chromium
-    // executablePath may be: async fn, sync fn, Promise, or string
-    const rawExe = chromium.executablePath;
-    const exePromise = typeof rawExe === "function" ? rawExe() : rawExe;
-    const exePath = await Promise.resolve(exePromise);
-
-    const browser = await puppeteer.launch({
-      args: chromium.args || [],
-      defaultViewport: { ...(chromium.defaultViewport || {}), width, height, deviceScaleFactor: 1 },
-      executablePath: exePath,
-      headless: chromium.headless !== undefined ? chromium.headless : true,
-      ignoreHTTPSErrors: true,
-      timeout: 8000,
-    });
-
-    let result;
-    try {
-      const page = await browser.newPage();
-      await page.setViewport({ width, height, deviceScaleFactor: scale });
-
-      // Set content (loads Fabric.js from CDN)
-      await page.setContent(html, {
-        waitUntil: "networkidle0",
-        timeout: 8000,
-      });
-
-      // Wait for Fabric.js to signal render completion
-      await page.waitForFunction("window.__renderDone === true", {
-        timeout: 6000,
-      });
-
-      if (isSvg) {
-        result = await page.evaluate(() => window.__svg);
-      } else {
-        // Screenshot the canvas element directly for crisp output
-        const canvasEl = await page.$("#c");
-        const buffer = await canvasEl.screenshot({
-          type: format === "jpg" ? "jpeg" : "png",
-          quality: format === "jpg" ? 92 : undefined,
-        });
-        const base64 = buffer.toString("base64");
-        const mime = format === "jpg" ? "image/jpeg" : "image/png";
-        result = `data:${mime};base64,${base64}`;
-      }
-    } finally {
-      await browser.close();
-    }
-
-    const elapsed = Date.now() - t0;
-    return {
-      status: "complete",
-      templateId,
-      format,
-      scale,
-      width,
-      height,
-      dataUrl: result,
-      elapsedMs: elapsed,
-    };
-  } catch (err) {
-    const elapsed = Date.now() - t0;
-    return {
-      status: "failed",
-      error: err.message || "Render failed",
-      elapsedMs: elapsed,
-    };
-  }
 }
 
 // ─── Periodic cleanup ─────────────────────────────────────────
@@ -228,19 +197,23 @@ setInterval(() => {
 // ─── Netlify Function handler ─────────────────────────────────
 
 /**
- * POST /api/render/:templateId  → synchronous render, returns image + jobId
- * GET  /api/render/:templateId/:jobId → poll job status
+ * POST /api/render/:templateId  → returns self-rendering HTML page
+ * GET  /api/render/:templateId/:jobId → retrieve stored render job
  */
 export const handler = async (event) => {
-  const headers = {
+  const jsonHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
     "Content-Type": "application/json",
   };
+  const htmlHeaders = {
+    ...jsonHeaders,
+    "Content-Type": "text/html; charset=utf-8",
+  };
 
   // CORS preflight
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers };
+    return { statusCode: 204, headers: jsonHeaders };
   }
 
   // Parse path: /api/render/:templateId[/:jobId]
@@ -249,19 +222,27 @@ export const handler = async (event) => {
   const templateId = parts[0];
   const jobId = parts[1];
 
-  // ── GET /api/render/:templateId/:jobId — poll job status ──
+  // ── GET /api/render/:templateId/:jobId — poll/retrieve job ──
   if (event.httpMethod === "GET" && templateId && jobId) {
     const storedJob = store.getRenderJob(jobId);
     if (!storedJob) {
       return {
         statusCode: 404,
-        headers,
+        headers: jsonHeaders,
         body: JSON.stringify({ error: "Render job not found or expired", jobId }),
+      };
+    }
+    // If an HTML page was stored, serve it
+    if (storedJob.url && storedJob.status === "complete") {
+      return {
+        statusCode: 200,
+        headers: htmlHeaders,
+        body: storedJob.url,
       };
     }
     return {
       statusCode: 200,
-      headers,
+      headers: jsonHeaders,
       body: JSON.stringify({
         jobId: storedJob.id,
         status: storedJob.status,
@@ -269,62 +250,74 @@ export const handler = async (event) => {
         format: storedJob.format,
         scale: storedJob.scale,
         createdAt: storedJob.createdAt,
-        // Include result if complete
-        ...(storedJob.url && { dataUrl: storedJob.url }),
         ...(storedJob.completedAt && { completedAt: storedJob.completedAt }),
         ...(storedJob.error && { error: storedJob.error }),
       }),
     };
   }
 
-  // ── POST /api/render/:templateId — synchronous render ──
+  // ── POST /api/render/:templateId — generate HTML page ──
   if (event.httpMethod === "POST" && templateId && !jobId) {
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { /* use defaults */ }
 
     const format = ["png", "jpg", "svg"].includes(body.format) ? body.format : "png";
-    const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 2, 1), 4);
+    const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
     // Accept template data directly (avoids cross-container lookup on Netlify)
     const providedTemplate = body.template || null;
 
-    // Create render job record
-    const job = store.createRenderJob(templateId, format, scale);
-
-    // Synchronous render — completes within 6-8s (under 10s Netlify limit)
-    const result = await doRenderSync(templateId, format, scale, providedTemplate);
-
-    // Update job with result
-    if (result.status === "complete") {
-      job.status = "complete";
-      job.url = result.dataUrl;
-      job.completedAt = new Date().toISOString();
-    } else {
-      job.status = "failed";
-      job.error = result.error;
-      job.completedAt = new Date().toISOString();
-    }
-
-    if (result.status === "failed") {
+    // Load template
+    const tpl = providedTemplate || await getTemplate(templateId);
+    if (!tpl) {
       return {
-        statusCode: 500,
-        headers,
-        body: JSON.stringify({ jobId: job.id, status: "failed", error: result.error }),
+        statusCode: 404,
+        headers: jsonHeaders,
+        body: JSON.stringify({ error: "Template not found", templateId }),
       };
     }
 
+    const baseW = tpl.width || 1080;
+    const baseH = tpl.height || 1080;
+    const width = Math.round(baseW * scale);
+    const height = Math.round(baseH * scale);
+
+    // Build self-rendering HTML page
+    const html = buildRenderPage(tpl, width, height, format, scale, templateId);
+
+    // Store render job for polling
+    const job = store.createRenderJob(templateId, format, scale);
+    job.status = "complete";
+    job.url = html;
+    job.completedAt = new Date().toISOString();
+
+    // Check if client wants JSON or HTML
+    const acceptHeader = event.headers?.accept || "";
+    const wantsHtml = acceptHeader.includes("text/html") || body.returnHtml;
+
+    if (wantsHtml) {
+      return {
+        statusCode: 200,
+        headers: htmlHeaders,
+        body: html,
+      };
+    }
+
+    // Default: return JSON with HTML content and jobId
     return {
       statusCode: 200,
-      headers,
+      headers: jsonHeaders,
       body: JSON.stringify({
         jobId: job.id,
         status: "complete",
         templateId,
         format,
         scale,
-        width: result.width,
-        height: result.height,
-        dataUrl: result.dataUrl,
-        elapsedMs: result.elapsedMs,
+        width,
+        height,
+        html: html,
+        _links: {
+          view: `/api/render/${templateId}/${job.id}`,
+        },
       }),
     };
   }
@@ -332,7 +325,7 @@ export const handler = async (event) => {
   // ── Fallback ──
   return {
     statusCode: 400,
-    headers,
+    headers: jsonHeaders,
     body: JSON.stringify({
       error: "POST /api/render/:templateId to render, GET /api/render/:templateId/:jobId to poll",
     }),
