@@ -34,15 +34,20 @@ async function listFromSupabase(
   if (!sb) return null;
   try {
     let q = sb.from("templates").select("*", { count: "exact" });
-    if (workspaceId) q = q.eq("workspace_id", workspaceId);
     q = q.order("updated_at", { ascending: false }).range(offset, offset + limit - 1);
     const { data, count, error } = await q;
     if (error) throw error;
     let items = (data || []).map((r: any) => rowToTemplate(r));
+    // Client-side filters (Supabase .eq on custom-format IDs may not match UUID columns)
+    if (workspaceId) {
+      items = items.filter(t => t.workspaceId === workspaceId);
+    }
     if (search) {
       items = items.filter(t => t.name.toLowerCase().includes(search));
     }
-    return { data: items, total: count || items.length };
+    // Use filtered count when client-side filtering is active
+    const total = (workspaceId || search) ? items.length : (count || items.length);
+    return { data: items, total };
   } catch (e) {
     console.warn("[templates] Supabase list failed:", (e as Error).message);
     return null;
@@ -61,11 +66,11 @@ async function getFromSupabase(id: string): Promise<DesignTemplate | null> {
   }
 }
 
-async function upsertSupabase(tpl: DesignTemplate, userId: string) {
+async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return;
+  if (!sb) return false;
   try {
-    await sb.from("templates").upsert({
+    const { error } = await sb.from("templates").upsert({
       id: tpl.id,
       name: tpl.name,
       workspace_id: tpl.workspaceId || null,
@@ -73,8 +78,14 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string) {
       user_id: userId,
       updated_at: new Date().toISOString(),
     });
+    if (error) {
+      console.warn("[templates] Supabase upsert failed:", error.message);
+      return false;
+    }
+    return true;
   } catch (e) {
     console.warn("[templates] Supabase upsert failed:", (e as Error).message);
+    return false;
   }
 }
 
@@ -110,13 +121,29 @@ export async function listTemplatesPaginated(
   limit: number, offset: number, workspaceId?: string, search?: string
 ): Promise<{ data: DesignTemplate[]; total: number }> {
   const fromSb = await listFromSupabase(limit, offset, workspaceId, search);
-  if (fromSb) return fromSb;
+  const fromStore = store.listTemplates(workspaceId, 99999, 0);
 
-  let { data, total } = store.listTemplates(workspaceId, 99999, 0);
+  // Merge Supabase + in-memory store, deduping by ID (store takes precedence)
+  const merged = new Map<string, DesignTemplate>();
+  if (fromSb) {
+    for (const t of fromSb.data) merged.set(t.id, t);
+  }
+  for (const t of fromStore.data) {
+    merged.set(t.id, t); // store overrides Supabase for same ID
+  }
+
+  let data = [...merged.values()];
+
+  // Apply search filter (workspaceId already filtered by both sources)
   if (search) {
     data = data.filter(t => t.name.toLowerCase().includes(search));
-    total = data.length;
   }
+
+  data.sort((a, b) =>
+    new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime()
+  );
+
+  const total = data.length;
   data = data.slice(offset, offset + limit);
   return { data, total };
 }

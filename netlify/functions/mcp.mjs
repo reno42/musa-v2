@@ -186,6 +186,7 @@ async function handleMethod(method, params, userId) {
       return tpl;
     }
     case "create_template": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const tpl = await templates.createTemplate(
         params.name, params.width || 1080, params.height || 1080,
         undefined, userId, params.workspaceId,
