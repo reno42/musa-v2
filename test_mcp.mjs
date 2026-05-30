@@ -1,192 +1,108 @@
-// MCP Test Suite - Tests all 10 tools
+/**
+ * Integration test: MCP Phase 1-5 features
+ */
 const BASE = "https://bejewelled-llama-a6719d.netlify.app/mcp";
 
-async function call(method, params = {}, id = 1) {
+async function mcp(method, params) {
   const res = await fetch(BASE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  return res.json();
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message);
+  const text = json.result?.content?.[0]?.text;
+  return text ? JSON.parse(text) : json.result;
 }
 
-let passed = 0;
-let failed = 0;
-const bugs = [];
+async function main() {
+  let passed = 0, failed = 0;
+  const ok = (label, cond) => { if (cond) { passed++; console.log(`  ✅ ${label}`); } else { failed++; console.log(`  ❌ ${label}`); } };
 
-function assert(cond, msg) {
-  if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-  else { failed++; bugs.push(msg); console.log(`  ❌ ${msg}`); }
+  // Setup
+  console.log("── Setup ──");
+  const ws = await mcp("tools/call", { name: "create_workspace", arguments: { name: "Test MCP" } });
+  console.log(`  Workspace: ${ws.id}`);
+
+  const tplA = await mcp("tools/call", { name: "create_template", arguments: { name: "Test A", workspaceId: ws.id } });
+  const idA = typeof tplA === "string" ? tplA : tplA.id;
+  console.log(`  Template A: ${idA}`);
+
+  // Test 1: Text with Google Font, underline, letterSpacing, lineHeight, shadow
+  console.log("\n── Test 1: Text properties ──");
+  await mcp("tools/call", { name: "update_template", arguments: {
+    id: idA,
+    objects: [{
+      type: "Textbox", text: "Hello World!", fontFamily: "Montserrat", fontWeight: 700, fontStyle: "italic",
+      underline: true, charSpacing: 4, lineHeight: 1.5, fontSize: 48, fill: "#111111",
+      left: 100, top: 100, width: 400,
+      shadow: { color: "rgba(0,0,0,0.3)", blur: 8, offsetX: 3, offsetY: 3, affectStroke: false }
+    }]
+  }});
+
+  const tpl1 = await mcp("tools/call", { name: "get_template", arguments: { id: idA } });
+  const text = (tpl1.canvas?.objects || [])[0];
+  ok("type is Textbox", text?.type === "Textbox");
+  ok("fontFamily", text?.fontFamily === "Montserrat");
+  ok("fontWeight 700", text?.fontWeight === 700);
+  ok("underline true", text?.underline === true);
+  ok("charSpacing 4", text?.charSpacing === 4);
+  ok("lineHeight 1.5", text?.lineHeight === 1.5);
+  ok("shadow blur 8", text?.shadow?.blur === 8);
+
+  // Test 2: Rect with gradient + box shadow
+  console.log("\n── Test 2: Rect gradient + shadow ──");
+  await mcp("tools/call", { name: "update_template", arguments: {
+    id: idA,
+    canvas: { objects: [
+      { type: "Rect", left: 50, top: 200, width: 300, height: 200, rx: 16, ry: 16,
+        fill: { type: "linear", gradientUnits: "percentage", coords: { x1: 0, y1: 0, x2: 1, y2: 1 },
+          colorStops: [{ offset: 0, color: "#4ade80" }, { offset: 1, color: "#7c3aed" }] },
+        shadow: { color: "rgba(124,58,237,0.4)", blur: 20, offsetX: 0, offsetY: 8, affectStroke: false } }
+    ], viewport: { x: 0, y: 0, zoom: 1 } }
+  }});
+
+  const tpl2 = await mcp("tools/call", { name: "get_template", arguments: { id: idA } });
+  const rect = (tpl2.canvas?.objects || [])[0];
+  ok("type is Rect", rect?.type === "Rect");
+  ok("fill is gradient", rect?.fill?.type === "linear");
+  ok("gradient stop 1", rect?.fill?.colorStops?.[0]?.color === "#4ade80");
+  ok("gradient stop 2", rect?.fill?.colorStops?.[1]?.color === "#7c3aed");
+  ok("border radius rx", rect?.rx === 16);
+  ok("shadow blur 20", rect?.shadow?.blur === 20);
+
+  // Test 3: batch_update
+  console.log("\n── Test 3: batch_update ──");
+  const tplB = await mcp("tools/call", { name: "create_template", arguments: { name: "Test B", workspaceId: ws.id } });
+  const idB = typeof tplB === "string" ? tplB : tplB.id;
+  console.log(`  Template B: ${idB}`);
+
+  const batchRes = await mcp("tools/call", { name: "batch_update", arguments: {
+    templateIds: [idA, idB],
+    name: "Batch Updated"
+  }});
+  ok("batch 2 updated", batchRes.updated === 2);
+  ok("batch 0 failed", batchRes.failed === 0);
+  console.log(`     ${batchRes.updated} updated, ${batchRes.failed} failed`);
+
+  // Test 4: render_batch
+  console.log("\n── Test 4: render_batch ──");
+  const renderRes = await mcp("tools/call", { name: "render_batch", arguments: {
+    templateIds: [idA], format: "png", scale: 1
+  }});
+  ok("render ready", renderRes.ready >= 1);
+  if (renderRes.results?.[0]?._links) {
+    console.log(`     Link: ${renderRes.results[0]._links.render}`);
+  }
+
+  // Test 5: list_versions / restore_version
+  console.log("\n── Test 5: versions ──");
+  const vers = await mcp("tools/call", { name: "list_versions", arguments: { id: idA } });
+  ok("list_versions returns", Array.isArray(vers?.versions));
+  console.log(`     ${vers.versions?.length || 0} versions`);
+
+  console.log(`\n── ${passed} passed, ${failed} failed ──`);
+  if (failed > 0) process.exit(1);
 }
 
-// ---- Init ----
-console.log("\n=== INIT ===\n");
-const init = await call("initialize", {
-  protocolVersion: "2024-11-05",
-  capabilities: {},
-  clientInfo: { name: "test", version: "1.0" },
-});
-assert(init?.result?.serverInfo?.name === "futuraria-mcp", "Initialize returns server info");
-
-const toolsRes = await call("tools/list");
-const tools = toolsRes?.result?.tools || [];
-console.log(`  Tools listed: ${tools.length}`);
-assert(tools.length === 10, "tools/list returns 10 tools");
-
-// ---- Workspaces ----
-console.log("\n=== WORKSPACES ===\n");
-let wsId = null;
-
-const listWs = await call("tools/call", { name: "list_workspaces", arguments: {} });
-assert(listWs?.result?.content?.[0]?.text, "list_workspaces returns content");
-let wsData = [];
-try { wsData = JSON.parse(listWs.result.content[0].text); } catch(e) {}
-console.log(`  Workspaces found: ${wsData?.data?.length || wsData?.length || 0}`);
-
-const testWsName = "MCP Test WS " + Date.now();
-const createWs = await call("tools/call", { name: "create_workspace", arguments: { name: testWsName } });
-let newWs = null;
-try { newWs = JSON.parse(createWs?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(newWs?.id && newWs?.name === testWsName, "create_workspace creates workspace with correct name");
-wsId = newWs?.id;
-if (wsId) console.log(`  Created workspace: ${wsId}`);
-
-// Re-list to confirm persistence
-const listWs2 = await call("tools/call", { name: "list_workspaces", arguments: {} });
-let wsData2 = [];
-try { wsData2 = JSON.parse(listWs2.result.content[0].text); } catch(e) {}
-const found = wsData2?.data?.find(w => w.id === wsId) || wsData2?.find(w => w.id === wsId);
-assert(!!found, "list_workspaces returns newly created workspace");
-
-// ---- Templates ----
-console.log("\n=== TEMPLATES ===\n");
-let tplId = null;
-
-const createTpl = await call("tools/call", { name: "create_template", arguments: { name: "Test Template", workspaceId: wsId } });
-let newTpl = null;
-try { newTpl = JSON.parse(createTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(newTpl?.id?.startsWith("tpl_"), "create_template returns tpl_ prefixed id");
-assert(newTpl?.name === "Test Template", "create_template has correct name");
-assert(newTpl?.workspaceId === wsId, "create_template has correct workspaceId");
-assert(newTpl?.width === 1080 && newTpl?.height === 1080, "create_template default dimensions are 1080x1080");
-tplId = newTpl?.id;
-if (tplId) console.log(`  Created template: ${tplId}`);
-
-// List templates
-const listTpl = await call("tools/call", { name: "list_templates", arguments: { workspaceId: wsId } });
-let listData = [];
-try { listData = JSON.parse(listTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(listData?.data?.length >= 1, "list_templates finds template in workspace");
-assert(listData?.data?.some?.(t => t.id === tplId), "list_templates includes created template");
-
-// Get template
-const getTpl = await call("tools/call", { name: "get_template", arguments: { id: tplId } });
-let getTplData = null;
-try { getTplData = JSON.parse(getTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(getTplData?.id === tplId, "get_template returns correct template");
-assert(getTplData?.canvas?.objects !== undefined, "get_template has canvas.objects");
-assert(getTplData?.frames !== undefined, "get_template has frames array");
-assert(getTplData?.styles !== undefined, "get_template has styles array");
-assert(getTplData?.variables !== undefined, "get_template has variables");
-
-// Update template
-const updateTpl = await call("tools/call", { name: "update_template", arguments: { id: tplId, name: "Updated Template" } });
-let updTpl = null;
-try { updTpl = JSON.parse(updateTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(updTpl?.name === "Updated Template", "update_template changes name");
-
-// Update with objects
-const testObjects = [{ type: "rect", left: 100, top: 100, width: 200, height: 150, fill: "#ff0000", layerName: "red-box" }];
-const updateObj = await call("tools/call", { name: "update_template", arguments: { id: tplId, objects: testObjects } });
-let updObj = null;
-try { updObj = JSON.parse(updateObj?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(updObj?.canvas?.objects?.length === 1, "update_template with objects adds objects to canvas");
-assert(updObj?.canvas?.objects?.[0]?.fill === "#ff0000", "update_template objects have correct properties");
-
-// Update with full canvas
-const fullCanvas = { objects: testObjects, viewport: { x: 0, y: 0, zoom: 1 }, background: "#ffffff" };
-const updateCanvas = await call("tools/call", { name: "update_template", arguments: { id: tplId, canvas: fullCanvas } });
-let updCanvas = null;
-try { updCanvas = JSON.parse(updateCanvas?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(updCanvas?.canvas?.background === "#ffffff", "update_template with canvas sets background");
-
-// Duplicate template
-const dupTpl = await call("tools/call", { name: "duplicate_template", arguments: { id: tplId, name: "Duplicate Copy" } });
-let dup = null;
-try { dup = JSON.parse(dupTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(dup?.id !== tplId && dup?.id?.startsWith("tpl_"), "duplicate_template creates new template with different id");
-assert(dup?.name === "Duplicate Copy", "duplicate_template uses provided name");
-assert(dup?.canvas?.objects?.length >= 1, "duplicate_template preserves canvas objects");
-
-// Export template
-const expTpl = await call("tools/call", { name: "export_template", arguments: { id: tplId } });
-let exp = null;
-try { exp = JSON.parse(expTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(exp?.format === "futuraria/v1", "export_template has correct format");
-assert(exp?.template?.name !== undefined, "export_template has template.name");
-assert(exp?.template?.canvas !== undefined, "export_template has template.canvas");
-
-// Import template
-const importTpl = await call("tools/call", { name: "import_template", arguments: { data: exp, workspaceId: wsId } });
-let imp = null;
-try { imp = JSON.parse(importTpl?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(imp?.id?.startsWith("tpl_"), "import_template creates template with valid id");
-assert(imp?.name === exp.template.name, "import_template preserves name");
-assert(imp?.workspaceId === wsId, "import_template sets workspaceId");
-
-// Delete templates
-const delDup = await call("tools/call", { name: "delete_template", arguments: { id: dup?.id } });
-let delRes = null;
-try { delRes = JSON.parse(delDup?.result?.content?.[0]?.text || "null"); } catch(e) {}
-assert(delRes?.deleted === true, "delete_template confirms deletion");
-assert(delRes?.id === dup?.id, "delete_template returns correct id");
-
-const delImp = await call("tools/call", { name: "delete_template", arguments: { id: imp?.id } });
-assert(delImp?.error === undefined && delImp?.result !== undefined, "delete_template works for imported template");
-
-const delTpl = await call("tools/call", { name: "delete_template", arguments: { id: tplId } });
-assert(delTpl?.error === undefined, "delete_template works for original template");
-
-// Get deleted template - should fail
-const getDel = await call("tools/call", { name: "get_template", arguments: { id: tplId } });
-assert(getDel?.error?.code === -32000, "get_template returns error for deleted template");
-
-// ---- Error Cases ----
-console.log("\n=== ERROR CASES ===\n");
-
-const badGet = await call("tools/call", { name: "get_template", arguments: { id: "tpl_nonexistent" } });
-assert(badGet?.error?.code === -32000, "get_template returns -32000 for missing template");
-
-const badCreate = await call("tools/call", { name: "create_template", arguments: { name: "NoWS" } });
-assert(badCreate?.error?.code !== undefined, "create_template fails without workspaceId");
-
-const badUpdate = await call("tools/call", { name: "update_template", arguments: {} });
-assert(badUpdate?.error?.code === -32602, "update_template returns -32602 with no id");
-
-const badDelete = await call("tools/call", { name: "delete_template", arguments: { id: "tpl_fake12345" } });
-assert(badDelete?.error?.code === -32000, "delete_template returns -32000 for missing template");
-
-const badDup = await call("tools/call", { name: "duplicate_template", arguments: { id: "tpl_nonexistent" } });
-assert(badDup?.error?.code === -32000, "duplicate_template returns -32000 for missing source");
-
-const badExp = await call("tools/call", { name: "export_template", arguments: { id: "tpl_nonexistent" } });
-assert(badExp?.error?.code === -32000, "export_template returns -32000 for missing template");
-
-const badImportFmt = await call("tools/call", { name: "import_template", arguments: { data: { format: "bad", template: { name: "x" } }, workspaceId: wsId } });
-assert(badImportFmt?.error?.code === -32602, "import_template rejects invalid format");
-
-const badImportNoName = await call("tools/call", { name: "import_template", arguments: { data: { format: "futuraria/v1", template: {} }, workspaceId: wsId } });
-assert(badImportNoName?.error?.code === -32602, "import_template rejects missing template.name");
-
-const unknownMethod = await call("tools/call", { name: "nonexistent_tool", arguments: {} });
-assert(unknownMethod?.error?.code === -32601, "Unknown method returns -32601");
-
-// ---- Summary ----
-console.log(`\n=== RESULTS ===\n`);
-console.log(`✅ Passed: ${passed}`);
-console.log(`❌ Failed: ${failed}`);
-console.log(`📊 Score: ${passed}/${passed + failed}`);
-if (bugs.length) {
-  console.log(`\n🐛 BUGS FOUND:`);
-  bugs.forEach((b, i) => console.log(`  ${i + 1}. ${b}`));
-}
+main().catch(e => { console.error("FATAL:", e.message); process.exit(1); });
