@@ -142,9 +142,10 @@ async function doRenderSync(templateId, format, scale, providedTemplate) {
       : buildRenderHtml(tpl, width, height);
 
     // 3. Launch headless Chromium via @sparticuz/chromium
-    const exePath = typeof chromium.executablePath === "function"
-      ? await chromium.executablePath()
-      : chromium.executablePath;
+    // executablePath may be: async fn, sync fn, Promise, or string
+    const rawExe = chromium.executablePath;
+    const exePromise = typeof rawExe === "function" ? rawExe() : rawExe;
+    const exePath = await Promise.resolve(exePromise);
 
     const browser = await puppeteer.launch({
       args: chromium.args || [],
