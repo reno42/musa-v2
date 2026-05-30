@@ -125,11 +125,11 @@ function buildSvgHtml(tpl, width, height) {
 
 // ─── Render engine ────────────────────────────────────────────
 
-async function doRender(templateId, format, scale, jobId) {
+async function doRender(templateId, format, scale, jobId, providedTemplate) {
   const t0 = Date.now();
   try {
-    // 1. Load template
-    const tpl = await getTemplate(templateId);
+    // 1. Load template (from provided data, Supabase, or in-memory fallback)
+    const tpl = providedTemplate || await getTemplate(templateId);
     if (!tpl) {
       jobs.set(jobId, { status: "failed", error: "Template not found" });
       return;
@@ -256,12 +256,15 @@ export const handler = async (event) => {
 
     const format = ["png", "jpg", "svg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 2, 1), 4);
+    // Accept template data directly (avoids cross-container lookup when
+    // template was just created via MCP and isn't in Supabase yet)
+    const providedTemplate = body.template || null;
 
     const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     jobs.set(id, { status: "processing", templateId, format, scale });
 
     // Fire-and-forget: don't await, return 202 immediately
-    doRender(templateId, format, scale, id);
+    doRender(templateId, format, scale, id, providedTemplate);
 
     return {
       statusCode: 202,
