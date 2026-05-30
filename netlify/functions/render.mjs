@@ -12,9 +12,13 @@
  * @module functions/render
  */
 
-import chromium from 'chrome-aws-lambda';
+import _chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import { store } from "../../api/src/services/store.js";
+
+// esbuild CJS/ESM interop: @sparticuz/chromium exports may be
+// wrapped in .default depending on bundler version
+const chromium = _chromium.default || _chromium;
 
 const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
@@ -152,7 +156,7 @@ export const handler = async (event) => {
       const browser = await puppeteer.launch({
         args: chromium.args,
         defaultViewport: { width, height },
-        executablePath: await chromium.executablePath,
+        executablePath: await Promise.resolve(chromium.executablePath),
         headless: chromium.headless,
       });
 
