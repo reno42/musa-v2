@@ -14,7 +14,7 @@
  */
 
 import puppeteer from "puppeteer-core";
-import chromium from "chrome-aws-lambda";
+import chromium from "@sparticuz/chromium";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
 
@@ -137,19 +137,13 @@ async function doRenderSync(templateId, format, scale, providedTemplate) {
       ? buildSvgHtml(tpl, width, height)
       : buildRenderHtml(tpl, width, height);
 
-    // 3. Launch headless Chromium
+    // 3. Launch headless Chromium via @sparticuz/chromium
     const browser = await puppeteer.launch({
-      args: [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process",
-      ],
-      defaultViewport: { width, height, deviceScaleFactor: 1 },
-      executablePath: await chromium.executablePath,
-      headless: true,
+      args: chromium.args,
+      defaultViewport: { ...chromium.defaultViewport, width, height, deviceScaleFactor: 1 },
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      ignoreHTTPSErrors: true,
       timeout: 8000,
     });
 

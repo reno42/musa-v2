@@ -10,9 +10,9 @@
     "build:functions": "cd api && npm install && npx tsc"
   },
   "dependencies": {
-    "chrome-aws-lambda": "^10.1.0",
+    "@sparticuz/chromium": "^133.0.0",
     "fabric": "^6.9.1",
-    "puppeteer-core": "^10.4.0",
+    "puppeteer-core": "^22.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
