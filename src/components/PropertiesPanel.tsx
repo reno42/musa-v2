@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { FabricObject, Canvas } from "fabric";
+import { Gradient } from "fabric";
+import { GoogleFontPicker } from "./GoogleFontPicker";
 
 interface PropertiesPanelProps {
   selectedObjects: FabricObject[];
@@ -69,13 +71,13 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                 type="color"
                 aria-label="Canvas background color"
                 defaultValue={typeof bg === "string" && bg.startsWith("#") ? bg : "#ffffff"}
-                onBlur={e => commitCanvas("backgroundColor", e.target.value)}
+                onChange={e => commitCanvas("backgroundColor", e.target.value)}
                 style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
               />
               <input
                 aria-label="Canvas background hex"
                 defaultValue={bg === "transparent" ? "#ffffff" : bg}
-                onBlur={e => commitCanvas("backgroundColor", e.target.value)}
+                onChange={e => commitCanvas("backgroundColor", e.target.value)}
                 style={inputStyle}
               />
             </div>
@@ -110,6 +112,8 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const fieldText = obj.text ?? "";
   const fieldFontSize = String(obj.fontSize ?? 24);
   const fieldFontFamily = obj.fontFamily ?? "Inter";
+  const fieldFontWeight = String(obj.fontWeight ?? 400);
+  const fieldFontStyle = obj.fontStyle ?? "normal";
   const fieldLocked = !!(obj.lockMovementX);
   const fieldVisible = obj.visible !== false;
   const fieldName = obj.layerName ?? obj.name ?? "";
@@ -179,7 +183,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               aria-label="Frame background color"
               key={`fbgcolor-${resetKey}`}
               defaultValue={(obj as any).frameFill || "#ffffff"}
-              onBlur={e => {
+              onChange={e => {
                 commit("frameFill", e.target.value);
                 commit("fill", e.target.value);
               }}
@@ -189,7 +193,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               aria-label="Frame background hex"
               key={`fbghex-${resetKey}`}
               defaultValue={(obj as any).frameFill || "#ffffff"}
-              onBlur={e => {
+              onChange={e => {
                 commit("frameFill", e.target.value);
                 commit("fill", e.target.value);
               }}
@@ -209,7 +213,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                 aria-label="Frame border color"
                 key={`fscolor-${resetKey}`}
                 defaultValue={(obj as any).frameStroke || "#6366f1"}
-                onBlur={e => {
+                onChange={e => {
                   commit("frameStroke", e.target.value);
                   commit("stroke", e.target.value);
                 }}
@@ -219,7 +223,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                 aria-label="Frame border hex"
                 key={`fshex-${resetKey}`}
                 defaultValue={(obj as any).frameStroke || "#6366f1"}
-                onBlur={e => {
+                onChange={e => {
                   commit("frameStroke", e.target.value);
                   commit("stroke", e.target.value);
                 }}
@@ -263,14 +267,14 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               aria-label="Fill color"
               key={`fillcolor-${resetKey}`}
               defaultValue={fieldFill.match(/^#[0-9a-fA-F]{6}$/) ? fieldFill : "#000000"}
-              onBlur={e => commit("fill", e.target.value)}
+              onChange={e => commit("fill", e.target.value)}
               style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
             />
             <input
               aria-label="Fill color hex"
               key={`fillhex-${resetKey}`}
               defaultValue={fieldFill}
-              onBlur={e => commit("fill", e.target.value)}
+              onChange={e => commit("fill", e.target.value)}
               style={inputStyle}
             />
           </div>
@@ -287,20 +291,27 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                 aria-label="Stroke color"
                 key={`strokecolor-${resetKey}`}
                 defaultValue={fieldStroke.match(/^#[0-9a-fA-F]{6}$/) ? fieldStroke : "#000000"}
-                onBlur={e => commit("stroke", e.target.value)}
+                onChange={e => commit("stroke", e.target.value)}
                 style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
             />
             <input
               aria-label="Stroke color hex"
               key={`strokehex-${resetKey}`}
               defaultValue={fieldStroke}
-              onBlur={e => commit("stroke", e.target.value)}
+              onChange={e => commit("stroke", e.target.value)}
               style={inputStyle}
             />
           </div>
           <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
         </div>
       </Section>
+      )}
+
+      {/* Gradient (hidden for frames) */}
+      {!isFrameType && (
+        <Section label="Gradient">
+          <GradientEditor obj={obj} commit={commit} resetKey={resetKey} />
+        </Section>
       )}
 
       {/* Corner Radius (rect only) */}
@@ -323,7 +334,39 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
             />
           </div>
           <Row label="Size" defaultValue={fieldFontSize} onChange={v => commit("fontSize", Number(v))} />
-          <Row label="Font" defaultValue={fieldFontFamily} onChange={v => commit("fontFamily", v)} />
+          <div style={{ padding: "0 10px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Font</span>
+              <GoogleFontPicker value={fieldFontFamily} onChange={v => commit("fontFamily", v)} />
+            </div>
+          </div>
+          <div style={{ padding: "0 10px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Weight</span>
+              <select
+                defaultValue={fieldFontWeight}
+                onChange={e => commit("fontWeight", Number(e.target.value))}
+                style={selectStyle}
+              >
+                {[100, 200, 300, 400, 500, 600, 700, 800, 900].map(w => (
+                  <option key={w} value={w}>{w}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ padding: "0 10px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Style</span>
+              <select
+                defaultValue={fieldFontStyle}
+                onChange={e => commit("fontStyle", e.target.value)}
+                style={selectStyle}
+              >
+                <option value="normal">Normal</option>
+                <option value="italic">Italic</option>
+              </select>
+            </div>
+          </div>
         </Section>
       )}
     </div>
@@ -359,6 +402,103 @@ function Row({ label, defaultValue, onChange }: { label: string; defaultValue: s
         onBlur={e => onChange(e.target.value)}
         style={inputStyle}
       />
+    </div>
+  );
+}
+
+// ── Gradient Editor ─────────────────────────────────────────
+
+function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string, value: any) => void; resetKey: number }) {
+  const fill = obj?.fill;
+  const isGradient = fill && typeof fill === "object" && fill.type && fill.colorStops;
+  const gradType = isGradient ? fill.type : "none";
+
+  const applyGradient = (type: string) => {
+    if (type === "none") { commit("fill", "#cccccc"); return; }
+    const coords = type === "radial"
+      ? { x1: 0.5, y1: 0.5, r1: 0, x2: 0.5, y2: 0.5, r2: 0.5 }
+      : { x1: 0, y1: 0, x2: 1, y2: 1 };
+    commit("fill", new Gradient({
+      type: type as "linear" | "radial",
+      gradientUnits: "percentage",
+      coords,
+      colorStops: [
+        { offset: 0, color: "#4ade80" },
+        { offset: 1, color: "#7c3aed" },
+      ],
+    }));
+  };
+
+  const updateStop = (i: number, color: string) => {
+    if (!isGradient) return;
+    const stops = [...fill.colorStops];
+    stops[i] = { ...stops[i], color };
+    commit("fill", new Gradient({ ...fill, colorStops: stops }));
+  };
+
+  const removeStop = (i: number) => {
+    if (!isGradient) return;
+    const stops = fill.colorStops.filter((_: any, j: number) => j !== i);
+    if (stops.length < 2) { commit("fill", "#cccccc"); return; }
+    commit("fill", new Gradient({ ...fill, colorStops: stops }));
+  };
+
+  const addStop = () => {
+    if (!isGradient) return;
+    const stops = [...fill.colorStops, { offset: 1, color: "#ffffff" }];
+    stops.sort((a: any, b: any) => a.offset - b.offset);
+    commit("fill", new Gradient({ ...fill, colorStops: stops }));
+  };
+
+  return (
+    <div style={{ padding: "0 10px 6px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Type</span>
+        <select
+          defaultValue={gradType}
+          onChange={e => applyGradient(e.target.value)}
+          style={selectStyle}
+        >
+          <option value="none">None</option>
+          <option value="linear">Linear</option>
+          <option value="radial">Radial</option>
+        </select>
+      </div>
+      {isGradient && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {fill.colorStops.map((stop: any, i: number) => (
+            <div key={`grad-${resetKey}-${i}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#7a7a90", minWidth: 30 }}>{Math.round(stop.offset * 100)}%</span>
+              <input
+                type="color"
+                defaultValue={stop.color}
+                onChange={e => updateStop(i, e.target.value)}
+                style={{ width: 24, height: 22, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+              />
+              <input
+                defaultValue={stop.color}
+                onBlur={e => updateStop(i, e.target.value)}
+                style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12, fontFamily: "monospace" }}
+              />
+              <button
+                type="button"
+                onClick={() => removeStop(i)}
+                style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 14, padding: 0, lineHeight: 1 }}
+                aria-label="Remove gradient stop"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addStop}
+            style={{ background: "#1a2a1a", border: "1px solid #1c1c26", color: "#4ade80", borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11 }}
+          >
+            + Add Stop
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -406,4 +546,9 @@ const rowStyle: React.CSSProperties = {
 
 const rowLabelStyle: React.CSSProperties = {
   fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right",
+};
+
+const selectStyle: React.CSSProperties = {
+  flex: 1, background: "#111118", border: "1px solid #1c1c26",
+  color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
 };

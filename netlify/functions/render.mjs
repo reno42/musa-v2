@@ -33,6 +33,32 @@ async function fetchTemplate(id) {
 }
 
 /**
+ * Extract unique Google Font families from template canvas objects.
+ */
+function extractFonts(tpl) {
+  const fonts = new Set();
+  const walk = (objs) => {
+    for (const o of objs || []) {
+      if (o.fontFamily && o.fontFamily !== "Inter" && o.fontFamily !== "sans-serif") {
+        fonts.add(o.fontFamily);
+      }
+      if (o.objects) walk(o.objects);
+    }
+  };
+  walk(tpl.canvas?.objects || []);
+  return [...fonts];
+}
+
+/** Build Google Fonts CSS link tags for fonts used in the template. */
+function googleFontsLinks(tpl) {
+  const fonts = extractFonts(tpl);
+  if (!fonts.length) return "";
+  return fonts.map(f =>
+    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, "+")}:wght@400;500;700&display=swap">`
+  ).join("\n");
+}
+
+/**
  * Build a self-contained HTML page that renders the template
  * via Fabric.js v5 CDN and auto-downloads as PNG on load.
  */
@@ -44,6 +70,8 @@ function buildRenderPage(tpl, width, height, format, scale, templateId) {
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
 
+  const fontsCss = googleFontsLinks(tpl);
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -51,6 +79,7 @@ function buildRenderPage(tpl, width, height, format, scale, templateId) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${safeName} — Futuraria Render</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+${fontsCss}
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
