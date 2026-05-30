@@ -14,9 +14,11 @@
  */
 
 import puppeteer from "puppeteer-core";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const chromium = require("@sparticuz/chromium");
+import _chromium from "@sparticuz/chromium";
+// esbuild CJS interop: handle both {default: {...}} and raw exports
+const chromium = (_chromium && _chromium.default && typeof _chromium.default === 'object' && 'args' in _chromium.default)
+  ? _chromium.default
+  : _chromium;
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
 
@@ -140,11 +142,15 @@ async function doRenderSync(templateId, format, scale, providedTemplate) {
       : buildRenderHtml(tpl, width, height);
 
     // 3. Launch headless Chromium via @sparticuz/chromium
+    const exePath = typeof chromium.executablePath === "function"
+      ? await chromium.executablePath()
+      : chromium.executablePath;
+
     const browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: { ...chromium.defaultViewport, width, height, deviceScaleFactor: 1 },
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
+      args: chromium.args || [],
+      defaultViewport: { ...(chromium.defaultViewport || {}), width, height, deviceScaleFactor: 1 },
+      executablePath: exePath,
+      headless: chromium.headless !== undefined ? chromium.headless : true,
       ignoreHTTPSErrors: true,
       timeout: 8000,
     });
