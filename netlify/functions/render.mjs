@@ -5,8 +5,7 @@
  * Chromium. Designed for Netlify Free tier (10s timeout, 50MB limit).
  *
  * Endpoints:
- *   POST /api/render/:templateId           → start render job
- *   GET  /api/render/:templateId/:jobId    → poll job status
+ *   POST /api/render/:templateId  → synchronous render (returns image)
  *
  * Dependencies: chrome-aws-lambda, puppeteer-core
  * Chromium binary: ~44MB (external — not bundled by esbuild)
@@ -18,13 +17,6 @@ import puppeteer from "puppeteer-core";
 import chromium from "chrome-aws-lambda";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import { store } from "../../api/src/services/store.js";
-
-// ─── In-memory job store ─────────────────────────────────────
-// Jobs survive the container lifetime (same cold-start semantics
-// as the in-memory template store). A render typically completes
-// in 5-8 seconds, so polling within the same container works.
-const jobs = new Map();
-const JOB_TTL = 5 * 60 * 1000; // auto-clean after 5 min
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -123,16 +115,15 @@ function buildSvgHtml(tpl, width, height) {
 </script></body></html>`;
 }
 
-// ─── Render engine ────────────────────────────────────────────
+// ─── Render engine (synchronous — returns result directly) ─────
 
-async function doRender(templateId, format, scale, jobId, providedTemplate) {
+async function doRenderSync(templateId, format, scale, providedTemplate) {
   const t0 = Date.now();
   try {
     // 1. Load template (from provided data, Supabase, or in-memory fallback)
     const tpl = providedTemplate || await getTemplate(templateId);
     if (!tpl) {
-      jobs.set(jobId, { status: "failed", error: "Template not found" });
-      return;
+      return { status: "failed", error: "Template not found", elapsedMs: Date.now() - t0 };
     }
 
     const baseW = tpl.width || 1080;
@@ -196,7 +187,7 @@ async function doRender(templateId, format, scale, jobId, providedTemplate) {
     }
 
     const elapsed = Date.now() - t0;
-    jobs.set(jobId, {
+    return {
       status: "complete",
       templateId,
       format,
@@ -205,32 +196,38 @@ async function doRender(templateId, format, scale, jobId, providedTemplate) {
       height,
       dataUrl: result,
       elapsedMs: elapsed,
-    });
+    };
   } catch (err) {
     const elapsed = Date.now() - t0;
-    jobs.set(jobId, {
+    return {
       status: "failed",
       error: err.message || "Render failed",
       elapsedMs: elapsed,
-    });
+    };
   }
 }
 
 // ─── Periodic cleanup ─────────────────────────────────────────
 
+// Idle render jobs are evicted after 10 minutes (container lifetime)
+const JOB_EVICT_MS = 10 * 60 * 1000;
+
 setInterval(() => {
-  const cutoff = Date.now() - JOB_TTL;
-  for (const [id, job] of jobs) {
+  const cutoff = Date.now() - JOB_EVICT_MS;
+  for (const [id, job] of store.renderJobs) {
     if (job.status !== "processing") {
-      // Check approximate age from jobId timestamp
-      const ts = parseInt(id.split("_")[1], 10);
-      if (ts && ts < cutoff) jobs.delete(id);
+      const created = new Date(job.createdAt).getTime();
+      if (created < cutoff) store.renderJobs.delete(id);
     }
   }
 }, 60_000).unref?.();
 
 // ─── Netlify Function handler ─────────────────────────────────
 
+/**
+ * POST /api/render/:templateId  → synchronous render, returns image + jobId
+ * GET  /api/render/:templateId/:jobId → poll job status
+ */
 export const handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -243,50 +240,89 @@ export const handler = async (event) => {
     return { statusCode: 204, headers };
   }
 
-  // Parse path: /api/render/:templateId or /api/render/:templateId/:jobId
+  // Parse path: /api/render/:templateId[/:jobId]
   const path = (event.path || "").replace(/^\/api\/render\/?/, "");
   const parts = path.split("/").filter(Boolean);
   const templateId = parts[0];
   const jobId = parts[1];
 
-  // ── POST /api/render/:templateId ──
-  if (event.httpMethod === "POST" && templateId) {
+  // ── GET /api/render/:templateId/:jobId — poll job status ──
+  if (event.httpMethod === "GET" && templateId && jobId) {
+    const storedJob = store.getRenderJob(jobId);
+    if (!storedJob) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: "Render job not found or expired", jobId }),
+      };
+    }
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        jobId: storedJob.id,
+        status: storedJob.status,
+        templateId: storedJob.templateId,
+        format: storedJob.format,
+        scale: storedJob.scale,
+        createdAt: storedJob.createdAt,
+        // Include result if complete
+        ...(storedJob.url && { dataUrl: storedJob.url }),
+        ...(storedJob.completedAt && { completedAt: storedJob.completedAt }),
+        ...(storedJob.error && { error: storedJob.error }),
+      }),
+    };
+  }
+
+  // ── POST /api/render/:templateId — synchronous render ──
+  if (event.httpMethod === "POST" && templateId && !jobId) {
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { /* use defaults */ }
 
     const format = ["png", "jpg", "svg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 2, 1), 4);
-    // Accept template data directly (avoids cross-container lookup when
-    // template was just created via MCP and isn't in Supabase yet)
+    // Accept template data directly (avoids cross-container lookup on Netlify)
     const providedTemplate = body.template || null;
 
-    const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    jobs.set(id, { status: "processing", templateId, format, scale });
+    // Create render job record
+    const job = store.createRenderJob(templateId, format, scale);
 
-    // Fire-and-forget: don't await, return 202 immediately
-    doRender(templateId, format, scale, id, providedTemplate);
+    // Synchronous render — completes within 6-8s (under 10s Netlify limit)
+    const result = await doRenderSync(templateId, format, scale, providedTemplate);
 
-    return {
-      statusCode: 202,
-      headers,
-      body: JSON.stringify({ id, status: "processing", templateId, format, scale }),
-    };
-  }
+    // Update job with result
+    if (result.status === "complete") {
+      job.status = "complete";
+      job.url = result.dataUrl;
+      job.completedAt = new Date().toISOString();
+    } else {
+      job.status = "failed";
+      job.error = result.error;
+      job.completedAt = new Date().toISOString();
+    }
 
-  // ── GET /api/render/:templateId/:jobId ──
-  if (event.httpMethod === "GET" && jobId) {
-    const job = jobs.get(jobId);
-    if (!job) {
+    if (result.status === "failed") {
       return {
-        statusCode: 404,
+        statusCode: 500,
         headers,
-        body: JSON.stringify({ error: "Render job not found" }),
+        body: JSON.stringify({ jobId: job.id, status: "failed", error: result.error }),
       };
     }
+
     return {
-      statusCode: job.status === "failed" ? 500 : 200,
+      statusCode: 200,
       headers,
-      body: JSON.stringify(job),
+      body: JSON.stringify({
+        jobId: job.id,
+        status: "complete",
+        templateId,
+        format,
+        scale,
+        width: result.width,
+        height: result.height,
+        dataUrl: result.dataUrl,
+        elapsedMs: result.elapsedMs,
+      }),
     };
   }
 
@@ -295,7 +331,7 @@ export const handler = async (event) => {
     statusCode: 400,
     headers,
     body: JSON.stringify({
-      error: "Use POST /api/render/:templateId (start) or GET /api/render/:templateId/:jobId (poll)",
+      error: "POST /api/render/:templateId to render, GET /api/render/:templateId/:jobId to poll",
     }),
   };
 };
