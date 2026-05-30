@@ -280,6 +280,31 @@ export function useCanvas() {
         return;
       }
 
+      if (currentTool === "image") {
+        const clickPoint = (c as any).getScenePoint(e);
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*";
+        input.onchange = async () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          const url = URL.createObjectURL(file);
+          try {
+            const img = await FabricImage.fromURL(url);
+            img.set({ left: clickPoint.x, top: clickPoint.y });
+            (img as any).layerName = makeLayerName("image");
+            img.scaleToWidth(Math.min(img.width || 400, 400));
+            c.add(img);
+            c.setActiveObject(img);
+            c.requestRenderAll();
+            pushHistory();
+          } catch { /* ignore */ }
+          URL.revokeObjectURL(url);
+        };
+        input.click();
+        return;
+      }
+
       if (["rect", "ellipse", "line", "triangle", "star", "polygon", "frame"].includes(currentTool) && !panningRef.current) {
         // If clicking on an existing object, let Fabric handle selection/drag — don't start a new draw
         if (opt.target) return;
