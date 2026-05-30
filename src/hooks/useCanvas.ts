@@ -305,8 +305,17 @@ export function useCanvas() {
         return;
       }
 
-      if (["rect", "ellipse", "line", "triangle", "star", "polygon", "frame"].includes(currentTool) && !panningRef.current) {
-        // If clicking on an existing object, let Fabric handle selection/drag — don't start a new draw
+      // Shape tools: draw on empty canvas or inside frames (frames are containers, not targets)
+      // Frame tool: clicking on existing frame selects it; clicking empty canvas draws new frame
+      const shapeTools = ["rect", "ellipse", "line", "triangle", "star", "polygon"];
+      if ((shapeTools as string[]).includes(currentTool) && !panningRef.current) {
+        // Only skip if clicking on a non-frame object (allow drawing inside frames)
+        if (opt.target && !(opt.target as any).isFrameVisual) return;
+        const ptr = (c as any).getScenePoint(e);
+        drawStartRef.current = { x: ptr.x, y: ptr.y };
+      }
+      if (currentTool === "frame" && !panningRef.current) {
+        // Frame tool: clicking on any existing object selects it; empty canvas draws new frame
         if (opt.target) return;
         const ptr = (c as any).getScenePoint(e);
         drawStartRef.current = { x: ptr.x, y: ptr.y };
@@ -333,10 +342,10 @@ export function useCanvas() {
         return;
       }
 
-      // Text tool: single click adds text only on empty canvas (doesn't need drawStartRef)
+      // Text tool: single click adds text on empty canvas or inside frames (frames are containers)
       if (toolRef.current === "text") {
-        // If clicking on an existing object, let Fabric handle it — don't add new text
-        if (opt.target) return;
+        // Only skip if clicking on a non-frame object (allow text inside frames)
+        if (opt.target && !(opt.target as any).isFrameVisual) return;
         const e = opt.e as any;
         const end = (c as any).getScenePoint(e);
         const text = new IText("Double-click to edit", {
@@ -456,8 +465,8 @@ export function useCanvas() {
     let penPreview: any = null;
     c.on("mouse:down", (opt) => {
       if (toolRef.current !== "pen") return;
-      // If clicking on an existing object, let Fabric handle it
-      if (opt.target) return;
+      // Only skip if clicking on a non-frame object (allow pen points inside frames)
+      if (opt.target && !(opt.target as any).isFrameVisual) return;
       const e = opt.e as any;
       const ptr = (c as any).getScenePoint(e);
       penPoints.push({ x: ptr.x, y: ptr.y });
