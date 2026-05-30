@@ -338,7 +338,14 @@ export function LayersPanel({
                     // Duplicate frame
                     const newFrameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                     FabricObject.fromObject(json).then((clone: any) => {
-                      clone.set({ left: (clone.left || 0) + 40, top: (clone.top || 0) + 40 });
+                      // Auto-place to the right of the rightmost frame (30px gap)
+                      const allFrames = c.getObjects().filter((o: any) => o.isFrameVisual);
+                      let maxRight = 0;
+                      for (const f of allFrames) {
+                        const r = (f as any).left + ((f as any).width || 0) * ((f as any).scaleX || 1);
+                        if (r > maxRight) maxRight = r;
+                      }
+                      clone.set({ left: maxRight + 30, top: (clone.top || 0) });
                       (clone as any).isFrameVisual = true;
                       (clone as any).frameId = newFrameId;
                       (clone as any).frameName = `${origName} (copy)`;
@@ -424,6 +431,32 @@ function LayerRow({
       onDrop={onDrop}
       style={layerItemStyle(isSelected, item.visible, indent, dragOverTarget === `item-${item.objectId}`)}
     >
+      <button
+        type="button"
+        aria-label="Bring forward"
+        title="Bring forward"
+        onClick={e => {
+          e.stopPropagation();
+          const c = canvasRef.current;
+          if (!c) return;
+          c.bringObjectForward(item.ref);
+          c.requestRenderAll();
+        }}
+        style={{ ...tinyBtn("▲"), fontSize: 8 }}
+      />
+      <button
+        type="button"
+        aria-label="Send backward"
+        title="Send backward"
+        onClick={e => {
+          e.stopPropagation();
+          const c = canvasRef.current;
+          if (!c) return;
+          c.sendObjectBackwards(item.ref);
+          c.requestRenderAll();
+        }}
+        style={{ ...tinyBtn("▼"), fontSize: 8 }}
+      />
       <button
         type="button"
         aria-label={`Select layer ${item.name}`}

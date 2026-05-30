@@ -315,6 +315,15 @@ export function useCanvas() {
           fontSize: 24, fontFamily: "Inter, sans-serif", fill: "#000000",
         });
         (text as any).layerName = makeLayerName("text");
+        // Link to containing frame immediately
+        const frames = c.getObjects().filter((o: any) => o.isFrameVisual);
+        for (const f of frames) {
+          const fb = f.getBoundingRect();
+          if (end.x >= fb.left && end.x <= fb.left + fb.width && end.y >= fb.top && end.y <= fb.top + fb.height) {
+            (text as any).frameId = (f as any).frameId;
+            break;
+          }
+        }
         c.add(text);
         c.setActiveObject(text);
         text.enterEditing();

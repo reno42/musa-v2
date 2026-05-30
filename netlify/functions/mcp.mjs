@@ -196,8 +196,16 @@ async function handleMethod(method, params, userId) {
       const updates = {};
       if (params.name !== undefined) updates.name = params.name;
       if (params.canvas !== undefined) updates.canvas = params.canvas;
-      const tpl = await templates.updateTemplate(params.id, updates);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      // Support raw objects array (simpler API for programmatic use)
+      if (params.objects !== undefined) {
+        const objects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
+        updates.canvas = { objects, viewport: { x: 0, y: 0, zoom: 1 } };
+      }
+      // Also accept id or templateId
+      const tplId = params.id || params.templateId;
+      if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      const tpl = await templates.updateTemplate(tplId, updates);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
       return tpl;
     }
     case "delete_template": {

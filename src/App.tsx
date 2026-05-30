@@ -129,7 +129,7 @@ function App() {
     return ctrl[method](...args);
   }, []);
 
-  // Create new template
+  // Create new template — stay on dashboard so user sees the new template
   const handleCreateTemplate = async (workspaceId: string) => {
     try {
       const res = await fetch("/api/templates", {
@@ -139,7 +139,8 @@ function App() {
       });
       const json = await res.json();
       if (json.success && json.data) {
-        dispatch({ type: "OPEN_TEMPLATE", id: json.data.id, json: { width: 1080, height: 1080, canvas: json.data.canvas, objects: json.data.canvas?.objects || [] } });
+        // Return to dashboard to show the new template in the list
+        dispatch({ type: "SET_VIEW", view: "dashboard" });
       }
     } catch { /* ignore */ }
   };
@@ -237,6 +238,7 @@ function App() {
         <PropertiesPanel
           selectedObjects={selectedObjects}
           onUpdate={() => callCanvas("pushHistory")}
+          canvasRef={layersCanvasRef as React.RefObject<import("fabric").Canvas | null>}
         />
         <LayersPanel
           key={layersCanvasRef.current ? "ready" : "loading"}

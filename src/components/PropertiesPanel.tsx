@@ -1,14 +1,15 @@
-import { useState, useCallback, useRef } from "react";
-import type { FabricObject } from "fabric";
+import { useState, useCallback, useRef, useEffect } from "react";
+import type { FabricObject, Canvas } from "fabric";
 
 interface PropertiesPanelProps {
   selectedObjects: FabricObject[];
   onUpdate?: () => void;
+  canvasRef?: React.RefObject<Canvas | null>;
 }
 
 const em = (n: number) => `${Math.round(n)}`;
 
-export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelProps) {
+export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: PropertiesPanelProps) {
   // Track last committed object identity for key-based reset
   const lastObjRef = useRef<any>(null);
   // Use a reset key to remount inputs when selection changes
@@ -33,6 +34,14 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
     onUpdate?.();
   }, [obj, onUpdate]);
 
+  const commitCanvas = useCallback((prop: string, value: any) => {
+    const canvas = canvasRef?.current;
+    if (!canvas) return;
+    (canvas as any).set(prop, value);
+    canvas.requestRenderAll();
+    onUpdate?.();
+  }, [canvasRef, onUpdate]);
+
   const commitScale = useCallback((prop: string, scaleKey: string, newValue: number) => {
     if (!obj) return;
     const cur = obj[prop] ?? 0;
@@ -44,7 +53,40 @@ export function PropertiesPanel({ selectedObjects, onUpdate }: PropertiesPanelPr
     onUpdate?.();
   }, [obj, onUpdate]);
 
+  // Canvas-level properties when nothing is selected
   if (!obj) {
+    const canvas = canvasRef?.current;
+    if (canvas) {
+      const bg = (canvas as any).backgroundColor || "transparent";
+      return (
+        <div style={panelStyle}>
+          <div style={propsHeaderStyle}>
+            <span>Canvas</span>
+          </div>
+          <Section label="Background">
+            <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
+              <input
+                type="color"
+                aria-label="Canvas background color"
+                defaultValue={typeof bg === "string" && bg.startsWith("#") ? bg : "#ffffff"}
+                onBlur={e => commitCanvas("backgroundColor", e.target.value)}
+                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+              />
+              <input
+                aria-label="Canvas background hex"
+                defaultValue={bg === "transparent" ? "#ffffff" : bg}
+                onBlur={e => commitCanvas("backgroundColor", e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+          </Section>
+          <Section label="Dimensions">
+            <Row label="W" defaultValue={em((canvas as any).width || 1080)} onChange={v => commitCanvas("width", Number(v))} />
+            <Row label="H" defaultValue={em((canvas as any).height || 1080)} onChange={v => commitCanvas("height", Number(v))} />
+          </Section>
+        </div>
+      );
+    }
     return (
       <div style={panelStyle}>
         <div style={emptyStateStyle}>
