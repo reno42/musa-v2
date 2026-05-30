@@ -1,34 +1,26 @@
 /**
- * Render Function — Server-side PNG/JPG rendering via chrome-aws-lambda
+ * Render Function — Self-rendering HTML with auto-download
  * ──────────────────────────────────────────────────────────────
- * Renders Futuraria design templates to PNG/JPG using headless
- * Chromium. Templates are fetched from the REST API (avoids broken
- * cross-function imports that fail in Netlify's per-function bundles).
+ * Returns a self-contained HTML page that renders Futuraria
+ * design templates via Fabric.js v5 CDN in the browser, then
+ * auto-downloads the result as PNG. Zero server-side binary
+ * dependencies (avoids Chromium/libnss3 issues on Netlify).
  *
  * Endpoints:
- *   POST /api/templates/:id/render          → render PNG/JPG
- *   GET  /api/templates/:id/render/:jobId   → poll job status
+ *   POST /api/templates/:id/render          → render + auto-download
+ *   POST /api/render/:templateId            → legacy compat
+ *   GET  /api/render/:templateId/:jobId     → retrieve stored render
  *
  * @module functions/render
  */
 
-import _chromium from '@sparticuz/chromium';
-import puppeteer from 'puppeteer-core';
 import { store } from "../../api/src/services/store.js";
-
-// esbuild CJS/ESM interop: @sparticuz/chromium exports may be
-// wrapped in .default depending on bundler version
-const chromium = _chromium.default || _chromium;
 
 const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-/**
- * Fetch template from REST API (reads Supabase).
- * Replaces broken cross-function import with an HTTP call
- * that works regardless of Netlify's per-function esbuild bundling.
- */
+/** Fetch template from REST API (reads Supabase across containers) */
 async function fetchTemplate(id) {
   try {
     const res = await fetch(`${API_BASE}/api/templates/${id}`);
@@ -40,28 +32,160 @@ async function fetchTemplate(id) {
   }
 }
 
-/** Minimal HTML page for headless Chromium to screenshot */
-function buildRenderHtml(tpl, width, height) {
+/**
+ * Build a self-contained HTML page that renders the template
+ * via Fabric.js v5 CDN and auto-downloads as PNG on load.
+ */
+function buildRenderPage(tpl, width, height, format, scale, templateId) {
   const canvasJson = typeof tpl.canvas === "string"
     ? tpl.canvas
     : JSON.stringify(tpl.canvas);
 
+  const safeName = (tpl.name || templateId || "template")
+    .replace(/[<>:"/\\|?*]/g, "_");
+
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${safeName} — Futuraria Render</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
-<style>*{margin:0;padding:0}body{background:#fff}</style>
-</head><body>
-<canvas id="c" width="${width}" height="${height}"></canvas>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .toolbar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 800px;
+    width: 100%;
+  }
+  .toolbar h2 {
+    font-size: 15px;
+    margin-right: auto;
+    color: #333;
+  }
+  .toolbar button {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s;
+  }
+  .btn-download { background:#3B82F6; color:#fff; }
+  .btn-download:hover { background:#2563EB; }
+  .btn-download-jpg { background:#059669; color:#fff; }
+  .btn-download-jpg:hover { background:#047857; }
+  .btn-download-svg { background:#7C3AED; color:#fff; }
+  .btn-download-svg:hover { background:#6D28D9; }
+  .canvas-wrap {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    padding: 16px;
+    overflow: auto;
+    max-width: 100vw;
+  }
+  .canvas-wrap canvas { display:block; }
+  .info {
+    margin-top: 10px;
+    font-size: 11px;
+    color: #888;
+  }
+  .status-msg {
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-size: 12px;
+  }
+  .status-ok { background:#D1FAE5; color:#065F46; }
+  .status-err { background:#FEE2E2; color:#991B1B; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <h2>${safeName}</h2>
+  <button class="btn-download" onclick="downloadCanvas('png')">⬇ PNG</button>
+  <button class="btn-download-jpg" onclick="downloadCanvas('jpg')">⬇ JPG</button>
+  <button class="btn-download-svg" onclick="downloadSvg()">⬇ SVG</button>
+  <span id="status" class="status-msg status-ok">Rendered ✓</span>
+</div>
+<div class="canvas-wrap">
+  <canvas id="c" width="${width}" height="${height}"></canvas>
+</div>
+<div class="info">
+  ${width}×${height}px · scale ${scale}× · ${format.toUpperCase()}
+</div>
+
 <script>
-var c = new fabric.StaticCanvas('c', {
-  width:${width}, height:${height},
-  renderOnAddRemove:true, backgroundColor:'#ffffff'
-});
-c.loadFromJSON(${canvasJson}, function() {
-  c.renderAll();
-  setTimeout(function(){ c.renderAll(); }, 300);
-});
-</script></body></html>`;
+(function() {
+  var width = ${width};
+  var height = ${height};
+  var safeName = "${safeName}";
+
+  var canvas = new fabric.StaticCanvas('c', {
+    width: width,
+    height: height,
+    renderOnAddRemove: true,
+    backgroundColor: '#ffffff'
+  });
+
+  canvas.loadFromJSON(${canvasJson}, function() {
+    canvas.renderAll();
+    setTimeout(function() {
+      canvas.renderAll();
+      // ── Auto-download PNG after render ──
+      var autoUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
+      var a = document.createElement('a');
+      a.href = autoUrl;
+      a.download = safeName + '.png';
+      a.click();
+    }, 500);
+  });
+
+  // ── Manual download helpers ──
+  window.downloadCanvas = function(fmt) {
+    var dataUrl;
+    if (fmt === 'jpg') {
+      dataUrl = canvas.toDataURL({ format: 'jpeg', quality: 0.92, multiplier: 2 });
+    } else {
+      dataUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
+    }
+    var a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = safeName + '.' + fmt;
+    a.click();
+  };
+
+  window.downloadSvg = function() {
+    var svg = canvas.toSVG();
+    var blob = new Blob([svg], { type: 'image/svg+xml' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = safeName + '.svg';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+})();
+</script>
+</body></html>`;
 }
 
 // ─── Periodic cleanup ─────────────────────────────────────────
@@ -85,119 +209,105 @@ export const handler = async (event) => {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
     "Content-Type": "application/json",
   };
+  const htmlHeaders = {
+    ...jsonHeaders,
+    "Content-Type": "text/html; charset=utf-8",
+  };
 
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: jsonHeaders };
   }
 
-  // Parse path: /api/templates/:id/render[/:jobId]
-  const path = (event.path || "").replace(/^\/api\/templates\//, "");
+  const rawPath = event.path || "";
+
+  // ── Legacy: /api/render/:templateId[/:jobId] ──
+  if (rawPath.startsWith("/api/render/")) {
+    const path = rawPath.replace(/^\/api\/render\/?/, "");
+    const parts = path.split("/").filter(Boolean);
+    const templateId = parts[0];
+    const jobId = parts[1];
+
+    // GET polling
+    if (event.httpMethod === "GET" && jobId) {
+      const storedJob = store.getRenderJob(jobId);
+      if (!storedJob) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Render job not found", jobId }) };
+      }
+      if (storedJob.url && storedJob.status === "complete") {
+        return { statusCode: 200, headers: htmlHeaders, body: storedJob.url };
+      }
+      return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ ...storedJob }) };
+    }
+
+    // POST render
+    if (event.httpMethod === "POST" && templateId) {
+      let body = {};
+      try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
+      const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
+      const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
+      const tpl = body.template || await fetchTemplate(templateId);
+      if (!tpl) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+      }
+      const baseW = tpl.width || 1080;
+      const baseH = tpl.height || 1080;
+      const width = Math.round(baseW * scale);
+      const height = Math.round(baseH * scale);
+      const html = buildRenderPage(tpl, width, height, format, scale, templateId);
+      const job = store.createRenderJob(templateId, format, scale);
+      job.status = "complete";
+      job.url = html;
+      job.completedAt = new Date().toISOString();
+      if (event.headers?.accept?.includes("text/html") || body.returnHtml) {
+        return { statusCode: 200, headers: htmlHeaders, body: html };
+      }
+      return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobId: job.id, status: "complete", templateId, format, scale, width, height, html, _links: { view: "/api/render/" + templateId + "/" + job.id } }) };
+    }
+  }
+
+  // ── New route: /api/templates/:id/render[/:jobId] ──
+  const path = rawPath.replace(/^\/api\/templates\//, "");
   const parts = path.split("/").filter(Boolean);
   const templateId = parts[0];
   const action = parts[1]; // "render"
-  const jobId = parts[2];  // optional
+  const jobId = parts[2];
 
-  // ── GET /api/templates/:id/render/:jobId — poll status ──
+  // GET polling
   if (event.httpMethod === "GET" && templateId && jobId) {
     const storedJob = store.getRenderJob(jobId);
     if (!storedJob) {
-      return {
-        statusCode: 404, headers: jsonHeaders,
-        body: JSON.stringify({ error: "Render job not found or expired", jobId }),
-      };
+      return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Render job not found", jobId }) };
     }
-    if (storedJob.status === "complete" && storedJob.url) {
-      return {
-        statusCode: 200,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Content-Type": storedJob.format === "jpg" ? "image/jpeg" : "image/png",
-        },
-        body: storedJob.url,
-        isBase64Encoded: true,
-      };
+    if (storedJob.url && storedJob.status === "complete") {
+      return { statusCode: 200, headers: htmlHeaders, body: storedJob.url };
     }
-    return {
-      statusCode: 200, headers: jsonHeaders,
-      body: JSON.stringify({
-        jobId: storedJob.id, status: storedJob.status,
-        templateId: storedJob.templateId, format: storedJob.format,
-        scale: storedJob.scale, createdAt: storedJob.createdAt,
-        ...(storedJob.completedAt && { completedAt: storedJob.completedAt }),
-        ...(storedJob.error && { error: storedJob.error }),
-      }),
-    };
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobId: storedJob.id, status: storedJob.status, templateId: storedJob.templateId, format: storedJob.format, scale: storedJob.scale, createdAt: storedJob.createdAt, ...(storedJob.completedAt && { completedAt: storedJob.completedAt }), ...(storedJob.error && { error: storedJob.error }) }) };
   }
 
-  // ── POST /api/templates/:id/render — render PNG/JPG ──
-  if (event.httpMethod === "POST" && templateId && action === "render" && !jobId) {
+  // POST render
+  if (event.httpMethod === "POST" && templateId && action === "render") {
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
-
     const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
-
-    // ★ Fetch template from REST API (no broken cross-function import)
-    const tpl = await fetchTemplate(templateId);
+    const tpl = body.template || await fetchTemplate(templateId);
     if (!tpl) {
-      return {
-        statusCode: 404, headers: jsonHeaders,
-        body: JSON.stringify({ error: "Template not found", templateId }),
-      };
+      return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
     }
-
-    const width = Math.round((tpl.width || 1080) * scale);
-    const height = Math.round((tpl.height || 1080) * scale);
-
+    const baseW = tpl.width || 1080;
+    const baseH = tpl.height || 1080;
+    const width = Math.round(baseW * scale);
+    const height = Math.round(baseH * scale);
+    const html = buildRenderPage(tpl, width, height, format, scale, templateId);
     const job = store.createRenderJob(templateId, format, scale);
-    job.status = "processing";
-
-    try {
-      const browser = await puppeteer.launch({
-        args: chromium.args,
-        defaultViewport: { width, height },
-        executablePath: await Promise.resolve(chromium.executablePath),
-        headless: chromium.headless,
-      });
-
-      const page = await browser.newPage();
-      const html = buildRenderHtml(tpl, width, height);
-      await page.setContent(html, { waitUntil: "networkidle0" });
-
-      const screenshotOpts = format === "jpg"
-        ? { type: "jpeg", quality: 92 }
-        : { type: "png" };
-
-      const buffer = await page.screenshot(screenshotOpts);
-      await browser.close();
-
-      const base64 = buffer.toString("base64");
-
-      job.status = "complete";
-      job.url = base64;
-      job.completedAt = new Date().toISOString();
-
-      return {
-        statusCode: 200,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Content-Type": format === "jpg" ? "image/jpeg" : "image/png",
-        },
-        body: base64,
-        isBase64Encoded: true,
-      };
-    } catch (e) {
-      job.status = "failed";
-      job.error = e.message;
-      return {
-        statusCode: 500, headers: jsonHeaders,
-        body: JSON.stringify({ error: "Render failed", message: e.message }),
-      };
+    job.status = "complete";
+    job.url = html;
+    job.completedAt = new Date().toISOString();
+    if (event.headers?.accept?.includes("text/html") || body.returnHtml) {
+      return { statusCode: 200, headers: htmlHeaders, body: html };
     }
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobId: job.id, status: "complete", templateId, format, scale, width, height, html, _links: { view: "/api/templates/" + templateId + "/render/" + job.id } }) };
   }
 
-  return {
-    statusCode: 400, headers: jsonHeaders,
-    body: JSON.stringify({ error: "POST /api/templates/:id/render to render, GET /api/templates/:id/render/:jobId to poll" }),
-  };
+  return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "POST /api/templates/:id/render to render, GET /api/templates/:id/render/:jobId to poll" }) };
 };
