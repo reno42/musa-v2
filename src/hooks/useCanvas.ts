@@ -281,6 +281,8 @@ export function useCanvas() {
       }
 
       if (["rect", "ellipse", "line", "triangle", "star", "polygon", "frame"].includes(currentTool) && !panningRef.current) {
+        // If clicking on an existing object, let Fabric handle selection/drag — don't start a new draw
+        if (opt.target) return;
         const ptr = (c as any).getScenePoint(e);
         drawStartRef.current = { x: ptr.x, y: ptr.y };
       }
@@ -306,8 +308,10 @@ export function useCanvas() {
         return;
       }
 
-      // Text tool: single click adds text (doesn't need drawStartRef)
+      // Text tool: single click adds text only on empty canvas (doesn't need drawStartRef)
       if (toolRef.current === "text") {
+        // If clicking on an existing object, let Fabric handle it — don't add new text
+        if (opt.target) return;
         const e = opt.e as any;
         const end = (c as any).getScenePoint(e);
         const text = new IText("Double-click to edit", {
@@ -427,6 +431,8 @@ export function useCanvas() {
     let penPreview: any = null;
     c.on("mouse:down", (opt) => {
       if (toolRef.current !== "pen") return;
+      // If clicking on an existing object, let Fabric handle it
+      if (opt.target) return;
       const e = opt.e as any;
       const ptr = (c as any).getScenePoint(e);
       penPoints.push({ x: ptr.x, y: ptr.y });
