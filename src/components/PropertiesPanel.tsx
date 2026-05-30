@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { FabricObject, Canvas } from "fabric";
-import { Gradient } from "fabric";
+import { Gradient, Shadow } from "fabric";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 
 interface PropertiesPanelProps {
@@ -117,6 +117,17 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const fieldLocked = !!(obj.lockMovementX);
   const fieldVisible = obj.visible !== false;
   const fieldName = obj.layerName ?? obj.name ?? "";
+  const fieldZIndex = String((obj.canvas?.getObjects() || []).indexOf(obj));
+  const fieldLetterSpacing = String(obj.charSpacing ?? 0);
+  const fieldLineHeight = String(obj.lineHeight ?? 1.2);
+  const fieldUnderline = obj.underline ?? false;
+
+  // Shadow helpers
+  const hasShadow = !!(obj.shadow);
+  const fieldShadowColor = obj.shadow?.color ?? "#000000";
+  const fieldShadowBlur = String(obj.shadow?.blur ?? 0);
+  const fieldShadowX = String(obj.shadow?.offsetX ?? 0);
+  const fieldShadowY = String(obj.shadow?.offsetY ?? 0);
 
   const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox";
   const isRectType = obj.type === "rect" || obj.type === "Rect" || (obj as any).isFrameVisual;
@@ -243,6 +254,20 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
         <Row label="H" defaultValue={fieldH} onChange={v => commitScale("height", "scaleY", Number(v))} />
         <Row label="R" defaultValue={fieldAngle} onChange={v => commit("angle", Number(v))} />
         <Row label="Opacity" defaultValue={fieldOpacity} onChange={v => commit("opacity", Math.min(1, Math.max(0, Number(v))))} />
+        <Row label="Z-Idx" defaultValue={fieldZIndex} onChange={v => {
+          const idx = parseInt(v, 10);
+          if (isNaN(idx)) return;
+          const objs = obj.canvas?.getObjects() || [];
+          const curIdx = objs.indexOf(obj);
+          if (curIdx === -1 || idx === curIdx) return;
+          const clamped = Math.max(0, Math.min(idx, objs.length - 1));
+          if (clamped > curIdx) {
+            for (let i = curIdx; i < clamped; i++) obj.canvas?.moveTo(obj, i + 1);
+          } else {
+            for (let i = curIdx; i > clamped; i--) obj.canvas?.moveTo(obj, i - 1);
+          }
+          onUpdate?.();
+        }} />
       </Section>
 
       {/* Layer Name */}
@@ -314,6 +339,20 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
         </Section>
       )}
 
+      {/* Shadow — text objects */}
+      {isTextType && (
+        <Section label="Shadow">
+          <ShadowEditor obj={obj} commit={commit} resetKey={resetKey} hasShadow={hasShadow} fieldShadowColor={fieldShadowColor} fieldShadowBlur={fieldShadowBlur} fieldShadowX={fieldShadowX} fieldShadowY={fieldShadowY} />
+        </Section>
+      )}
+
+      {/* Shadow — rect/circle/path objects */}
+      {!isTextType && !isFrameType && (
+        <Section label="Box Shadow">
+          <ShadowEditor obj={obj} commit={commit} resetKey={resetKey} hasShadow={hasShadow} fieldShadowColor={fieldShadowColor} fieldShadowBlur={fieldShadowBlur} fieldShadowX={fieldShadowX} fieldShadowY={fieldShadowY} />
+        </Section>
+      )}
+
       {/* Corner Radius (rect only) */}
       {isRectType && (
         <Section label="Corner Radius">
@@ -367,6 +406,26 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               </select>
             </div>
           </div>
+          <div style={{ padding: "0 10px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Deco</span>
+              <button
+                type="button"
+                onClick={() => commit("underline", !fieldUnderline)}
+                style={{
+                  flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
+                  background: fieldUnderline ? "#2a4a2a" : "#111118",
+                  border: fieldUnderline ? "1px solid #4ade80" : "1px solid #1c1c26",
+                  color: fieldUnderline ? "#4ade80" : "#7a7a90",
+                  textDecoration: "underline",
+                }}
+              >
+                Underline
+              </button>
+            </div>
+          </div>
+          <Row label="Spacing" defaultValue={fieldLetterSpacing} onChange={v => commit("charSpacing", Number(v))} />
+          <Row label="Ln-Ht" defaultValue={fieldLineHeight} onChange={v => commit("lineHeight", Math.max(0.5, Math.min(4, Number(v))))} />
         </Section>
       )}
     </div>
@@ -498,6 +557,72 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
             + Add Stop
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Shadow Editor — text shadow / box shadow ────────────────
+
+function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fieldShadowBlur, fieldShadowX, fieldShadowY }: {
+  obj: any; commit: (prop: string, value: any) => void; resetKey: number;
+  hasShadow: boolean; fieldShadowColor: string; fieldShadowBlur: string; fieldShadowX: string; fieldShadowY: string;
+}) {
+  const applyShadow = (enabled: boolean) => {
+    if (!enabled) { commit("shadow", null); return; }
+    commit("shadow", new Shadow({
+      color: fieldShadowColor,
+      blur: Number(fieldShadowBlur) || 4,
+      offsetX: Number(fieldShadowX) || 2,
+      offsetY: Number(fieldShadowY) || 2,
+      affectStroke: false,
+      nonScaling: false,
+    }));
+  };
+
+  const updateShadow = (prop: string, val: string | number) => {
+    const s = obj.shadow;
+    if (!s) return;
+    const update: any = { color: s.color, blur: s.blur, offsetX: s.offsetX, offsetY: s.offsetY, affectStroke: s.affectStroke, nonScaling: s.nonScaling };
+    update[prop] = typeof val === "string" ? val : Number(val) || 0;
+    commit("shadow", new Shadow(update));
+  };
+
+  return (
+    <div style={{ padding: "0 10px 6px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <button
+          type="button"
+          onClick={() => applyShadow(!hasShadow)}
+          style={{
+            flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
+            background: hasShadow ? "#2a4a2a" : "#111118",
+            border: hasShadow ? "1px solid #4ade80" : "1px solid #1c1c26",
+            color: hasShadow ? "#4ade80" : "#7a7a90",
+          }}
+        >
+          {hasShadow ? "Enabled ✓" : "Disabled"}
+        </button>
+      </div>
+      {hasShadow && (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+            <input
+              type="color"
+              defaultValue={fieldShadowColor}
+              onChange={e => updateShadow("color", e.target.value)}
+              style={{ width: 24, height: 22, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+            />
+            <input
+              defaultValue={fieldShadowColor}
+              onBlur={e => updateShadow("color", e.target.value)}
+              style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12, fontFamily: "monospace" }}
+            />
+          </div>
+          <Row label="Blur" defaultValue={fieldShadowBlur} onChange={v => updateShadow("blur", v)} />
+          <Row label="X" defaultValue={fieldShadowX} onChange={v => updateShadow("offsetX", v)} />
+          <Row label="Y" defaultValue={fieldShadowY} onChange={v => updateShadow("offsetY", v)} />
+        </>
       )}
     </div>
   );

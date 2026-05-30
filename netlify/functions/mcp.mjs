@@ -121,6 +121,77 @@ const MCP_TOOLS = [
       required: ["data", "workspaceId"],
     },
   },
+  {
+    name: "batch_update",
+    description: "Apply an update to multiple templates at once (e.g. change CTA text across all 18 styles)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of template IDs to update",
+        },
+        search: { type: "string", description: "Optional: update all templates matching this name search instead of explicit IDs" },
+        workspaceId: { type: "string", description: "Required when using search to scope to a workspace" },
+        canvas: { type: "object", description: "Canvas JSON to merge into each template" },
+        objects: {
+          type: "array",
+          items: { type: "object" },
+          description: "Raw Fabric.js objects to merge (simpler than full canvas JSON)",
+        },
+        name: { type: "string", description: "New name(s) — appended suffix like ' - Updated'" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "render_batch",
+    description: "Render multiple templates to HTML+PNG in one call. Returns render URLs for each.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of template IDs to render",
+        },
+        format: {
+          type: "string",
+          enum: ["png", "jpg"],
+          description: "Output format (default png)",
+        },
+        scale: {
+          type: "number",
+          description: "Render scale multiplier (default 1, max 4)",
+        },
+      },
+      required: ["templateIds"],
+    },
+  },
+  {
+    name: "list_versions",
+    description: "List all saved versions of a template for undo/restore",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Template ID" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "restore_version",
+    description: "Restore a template to a previously saved version",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Template ID" },
+        versionId: { type: "string", description: "Version ID to restore (from list_versions)" },
+      },
+      required: ["id", "versionId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -266,6 +337,100 @@ async function handleMethod(method, params, userId) {
         } catch { /* non-blocking */ }
       }
       return newTpl;
+    }
+
+    // ── Batch Update ──
+    case "batch_update": {
+      let ids = params.templateIds || [];
+      // Resolve IDs via search if provided
+      if (params.search) {
+        const result = await templates.listTemplatesPaginated(200, 0, params.workspaceId, params.search);
+        const found = (result?.data || []).map(t => t.id);
+        ids = [...new Set([...ids, ...found])];
+      }
+      if (!ids.length) throw { code: -32602, message: "No templateIds or matching search results" };
+
+      const updates = {};
+      if (params.name !== undefined) updates.name = params.name;
+      if (params.canvas !== undefined) updates.canvas = params.canvas;
+      if (params.objects !== undefined) {
+        const objects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
+        updates.canvas = { objects, viewport: { x: 0, y: 0, zoom: 1 } };
+      }
+
+      const results = [];
+      for (const id of ids) {
+        try {
+          const tpl = await templates.updateTemplate(id, updates);
+          results.push({ id, ok: !!tpl });
+        } catch (e) {
+          results.push({ id, ok: false, error: e?.message || "update failed" });
+        }
+      }
+      return {
+        updated: results.filter(r => r.ok).length,
+        failed: results.filter(r => !r.ok).length,
+        total: ids.length,
+        results,
+      };
+    }
+
+    // ── Render Batch ──
+    case "render_batch": {
+      if (!params.templateIds?.length) throw { code: -32602, message: "templateIds array required" };
+      const format = ["png", "jpg"].includes(params.format) ? params.format : "png";
+      const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
+      const results = [];
+      for (const id of params.templateIds) {
+        try {
+          const tpl = await templates.getTemplate(id);
+          if (!tpl) { results.push({ templateId: id, error: "not found" }); continue; }
+          results.push({
+            templateId: id,
+            name: tpl.name,
+            status: "ready",
+            _links: {
+              render: `/api/templates/${id}/render`,
+              view: `/api/render/${id}`,
+            },
+            renderParams: { format, scale, width: (tpl.width || 1080) * scale, height: (tpl.height || 1080) * scale },
+          });
+        } catch (e) {
+          results.push({ templateId: id, error: e?.message || "load failed" });
+        }
+      }
+      return { format, scale, total: params.templateIds.length, ready: results.filter(r => r.status === "ready").length, results };
+    }
+
+    // ── Versions ──
+    case "list_versions": {
+      const tpl = await templates.getTemplate(params.id);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      return {
+        templateId: params.id,
+        versions: (tpl.versions || []).map((v, i) => ({
+          id: v.id || `v${i}`,
+          version: i + 1,
+          timestamp: v.timestamp || v.createdAt,
+          label: v.label || `Version ${i + 1}`,
+          canvasHash: v.canvasHash || "",
+        })),
+      };
+    }
+    case "restore_version": {
+      const tpl = await templates.getTemplate(params.id);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      const versions = tpl.versions || [];
+      const match = versions.find((v, i) => (v.id || `v${i}`) === params.versionId);
+      if (!match) throw { code: -32000, message: `Version not found: ${params.versionId}` };
+      if (!match.canvas) throw { code: -32000, message: "Version has no canvas data" };
+      const restored = await templates.updateTemplate(params.id, { canvas: match.canvas });
+      return {
+        restored: true,
+        templateId: params.id,
+        versionId: params.versionId,
+        template: restored,
+      };
     }
 
     default:
