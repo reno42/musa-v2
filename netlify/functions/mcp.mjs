@@ -341,7 +341,7 @@ async function handleMethod(method, params, userId) {
 
     // ── Batch Update ──
     case "batch_update": {
-      let ids = params.templateIds || [];
+      let ids = params.templateIds || params.operations || [];
       // Resolve IDs via search if provided
       if (params.search) {
         const result = await templates.listTemplatesPaginated(200, 0, params.workspaceId, params.search);
@@ -404,10 +404,12 @@ async function handleMethod(method, params, userId) {
 
     // ── Versions ──
     case "list_versions": {
-      const tpl = await templates.getTemplate(params.id);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      const tplId = params.id || params.templateId;
+      if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      const tpl = await templates.getTemplate(tplId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
       return {
-        templateId: params.id,
+        templateId: tplId,
         versions: (tpl.versions || []).map((v, i) => ({
           id: v.id || `v${i}`,
           version: i + 1,
@@ -418,16 +420,18 @@ async function handleMethod(method, params, userId) {
       };
     }
     case "restore_version": {
-      const tpl = await templates.getTemplate(params.id);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      const tplId = params.id || params.templateId;
+      if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      const tpl = await templates.getTemplate(tplId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
       const versions = tpl.versions || [];
       const match = versions.find((v, i) => (v.id || `v${i}`) === params.versionId);
       if (!match) throw { code: -32000, message: `Version not found: ${params.versionId}` };
       if (!match.canvas) throw { code: -32000, message: "Version has no canvas data" };
-      const restored = await templates.updateTemplate(params.id, { canvas: match.canvas });
+      const restored = await templates.updateTemplate(tplId, { canvas: match.canvas });
       return {
         restored: true,
-        templateId: params.id,
+        templateId: tplId,
         versionId: params.versionId,
         template: restored,
       };

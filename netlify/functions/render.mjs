@@ -58,19 +58,82 @@ function googleFontsLinks(tpl) {
   ).join("\n");
 }
 
+/** Parse an SVG path 'd' string into Fabric.js path command arrays */
+function parseSvgPathData(d) {
+  const commands = [];
+  const re = /([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)/g;
+  let m;
+  while ((m = re.exec(d)) !== null) {
+    const cmd = m[1];
+    const args = m[2].trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    commands.push([cmd, ...args]);
+  }
+  return commands;
+}
+
+/** Convert an SVG-like gradient description to Fabric.js v5 gradient format */
+function svgGradientToFabric(grad) {
+  const angle = grad.angle || 0;
+  const stops = (grad.colorStops || grad.stops || []).map(s => ({
+    offset: s.offset != null ? s.offset : s.position,
+    color: s.color || "",
+  }));
+  const rad = (angle - 90) * Math.PI / 180;
+  const x1 = grad.x1 != null ? grad.x1 : 0.5 - Math.cos(rad) * 0.5;
+  const y1 = grad.y1 != null ? grad.y1 : 0.5 - Math.sin(rad) * 0.5;
+  const x2 = grad.x2 != null ? grad.x2 : 0.5 + Math.cos(rad) * 0.5;
+  const y2 = grad.y2 != null ? grad.y2 : 0.5 + Math.sin(rad) * 0.5;
+  return {
+    type: "linear",
+    coords: { x1, y1, x2, y2 },
+    colorStops: stops,
+  };
+}
+
+/**
+ * Pre-process canvas JSON for the browser-side Fabric.js renderer:
+ * - Converts SVG pathData strings to Fabric.js path command arrays
+ * - Converts gradient objects to Fabric.js v5-compatible format
+ * - Extracts backgroundImage for async loading after loadFromJSON
+ */
+function prepareCanvasJson(tpl) {
+  const rawCanvas = typeof tpl.canvas === "object"
+    ? JSON.parse(JSON.stringify(tpl.canvas))
+    : JSON.parse(tpl.canvas || "{}");
+  const bgImage = rawCanvas.backgroundImage || null;
+  delete rawCanvas.backgroundImage;
+
+  function walk(objs) {
+    for (const o of objs || []) {
+      if (o.type === "path" && typeof o.pathData === "string" && (!o.path || !o.path.length)) {
+        o.path = parseSvgPathData(o.pathData);
+        delete o.pathData;
+      }
+      if (o.fill && typeof o.fill === "object" && o.fill.type === "linear") {
+        o.fill = svgGradientToFabric(o.fill);
+      }
+      if (o.objects) walk(o.objects);
+      if (o._objects) walk(o._objects);
+    }
+  }
+  walk(rawCanvas.objects || []);
+
+  return { canvas: rawCanvas, bgImage };
+}
+
 /**
  * Build a self-contained HTML page that renders the template
  * via Fabric.js v5 CDN and auto-downloads as PNG on load.
  */
 function buildRenderPage(tpl, width, height, format, scale, templateId) {
-  const canvasJson = typeof tpl.canvas === "string"
-    ? tpl.canvas
-    : JSON.stringify(tpl.canvas);
+  const { canvas: canvasData, bgImage } = prepareCanvasJson(tpl);
+  const canvasJson = JSON.stringify(canvasData);
 
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
 
   const fontsCss = googleFontsLinks(tpl);
+  const bgImageJson = bgImage ? JSON.stringify(bgImage) : "null";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -167,6 +230,7 @@ ${fontsCss}
   var width = ${width};
   var height = ${height};
   var safeName = "${safeName}";
+  var bgImage = ${bgImageJson};
 
   var canvas = new fabric.StaticCanvas('c', {
     width: width,
@@ -175,17 +239,76 @@ ${fontsCss}
     backgroundColor: '#ffffff'
   });
 
-  canvas.loadFromJSON(${canvasJson}, function() {
+  /** Parse an SVG path 'd' string into Fabric.js path command arrays */
+  function parseSvgPathData(d) {
+    var commands = [];
+    var re = /([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)/g;
+    var m;
+    while ((m = re.exec(d)) !== null) {
+      var cmd = m[1];
+      var args = m[2].trim().split(/[\\s,]+/).filter(Boolean).map(Number);
+      commands.push([cmd].concat(args));
+    }
+    return commands;
+  }
+
+  /** Walk objects and convert pathData strings to Fabric path arrays + gradients */
+  function preprocessObjects(objects) {
+    for (var i = 0; i < (objects || []).length; i++) {
+      var o = objects[i];
+      if (o.type === 'path' && typeof o.pathData === 'string' && (!o.path || !o.path.length)) {
+        o.path = parseSvgPathData(o.pathData);
+        delete o.pathData;
+      }
+      if (o.fill && typeof o.fill === 'object' && o.fill.type === 'linear' && o.fill.coords) {
+        o.fill = new fabric.Gradient(o.fill);
+      }
+      if (o.objects) preprocessObjects(o.objects);
+      if (o._objects) preprocessObjects(o._objects);
+    }
+  }
+
+  var canvasData = ${canvasJson};
+  preprocessObjects(canvasData.objects || []);
+
+  canvas.loadFromJSON(canvasData, function() {
     canvas.renderAll();
-    setTimeout(function() {
+
+    // ── Auto-download helper ──
+    function finishRender() {
       canvas.renderAll();
-      // ── Auto-download PNG after render ──
       var autoUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
       var a = document.createElement('a');
       a.href = autoUrl;
       a.download = safeName + '.png';
       a.click();
-    }, 500);
+    }
+
+    // ── Background image support ──
+    if (bgImage) {
+      fabric.Image.fromURL(bgImage, function(img) {
+        var scaleX = canvas.width / img.width;
+        var scaleY = canvas.height / img.height;
+        var scale = typeof bgImage === 'object' && bgImage.fit === 'cover'
+          ? Math.max(scaleX, scaleY)
+          : typeof bgImage === 'object' && bgImage.fit === 'contain'
+            ? Math.min(scaleX, scaleY)
+            : Math.min(scaleX, scaleY);
+        canvas.setBackgroundImage(img, function() {
+          canvas.renderAll();
+          setTimeout(finishRender, 400);
+        }, {
+          scaleX: scale,
+          scaleY: scale,
+          originX: 'center',
+          originY: 'center',
+          left: canvas.width / 2,
+          top: canvas.height / 2
+        });
+      });
+    } else {
+      setTimeout(finishRender, 500);
+    }
   });
 
   // ── Manual download helpers ──
