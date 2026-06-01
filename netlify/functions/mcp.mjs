@@ -1287,7 +1287,23 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      let frame = tpl.frames?.find(f => f.id === params.frameId);
+
+      // Fallback: canvas.objects with isFrameVisual + frameId
+      if (!frame) {
+        const visualFrame = (tpl.canvas?.objects || []).find(
+          o => o.isFrameVisual && o.frameId === params.frameId
+        );
+        if (visualFrame) {
+          frame = {
+            id: visualFrame.frameId,
+            name: visualFrame.frameName || visualFrame.layerName || visualFrame.name || "Frame",
+            width: visualFrame.width || 1080,
+            height: visualFrame.height || 1080,
+          };
+        }
+      }
+
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
 
       const format = ["png", "jpg", "svg"].includes(params.format) ? params.format : "png";
