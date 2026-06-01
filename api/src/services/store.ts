@@ -4,12 +4,22 @@ import type {
   Webhook, RenderJob,
 } from "../types.js";
 
+interface SnapshotEntry {
+  id: string;
+  type: "ia" | "human" | "system";
+  trigger: string;
+  timestamp: string;
+  objectCount: number;
+  frameCount: number;
+  data: DesignTemplate;
+}
+
 class Store {
   workspaces = new Map<string, Workspace>();
   templates = new Map<string, DesignTemplate>();
   webhooks = new Map<string, Webhook>();
   renderJobs = new Map<string, RenderJob>();
-  snapshots = new Map<string, DesignTemplate>();
+  snapshots = new Map<string, SnapshotEntry[]>();
 
   // ─── Workspaces ─────────────────────────────────
 
@@ -195,12 +205,56 @@ class Store {
 
   // ─── Snapshots ──────────────────────────────────
 
-  snapshot(templateId: string, data: DesignTemplate): void {
-    this.snapshots.set(templateId, data);
+  /** Store a snapshot with type/tag. Enforces 50-per-template limit. */
+  snapshotAuto(templateId: string, type: "ia" | "human" | "system", trigger: string): SnapshotEntry | undefined {
+    const tpl = this.templates.get(templateId);
+    if (!tpl) return undefined;
+    const entry: SnapshotEntry = {
+      id: `snap_${uuid().slice(0, 12)}`,
+      type, trigger,
+      timestamp: new Date().toISOString(),
+      objectCount: tpl.canvas?.objects?.length || 0,
+      frameCount: tpl.frames?.length || 0,
+      data: JSON.parse(JSON.stringify(tpl)),
+    };
+    let arr = this.snapshots.get(templateId) || [];
+    arr.push(entry);
+    if (arr.length > 50) arr = arr.slice(arr.length - 50);
+    this.snapshots.set(templateId, arr);
+    return entry;
   }
 
-  getSnapshot(templateId: string): DesignTemplate | undefined {
-    return this.snapshots.get(templateId);
+  /** List all snapshots for a template, newest first */
+  listSnapshots(templateId: string): SnapshotEntry[] {
+    const arr = this.snapshots.get(templateId) || [];
+    return [...arr].reverse();
+  }
+
+  /** Get a specific snapshot by template + snapshot id */
+  getSnapshot(templateId: string, snapId?: string): SnapshotEntry | DesignTemplate | undefined {
+    const arr = this.snapshots.get(templateId);
+    if (!arr) return undefined;
+    if (snapId) {
+      const entry = arr.find(e => e.id === snapId);
+      return entry || undefined;
+    }
+    return arr.length > 0 ? arr[arr.length - 1].data : undefined;
+  }
+
+  /** Legacy snapshot (backward compat with snapshot_template MCP) */
+  snapshot(templateId: string, data: DesignTemplate): void {
+    const entry: SnapshotEntry = {
+      id: `snap_${uuid().slice(0, 12)}`,
+      type: "ia", trigger: "manual",
+      timestamp: new Date().toISOString(),
+      objectCount: data.canvas?.objects?.length || 0,
+      frameCount: data.frames?.length || 0,
+      data,
+    };
+    let arr = this.snapshots.get(templateId) || [];
+    arr.push(entry);
+    if (arr.length > 50) arr = arr.slice(arr.length - 50);
+    this.snapshots.set(templateId, arr);
   }
 }
 

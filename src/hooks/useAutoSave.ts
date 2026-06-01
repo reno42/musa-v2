@@ -107,6 +107,18 @@ export function useAutoSave({
       // Update localStorage timestamp to mark API-synced
       saveLocal(templateId!, { ...payload, _apiSynced: true });
 
+      // Auto-snapshot for governance timeline
+      try {
+        apiFetch("/api/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", method: "snapshot_auto",
+            params: { templateId, type: "human", trigger: "autosave" }, id: 0,
+          }),
+        });
+      } catch { /* silent */ }
+
       setTimeout(() => {
         setStatus((prev) => (prev === "saved" ? "idle" : prev));
       }, 3000);

@@ -1,10 +1,11 @@
-import { useReducer, useRef, useCallback, useEffect } from "react";
+import { useReducer, useRef, useCallback, useEffect, useState } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { CanvasEditor } from "./components/CanvasEditor";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { Dashboard } from "./components/Dashboard";
 import { BatchAMator } from "./components/BatchAMator";
+import { GovernancePanel } from "./components/GovernancePanel";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { ToastProvider } from "./components/Toast";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -65,6 +66,9 @@ const initialAppState: AppState = {
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const batchOpenRef = useRef(false);
+  const governanceOpenRef = useRef(false);
+  const governanceRefreshRef = useRef(0);
+  const [, setGovKey] = useState(0);
 
   const { view, templateId, templateJson, canvas: canvasState, shortcutsOpen } = state;
   const zoom = canvasState.zoom;
@@ -121,6 +125,53 @@ function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [view, setBatchOpen, batchOpenRef]);
+
+  // ── Auto-triggers: snapshots on browser events ──
+  const callSnapshot = useCallback(async (type: "human" | "system", trigger: string) => {
+    if (!templateId) return;
+    try {
+      await apiFetch("/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "snapshot_auto",
+          params: { templateId, type, trigger }, id: 0,
+        }),
+      });
+    } catch { /* silent */ }
+  }, [templateId]);
+
+  // beforeunload
+  useEffect(() => {
+    const handler = () => { callSnapshot("human", "beforeunload"); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [callSnapshot]);
+
+  // visibilitychange
+  useEffect(() => {
+    const handler = () => {
+      if (document.hidden) callSnapshot("system", "paused");
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [callSnapshot]);
+
+  // Idle 5min timer
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => callSnapshot("system", "idle"), 300_000);
+    };
+    reset();
+    const events = ["mousemove", "keydown", "touchstart", "scroll"];
+    for (const evt of events) window.addEventListener(evt, reset);
+    return () => {
+      clearTimeout(timer);
+      for (const evt of events) window.removeEventListener(evt, reset);
+    };
+  }, [callSnapshot]);
 
   // Call canvas controls
   const callCanvas = useCallback((method: string, ...args: any[]) => {
@@ -223,6 +274,7 @@ function App() {
           <button type="button" onClick={() => dispatch({ type: "BACK_TO_DASHBOARD" })} style={topBtn}>← Home</button>
           <button type="button" onClick={() => dispatch({ type: "SET_SHORTCUTS", open: true })} style={topBtn}>⌨ Shortcuts</button>
           <button type="button" onClick={() => setBatchOpen(true)} style={topBtn}>⚡ Batch</button>
+          <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
         </div>
 
         {/* Canvas */}
@@ -254,6 +306,7 @@ function App() {
       {/* Modals */}
       <KeyboardShortcuts open={shortcutsOpen} onClose={() => dispatch({ type: "SET_SHORTCUTS", open: false })} />
       {batchOpen && <BatchAMator templateId={templateId} onClose={() => setBatchOpen(false)} />}
+      {governanceOpenRef.current && <GovernancePanel templateId={templateId} onClose={() => { governanceOpenRef.current = false; setGovKey(n => n + 1); }} onRestore={() => callCanvas("pushHistory")} />}
     </ToastProvider>
   );
 }

@@ -579,6 +579,43 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "snapshot_auto",
+    description: "Store a typed snapshot automatically. type='ia'|'human'|'system', trigger='update_template'|'autosave'|'beforeunload'|'idle'|'visibility'|'manual'. Auto-enforces 50-per-template limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        type: { type: "string", enum: ["ia", "human", "system"], description: "Who triggered the snapshot" },
+        trigger: { type: "string", description: "What triggered it (tool name, autosave, beforeunload, idle, visibility, manual)" },
+      },
+      required: ["templateId", "type", "trigger"],
+    },
+  },
+  {
+    name: "list_snapshots",
+    description: "List all snapshots for a template as a timeline (newest first). Each entry has id, type, trigger, timestamp, objectCount, frameCount.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "diff_snapshots",
+    description: "Compare two specific snapshots by ID. Returns object-by-object changes between them. Use list_snapshots first to find snapshot IDs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        snapIdA: { type: "string", description: "First snapshot ID (older)" },
+        snapIdB: { type: "string", description: "Second snapshot ID (newer, or omit for current state)" },
+      },
+      required: ["templateId", "snapIdA"],
+    },
+  },
+  {
     name: "search_google_fonts",
     description: "Search and browse 94 Google Fonts by name or category (sans-serif, serif, display, handwriting, monospace). Returns family name, category, available weight variants, and the Google Fonts CSS URL. Use this to discover fonts for your designs before applying via add_text fontFamily or transform_object fontFamily.",
     inputSchema: {
@@ -663,6 +700,11 @@ async function handleMethod(method, params, userId) {
     return frame.objects;
   };
 
+  // Helper: auto-snapshot after IA mutations
+  const autoSnapshot = (templateId, trigger) => {
+    try { store.snapshotAuto(templateId, "ia", trigger); } catch { /* non-blocking */ }
+  };
+
   switch (method) {
     // ── Workspaces ──
     case "list_workspaces": {
@@ -721,6 +763,7 @@ async function handleMethod(method, params, userId) {
         params.name, params.width || 1080, params.height || 1080,
         undefined, userId, params.workspaceId,
       );
+      autoSnapshot(tpl.id, "create_template");
       return tpl;
     }
     case "update_template": {
@@ -737,6 +780,7 @@ async function handleMethod(method, params, userId) {
       if (!tplId) throw { code: -32602, message: "id or templateId required" };
       const tpl = await templates.updateTemplate(tplId, updates);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+      autoSnapshot(tplId, "update_template");
       return tpl;
     }
     case "delete_template": {
@@ -926,6 +970,7 @@ async function handleMethod(method, params, userId) {
       Object.assign(obj, rest);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -949,6 +994,7 @@ async function handleMethod(method, params, userId) {
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -969,6 +1015,7 @@ async function handleMethod(method, params, userId) {
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -988,6 +1035,7 @@ async function handleMethod(method, params, userId) {
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -1010,6 +1058,7 @@ async function handleMethod(method, params, userId) {
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -1028,6 +1077,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { removed, count: removed.length };
     }
 
@@ -1050,6 +1100,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { layerName: params.layerName, position: params.position };
     }
 
@@ -1086,6 +1137,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { direction: params.direction, affected: targets.length };
     }
 
@@ -1122,6 +1174,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { direction: params.direction, affected: targets.length };
     }
 
@@ -1152,6 +1205,7 @@ async function handleMethod(method, params, userId) {
       objects.push(group);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return group;
     }
 
@@ -1174,6 +1228,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { children: children.length, layerNames: children.map(c => c.layerName || c.name) };
     }
 
@@ -1206,6 +1261,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return clone;
     }
 
@@ -1227,6 +1283,7 @@ async function handleMethod(method, params, userId) {
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return obj;
     }
 
@@ -1254,6 +1311,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { operation: params.operation, combinedName, affected: params.targetLayerNames };
     }
 
@@ -1279,6 +1337,7 @@ async function handleMethod(method, params, userId) {
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { direction: dir, gap, affected: targets.length };
     }
 
@@ -1319,6 +1378,7 @@ async function handleMethod(method, params, userId) {
       });
       if (!frame) throw { code: -32000, message: "Failed to create frame" };
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return frame;
     }
 
@@ -1346,6 +1406,7 @@ async function handleMethod(method, params, userId) {
       const frame = store.updateFrame(params.templateId, params.frameId, updates);
       if (!frame) throw { code: -32000, message: "Frame not found" };
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return frame;
     }
 
@@ -1356,6 +1417,7 @@ async function handleMethod(method, params, userId) {
       const ok = store.deleteFrame(params.templateId, params.frameId);
       if (!ok) throw { code: -32000, message: "Frame not found" };
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
     }
 
@@ -1408,12 +1470,53 @@ async function handleMethod(method, params, userId) {
 
     // ── diff_template ──
     case "diff_template": {
-      const snap = store.getSnapshot(params.templateId);
-      if (!snap) throw { code: -32000, message: "No snapshot found. Call snapshot_template first." };
+      const raw = store.getSnapshot(params.templateId);
+      const snap = raw?.data || raw;
+      if (!snap || !snap.canvas) throw { code: -32000, message: "No snapshot found. Call snapshot_template first." };
       const current = await templates.getTemplate(params.templateId);
       if (!current) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const diffs = compareTemplates(snap, current);
       return { templateId: params.templateId, changes: diffs, totalChanges: diffs.length };
+    }
+
+    // ── snapshot_auto ──
+    case "snapshot_auto": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const type = ["ia", "human", "system"].includes(params.type) ? params.type : "ia";
+      const entry = store.snapshotAuto(params.templateId, type, params.trigger || "manual");
+      return { snapshotted: true, templateId: params.templateId, snapshot: entry };
+    }
+
+    // ── list_snapshots ──
+    case "list_snapshots": {
+      const timeline = store.listSnapshots(params.templateId);
+      return {
+        templateId: params.templateId,
+        snapshots: timeline.map(e => ({
+          id: e.id, type: e.type, trigger: e.trigger,
+          timestamp: e.timestamp, objectCount: e.objectCount, frameCount: e.frameCount,
+        })),
+        total: timeline.length,
+      };
+    }
+
+    // ── diff_snapshots ──
+    case "diff_snapshots": {
+      const snapA = store.getSnapshot(params.templateId, params.snapIdA);
+      if (!snapA || !snapA.data) throw { code: -32000, message: `Snapshot A not found: ${params.snapIdA}` };
+      const dataA = snapA.data;
+      let dataB;
+      if (params.snapIdB) {
+        const snapB = store.getSnapshot(params.templateId, params.snapIdB);
+        if (!snapB || !snapB.data) throw { code: -32000, message: `Snapshot B not found: ${params.snapIdB}` };
+        dataB = snapB.data;
+      } else {
+        dataB = await templates.getTemplate(params.templateId);
+        if (!dataB) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      }
+      const diffs = compareTemplates(dataA, dataB);
+      return { snapIdA: params.snapIdA, snapIdB: params.snapIdB || "current", changes: diffs, totalChanges: diffs.length };
     }
 
     // ── search_google_fonts ──
