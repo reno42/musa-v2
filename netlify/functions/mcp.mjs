@@ -590,6 +590,15 @@ function jsonRpcResult(id, result) {
 
 /** Route JSON-RPC method calls to template/workspace services */
 async function handleMethod(method, params, userId) {
+  // Helper: safely get objects array for a frame, initializing if needed
+  const getFrameObjects = (tpl, frameId) => {
+    if (!frameId) return tpl.canvas.objects;
+    const frame = tpl.frames?.find(f => f.id === frameId);
+    if (!frame) return tpl.canvas.objects;
+    if (!frame.objects) frame.objects = [];
+    return frame.objects;
+  };
+
   switch (method) {
     // ── Workspaces ──
     case "list_workspaces": {
@@ -819,12 +828,8 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const getObjects = (fid) => {
-        if (fid) { const frame = tpl.frames?.find(f => f.id === fid); return frame?.objects; }
-        return tpl.canvas?.objects;
-      };
-      const objects = getObjects(params.frameId);
-      if (!objects) throw { code: -32000, message: "Objects not found" };
+      const objects = getFrameObjects(tpl, params.frameId);
+
 
       const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
@@ -843,7 +848,7 @@ async function handleMethod(method, params, userId) {
 
       Object.assign(obj, rest);
       tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
       return obj;
     }
 
@@ -863,9 +868,7 @@ async function handleMethod(method, params, userId) {
       if (params.tool === "star") { obj.points = 5; obj.innerRadius = params.width * 0.4; obj.outerRadius = params.width * 0.5; }
       if (params.tool === "polygon") obj.sides = 6;
 
-      const target = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const target = getFrameObjects(tpl, params.frameId);
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
@@ -885,9 +888,7 @@ async function handleMethod(method, params, userId) {
         scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
 
-      const target = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const target = getFrameObjects(tpl, params.frameId);
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
@@ -906,9 +907,7 @@ async function handleMethod(method, params, userId) {
         scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
 
-      const target = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const target = getFrameObjects(tpl, params.frameId);
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
@@ -930,9 +929,7 @@ async function handleMethod(method, params, userId) {
         scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
 
-      const target = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const target = getFrameObjects(tpl, params.frameId);
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
@@ -944,10 +941,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
-      if (!objects) throw { code: -32000, message: "Objects not found" };
+      const objects = getFrameObjects(tpl, params.frameId);
 
       const removed = [];
       for (const name of params.layerNames) {
@@ -965,9 +959,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
       if (idx === -1) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
 
@@ -989,9 +981,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
         ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
         : objects;
@@ -1027,9 +1017,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
         ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
         : objects;
@@ -1065,10 +1053,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
-      if (!objects) throw { code: -32000, message: "Objects not found" };
+      const objects = getFrameObjects(tpl, params.frameId);
 
       const members = [];
       for (const name of params.layerNames) {
@@ -1098,9 +1083,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName && o.type === "group");
       if (idx === -1) throw { code: -32000, message: "Group not found" };
 
@@ -1122,9 +1105,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const obj = objects.find(o => (o.layerName || o.name) === params.layerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
 
@@ -1136,9 +1117,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
       if (idx === -1) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
 
@@ -1167,9 +1146,7 @@ async function handleMethod(method, params, userId) {
         scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
 
-      const target = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const target = getFrameObjects(tpl, params.frameId);
       target.push(obj);
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
@@ -1181,9 +1158,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const targets = objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name));
       if (targets.length < 2) throw { code: -32000, message: "Need at least 2 matching layers" };
 
@@ -1210,9 +1185,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = params.frameId
-        ? tpl.frames?.find(f => f.id === params.frameId)?.objects
-        : tpl.canvas.objects;
+      const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
         .map(name => objects.find(o => (o.layerName || o.name) === name))
         .filter(Boolean);
@@ -1268,6 +1241,7 @@ async function handleMethod(method, params, userId) {
         fill: params.fill || "transparent",
       });
       if (!frame) throw { code: -32000, message: "Failed to create frame" };
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       return frame;
     }
 
@@ -1294,13 +1268,17 @@ async function handleMethod(method, params, userId) {
       const { templateId, frameId, ...updates } = params;
       const frame = store.updateFrame(params.templateId, params.frameId, updates);
       if (!frame) throw { code: -32000, message: "Frame not found" };
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       return frame;
     }
 
     // ── delete_frame ──
     case "delete_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const ok = store.deleteFrame(params.templateId, params.frameId);
       if (!ok) throw { code: -32000, message: "Frame not found" };
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
     }
 
