@@ -158,7 +158,16 @@ export async function listTemplatesPaginated(
 export async function updateTemplate(
   id: string, updates: Partial<DesignTemplate> & Record<string, any>
 ): Promise<DesignTemplate | null> {
-  const tpl = store.updateTemplate(id, updates);
+  let tpl = store.updateTemplate(id, updates);
+  if (!tpl) {
+    // Stateless Netlify edge: load from Supabase if not in memory
+    const fromDb = await getFromSupabase(id);
+    if (!fromDb) return null;
+    // Apply updates and write back to in-memory store
+    Object.assign(fromDb, updates);
+    store.updateTemplate(id, fromDb);
+    tpl = fromDb;
+  }
   if (tpl) {
     await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
   }
