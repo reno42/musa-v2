@@ -1282,6 +1282,29 @@ async function handleMethod(method, params, userId) {
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
     }
 
+    // ── render_frame ──
+    case "render_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const format = ["png", "jpg", "svg"].includes(params.format) ? params.format : "png";
+      const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
+      const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
+
+      return {
+        frameId: frame.id,
+        frameName: frame.name,
+        width: frame.width,
+        height: frame.height,
+        format,
+        scale,
+        viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}`,
+      };
+    }
+
     // ── search_google_fonts ──
     case "search_google_fonts": {
       const GOOGLE_FONTS = [

@@ -76,6 +76,42 @@ function parseSvgPathData(d) {
   return commands;
 }
 
+/**
+ * Prepare a frame-only render by filtering canvas objects to those
+ * belonging to the frame and offsetting positions relative to frame origin.
+ * Returns a transformed template or null if frame not found.
+ */
+function prepareFrameRender(tpl, frameId) {
+  const frame = tpl.frames?.find(f => f.id === frameId);
+  if (!frame) return null;
+
+  const offsetObjs = (objs) => {
+    const result = [];
+    for (const o of objs || []) {
+      if (o.frameId !== frameId) continue;
+      const clone = JSON.parse(JSON.stringify(o));
+      clone.left = (clone.left || 0) - frame.x;
+      clone.top = (clone.top || 0) - frame.y;
+      result.push(clone);
+    }
+    return result;
+  };
+
+  const frameObjects = offsetObjs(tpl.canvas?.objects || []);
+
+  return {
+    ...tpl,
+    width: frame.width,
+    height: frame.height,
+    canvas: {
+      ...tpl.canvas,
+      objects: frameObjects,
+      backgroundColor: frame.fill || "#ffffff",
+    },
+    _frameName: frame.name,
+  };
+}
+
 /** Convert an SVG-like gradient description to Fabric.js v5 gradient format */
 function svgGradientToFabric(grad) {
   const angle = grad.angle || 0;
@@ -416,6 +452,28 @@ export const handler = async (event) => {
 
   const rawPath = event.path || "";
 
+  // ── Frame render: GET /api/render/:templateId/frame/:frameId ──
+  if (event.httpMethod === "GET" && rawPath.includes("/frame/")) {
+    const match = rawPath.match(/^\/api\/render\/(.+?)\/frame\/(.+)$/);
+    if (match) {
+      const [, templateId, frameId] = match;
+      const tpl = await fetchTemplate(templateId);
+      if (!tpl) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+      }
+      const frameTpl = prepareFrameRender(tpl, frameId);
+      if (!frameTpl) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId }) };
+      }
+      const scale = 1;
+      const format = "png";
+      const width = Math.round(frameTpl.width * scale);
+      const height = Math.round(frameTpl.height * scale);
+      const html = buildRenderPage(frameTpl, width, height, format, scale, templateId + "_" + frameId);
+      return { statusCode: 200, headers: htmlHeaders, body: html };
+    }
+  }
+
   // ── Legacy: /api/render/:templateId[/:jobId] ──
   if (rawPath.startsWith("/api/render/")) {
     const path = rawPath.replace(/^\/api\/render\/?/, "");
@@ -441,9 +499,16 @@ export const handler = async (event) => {
       try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
       const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
       const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
-      const tpl = body.template || await fetchTemplate(templateId);
+      let tpl = body.template || await fetchTemplate(templateId);
       if (!tpl) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+      }
+      if (body.frameId) {
+        const frameTpl = prepareFrameRender(tpl, body.frameId);
+        if (!frameTpl) {
+          return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
+        }
+        tpl = frameTpl;
       }
       const baseW = tpl.width || 1080;
       const baseH = tpl.height || 1080;
@@ -486,9 +551,16 @@ export const handler = async (event) => {
     try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
     const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
-    const tpl = body.template || await fetchTemplate(templateId);
+    let tpl = body.template || await fetchTemplate(templateId);
     if (!tpl) {
       return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+    }
+    if (body.frameId) {
+      const frameTpl = prepareFrameRender(tpl, body.frameId);
+      if (!frameTpl) {
+        return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
+      }
+      tpl = frameTpl;
     }
     const baseW = tpl.width || 1080;
     const baseH = tpl.height || 1080;
