@@ -130,7 +130,7 @@ function App() {
   const callSnapshot = useCallback(async (type: "human" | "system", trigger: string) => {
     if (!templateId) return;
     try {
-      await apiFetch("/api/mcp", {
+      await apiFetch("/mcp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

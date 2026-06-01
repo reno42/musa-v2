@@ -36,6 +36,18 @@ const TYPE_LABEL: Record<string, string> = {
   system: "System",
 };
 
+/** JSON-RPC helper: POST to /mcp, parse response */
+async function mcpCall(method: string, params: Record<string, any>) {
+  const res = await apiFetch("/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || "MCP error");
+  return json.result;
+}
+
 export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePanelProps) {
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,20 +61,10 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch("/mcp/invoke", {
-        method: "POST",
-        body: JSON.stringify({ tool: "list_snapshots", params: { templateId } }),
-      });
-      const json = await res.json();
-      if (json?.result?.snapshots) {
-        setSnapshots(json.result.snapshots);
-      } else if (json?.result?.data?.snapshots) {
-        setSnapshots(json.result.data.snapshots);
-      } else {
-        setSnapshots([]);
-      }
-    } catch (e) {
-      setError("Failed to load snapshots");
+      const result = await mcpCall("list_snapshots", { templateId });
+      setSnapshots(result?.snapshots || []);
+    } catch {
+      setError("Failed to load snapshots. Ensure the MCP server is running.");
     } finally {
       setLoading(false);
     }
@@ -76,13 +78,8 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
     setSelectedSnapId(snapId);
     setDiffLoading(true);
     try {
-      // Compare selected snapshot vs current
-      const res = await apiFetch("/mcp/invoke", {
-        method: "POST",
-        body: JSON.stringify({ tool: "diff_template", params: { templateId } }),
-      });
-      const json = await res.json();
-      const changes = json?.result?.changes ?? json?.result?.data?.changes ?? [];
+      const result = await mcpCall("diff_template", { templateId });
+      const changes = result?.changes ?? [];
       setDiffs(changes);
     } catch {
       setDiffs(null);
@@ -95,13 +92,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
     if (!templateId) return;
     // Find the snapshot data and restore via update_template
     try {
-      const res = await apiFetch("/mcp/invoke", {
-        method: "POST",
-        body: JSON.stringify({
-          tool: "diff_snapshots",
-          params: { templateId, snapIdA: snapId },
-        }),
-      });
+      const result = await mcpCall("diff_snapshots", { templateId, snapIdA: snapId });
       // To actually restore, we'd need to get the snapshot data and call update_template
       // For now, emit the callback for external handling
       onRestore?.(snapId);

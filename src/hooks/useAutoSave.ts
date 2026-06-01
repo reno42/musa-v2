@@ -109,7 +109,7 @@ export function useAutoSave({
 
       // Auto-snapshot for governance timeline
       try {
-        apiFetch("/api/mcp", {
+        apiFetch("/mcp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
