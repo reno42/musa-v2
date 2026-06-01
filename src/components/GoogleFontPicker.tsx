@@ -1,28 +1,41 @@
 import { useState, useEffect, useRef } from "react";
 
-/** Top 50 popular Google Fonts — loaded on demand via CSS (no API key) */
-const POPULAR_FONTS = [
-  "Inter", "Roboto", "Open Sans", "Montserrat", "Poppins", "Lato", "Oswald",
-  "Raleway", "Nunito", "Playfair Display", "Merriweather", "Ubuntu", "PT Sans",
-  "Noto Sans", "Dancing Script", "Pacifico", "Bebas Neue", "Crimson Text",
-  "Josefin Sans", "Libre Baskerville", "Arimo", "Lora", "Fira Sans",
-  "Work Sans", "DM Sans", "Manrope", "Space Grotesk", "Syne", "Archivo",
-  "Lexend", "Plus Jakarta Sans", "Outfit", "Sora", "Rubik", "Quicksand",
-  "Titillium Web", "Comfortaa", "Righteous", "Lobster", "Abril Fatface",
-  "Alfa Slab One", "Anton", "Archivo Black", "Caveat", "Exo 2",
-  "Orbitron", "Permanent Marker", "Shadows Into Light", "Teko", "Zilla Slab",
-];
+interface FontEntry {
+  family: string;
+  category: string;
+  variants: string[];
+}
+
+/** Fetch the Google Fonts catalog from the REST API */
+async function fetchCatalog(): Promise<FontEntry[]> {
+  try {
+    const res = await fetch("/api/fonts/catalog?limit=200");
+    const json = await res.json();
+    if (json.success && json.data?.fonts) return json.data.fonts;
+    return [];
+  } catch {
+    return []; // offline fallback — returns empty, handled gracefully
+  }
+}
 
 /** Dynamically load a Google Font via CSS link tag */
-function loadFont(family: string) {
+function loadFont(family: string, variants: string[] = ["400","700"]) {
   const id = `gf-${family.replace(/\s+/g, "-").toLowerCase()}`;
   if (document.getElementById(id)) return;
   const link = document.createElement("link");
   link.id = id;
   link.rel = "stylesheet";
-  link.href = `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}:wght@400;700&display=swap`;
+  link.href = `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}:wght@${variants.join(";")}&display=swap`;
   document.head.appendChild(link);
 }
+
+const CATEGORY_LABELS: Record<string, string> = {
+  "sans-serif": "Sans",
+  "serif": "Serif",
+  "display": "Display",
+  "handwriting": "Hand",
+  "monospace": "Mono",
+};
 
 interface Props {
   value: string;
@@ -30,9 +43,14 @@ interface Props {
 }
 
 export function GoogleFontPicker({ value, onChange }: Props) {
+  const [catalog, setCatalog] = useState<FontEntry[]>([]);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+
+  // Load catalog on mount
+  useEffect(() => { fetchCatalog().then(setCatalog); }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -43,13 +61,18 @@ export function GoogleFontPicker({ value, onChange }: Props) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
-  const filtered = search
-    ? POPULAR_FONTS.filter(f => f.toLowerCase().includes(search.toLowerCase()))
-    : POPULAR_FONTS;
+  const filtered = catalog.filter(f => {
+    if (search && !f.family.toLowerCase().includes(search.toLowerCase())) return false;
+    if (categoryFilter && f.category !== categoryFilter) return false;
+    return true;
+  });
 
-  const select = (f: string) => {
-    loadFont(f);
-    onChange(f);
+  // Deduplicate for category pills
+  const categories = [...new Set(catalog.map(f => f.category))];
+
+  const select = (f: FontEntry) => {
+    loadFont(f.family, f.variants);
+    onChange(f.family);
     setOpen(false);
     setSearch("");
   };
@@ -72,11 +95,11 @@ export function GoogleFontPicker({ value, onChange }: Props) {
         <div style={{
           position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999,
           background: "#111118", border: "1px solid #1c1c26", borderRadius: 6,
-          maxHeight: 220, overflowY: "auto",
+          maxHeight: 260, overflowY: "auto",
         }}>
           <input
             autoFocus
-            placeholder="Search fonts..."
+            placeholder="Search 94 fonts..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
@@ -85,23 +108,50 @@ export function GoogleFontPicker({ value, onChange }: Props) {
               color: "#e4e4f0", borderRadius: 4, fontSize: 12,
             }}
           />
+          {/* Category filter pills */}
+          {catalog.length > 0 && (
+            <div style={{ display: "flex", gap: 4, padding: "2px 6px", flexWrap: "wrap" }}>
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                  style={{
+                    padding: "1px 5px", borderRadius: 3, border: "1px solid #2a2a3a",
+                    background: categoryFilter === cat ? "#2563eb" : "#1a1a26",
+                    color: categoryFilter === cat ? "#fff" : "#9a9ab0",
+                    fontSize: 10, cursor: "pointer", lineHeight: "16px",
+                  }}
+                >
+                  {CATEGORY_LABELS[cat] || cat}
+                </button>
+              ))}
+            </div>
+          )}
           {filtered.map(f => (
             <div
-              key={f}
+              key={f.family}
               onClick={() => select(f)}
               style={{
                 padding: "4px 8px", cursor: "pointer", fontSize: 13,
-                fontFamily: f, color: f === value ? "#4ade80" : "#e4e4f0",
-                background: f === value ? "#1a2a1a" : "transparent",
+                fontFamily: f.family, color: f.family === value ? "#4ade80" : "#e4e4f0",
+                background: f.family === value ? "#1a2a1a" : "transparent",
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                display: "flex", alignItems: "center", gap: 6,
               }}
             >
-              {f}
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{f.family}</span>
+              <span style={{
+                fontSize: 9, color: "#5a5a70", background: "#1a1a26",
+                padding: "0 4px", borderRadius: 2, fontFamily: "Inter",
+              }}>
+                {CATEGORY_LABELS[f.category] || f.category}
+              </span>
             </div>
           ))}
           {filtered.length === 0 && (
             <div style={{ padding: "8px 12px", color: "#7a7a90", fontSize: 11 }}>
-              No matching fonts
+              {catalog.length === 0 ? "Loading catalog…" : "No matching fonts"}
             </div>
           )}
         </div>

@@ -556,6 +556,19 @@ const MCP_TOOLS = [
       required: ["templateId", "frameId"],
     },
   },
+  {
+    name: "search_google_fonts",
+    description: "Search and browse 94 Google Fonts by name or category (sans-serif, serif, display, handwriting, monospace). Returns family name, category, available weight variants, and the Google Fonts CSS URL. Use this to discover fonts for your designs before applying via add_text fontFamily or transform_object fontFamily.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        search: { type: "string", description: "Search by font name or category (e.g. 'play', 'serif', 'mono')" },
+        category: { type: "string", enum: ["sans-serif", "serif", "display", "handwriting", "monospace"], description: "Filter by category" },
+        limit: { type: "number", description: "Max results (default 20, max 100)" },
+      },
+      required: [],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -1289,6 +1302,129 @@ async function handleMethod(method, params, userId) {
       const ok = store.deleteFrame(params.templateId, params.frameId);
       if (!ok) throw { code: -32000, message: "Frame not found" };
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
+    }
+
+    // ── search_google_fonts ──
+    case "search_google_fonts": {
+      const GOOGLE_FONTS = [
+        { family:"Inter", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Roboto", category:"sans-serif", variants:["400","500","700"] },
+        { family:"Open Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Montserrat", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Poppins", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Lato", category:"sans-serif", variants:["400","700"] },
+        { family:"Raleway", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Nunito", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Oswald", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"DM Sans", category:"sans-serif", variants:["400","500","700"] },
+        { family:"Manrope", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Space Grotesk", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Syne", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Archivo", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Lexend", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Plus Jakarta Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Outfit", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Sora", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Rubik", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Quicksand", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Work Sans", category:"sans-serif", variants:["400","500","600","700","800"] },
+        { family:"Fira Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"IBM Plex Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Source Sans 3", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Public Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Figtree", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Onest", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Be Vietnam Pro", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Epilogue", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Urbanist", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Playfair Display", category:"serif", variants:["400","500","600","700","800"] },
+        { family:"Merriweather", category:"serif", variants:["400","700"] },
+        { family:"Lora", category:"serif", variants:["400","500","600","700"] },
+        { family:"Libre Baskerville", category:"serif", variants:["400","700"] },
+        { family:"Crimson Text", category:"serif", variants:["400","600","700"] },
+        { family:"PT Serif", category:"serif", variants:["400","700"] },
+        { family:"EB Garamond", category:"serif", variants:["400","500","600","700"] },
+        { family:"DM Serif Display", category:"serif", variants:["400"] },
+        { family:"Bitter", category:"serif", variants:["400","500","600","700"] },
+        { family:"Cormorant Garamond", category:"serif", variants:["400","500","600","700"] },
+        { family:"Zilla Slab", category:"serif", variants:["400","500","600","700"] },
+        { family:"Bebas Neue", category:"display", variants:["400"] },
+        { family:"Anton", category:"display", variants:["400"] },
+        { family:"Abril Fatface", category:"display", variants:["400"] },
+        { family:"Archivo Black", category:"display", variants:["400"] },
+        { family:"Alfa Slab One", category:"display", variants:["400"] },
+        { family:"Righteous", category:"display", variants:["400"] },
+        { family:"Lobster", category:"display", variants:["400"] },
+        { family:"Pacifico", category:"display", variants:["400"] },
+        { family:"Orbitron", category:"display", variants:["400","500","600","700"] },
+        { family:"Teko", category:"display", variants:["400","500","600","700"] },
+        { family:"Permanent Marker", category:"display", variants:["400"] },
+        { family:"Shadows Into Light", category:"display", variants:["400"] },
+        { family:"Exo 2", category:"display", variants:["400","500","600","700"] },
+        { family:"Comfortaa", category:"display", variants:["400","500","600","700"] },
+        { family:"Titillium Web", category:"display", variants:["400","600","700"] },
+        { family:"Dancing Script", category:"handwriting", variants:["400","500","600","700"] },
+        { family:"Caveat", category:"handwriting", variants:["400","500","600","700"] },
+        { family:"Kalam", category:"handwriting", variants:["400","700"] },
+        { family:"Satisfy", category:"handwriting", variants:["400"] },
+        { family:"Indie Flower", category:"handwriting", variants:["400"] },
+        { family:"Patrick Hand", category:"handwriting", variants:["400"] },
+        { family:"Great Vibes", category:"handwriting", variants:["400"] },
+        { family:"Sacramento", category:"handwriting", variants:["400"] },
+        { family:"JetBrains Mono", category:"monospace", variants:["400","500","600","700"] },
+        { family:"Fira Code", category:"monospace", variants:["400","500","600","700"] },
+        { family:"Source Code Pro", category:"monospace", variants:["400","500","600","700"] },
+        { family:"IBM Plex Mono", category:"monospace", variants:["400","500","600","700"] },
+        { family:"Space Mono", category:"monospace", variants:["400","700"] },
+        { family:"Red Hat Mono", category:"monospace", variants:["400","500","600","700"] },
+        { family:"Courier Prime", category:"monospace", variants:["400","700"] },
+        { family:"Inconsolata", category:"monospace", variants:["400","500","600","700"] },
+        { family:"Ubuntu", category:"sans-serif", variants:["400","500","700"] },
+        { family:"Noto Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Josefin Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Arimo", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Cabin", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Mulish", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Red Hat Display", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Schibsted Grotesk", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Familjen Grotesk", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Albert Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Kumbh Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Geist", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Instrument Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Inter Tight", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Exo", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Maven Pro", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Jost", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Overpass", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Spline Sans", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Commissioner", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Hanken Grotesk", category:"sans-serif", variants:["400","500","600","700"] },
+        { family:"Readex Pro", category:"sans-serif", variants:["400","500","600","700"] },
+      ];
+
+      const search = (params.search || "").toLowerCase();
+      const category = params.category || "";
+      const limit = Math.min(params.limit || 20, 100);
+
+      let results = GOOGLE_FONTS;
+      if (category) results = results.filter(f => f.category === category);
+      if (search) {
+        results = results.filter(f =>
+          f.family.toLowerCase().includes(search) ||
+          f.category.toLowerCase().includes(search)
+        );
+      }
+
+      const total = results.length;
+      results = results.slice(0, limit);
+
+      const enriched = results.map(f => ({
+        ...f,
+        googleFontsUrl: `https://fonts.googleapis.com/css2?family=${f.family.replace(/ /g, "+")}:wght@${f.variants.join(";")}&display=swap`,
+      }));
+
+      return { fonts: enriched, total, categories: [...new Set(GOOGLE_FONTS.map(f => f.category))] };
     }
 
     default:

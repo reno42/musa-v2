@@ -18,6 +18,7 @@ import { variableRoutes } from "./routes/variables.js";
 import { colorRoutes } from "./routes/colors.js";
 import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
+import fontCatalog from "./data/google-fonts.json";
 
 const app = express();
 
@@ -48,5 +49,32 @@ app.use("/api/templates", colorRoutes);
 app.use("/api/templates", fontRoutes);
 app.use("/api/templates", componentRoutes);
 app.use("/api/webhooks", webhookRoutes);
+
+// ── Google Fonts Catalog ──
+// Global endpoint: search/browse 94 popular Google Fonts by name or category
+// GET /api/fonts/catalog?search=mont&category=sans-serif&limit=20&offset=0
+app.get("/api/fonts/catalog", (req, res) => {
+  try {
+    const search = (req.query.search as string || "").toLowerCase();
+    const category = req.query.category as string || "";
+    let fonts = fontCatalog as Array<{family:string; category:string; variants:string[]}>;
+    if (category) {
+      fonts = fonts.filter(f => f.category === category);
+    }
+    if (search) {
+      fonts = fonts.filter(f =>
+        f.family.toLowerCase().includes(search) ||
+        f.category.toLowerCase().includes(search)
+      );
+    }
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const total = fonts.length;
+    const paged = fonts.slice(offset, offset + limit);
+    res.json({ success: true, data: { fonts: paged, total, limit, offset } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 export default app;
