@@ -9,6 +9,7 @@ class Store {
   templates = new Map<string, DesignTemplate>();
   webhooks = new Map<string, Webhook>();
   renderJobs = new Map<string, RenderJob>();
+  snapshots = new Map<string, DesignTemplate>();
 
   // ─── Workspaces ─────────────────────────────────
 
@@ -190,6 +191,16 @@ class Store {
 
   getRenderJob(id: string): RenderJob | undefined {
     return this.renderJobs.get(id);
+  }
+
+  // ─── Snapshots ──────────────────────────────────
+
+  snapshot(templateId: string, data: DesignTemplate): void {
+    this.snapshots.set(templateId, data);
+  }
+
+  getSnapshot(templateId: string): DesignTemplate | undefined {
+    return this.snapshots.get(templateId);
   }
 }
 

@@ -557,6 +557,28 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "snapshot_template",
+    description: "Save the current state of a template as a reference point. Used with diff_template to detect changes made by another user or agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to snapshot" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "diff_template",
+    description: "Compare current template state against the last snapshot. Returns object-by-object changes (added, deleted, modified with before/after values). Call snapshot_template first to set the reference point.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to diff against snapshot" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
     name: "search_google_fonts",
     description: "Search and browse 94 Google Fonts by name or category (sans-serif, serif, display, handwriting, monospace). Returns family name, category, available weight variants, and the Google Fonts CSS URL. Use this to discover fonts for your designs before applying via add_text fontFamily or transform_object fontFamily.",
     inputSchema: {
@@ -586,6 +608,48 @@ function jsonRpcError(id, code, message) {
 
 function jsonRpcResult(id, result) {
   return { jsonrpc: "2.0", id, result };
+}
+
+/** Compare two values recursively, returning { path, old, new } diffs */
+function compareValues(a, b, path = "") {
+  const diffs = [];
+  if (a === b) return diffs;
+  if (typeof a !== typeof b) { diffs.push({ path, old: a, new: b }); return diffs; }
+  if (a === null || b === null) { if (a !== b) diffs.push({ path, old: a, new: b }); return diffs; }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++)
+      diffs.push(...compareValues(a[i], b[i], path + "[" + i + "]"));
+    return diffs;
+  }
+  if (typeof a === "object") {
+    const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const k of keys) diffs.push(...compareValues(a?.[k], b?.[k], path ? path + "." + k : k));
+    if (diffs.length === 0 && JSON.stringify(a) !== JSON.stringify(b))
+      diffs.push({ path, old: a, new: b });
+    return diffs;
+  }
+  if (a !== b) diffs.push({ path, old: a, new: b });
+  return diffs;
+}
+
+/** Compare snapshot vs current template, returning per-object changes */
+function compareTemplates(snap, current) {
+  const diffs = [], snapById = new Map(), currById = new Map();
+  for (const o of snap.canvas?.objects || []) { const id = o.layerName || o.name || o.id; if (id) snapById.set(id, o); }
+  for (const o of current.canvas?.objects || []) { const id = o.layerName || o.name || o.id; if (id) currById.set(id, o); }
+  const allIds = new Set([...snapById.keys(), ...currById.keys()]);
+  for (const id of allIds) {
+    const s = snapById.get(id), c = currById.get(id);
+    if (s && !c) {
+      diffs.push({ layerName: id, action: "deleted", old: { type: s.type, left: s.left, top: s.top } });
+    } else if (!s && c) {
+      diffs.push({ layerName: id, action: "added", new: { type: c.type, left: c.left, top: c.top } });
+    } else {
+      const changes = compareValues(s, c);
+      if (changes.length > 0) diffs.push({ layerName: id, action: "modified", changes });
+    }
+  }
+  return diffs;
 }
 
 /** Route JSON-RPC method calls to template/workspace services */
@@ -834,7 +898,7 @@ async function handleMethod(method, params, userId) {
       const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
 
-      const { templateId, targetLayerName, frameId, fillGradient, ...rest } = params;
+      const { templateId, targetLayerName, frameId, fillGradient, shadow, ...rest } = params;
 
       if (fillGradient) {
         rest.fill = {
@@ -843,6 +907,15 @@ async function handleMethod(method, params, userId) {
           colorStops: fillGradient.colorStops || fillGradient.stops || [],
           x1: fillGradient.x1, y1: fillGradient.y1,
           x2: fillGradient.x2, y2: fillGradient.y2,
+        };
+      }
+
+      if (shadow) {
+        rest.shadow = {
+          color: shadow.color || "rgba(0,0,0,0.3)",
+          blur: shadow.blur || 8,
+          offsetX: shadow.offsetX || 0,
+          offsetY: shadow.offsetY || 4,
         };
       }
 
@@ -1319,6 +1392,24 @@ async function handleMethod(method, params, userId) {
         scale,
         viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}`,
       };
+    }
+
+    // ── snapshot_template ──
+    case "snapshot_template": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      store.snapshot(params.templateId, JSON.parse(JSON.stringify(tpl)));
+      return { snapshotted: true, templateId: params.templateId, objectCount: tpl.canvas?.objects?.length || 0 };
+    }
+
+    // ── diff_template ──
+    case "diff_template": {
+      const snap = store.getSnapshot(params.templateId);
+      if (!snap) throw { code: -32000, message: "No snapshot found. Call snapshot_template first." };
+      const current = await templates.getTemplate(params.templateId);
+      if (!current) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const diffs = compareTemplates(snap, current);
+      return { templateId: params.templateId, changes: diffs, totalChanges: diffs.length };
     }
 
     // ── search_google_fonts ──
