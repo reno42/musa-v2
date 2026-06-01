@@ -19,7 +19,7 @@ export type ToolName =
 
 const SNAP_HISTORY_LIMIT = 50;
 const FRAME_MAX = 50;
-const EXTRA_PROPS = ["layerId", "layerName", "frameId", "isFrameVisual", "isFrameLabel", "frameName", "frameFill", "frameStroke", "styleId", "isGridLine"];
+const EXTRA_PROPS = ["name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameLabel", "frameName", "frameFill", "frameStroke", "styleId", "isGridLine"];
 
 function canvasToJSON(c: Canvas): any {
   return (c as any).toJSON(EXTRA_PROPS);
@@ -351,6 +351,7 @@ export function useCanvas() {
         const text = new IText("Double-click to edit", {
           left: end.x, top: end.y,
           fontSize: 24, fontFamily: "Inter, sans-serif", fill: "#000000",
+          padding: 0,
         });
         (text as any).layerName = makeLayerName("text");
         // Link to containing frame immediately

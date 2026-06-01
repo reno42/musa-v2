@@ -709,7 +709,11 @@ async function handleMethod(method, params, userId) {
     case "get_template": {
       const tpl = await templates.getTemplate(params.id);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
-      return tpl;
+      return {
+        ...tpl,
+        _objectCount: tpl.canvas?.objects?.length || 0,
+        _frameCount: tpl.frames?.length || 0,
+      };
     }
     case "create_template": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
@@ -957,7 +961,7 @@ async function handleMethod(method, params, userId) {
         type: "text", layerName: params.layerName || `text_${uuid().slice(0, 8)}`,
         text: params.text, left: params.x, top: params.y,
         fontSize: params.fontSize || 24, fontFamily: params.fontFamily || "Inter",
-        fill: params.fill || "#000000",
+        fill: params.fill || "#000000", padding: 0,
         scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
 

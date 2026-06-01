@@ -52,14 +52,14 @@ function extractFonts(tpl) {
 /**
  * Build Google Fonts CSS link tags for fonts used in the template.
  * Always includes Inter (the editor default) plus any template-specific fonts.
- * Loads weights 400,500,700,800 for full design coverage.
+ * Loads weights 100,200,300,400,500,600,700,800,900 for complete design coverage.
  */
 function googleFontsLinks(tpl) {
   const fonts = extractFonts(tpl);
   // Inter is always needed as the base UI/design font
   const allFonts = ["Inter", ...fonts.filter(f => f !== "Inter")];
   return allFonts.map(f =>
-    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, "+")}:wght@400;500;700;800&display=swap">`
+    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, "+")}:wght@100;200;300;400;500;600;700;800;900&display=swap">`
   ).join("\n");
 }
 

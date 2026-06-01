@@ -17,13 +17,14 @@ type SupabaseTplRow = {
 };
 
 function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
+  const data = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
   return {
-    ...row.data,
+    ...data,
     id: row.id,
     name: row.name,
     workspaceId: row.workspace_id,
     metadata: {
-      ...row.data.metadata,
+      ...data.metadata,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     },

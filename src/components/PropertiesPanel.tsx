@@ -120,6 +120,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const fieldZIndex = String((obj.canvas?.getObjects() || []).indexOf(obj));
   const fieldLetterSpacing = String(obj.charSpacing ?? 0);
   const fieldLineHeight = String(obj.lineHeight ?? 1.2);
+  const fieldPadding = String(obj.padding ?? 0);
   const fieldUnderline = obj.underline ?? false;
 
   // Shadow helpers
@@ -426,6 +427,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
           </div>
           <Row label="Spacing" defaultValue={fieldLetterSpacing} onChange={v => commit("charSpacing", Number(v))} />
           <Row label="Ln-Ht" defaultValue={fieldLineHeight} onChange={v => commit("lineHeight", Math.max(0.5, Math.min(4, Number(v))))} />
+          <Row label="Pad" defaultValue={fieldPadding} onChange={v => commit("padding", Math.max(0, Math.min(100, Number(v))))} />
         </Section>
       )}
     </div>

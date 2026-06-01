@@ -73,7 +73,7 @@ export function useAutoSave({
 
     // Serialize canvas
     const canvasJSON = (c.toJSON as any)([
-      "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
+      "name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
       "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
       "componentId", "isComponentInstance", "constraints", "autoLayout",
       "resizingMode", "overrides",
@@ -178,7 +178,7 @@ export function useAutoSave({
     if (userObjects.length === 0) return;
 
     const canvasJSON = (c.toJSON as any)([
-      "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
+      "name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
       "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
       "componentId", "isComponentInstance", "constraints", "autoLayout",
       "resizingMode", "overrides",
