@@ -9,9 +9,11 @@
  * @module services/supabase
  *
  * Environment variables:
- *   SUPABASE_URL             → https://<project>.supabase.co
- *   SUPABASE_SERVICE_KEY     → service_role JWT (server-side only)
- *   SUPABASE_ANON_KEY        → fallback anon key
+ *   SUPABASE_URL                        → https://<project>.supabase.co
+ *   SUPABASE_SERVICE_KEY                → service_role JWT (server-side only)
+ *   SUPABASE_ANON_KEY                   → fallback anon key
+ *   SUPABASE_PROJECT_URL_DE_REPO_DESIGN → Netlify-deployed fallback URL
+ *   SUPABASE_SECRET_KEY_DE_REPO_DESIGN  → Netlify-deployed fallback key
  *
  * DB tables accessed: ALL (via .from() queries)
  * Storage buckets: design-exports (rendered images)
@@ -34,8 +36,10 @@ let client: SupabaseClient | null = null;
  *            webhooks.ts (dispatch), renderer.ts (storage)
  */
 export function getSupabase(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+  const url = process.env.SUPABASE_URL ||
+    process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN;
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN;
 
   if (!url || !key || url.includes("your-project")) {
     console.warn("[SUPABASE] Not configured — using in-memory storage");
