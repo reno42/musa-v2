@@ -82,7 +82,26 @@ function parseSvgPathData(d) {
  * Returns a transformed template or null if frame not found.
  */
 function prepareFrameRender(tpl, frameId) {
-  const frame = tpl.frames?.find(f => f.id === frameId);
+  let frame = tpl.frames?.find(f => f.id === frameId);
+
+  // Fallback: search canvas.objects for visual frame rects (isFrameVisual + frameId)
+  if (!frame) {
+    const visualFrame = (tpl.canvas?.objects || []).find(
+      o => o.isFrameVisual && o.frameId === frameId
+    );
+    if (visualFrame) {
+      frame = {
+        id: visualFrame.frameId,
+        name: visualFrame.frameName || visualFrame.layerName || visualFrame.name || "Frame",
+        x: visualFrame.left || 0,
+        y: visualFrame.top || 0,
+        width: visualFrame.width || 1080,
+        height: visualFrame.height || 1080,
+        fill: visualFrame.fill || "#ffffff",
+      };
+    }
+  }
+
   if (!frame) return null;
 
   const offsetObjs = (objs) => {
