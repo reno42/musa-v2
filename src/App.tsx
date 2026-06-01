@@ -152,12 +152,8 @@ function App() {
   // Open existing template
   const handleSelectTemplate = async (id: string) => {
     try {
-      const res = await fetch(`/api/templates/${id}`, {
-        headers: { "x-api-key": "dev-key" },
-      });
-      const json = await res.json();
-      if (json.success && json.data) {
-        const d = json.data;
+      const d = await getTemplate(id);
+      if (d) {
         dispatch({ type: "OPEN_TEMPLATE", id, json: { width: d.width, height: d.height, canvas: d.canvas, objects: d.canvas?.objects || [] } });
         return;
       }
