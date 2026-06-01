@@ -49,12 +49,17 @@ function extractFonts(tpl) {
   return [...fonts];
 }
 
-/** Build Google Fonts CSS link tags for fonts used in the template. */
+/**
+ * Build Google Fonts CSS link tags for fonts used in the template.
+ * Always includes Inter (the editor default) plus any template-specific fonts.
+ * Loads weights 400,500,700,800 for full design coverage.
+ */
 function googleFontsLinks(tpl) {
   const fonts = extractFonts(tpl);
-  if (!fonts.length) return "";
-  return fonts.map(f =>
-    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, "+")}:wght@400;500;700&display=swap">`
+  // Inter is always needed as the base UI/design font
+  const allFonts = ["Inter", ...fonts.filter(f => f !== "Inter")];
+  return allFonts.map(f =>
+    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, "+")}:wght@400;500;700;800&display=swap">`
   ).join("\n");
 }
 
@@ -271,45 +276,80 @@ ${fontsCss}
   var canvasData = ${canvasJson};
   preprocessObjects(canvasData.objects || []);
 
-  canvas.loadFromJSON(canvasData, function() {
-    canvas.renderAll();
+  /** Normalize type values that may arrive as strings from JSON serialization */
+  function normalizeTypes(objects) {
+    for (var i = 0; i < (objects || []).length; i++) {
+      var o = objects[i];
+      if (o.fontWeight != null && typeof o.fontWeight === 'string') {
+        var w = parseInt(o.fontWeight, 10);
+        o.fontWeight = isNaN(w) ? 400 : w;
+      }
+      if (o.charSpacing != null && typeof o.charSpacing === 'string') {
+        o.charSpacing = parseFloat(o.charSpacing) || 0;
+      }
+      if (o.lineHeight != null && typeof o.lineHeight === 'string') {
+        o.lineHeight = parseFloat(o.lineHeight) || 1.2;
+      }
+      if (o.fontSize != null && typeof o.fontSize === 'string') {
+        o.fontSize = parseInt(o.fontSize, 10) || 24;
+      }
+      if (o.fontStyle === '') o.fontStyle = 'normal';
+      if (o.objects) normalizeTypes(o.objects);
+      if (o._objects) normalizeTypes(o._objects);
+    }
+  }
+  normalizeTypes(canvasData.objects || []);
 
-    // ── Auto-download helper ──
-    function finishRender() {
+  function doRender() {
+    canvas.loadFromJSON(canvasData, function() {
       canvas.renderAll();
-      var autoUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
-      var a = document.createElement('a');
-      a.href = autoUrl;
-      a.download = safeName + '.png';
-      a.click();
-    }
 
-    // ── Background image support ──
-    if (bgImage) {
-      fabric.Image.fromURL(bgImage, function(img) {
-        var scaleX = canvas.width / img.width;
-        var scaleY = canvas.height / img.height;
-        var scale = typeof bgImage === 'object' && bgImage.fit === 'cover'
-          ? Math.max(scaleX, scaleY)
-          : typeof bgImage === 'object' && bgImage.fit === 'contain'
-            ? Math.min(scaleX, scaleY)
-            : Math.min(scaleX, scaleY);
-        canvas.setBackgroundImage(img, function() {
-          canvas.renderAll();
-          setTimeout(finishRender, 400);
-        }, {
-          scaleX: scale,
-          scaleY: scale,
-          originX: 'center',
-          originY: 'center',
-          left: canvas.width / 2,
-          top: canvas.height / 2
+      // ── Auto-download helper ──
+      function finishRender() {
+        canvas.renderAll();
+        var autoUrl = canvas.toDataURL({ format: 'png', multiplier: 2 });
+        var a = document.createElement('a');
+        a.href = autoUrl;
+        a.download = safeName + '.png';
+        a.click();
+      }
+
+      // ── Background image support ──
+      if (bgImage) {
+        fabric.Image.fromURL(bgImage, function(img) {
+          var scaleX = canvas.width / img.width;
+          var scaleY = canvas.height / img.height;
+          var scale = typeof bgImage === 'object' && bgImage.fit === 'cover'
+            ? Math.max(scaleX, scaleY)
+            : typeof bgImage === 'object' && bgImage.fit === 'contain'
+              ? Math.min(scaleX, scaleY)
+              : Math.min(scaleX, scaleY);
+          canvas.setBackgroundImage(img, function() {
+            canvas.renderAll();
+            setTimeout(finishRender, 400);
+          }, {
+            scaleX: scale,
+            scaleY: scale,
+            originX: 'center',
+            originY: 'center',
+            left: canvas.width / 2,
+            top: canvas.height / 2
+          });
         });
-      });
-    } else {
-      setTimeout(finishRender, 500);
-    }
-  });
+      } else {
+        setTimeout(finishRender, 500);
+      }
+    });
+  }
+
+  /** Wait for Google Fonts to finish loading before rendering canvas.
+   *  Without this, Fabric.js fillText() falls back to system serif (Times New Roman),
+   *  breaking fontFamily, fontWeight, charSpacing, and fontSize. */
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(doRender);
+  } else {
+    setTimeout(doRender, 800);
+  }
 
   // ── Manual download helpers ──
   window.downloadCanvas = function(fmt) {
