@@ -32,6 +32,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   const templateJsonRef = useRef(templateJson);
   templateJsonRef.current = templateJson;
   const initDoneRef = useRef(false);
+  const [canvasReady, setCanvasReady] = useState(false);
 
   // Auto-save
   const { status: saveStatus } = useAutoSave({
@@ -39,6 +40,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     templateId,
     getExtraData: () => ({}),
     enabled: !!templateId,
+    canvasReady,
   });
 
   // Step 1: Init canvas on mount (no template load, no setLoading)
@@ -47,11 +49,13 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     const c = initCanvas(mountRef.current, containerRef.current);
     fabricRef.current = c;
     initDoneRef.current = true;
+    setCanvasReady(true);
 
     return () => {
       c.dispose();
       fabricRef.current = null;
       initDoneRef.current = false;
+      setCanvasReady(false);
     };
   }, [initCanvas]);
 

@@ -15,6 +15,8 @@ interface UseAutoSaveOptions {
   debounceMs?: number;
   /** Whether auto-save is enabled */
   enabled?: boolean;
+  /** Signal that the canvas is initialized and ready for event attachment */
+  canvasReady?: boolean;
 }
 
 /**
@@ -42,6 +44,7 @@ export function useAutoSave({
   getExtraData,
   debounceMs = 2000,
   enabled = true,
+  canvasReady = false,
 }: UseAutoSaveOptions) {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -156,7 +159,7 @@ export function useAutoSave({
       }
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [fabricRef, enabled, templateId]);
+  }, [fabricRef, enabled, templateId, canvasReady]);
 
   // Force save (for manual save triggers)
   const forceSave = useCallback(() => {
