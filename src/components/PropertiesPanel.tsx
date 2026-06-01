@@ -129,7 +129,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const fieldShadowX = String(obj.shadow?.offsetX ?? 0);
   const fieldShadowY = String(obj.shadow?.offsetY ?? 0);
 
-  const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox";
+  const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox" || obj.type === "textbox";
   const isRectType = obj.type === "rect" || obj.type === "Rect" || (obj as any).isFrameVisual;
   const isFrameType = !!(obj as any).isFrameVisual;
   const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;

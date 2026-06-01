@@ -257,7 +257,7 @@ ${fontsCss}
     return commands;
   }
 
-  /** Walk objects and convert pathData strings to Fabric path arrays + gradients */
+  /** Walk objects and convert pathData strings to Fabric path arrays + gradients + image crossOrigin */
   function preprocessObjects(objects) {
     for (var i = 0; i < (objects || []).length; i++) {
       var o = objects[i];
@@ -267,6 +267,10 @@ ${fontsCss}
       }
       if (o.fill && typeof o.fill === 'object' && o.fill.type === 'linear' && o.fill.coords) {
         o.fill = new fabric.Gradient(o.fill);
+      }
+      // Enable CORS for remote images so Fabric.js can load them into canvas
+      if (o.type === 'image' && o.src && !o.crossOrigin) {
+        o.crossOrigin = 'anonymous';
       }
       if (o.objects) preprocessObjects(o.objects);
       if (o._objects) preprocessObjects(o._objects);

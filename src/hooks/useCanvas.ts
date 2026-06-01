@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from "react";
-import { Canvas, FabricObject, Rect, Ellipse, Line, Triangle, Polygon, IText, Point, Path, Group, StaticCanvas, FabricImage } from "fabric";
+import { Canvas, FabricObject, Rect, Ellipse, Line, Triangle, Polygon, IText, Textbox, Point, Path, Group, StaticCanvas, FabricImage } from "fabric";
 
 export type ToolName =
   | "select"

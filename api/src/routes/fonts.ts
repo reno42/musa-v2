@@ -14,7 +14,7 @@ fontRoutes.get("/:id/fonts", async (req, res) => {
     function scan(obj: any) {
       if (
         obj.type === "text" || obj.type === "i-text" ||
-        obj.type === "IText" || obj.type === "Textbox"
+        obj.type === "IText" || obj.type === "Textbox" || obj.type === "textbox"
       ) {
         const family = obj.fontFamily || "Inter";
         if (!fontMap[family]) {
