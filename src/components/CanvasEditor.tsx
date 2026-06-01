@@ -38,7 +38,9 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   const { status: saveStatus } = useAutoSave({
     fabricRef,
     templateId,
-    getExtraData: () => ({}),
+    getExtraData: () => ({
+      name: templateJsonRef.current?.name,
+    }),
     enabled: !!templateId,
     canvasReady,
   });

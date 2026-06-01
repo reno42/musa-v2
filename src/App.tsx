@@ -154,7 +154,7 @@ function App() {
     try {
       const d = await getTemplate(id);
       if (d) {
-        dispatch({ type: "OPEN_TEMPLATE", id, json: { width: d.width, height: d.height, canvas: d.canvas, objects: d.canvas?.objects || [] } });
+        dispatch({ type: "OPEN_TEMPLATE", id, json: { name: d.name, width: d.width, height: d.height, canvas: d.canvas, objects: d.canvas?.objects || [] } });
         return;
       }
     } catch { /* ignore */ }
