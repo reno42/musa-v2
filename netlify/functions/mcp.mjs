@@ -848,19 +848,50 @@ async function handleMethod(method, params, userId) {
       }
       if (!ids.length) throw { code: -32602, message: "No templateIds or matching search results" };
 
-      const updates = {};
-      if (params.name !== undefined) updates.name = params.name;
-      if (params.canvas !== undefined) updates.canvas = params.canvas;
+      // Build base updates (non-objects fields)
+      const baseUpdates = {};
+      if (params.name !== undefined) baseUpdates.name = params.name;
+      if (params.canvas !== undefined) baseUpdates.canvas = params.canvas;
+
+      // Pre-parse objects array for merge
+      let newObjects = null;
       if (params.objects !== undefined) {
-        const objects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
-        updates.canvas = { objects, viewport: { x: 0, y: 0, zoom: 1 } };
+        newObjects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
+        if (!Array.isArray(newObjects)) newObjects = [newObjects];
       }
 
       const results = [];
       for (const id of ids) {
         try {
-          const tpl = await templates.updateTemplate(id, updates);
-          results.push({ id, ok: !!tpl });
+          const tpl = await templates.getTemplate(id);
+          if (!tpl) { results.push({ id, ok: false, error: "Template not found" }); continue; }
+
+          const updates = { ...baseUpdates };
+
+          // Merge objects by layerName instead of replacing
+          if (newObjects) {
+            const existing = tpl.canvas?.objects || [];
+            const merged = [...existing];
+            const indexByLayer = new Map();
+            for (let i = 0; i < merged.length; i++) {
+              const key = merged[i].layerName || merged[i].name;
+              if (key) indexByLayer.set(key, i);
+            }
+            for (const newObj of newObjects) {
+              const key = newObj.layerName || newObj.name;
+              if (key && indexByLayer.has(key)) {
+                // Update existing object in place
+                Object.assign(merged[indexByLayer.get(key)], newObj);
+              } else {
+                // Append new object
+                merged.push(newObj);
+              }
+            }
+            updates.canvas = { ...tpl.canvas, objects: merged };
+          }
+
+          await templates.updateTemplate(id, updates);
+          results.push({ id, ok: true });
         } catch (e) {
           results.push({ id, ok: false, error: e?.message || "update failed" });
         }
