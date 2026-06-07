@@ -13,6 +13,22 @@ function uuid() {
 /** UUID v4 format — validates user_id before Supabase upsert */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Simple in-memory rate limiter (survives warm Edge Function instances) */
+const rateLimitMap = new Map();
+const RATE_LIMIT_MAX = 60;      // requests per window
+const RATE_WINDOW_MS = 60_000;  // 1 minute
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false;
+  entry.count++;
+  return true;
+}
+
 const MCP_TOOLS = [
   {
     name: "list_workspaces",
@@ -1791,6 +1807,17 @@ async function handleMethod(method, params, userId) {
 
 export const handler = async (event) => {
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
+
+  // Rate limiting
+  const clientIp = event.headers["x-forwarded-for"] || event.headers["client-ip"] || "unknown";
+  if (!checkRateLimit(clientIp)) {
+    return {
+      statusCode: 429,
+      headers,
+      body: JSON.stringify(jsonRpcError(null, -32000, "Rate limit exceeded. Try again in 60 seconds.")),
+    };
+  }
+
   const userId = getUserId(event);
 
   // SSE initialization (GET)
