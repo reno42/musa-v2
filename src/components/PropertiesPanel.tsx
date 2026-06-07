@@ -9,7 +9,10 @@ interface PropertiesPanelProps {
   canvasRef?: React.RefObject<Canvas | null>;
 }
 
-const em = (n: number) => `${Math.round(n)}`;
+const em = (n: number) => {
+  if (n == null || isNaN(n)) return "0";
+  return parseFloat(n.toFixed(2)).toString();
+};
 
 export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: PropertiesPanelProps) {
   // Track last committed object identity for key-based reset
