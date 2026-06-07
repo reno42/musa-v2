@@ -1908,6 +1908,24 @@ export const handler = async (event) => {
     }
   }
 
+  // Direct method fallback: if method matches a tool name, route to tools/call
+  if (MCP_TOOLS.some(t => t.name === method)) {
+    try {
+      const result = await handleMethod(method, params || {}, userId);
+      const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
+      };
+    } catch (e) {
+      const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
+      };
+    }
+  }
+
   // Unknown method
   return {
     statusCode: 200, headers,
