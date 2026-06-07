@@ -252,6 +252,7 @@ const MCP_TOOLS = [
         textAlign: { type: "string", enum: ["left", "center", "right"], description: "Text alignment" },
         lockMovementX: { type: "boolean", description: "Lock horizontal movement" },
         lockMovementY: { type: "boolean", description: "Lock vertical movement" },
+        blendMode: { type: "string", enum: ["source-over", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "difference", "exclusion"], description: "CSS globalCompositeOperation blend mode" },
       },
       required: ["templateId", "targetLayerName"],
     },
@@ -1066,6 +1067,12 @@ async function handleMethod(method, params, userId) {
           offsetX: shadow.offsetX || 0,
           offsetY: shadow.offsetY || 4,
         };
+      }
+
+      // Map blendMode to Fabric.js globalCompositeOperation
+      if (rest.blendMode !== undefined) {
+        rest.globalCompositeOperation = rest.blendMode;
+        delete rest.blendMode;
       }
 
       Object.assign(obj, rest);

@@ -332,8 +332,36 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
             />
           </div>
           <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
+          <Row label="Dash" defaultValue={(obj as any).strokeDashArray?.join(",") || ""} onChange={v => {
+            const arr = v ? v.split(",").map(Number).filter(n => !isNaN(n) && n >= 0) : null;
+            commit("strokeDashArray", arr && arr.length > 0 ? arr : null);
+          }} />
         </div>
       </Section>
+      )}
+
+      {/* Blend Mode (hidden for frames) */}
+      {!isFrameType && (
+        <Section label="Blend Mode">
+          <div style={{ padding: "0 10px 6px" }}>
+            <select
+              defaultValue={(obj as any).globalCompositeOperation || "source-over"}
+              onChange={e => commit("globalCompositeOperation", e.target.value)}
+              style={selectStyle}
+            >
+              <option value="source-over">Normal</option>
+              <option value="multiply">Multiply</option>
+              <option value="screen">Screen</option>
+              <option value="overlay">Overlay</option>
+              <option value="darken">Darken</option>
+              <option value="lighten">Lighten</option>
+              <option value="color-dodge">Color Dodge</option>
+              <option value="color-burn">Color Burn</option>
+              <option value="difference">Difference</option>
+              <option value="exclusion">Exclusion</option>
+            </select>
+          </div>
+        </Section>
       )}
 
       {/* Gradient (hidden for frames) */}
