@@ -1090,6 +1090,10 @@ async function handleMethod(method, params, userId) {
 
     // ── draw_shape ──
     case "draw_shape": {
+      const VALID_TOOLS = ["rect", "ellipse", "line", "triangle", "star", "polygon"];
+      if (!VALID_TOOLS.includes(params.tool))
+        throw { code: -32602, message: `Invalid tool type: ${params.tool}. Must be one of: ${VALID_TOOLS.join(", ")}` };
+
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       autoSnapshot(params.templateId, method, tpl);
