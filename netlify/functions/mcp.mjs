@@ -1874,7 +1874,7 @@ export const handler = async (event) => {
       statusCode: 200, headers,
       body: JSON.stringify(jsonRpcResult(id, {
         protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
+        capabilities: { tools: { listChanged: true } },
         serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
       })),
     };
