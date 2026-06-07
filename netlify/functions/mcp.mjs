@@ -400,13 +400,18 @@ const MCP_TOOLS = [
   },
   {
     name: "copy_object",
-    description: "Copy a layer (returns its data for paste/duplicate)",
+    description: "Copy a layer to another template or duplicate within the same template",
     inputSchema: {
       type: "object",
       properties: {
-        templateId: { type: "string", description: "Template ID" },
+        templateId: { type: "string", description: "Source template ID" },
         layerName: { type: "string", description: "Layer name to copy" },
-        frameId: { type: "string", description: "Optional frame ID" },
+        frameId: { type: "string", description: "Optional source frame ID" },
+        targetTemplateId: { type: "string", description: "Target template ID (if different from source)" },
+        targetFrameId: { type: "string", description: "Optional target frame ID" },
+        targetLayerName: { type: "string", description: "Optional new layer name (default: original_copy)" },
+        offsetX: { type: "number", description: "Horizontal offset for the copy (default 20)" },
+        offsetY: { type: "number", description: "Vertical offset for the copy (default 20)" },
       },
       required: ["templateId", "layerName"],
     },
@@ -1288,14 +1293,39 @@ async function handleMethod(method, params, userId) {
 
     // ── copy_object ──
     case "copy_object": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const sourceTpl = await templates.getTemplate(params.templateId);
+      if (!sourceTpl) throw { code: -32000, message: `Source template not found: ${params.templateId}` };
 
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.layerName);
+      const sourceObjects = getFrameObjects(sourceTpl, params.frameId);
+      const obj = sourceObjects.find(o => (o.layerName || o.name) === params.layerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
 
-      return obj;
+      // Clone the object
+      const clone = JSON.parse(JSON.stringify(obj));
+      clone.layerName = params.targetLayerName || `${params.layerName}_copy`;
+      if (params.offsetX !== undefined) clone.left = (clone.left || 0) + params.offsetX;
+      else clone.left = (clone.left || 0) + 20;
+      if (params.offsetY !== undefined) clone.top = (clone.top || 0) + params.offsetY;
+      else clone.top = (clone.top || 0) + 20;
+
+      // Determine target
+      const targetId = params.targetTemplateId || params.templateId;
+      let targetTpl = targetId === params.templateId ? sourceTpl : await templates.getTemplate(targetId);
+      if (!targetTpl) throw { code: -32000, message: `Target template not found: ${targetId}` };
+
+      const targetObjects = getFrameObjects(targetTpl, params.targetFrameId || params.frameId);
+      targetObjects.push(clone);
+      targetTpl.metadata.updatedAt = new Date().toISOString();
+
+      await templates.updateTemplate(targetId, { canvas: targetTpl.canvas, frames: targetTpl.frames });
+      autoSnapshot(targetId, method);
+
+      return {
+        copied: true,
+        sourceTemplateId: params.templateId,
+        targetTemplateId: targetId,
+        object: clone,
+      };
     }
 
     // ── duplicate_object ──
