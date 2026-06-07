@@ -696,13 +696,20 @@ function compareTemplates(snap, current) {
 
 /** Route JSON-RPC method calls to template/workspace services */
 async function handleMethod(method, params, userId) {
-  // Helper: safely get objects array for a frame, initializing if needed
+  // Helper: safely get objects array for a frame, merging frame.objects + canvas.objects
   const getFrameObjects = (tpl, frameId) => {
     if (!frameId) return tpl.canvas.objects;
+    // Merge: frame.objects (explicit) + canvas.objects with matching frameId
     const frame = tpl.frames?.find(f => f.id === frameId);
-    if (!frame) return tpl.canvas.objects;
-    if (!frame.objects) frame.objects = [];
-    return frame.objects;
+    const fromFrame = frame?.objects || [];
+    const fromCanvas = (tpl.canvas?.objects || []).filter(o => o.frameId === frameId && !o.isFrameVisual);
+    // Deduplicate by layerName
+    const seen = new Set(fromFrame.map(o => o.layerName || o.name));
+    const merged = [...fromFrame];
+    for (const o of fromCanvas) {
+      if (!seen.has(o.layerName || o.name)) merged.push(o);
+    }
+    return merged;
   };
 
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
