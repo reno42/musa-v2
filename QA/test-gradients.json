@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"transform_object","arguments":{"templateId":"tpl_42f101f4-d91","targetLayerName":"rect_170a98fd","fillGradient":{"type":"linear","colorStops":[{"offset":0,"color":"#4ade80"},{"offset":1,"color":"#7c3aed"}]}}},"id":1}

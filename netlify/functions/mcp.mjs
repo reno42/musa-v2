@@ -1560,46 +1560,56 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      // 1. Create frame metadata in store
-      const frame = store.createFrame(params.templateId, {
-        name: params.name, x: params.x || 0, y: params.y || 0,
+      // 1. Create frame metadata DIRECTLY on tpl (bypass store cold-start issue)
+      const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const frame = {
+        id: frameId,
+        templateId: params.templateId,
+        name: params.name,
+        x: params.x || 0, y: params.y || 0,
         width: params.width || 400, height: params.height || 300,
-        fill: params.fill || "transparent",
+        fill: params.fill || "#ffffff",
+        opacity: 1, order: (tpl.frames || []).length,
+        objects: [],
         parentFrameId: params.parentFrameId || null,
-      });
-      if (!frame) throw { code: -32000, message: "Failed to create frame" };
+      };
+      if (!tpl.frames) tpl.frames = [];
+      tpl.frames.push(frame);
 
-      // 2. Create visual object in canvas.objects (isFrameVisual) for renderer compatibility
+      // 2. Create visual object in canvas.objects
       const visualObj = {
         type: "rect",
-        layerName: `frame_visual_${frame.id}`,
-        frameId: frame.id,
+        layerName: `frame_visual_${frameId}`,
+        frameId,
         isFrameVisual: true,
         frameName: frame.name,
         frameFill: frame.fill,
-        left: frame.x || 0,
-        top: frame.y || 0,
-        width: frame.width || 400,
-        height: frame.height || 300,
-        fill: frame.fill || "#ffffff",
-        stroke: "#6366f1",
-        strokeWidth: 1,
-        rx: 0, ry: 0,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
+        left: frame.x, top: frame.y,
+        width: frame.width, height: frame.height,
+        fill: frame.fill,
+        stroke: "#6366f1", strokeWidth: 1,
+        rx: 0, ry: 0, scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
       };
       if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
       if (!tpl.canvas.objects) tpl.canvas.objects = [];
       tpl.canvas.objects.push(visualObj);
 
-      // 3. Persist both frames metadata and canvas objects in one operation
+      // 3. Persist in one operation
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
         canvas: tpl.canvas,
       });
-      autoSnapshot(params.templateId, method);
+      autoSnapshot(params.templateId, "create_frame");
 
-      // 4. Return with frameId for consistency (fix BUG-011)
-      return { frameId: frame.id, name: frame.name, x: frame.x, y: frame.y, width: frame.width, height: frame.height, fill: frame.fill };
+      // 4. Return frameId consistently (BUG-011 fix)
+      return {
+        frameId,
+        name: frame.name,
+        x: frame.x, y: frame.y,
+        width: frame.width, height: frame.height,
+        fill: frame.fill,
+        parentFrameId: frame.parentFrameId,
+      };
     }
 
     // ── list_frames ──
