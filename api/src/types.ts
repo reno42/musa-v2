@@ -20,6 +20,7 @@ export interface Frame {
   height: number;
   fill?: string;
   opacity?: number;
+  parentFrameId?: string | null;
   order: number;
   objects: FabricObject[];
 }

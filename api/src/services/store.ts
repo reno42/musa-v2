@@ -128,7 +128,7 @@ class Store {
   // ─── Frames ─────────────────────────────────────
 
   createFrame(templateId: string, data: {
-    name: string; x: number; y: number; width: number; height: number; fill?: string;
+    name: string; x: number; y: number; width: number; height: number; fill?: string; parentFrameId?: string | null;
   }): Frame | undefined {
     const tpl = this.templates.get(templateId);
     if (!tpl) return undefined;
@@ -138,6 +138,7 @@ class Store {
       width: data.width, height: data.height,
       fill: data.fill || "#ffffff", opacity: 1,
       order: tpl.frames.length, objects: [],
+      parentFrameId: data.parentFrameId || null,
     };
     tpl.frames.push(frame);
     tpl.metadata.updatedAt = new Date().toISOString();

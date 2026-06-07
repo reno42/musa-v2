@@ -521,6 +521,7 @@ const MCP_TOOLS = [
         width: { type: "number", description: "Frame width (default 400)" },
         height: { type: "number", description: "Frame height (default 300)" },
         fill: { type: "string", description: "Background fill color" },
+        parentFrameId: { type: "string", description: "Optional parent frame ID for nested frames" },
       },
       required: ["templateId", "name"],
     },
@@ -1522,6 +1523,7 @@ async function handleMethod(method, params, userId) {
         name: params.name, x: params.x || 0, y: params.y || 0,
         width: params.width || 400, height: params.height || 300,
         fill: params.fill || "transparent",
+        parentFrameId: params.parentFrameId || null,
       });
       if (!frame) throw { code: -32000, message: "Failed to create frame" };
 
