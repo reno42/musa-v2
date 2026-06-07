@@ -428,6 +428,38 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               </button>
             </div>
           </div>
+          {/* Text Alignment */}
+          <div style={{ padding: "0 10px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Align</span>
+              <div style={{ flex: 1, display: "flex", gap: 2 }}>
+                {[
+                  { value: "left", label: "\u2190" },
+                  { value: "center", label: "\u2194" },
+                  { value: "right", label: "\u2192" },
+                  { value: "justify", label: "\u2261" },
+                ].map(({ value, label }) => {
+                  const active = (obj.textAlign || "left") === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      title={`Align ${value}`}
+                      onClick={() => commit("textAlign", value)}
+                      style={{
+                        flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
+                        background: active ? "#1a3a5c" : "#111118",
+                        border: active ? "1px solid #3b82f6" : "1px solid #1c1c26",
+                        color: active ? "#60a5fa" : "#7a7a90",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
           <Row label="Spacing" defaultValue={fieldLetterSpacing} onChange={v => commit("charSpacing", Number(v))} />
           <Row label="Ln-Ht" defaultValue={fieldLineHeight} onChange={v => commit("lineHeight", Math.max(0.5, Math.min(4, Number(v))))} />
           <Row label="Pad" defaultValue={fieldPadding} onChange={v => commit("padding", Math.max(0, Math.min(100, Number(v))))} />
