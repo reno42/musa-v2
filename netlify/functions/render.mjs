@@ -185,7 +185,7 @@ function prepareCanvasJson(tpl) {
  * Build a self-contained HTML page that renders the template
  * via Fabric.js v5 CDN and auto-downloads as PNG on load.
  */
-function buildRenderPage(tpl, width, height, format, scale, templateId) {
+function buildRenderPage(tpl, width, height, format, scale, templateId, transparent = false) {
   const { canvas: canvasData, bgImage } = prepareCanvasJson(tpl);
   const canvasJson = JSON.stringify(canvasData);
 
@@ -296,7 +296,7 @@ ${fontsCss}
     width: width,
     height: height,
     renderOnAddRemove: true,
-    backgroundColor: '#ffffff'
+    backgroundColor: transparent ? 'transparent' : (tpl.backgroundColor || '#ffffff')
   });
 
   /** Parse an SVG path 'd' string into Fabric.js path command arrays */
@@ -529,11 +529,12 @@ export const handler = async (event) => {
         }
         tpl = frameTpl;
       }
+      const transparent = body.transparent === true;
       const baseW = tpl.width || 1080;
       const baseH = tpl.height || 1080;
       const width = Math.round(baseW * scale);
       const height = Math.round(baseH * scale);
-      const html = buildRenderPage(tpl, width, height, format, scale, templateId);
+      const html = buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
       const job = store.createRenderJob(templateId, format, scale);
       job.status = "complete";
       job.url = html;
@@ -581,11 +582,12 @@ export const handler = async (event) => {
       }
       tpl = frameTpl;
     }
+    const transparent = body.transparent === true;
     const baseW = tpl.width || 1080;
     const baseH = tpl.height || 1080;
     const width = Math.round(baseW * scale);
     const height = Math.round(baseH * scale);
-    const html = buildRenderPage(tpl, width, height, format, scale, templateId);
+    const html = buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
     const job = store.createRenderJob(templateId, format, scale);
     job.status = "complete";
     job.url = html;

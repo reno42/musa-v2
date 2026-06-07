@@ -189,6 +189,10 @@ const MCP_TOOLS = [
           type: "number",
           description: "Render scale multiplier (default 1, max 4)",
         },
+        transparent: {
+          type: "boolean",
+          description: "Render with transparent background instead of white (default false)",
+        },
       },
       required: ["templateIds"],
     },
@@ -956,6 +960,7 @@ async function handleMethod(method, params, userId) {
       if (!params.templateIds?.length) throw { code: -32602, message: "templateIds array required" };
       const format = ["png", "jpg"].includes(params.format) ? params.format : "png";
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
+      const transparent = params.transparent === true;
       const results = [];
       for (const id of params.templateIds) {
         try {
@@ -969,7 +974,7 @@ async function handleMethod(method, params, userId) {
               render: `/api/templates/${id}/render`,
               view: `/api/render/${id}`,
             },
-            renderParams: { format, scale, width: (tpl.width || 1080) * scale, height: (tpl.height || 1080) * scale },
+            renderParams: { format, scale, width: (tpl.width || 1080) * scale, height: (tpl.height || 1080) * scale, transparent },
           });
         } catch (e) {
           results.push({ templateId: id, error: e?.message || "load failed" });
