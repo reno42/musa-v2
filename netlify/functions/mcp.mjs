@@ -793,8 +793,19 @@ async function handleMethod(method, params, userId) {
     }
     case "create_template": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      // Validate name
+      const tplName = (params.name || "").trim();
+      if (!tplName) throw { code: -32602, message: "name is required and cannot be empty" };
+      if (tplName.length > 200) throw { code: -32602, message: "name must be 200 characters or less" };
+      // Validate dimensions
+      const tplWidth = params.width !== undefined ? Number(params.width) : 1080;
+      const tplHeight = params.height !== undefined ? Number(params.height) : 1080;
+      if (isNaN(tplWidth) || tplWidth <= 0 || tplWidth > 10000)
+        throw { code: -32602, message: "width must be a number between 1 and 10000" };
+      if (isNaN(tplHeight) || tplHeight <= 0 || tplHeight > 10000)
+        throw { code: -32602, message: "height must be a number between 1 and 10000" };
       const tpl = await templates.createTemplate(
-        params.name, params.width || 1080, params.height || 1080,
+        tplName, tplWidth, tplHeight,
         undefined, userId, params.workspaceId,
       );
       autoSnapshot(tpl.id, "create_template");
