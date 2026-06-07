@@ -989,15 +989,34 @@ async function handleMethod(method, params, userId) {
       if (!tplId) throw { code: -32602, message: "id or templateId required" };
       const tpl = await templates.getTemplate(tplId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+
+      // Read from snapshot store (autoSnapshot creates these)
+      const snapshots = store.listSnapshots(tplId) || [];
+      const snapshotVersions = snapshots.map((s, i) => ({
+        id: s.id || `v${i}`,
+        version: i + 1,
+        timestamp: s.timestamp || s.createdAt,
+        label: `${s.type} · ${s.trigger}`,
+        type: s.type,
+        trigger: s.trigger,
+        objectCount: s.objectCount,
+        frameCount: s.frameCount,
+      }));
+
+      // Merge with legacy tpl.versions if any exist
+      const legacyVersions = (tpl.versions || []).map((v, i) => ({
+        id: v.id || `v${i}`,
+        version: snapshotVersions.length + i + 1,
+        timestamp: v.timestamp || v.createdAt,
+        label: v.label || `Version ${i + 1}`,
+        canvasHash: v.canvasHash || "",
+      }));
+
+      const allVersions = [...snapshotVersions, ...legacyVersions];
       return {
         templateId: tplId,
-        versions: (tpl.versions || []).map((v, i) => ({
-          id: v.id || `v${i}`,
-          version: i + 1,
-          timestamp: v.timestamp || v.createdAt,
-          label: v.label || `Version ${i + 1}`,
-          canvasHash: v.canvasHash || "",
-        })),
+        versions: allVersions,
+        total: allVersions.length,
       };
     }
     case "restore_version": {
@@ -1005,6 +1024,20 @@ async function handleMethod(method, params, userId) {
       if (!tplId) throw { code: -32602, message: "id or templateId required" };
       const tpl = await templates.getTemplate(tplId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+
+      // Try snapshot store first
+      const snapshot = store.getSnapshot(tplId, params.versionId);
+      if (snapshot && snapshot.data) {
+        const restored = await templates.updateTemplate(tplId, { canvas: snapshot.data.canvas });
+        return {
+          restored: true,
+          templateId: tplId,
+          versionId: params.versionId,
+          template: restored,
+        };
+      }
+
+      // Fallback to legacy tpl.versions
       const versions = tpl.versions || [];
       const match = versions.find((v, i) => (v.id || `v${i}`) === params.versionId);
       if (!match) throw { code: -32000, message: `Version not found: ${params.versionId}` };
