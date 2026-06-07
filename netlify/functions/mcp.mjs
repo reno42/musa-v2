@@ -979,6 +979,29 @@ async function handleMethod(method, params, userId) {
 
       const { templateId, targetLayerName, frameId, fillGradient, shadow, ...rest } = params;
 
+      // ── Range validation for numeric properties ──
+      if (rest.opacity !== undefined) {
+        if (typeof rest.opacity !== "number" || rest.opacity < 0 || rest.opacity > 1)
+          throw { code: -32602, message: "opacity must be a number between 0 and 1" };
+      }
+      if (rest.angle !== undefined) {
+        if (typeof rest.angle !== "number")
+          throw { code: -32602, message: "angle must be a number" };
+        rest.angle = ((rest.angle % 360) + 360) % 360; // Normalize 0-360
+      }
+      if (rest.width !== undefined && (typeof rest.width !== "number" || rest.width <= 0))
+        throw { code: -32602, message: "width must be a number > 0" };
+      if (rest.height !== undefined && (typeof rest.height !== "number" || rest.height <= 0))
+        throw { code: -32602, message: "height must be a number > 0" };
+      if (rest.scaleX !== undefined && rest.scaleX === 0)
+        throw { code: -32602, message: "scaleX cannot be 0" };
+      if (rest.scaleY !== undefined && rest.scaleY === 0)
+        throw { code: -32602, message: "scaleY cannot be 0" };
+      if (rest.strokeWidth !== undefined && (typeof rest.strokeWidth !== "number" || rest.strokeWidth < 0))
+        throw { code: -32602, message: "strokeWidth must be a number >= 0" };
+      if (rest.fontSize !== undefined && (typeof rest.fontSize !== "number" || rest.fontSize <= 0))
+        throw { code: -32602, message: "fontSize must be a number > 0" };
+
       if (fillGradient) {
         rest.fill = {
           type: fillGradient.type || "linear",
