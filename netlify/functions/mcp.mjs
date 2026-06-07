@@ -705,9 +705,15 @@ async function handleMethod(method, params, userId) {
     return frame.objects;
   };
 
-  // Helper: auto-snapshot after IA mutations
-  const autoSnapshot = (templateId, trigger) => {
-    try { store.snapshotAuto(templateId, "ia", trigger); } catch { /* non-blocking */ }
+  // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
+  const autoSnapshot = (templateId, trigger, tplData) => {
+    try {
+      if (tplData) {
+        store.snapshot(templateId, JSON.parse(JSON.stringify(tplData)));
+      } else {
+        store.snapshotAuto(templateId, "ia", trigger);
+      }
+    } catch { /* non-blocking */ }
   };
 
   switch (method) {
@@ -982,6 +988,8 @@ async function handleMethod(method, params, userId) {
       const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
 
+      autoSnapshot(params.templateId, method, tpl); // Capture pre-mutation state for diff
+
       const { templateId, targetLayerName, frameId, fillGradient, shadow, ...rest } = params;
 
       // ── Range validation for numeric properties ──
@@ -1037,6 +1045,7 @@ async function handleMethod(method, params, userId) {
     case "draw_shape": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const llName = params.layerName || `${params.tool}_${uuid().slice(0, 8)}`;
       const obj = {
@@ -1061,6 +1070,7 @@ async function handleMethod(method, params, userId) {
     case "add_text": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const obj = {
         type: "text", layerName: params.layerName || `text_${uuid().slice(0, 8)}`,
@@ -1082,6 +1092,7 @@ async function handleMethod(method, params, userId) {
     case "add_image": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const obj = {
         type: "image", layerName: params.layerName || `img_${uuid().slice(0, 8)}`,
@@ -1102,6 +1113,7 @@ async function handleMethod(method, params, userId) {
     case "upload_image": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const fileName = params.name || `img_${uuid().slice(0, 8)}.png`;
       const dataUrl = params.base64.startsWith("data:") ? params.base64 : `data:image/png;base64,${params.base64}`;
@@ -1125,6 +1137,7 @@ async function handleMethod(method, params, userId) {
     case "delete_objects": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
 
@@ -1144,6 +1157,7 @@ async function handleMethod(method, params, userId) {
     case "reorder_object": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
@@ -1167,6 +1181,7 @@ async function handleMethod(method, params, userId) {
     case "align_objects": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
@@ -1204,6 +1219,7 @@ async function handleMethod(method, params, userId) {
     case "distribute_objects": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
@@ -1241,6 +1257,7 @@ async function handleMethod(method, params, userId) {
     case "group_objects": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
 
@@ -1272,6 +1289,7 @@ async function handleMethod(method, params, userId) {
     case "ungroup_objects": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName && o.type === "group");
@@ -1332,6 +1350,7 @@ async function handleMethod(method, params, userId) {
     case "duplicate_object": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
@@ -1375,6 +1394,7 @@ async function handleMethod(method, params, userId) {
     case "boolean_operation": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const targets = objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name));
@@ -1403,6 +1423,7 @@ async function handleMethod(method, params, userId) {
     case "auto_layout": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
 
       const objects = getFrameObjects(tpl, params.frameId);
       const targets = params.targetLayerNames
