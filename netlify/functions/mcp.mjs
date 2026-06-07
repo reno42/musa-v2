@@ -1513,8 +1513,8 @@ async function handleMethod(method, params, userId) {
         }
         if (obj.objects && Array.isArray(obj.objects)) for (const child of obj.objects) scan(child);
       }
-      for (const obj of tpl.canvas.objects) scan(obj);
-      for (const frame of tpl.frames) for (const obj of frame.objects) scan(obj);
+      for (const obj of (tpl.canvas?.objects || [])) scan(obj);
+      for (const frame of (tpl.frames || [])) for (const obj of (frame.objects || [])) scan(obj);
 
       const fonts = Object.entries(fontMap)
         .map(([family, info]) => ({ family, count: info.count, sizes: [...info.sizes].sort((a, b) => a - b), weights: [...info.weights] }))
