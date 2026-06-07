@@ -1425,15 +1425,45 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
+      // 1. Create frame metadata in store
       const frame = store.createFrame(params.templateId, {
         name: params.name, x: params.x || 0, y: params.y || 0,
         width: params.width || 400, height: params.height || 300,
         fill: params.fill || "transparent",
       });
       if (!frame) throw { code: -32000, message: "Failed to create frame" };
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+
+      // 2. Create visual object in canvas.objects (isFrameVisual) for renderer compatibility
+      const visualObj = {
+        type: "rect",
+        layerName: `frame_visual_${frame.id}`,
+        frameId: frame.id,
+        isFrameVisual: true,
+        frameName: frame.name,
+        frameFill: frame.fill,
+        left: frame.x || 0,
+        top: frame.y || 0,
+        width: frame.width || 400,
+        height: frame.height || 300,
+        fill: frame.fill || "#ffffff",
+        stroke: "#6366f1",
+        strokeWidth: 1,
+        rx: 0, ry: 0,
+        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
+      };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      if (!tpl.canvas.objects) tpl.canvas.objects = [];
+      tpl.canvas.objects.push(visualObj);
+
+      // 3. Persist both frames metadata and canvas objects in one operation
+      await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames,
+        canvas: tpl.canvas,
+      });
       autoSnapshot(params.templateId, method);
-      return frame;
+
+      // 4. Return with frameId for consistency (fix BUG-011)
+      return { frameId: frame.id, name: frame.name, x: frame.x, y: frame.y, width: frame.width, height: frame.height, fill: frame.fill };
     }
 
     // ── list_frames ──
