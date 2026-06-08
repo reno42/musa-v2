@@ -291,6 +291,7 @@ function App() {
           selectedObjects={selectedObjects}
           onUpdate={() => callCanvas("pushHistory")}
           canvasRef={layersCanvasRef as React.RefObject<import("fabric").Canvas | null>}
+          templateId={templateId}
         />
         <LayersPanel
           key={layersCanvasRef.current ? "ready" : "loading"}
