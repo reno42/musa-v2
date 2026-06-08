@@ -12,8 +12,10 @@ import type { BooleanOperation } from "@futuraria/shared";
 import { useDropdowns } from "../hooks/useDropdowns";
 import { ToolBtn, Divider, Spacer } from "./toolbar/ToolbarButtons";
 import { ShapesDropdown, DrawDropdown, AlignDropdown, BooleanDropdown } from "./toolbar/ToolbarDropdowns";
+import { EmbedsDropdown } from "./toolbar/EmbedsDropdown";
 
 type AlignDirection = "left" | "center-h" | "right" | "top" | "center-v" | "bottom";
+type EmbedType = "video" | "audio" | "pdf" | "figma" | "social";
 
 interface HistoryState {
   canUndo: boolean;
@@ -49,6 +51,7 @@ interface Props {
   onAutoLayout?: () => void;
   onBooleanOp: (op: BooleanOperation) => void;
   onPrototypePreview?: () => void;
+  onEmbed?: (url: string, type: EmbedType) => void;
 }
 
 export function Toolbar({
@@ -62,6 +65,7 @@ export function Toolbar({
   onAutoLayout,
   onBooleanOp,
   onPrototypePreview,
+  onEmbed,
 }: Props) {
   const {
     alignOpen, boolOpen, shapesOpen, drawOpen,
@@ -114,6 +118,9 @@ export function Toolbar({
       <ToolBtn id="image" tool={tool} onChange={onToolChange} title="Image (I)" shortcut="I">
         <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
       </ToolBtn>
+
+      {/* ─── Embed ─── */}
+      {onEmbed && <EmbedsDropdown onEmbed={onEmbed} />}
 
       <Divider />
 

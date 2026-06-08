@@ -273,6 +273,18 @@ function App() {
             canBooleanOp: selectedObjects.length >= 2,
           }}
           onBooleanOp={(op) => callCanvas("booleanOp", op)}
+          onEmbed={templateId ? async (url: string, type: string) => {
+            const methodMap: Record<string, string> = { video: "embed_video", audio: "embed_audio", pdf: "embed_pdf", figma: "embed_figma", social: "embed_social" };
+            const method = methodMap[type];
+            if (!method) return;
+            try {
+              await apiFetch("/mcp", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", method, params: { templateId, url }, id: 1 }),
+              });
+            } catch { /* silent */ }
+          } : undefined}
         />
 
         {/* Top bar: navigation */}
