@@ -4499,7 +4499,7 @@ async function handleMethod(method, params, userId) {
     case "add_overlay": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const frames = tpl.data?.frames || [];
+      const frames = tpl.frames || [];
       const frameIdx = frames.findIndex(f => f.id === params.frameId);
       if (frameIdx === -1) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
       if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
@@ -4511,8 +4511,8 @@ async function handleMethod(method, params, userId) {
         manualX: params.manualX ?? null,
         manualY: params.manualY ?? null,
       };
-      tpl.data.frames = frames;
-      await templates.updateTemplate(params.templateId, { data: tpl.data });
+      tpl.frames = frames;
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
       return { updated: true, frameId: params.frameId, position: frames[frameIdx].metadata.overlay.position };
     }
@@ -4521,7 +4521,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       // Check frames first
-      const frames = tpl.data?.frames || [];
+      const frames = tpl.frames || [];
       const frameIdx = frames.findIndex(f => f.id === params.objectId);
       if (frameIdx !== -1) {
         if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
@@ -4529,8 +4529,8 @@ async function handleMethod(method, params, userId) {
         if (params.stickyTop !== undefined) frames[frameIdx].metadata.stickyTop = params.stickyTop;
         if (params.stickyBottom !== undefined) frames[frameIdx].metadata.stickyBottom = params.stickyBottom;
         if (params.overflow) frames[frameIdx].metadata.overflow = params.overflow;
-        tpl.data.frames = frames;
-        await templates.updateTemplate(params.templateId, { data: tpl.data });
+        tpl.frames = frames;
+        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       } else {
         // Check canvas objects
         const obj = (tpl.canvas?.objects || []).find(o => (o.id || o.layerName) === params.objectId);
