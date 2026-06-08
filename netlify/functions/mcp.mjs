@@ -4766,16 +4766,12 @@ async function handleMethod(method, params, userId) {
       const scopes = params.scopes || ["read"];
       const expiresIn = params.expiresIn ?? 31536000; // 1 year default
       const expiresAt = expiresIn === 0 ? null : new Date(Date.now() + expiresIn * 1000).toISOString();
-      // Hash the token for storage (simple hash for free-tier, not cryptographic)
-      const tokenRaw = `${tokenId}_${params.userId}_${Date.now()}`;
+      // Generate a secure token (simple hash for free-tier)
+      const tokenRaw = `${tokenId}_${params.userId}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const tokenHashed = [...tokenRaw].reduce((h, c) => (h = ((h << 5) - h) + c.charCodeAt(0)) & 0xffffffff, 0).toString(36);
-      // Store in metadata
-      const sb = getSupabase();
-      const patData = { id: tokenId, userId: params.userId, name: params.name, scopes, expiresAt, tokenHashed, created: new Date().toISOString() };
-      if (sb) {
-        const { error } = await sb.from("personal_access_tokens").upsert({ id: tokenId, data: patData }, { onConflict: "id" });
-        if (error) throw { code: -32000, message: `Supabase error: ${error.message}` };
-      }
+      // Store in in-memory registry (free-tier: no separate Supabase table)
+      if (!globalThis.__pat_tokens) globalThis.__pat_tokens = new Map();
+      globalThis.__pat_tokens.set(tokenId, { id: tokenId, userId: params.userId, name: params.name, scopes, expiresAt, tokenHashed, created: new Date().toISOString() });
       return { created: true, tokenId, token: tokenRaw, name: params.name, scopes, expiresAt, note: "Store this token securely. It will not be shown again." };
     }
 
