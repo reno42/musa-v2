@@ -9,6 +9,7 @@ import { GovernancePanel } from "./components/GovernancePanel";
 import { ComponentsPanel } from "./components/ComponentsPanel";
 import { PrototypePanel } from "./components/PrototypePanel";
 import { PagesPanel } from "./components/PagesPanel";
+import { AIPanel } from "./components/AIPanel";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { ToastProvider } from "./components/Toast";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -76,6 +77,8 @@ function App() {
   const [, setCompKey] = useState(0);
   const prototypeOpenRef = useRef(false);
   const [, setProtoKey] = useState(0);
+  const aiOpenRef = useRef(false);
+  const [, setAiKey] = useState(0);
 
   const { view, templateId, templateJson, canvas: canvasState, shortcutsOpen } = state;
   const zoom = canvasState.zoom;
@@ -304,6 +307,7 @@ function App() {
           <button type="button" onClick={() => setBatchOpen(true)} style={topBtn}>⚡ Batch</button>
           <button type="button" onClick={() => { componentsOpenRef.current = !componentsOpenRef.current; setCompKey(n => n + 1); }} style={topBtn}>📦 Components</button>
           <button type="button" onClick={() => { prototypeOpenRef.current = !prototypeOpenRef.current; setProtoKey(n => n + 1); }} style={topBtn}>▶ Prototype</button>
+          <button type="button" onClick={() => { aiOpenRef.current = !aiOpenRef.current; setAiKey(n => n + 1); }} style={topBtn}>🤖 AI Tools</button>
           <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
         </div>
 
@@ -342,6 +346,7 @@ function App() {
       {batchOpen && <BatchAMator templateId={templateId} onClose={() => setBatchOpen(false)} />}
       {componentsOpenRef.current && <ComponentsPanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { componentsOpenRef.current = false; setCompKey(n => n + 1); }} />}
       {prototypeOpenRef.current && <PrototypePanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { prototypeOpenRef.current = false; setProtoKey(n => n + 1); }} />}
+      {aiOpenRef.current && <AIPanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { aiOpenRef.current = false; setAiKey(n => n + 1); }} />}
       {governanceOpenRef.current && <GovernancePanel templateId={templateId} onClose={() => { governanceOpenRef.current = false; setGovKey(n => n + 1); }} onRestore={() => callCanvas("pushHistory")} />}
     </ToastProvider>
   );
