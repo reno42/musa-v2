@@ -454,13 +454,66 @@ export function useCanvas() {
       }
     });
 
-    // Snap-to-grid on moving
+    // Snap: object-to-object edge/center + grid fallback
     c.on("object:moving", (opt: any) => {
       if (!snapRef.current) return;
       const obj = opt.target;
-      const step = gridSizeRef.current;
-      if (obj.left !== undefined) obj.left = Math.round(obj.left / step) * step;
-      if (obj.top !== undefined) obj.top = Math.round(obj.top / step) * step;
+      if ((obj as any).isFrameVisual || (obj as any).isGuideLine) return;
+      const zoom = c.getZoom();
+      const threshold = 6 / zoom; // 6px snap distance at any zoom
+      const gridStep = gridSizeRef.current;
+
+      // Get snap candidates (other objects, excluding self + grid + guides + frame visuals)
+      const others = c.getObjects().filter((o: any) =>
+        o !== obj && !o.isGridLine && !o.isGuideLine && !o.isFrameVisual,
+      );
+
+      // Compute the moving object's bounding edges
+      const objLeft = obj.left ?? 0;
+      const objTop = obj.top ?? 0;
+      const objW = (obj.width ?? 0) * (obj.scaleX ?? 1);
+      const objH = (obj.height ?? 0) * (obj.scaleY ?? 1);
+      const objRight = objLeft + objW;
+      const objBottom = objTop + objH;
+      const objCX = objLeft + objW / 2;
+      const objCY = objTop + objH / 2;
+
+      let bestSnapX: number | null = null, bestSnapY: number | null = null;
+      let bestDistX = threshold, bestDistY = threshold;
+
+      for (const other of others) {
+        const ol = other.left ?? 0;
+        const ot = other.top ?? 0;
+        const ow = (other.width ?? 0) * (other.scaleX ?? 1);
+        const oh = (other.height ?? 0) * (other.scaleY ?? 1);
+        const or = ol + ow, ob = ot + oh;
+        const ocx = ol + ow / 2, ocy = ot + oh / 2;
+
+        // Candidate edges for snapping (both sides of both objects)
+        const targetsX = [ol, or, ocx, ol - objW, or - objW, ocx - objW / 2];
+        const targetsY = [ot, ob, ocy, ot - objH, ob - objH, ocy - objH / 2];
+
+        for (const tx of targetsX) {
+          const dist = Math.abs(objLeft - tx);
+          if (dist < bestDistX) { bestDistX = dist; bestSnapX = tx; }
+        }
+        for (const ty of targetsY) {
+          const dist = Math.abs(objTop - ty);
+          if (dist < bestDistY) { bestDistY = dist; bestSnapY = ty; }
+        }
+      }
+
+      // Apply object-to-object snap, fallback to grid
+      if (bestSnapX !== null) {
+        obj.left = bestSnapX;
+      } else if (gridStep > 0) {
+        obj.left = Math.round(objLeft / gridStep) * gridStep;
+      }
+      if (bestSnapY !== null) {
+        obj.top = bestSnapY;
+      } else if (gridStep > 0) {
+        obj.top = Math.round(objTop / gridStep) * gridStep;
+      }
     });
 
     // Pen tool: click to add points (bezier)
