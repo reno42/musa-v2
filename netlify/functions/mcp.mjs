@@ -1165,6 +1165,99 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  {
+    name: "canvas_grid",
+    description: "Configure canvas grid settings: cell size, visibility, snap-to-grid, and color. Stored in template metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        gridSize: { type: "number", description: "Grid cell size in px (default 8)" },
+        visible: { type: "boolean", description: "Show/hide grid overlay" },
+        snapToGrid: { type: "boolean", description: "Enable snap-to-grid" },
+        color: { type: "string", description: "Grid line color hex (default #333344)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "canvas_rulers",
+    description: "Configure ruler visibility, measurement units, and guide lines on the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        visible: { type: "boolean", description: "Show/hide rulers" },
+        units: { type: "string", enum: ["px", "pt", "in", "mm", "cm"], description: "Ruler measurement units (default px)" },
+        guides: { type: "array", items: { type: "object", properties: { axis: { type: "string", enum: ["x", "y"] }, position: { type: "number" } } }, description: "Guide lines [{ axis: 'x'|'y', position: px }]" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "canvas_snap",
+    description: "Configure snap behavior: snap-to-object, snap-to-grid, and snap threshold distance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        snapToObject: { type: "boolean", description: "Enable snap to other objects (edges/centers)" },
+        snapToGrid: { type: "boolean", description: "Enable snap to grid" },
+        snapThreshold: { type: "number", description: "Snap distance threshold in px (default 5)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "history_undo",
+    description: "Undo the last canvas mutation by restoring the most recent snapshot before the current state. Uses the snapshot store.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "history_redo",
+    description: "Redo a previously undone mutation by restoring forward in the snapshot history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "canvas_pages",
+    description: "Manage multiple pages per template: add, remove, reorder, and switch the active page. Pages store independent canvas states.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        action: { type: "string", enum: ["list", "add", "remove", "set_active", "reorder"], description: "Page action" },
+        pageName: { type: "string", description: "Page name (for add/set_active actions)" },
+        pageId: { type: "string", description: "Page ID (for remove/set_active actions)" },
+        pageIndex: { type: "number", description: "Target index (for reorder)" },
+      },
+      required: ["templateId", "action"],
+    },
+  },
+  {
+    name: "color_picker",
+    description: "Color utilities: parse hex/rgba/hsl, generate complementary/analogous/triadic palettes, create light-dark shade gradients. Pure computation, no canvas required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        color: { type: "string", description: "Hex color (#cba6f7, #cba6f7ff, cba6f7) or rgb/rgba string" },
+        action: { type: "string", enum: ["parse", "complementary", "analogous", "triadic", "shades", "gradient"], description: "Color action (default: parse)" },
+        steps: { type: "number", description: "Number of steps for shades/gradient (default 5, max 20)" },
+      },
+      required: ["color"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -1224,6 +1317,47 @@ function compareTemplates(snap, current) {
     }
   }
   return diffs;
+}
+
+/** RGB → HSL conversion (used by color_picker) */
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0, l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100) / 100, l: Math.round(l * 100) / 100 };
+}
+
+/** HSL → RGB conversion (used by color_picker) */
+function hslToRgb(h, s, l) {
+  h /= 360;
+  let r, g, b;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
 }
 
 /** Route JSON-RPC method calls to template/workspace services */
@@ -3415,6 +3549,217 @@ async function handleMethod(method, params, userId) {
         }
       }
       return { exported: pages.length, orientation, pageFormat, pages, note: "PDF render URLs ready for the render pipeline." };
+    }
+
+    // ── F1: Canvas Controls & Navigation ──
+    case "canvas_grid": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (params.gridSize !== undefined) tpl.metadata.gridSize = Math.max(1, Math.min(256, params.gridSize));
+      if (params.visible !== undefined) tpl.metadata.gridVisible = params.visible;
+      if (params.snapToGrid !== undefined) tpl.metadata.gridSnap = params.snapToGrid;
+      if (params.color !== undefined) tpl.metadata.gridColor = params.color;
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return {
+        gridSize: tpl.metadata.gridSize || 8,
+        visible: tpl.metadata.gridVisible !== false,
+        snapToGrid: tpl.metadata.gridSnap || false,
+        color: tpl.metadata.gridColor || "#333344",
+      };
+    }
+
+    case "canvas_rulers": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (params.visible !== undefined) tpl.metadata.rulersVisible = params.visible;
+      if (params.units) tpl.metadata.rulerUnits = params.units;
+      if (params.guides) {
+        if (!tpl.metadata.guides) tpl.metadata.guides = [];
+        for (const g of params.guides) {
+          tpl.metadata.guides.push({ id: `guide_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, axis: g.axis || "x", position: g.position || 0 });
+        }
+      }
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return {
+        visible: tpl.metadata.rulersVisible !== false,
+        units: tpl.metadata.rulerUnits || "px",
+        guides: tpl.metadata.guides || [],
+      };
+    }
+
+    case "canvas_snap": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (params.snapToObject !== undefined) tpl.metadata.snapToObject = params.snapToObject;
+      if (params.snapToGrid !== undefined) tpl.metadata.snapToGrid = params.snapToGrid;
+      if (params.snapThreshold !== undefined) tpl.metadata.snapThreshold = Math.max(1, Math.min(50, params.snapThreshold));
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return {
+        snapToObject: tpl.metadata.snapToObject !== false,
+        snapToGrid: tpl.metadata.snapToGrid || false,
+        snapThreshold: tpl.metadata.snapThreshold || 5,
+      };
+    }
+
+    case "history_undo": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const snaps = store.listSnapshots(params.templateId);
+      if (snaps.length < 2) throw { code: -32000, message: "Nothing to undo. At least 2 snapshots required." };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.redoStack) tpl.metadata.redoStack = [];
+      // Save current state to redo stack
+      tpl.metadata.redoStack.push({ canvas: JSON.parse(JSON.stringify(tpl.canvas)), timestamp: new Date().toISOString() });
+      // Restore from previous snapshot (index 1 = state before latest change)
+      const prevSnap = snaps[1];
+      if (prevSnap.data?.canvas) {
+        tpl.canvas = JSON.parse(JSON.stringify(prevSnap.data.canvas));
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { undone: true, snapshotLabel: prevSnap.trigger || prevSnap.label, redoDepth: tpl.metadata.redoStack.length };
+    }
+
+    case "history_redo": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata?.redoStack?.length) throw { code: -32000, message: "Nothing to redo." };
+      const redoEntry = tpl.metadata.redoStack.pop();
+      // Save current state for potential undo
+      store.snapshotAuto(params.templateId, "ia", "redo_before");
+      if (redoEntry.canvas) {
+        tpl.canvas = redoEntry.canvas;
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { redone: true, redoDepth: tpl.metadata.redoStack.length };
+    }
+
+    case "canvas_pages": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const action = params.action || "list";
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.pages) tpl.metadata.pages = [];
+      if (!tpl.metadata.activePageId && tpl.metadata.pages.length === 0) {
+        // Initialize with default page
+        tpl.metadata.pages.push({ id: `page_${Date.now()}`, name: "Page 1", canvas: JSON.parse(JSON.stringify(tpl.canvas)), order: 0 });
+        tpl.metadata.activePageId = tpl.metadata.pages[0].id;
+      }
+      if (action === "list") {
+        return {
+          pages: tpl.metadata.pages.map(p => ({ id: p.id, name: p.name, order: p.order, isActive: p.id === tpl.metadata.activePageId })),
+          activePageId: tpl.metadata.activePageId,
+          total: tpl.metadata.pages.length,
+        };
+      } else if (action === "add") {
+        const page = {
+          id: `page_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+          name: params.pageName || `Page ${tpl.metadata.pages.length + 1}`,
+          canvas: { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
+          order: tpl.metadata.pages.length,
+        };
+        tpl.metadata.pages.push(page);
+        tpl.metadata.activePageId = page.id;
+        tpl.canvas = JSON.parse(JSON.stringify(page.canvas));
+      } else if (action === "remove") {
+        const idx = params.pageId ? tpl.metadata.pages.findIndex(p => p.id === params.pageId) : params.pageIndex;
+        if (idx < 0 || idx >= tpl.metadata.pages.length) throw { code: -32000, message: "Page not found" };
+        tpl.metadata.pages.splice(idx, 1);
+        if (tpl.metadata.activePageId === (params.pageId || tpl.metadata.pages[idx]?.id)) {
+          tpl.metadata.activePageId = tpl.metadata.pages[0]?.id || null;
+        }
+      } else if (action === "set_active") {
+        const page = tpl.metadata.pages.find(p => p.id === params.pageId || p.name === params.pageName);
+        if (!page) throw { code: -32000, message: "Page not found" };
+        // Save current canvas to current page
+        const curPage = tpl.metadata.pages.find(p => p.id === tpl.metadata.activePageId);
+        if (curPage) curPage.canvas = JSON.parse(JSON.stringify(tpl.canvas));
+        tpl.metadata.activePageId = page.id;
+        tpl.canvas = JSON.parse(JSON.stringify(page.canvas));
+      } else if (action === "reorder") {
+        const page = tpl.metadata.pages.find(p => p.id === params.pageId);
+        if (!page) throw { code: -32000, message: "Page not found" };
+        const from = tpl.metadata.pages.indexOf(page);
+        const to = Math.max(0, Math.min(tpl.metadata.pages.length - 1, params.pageIndex ?? 0));
+        tpl.metadata.pages.splice(from, 1);
+        tpl.metadata.pages.splice(to, 0, page);
+        tpl.metadata.pages.forEach((p, i) => { p.order = i; });
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { action, activePageId: tpl.metadata.activePageId, totalPages: tpl.metadata.pages.length };
+    }
+
+    case "color_picker": {
+      const raw = (params.color || "#000000").trim();
+      const action = params.action || "parse";
+      const steps = Math.max(2, Math.min(20, params.steps || 5));
+      // Parse hex/rgb/rgba to {r,g,b,a}
+      let r = 0, g = 0, b = 0, a = 1;
+      const hexMatch = raw.match(/^#?([0-9a-fA-F]{3,8})$/);
+      const rgbMatch = raw.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+))?\s*\)/);
+      if (hexMatch) {
+        let h = hexMatch[1];
+        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+        if (h.length === 6) h += "ff";
+        r = parseInt(h.substring(0,2), 16);
+        g = parseInt(h.substring(2,4), 16);
+        b = parseInt(h.substring(4,6), 16);
+        a = parseInt(h.substring(6,8), 16) / 255;
+      } else if (rgbMatch) {
+        r = parseInt(rgbMatch[1]);
+        g = parseInt(rgbMatch[2]);
+        b = parseInt(rgbMatch[3]);
+        a = rgbMatch[4] !== undefined ? parseFloat(rgbMatch[4]) : 1;
+      } else {
+        throw { code: -32000, message: `Unparseable color: ${raw}. Use hex (#cba6f7) or rgb/rgba.` };
+      }
+      const toHex = (rr, gg, bb) => "#" + [rr, gg, bb].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+      const toRgba = (rr, gg, bb, aa) => `rgba(${Math.round(rr)},${Math.round(gg)},${Math.round(bb)},${aa.toFixed(2)})`;
+      const hex = toHex(r, g, b);
+      let result = { hex, rgba: toRgba(r, g, b, a), r, g, b, a };
+      if (action === "complementary") {
+        result.complementary = toHex(255 - r, 255 - g, 255 - b);
+        result.palette = [hex, result.complementary];
+      } else if (action === "analogous") {
+        const hsl = rgbToHsl(r, g, b);
+        const c1 = hslToRgb(((hsl.h - 30) + 360) % 360, hsl.s, hsl.l);
+        const c2 = hslToRgb(((hsl.h + 30) + 360) % 360, hsl.s, hsl.l);
+        result.palette = [toHex(c1.r, c1.g, c1.b), hex, toHex(c2.r, c2.g, c2.b)];
+      } else if (action === "triadic") {
+        const hsl = rgbToHsl(r, g, b);
+        const c1 = hslToRgb(((hsl.h + 120) % 360), hsl.s, hsl.l);
+        const c2 = hslToRgb(((hsl.h + 240) % 360), hsl.s, hsl.l);
+        result.palette = [hex, toHex(c1.r, c1.g, c1.b), toHex(c2.r, c2.g, c2.b)];
+      } else if (action === "shades") {
+        const shades = [];
+        for (let i = 0; i < steps; i++) {
+          const t = i / (steps - 1);
+          const sr = Math.round(r + (255 - r) * t * 0.5);
+          const sg = Math.round(g + (255 - g) * t * 0.5);
+          const sb = Math.round(b + (255 - b) * t * 0.5);
+          shades.push(toHex(sr, sg, sb));
+        }
+        result.shades = shades;
+      } else if (action === "gradient") {
+        const gradient = [];
+        for (let i = 0; i < steps; i++) {
+          const t = i / (steps - 1);
+          gradient.push({
+            offset: Math.round(t * 100) / 100,
+            color: toHex(Math.round(r + (255 - r) * t * 0.6), Math.round(g + (255 - g) * t * 0.6), Math.round(b + (255 - b) * t * 0.6)),
+          });
+        }
+        result.gradient = gradient;
+      }
+      return result;
     }
 
     default:
