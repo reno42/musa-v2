@@ -1312,6 +1312,266 @@ const MCP_TOOLS = [
       required: ["templateId", "images"],
     },
   },
+  {
+    name: "create_component",
+    description: "Create a reusable component from selected canvas objects. Components support variants (alternative configurations) and property overrides (boolean, text, instance swap). Stored in template metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        name: { type: "string", description: "Component name (e.g. Button/Primary)" },
+        description: { type: "string", description: "Optional description of the component" },
+        objectIds: { type: "array", items: { type: "string" }, description: "Array of object IDs to include in the component" },
+        frameId: { type: "string", description: "Optional frame ID to scope the component" },
+      },
+      required: ["templateId", "name", "objectIds"],
+    },
+  },
+  {
+    name: "create_instance",
+    description: "Create an instance of a component. Instances inherit the component master's properties but can override specific values. Changes to the master propagate to instances that haven't overridden the changed property.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        componentId: { type: "string", description: "Component ID to instantiate" },
+        x: { type: "number", description: "X position for the instance (default 0)" },
+        y: { type: "number", description: "Y position for the instance (default 0)" },
+        frameId: { type: "string", description: "Optional frame ID to place instance inside" },
+      },
+      required: ["templateId", "componentId"],
+    },
+  },
+  {
+    name: "add_variant",
+    description: "Add a variant to an existing component. Variants define alternative configurations (e.g. Button/Primary, Button/Secondary, Button/Disabled) with per-property overrides.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        componentId: { type: "string", description: "Component ID to add variant to" },
+        name: { type: "string", description: "Variant name (e.g. Hover, Disabled, Secondary)" },
+        overrides: { type: "object", description: "Key-value overrides for object properties (e.g. { \"fill\": \"#45475a\", \"opacity\": 0.5 })" },
+      },
+      required: ["templateId", "componentId", "name"],
+    },
+  },
+  {
+    name: "set_component_prop",
+    description: "Define or override a component property on an instance. Properties can be boolean (visible/hidden), text (label override), or instance swap (swap one nested instance for another).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        componentId: { type: "string", description: "Component ID (master definition)" },
+        instanceId: { type: "string", description: "Instance ID to override (if omitted, defines on master)" },
+        propName: { type: "string", description: "Property name (e.g. visible, label, iconSwap)" },
+        propType: { type: "string", enum: ["boolean", "text", "instanceSwap"], description: "Property type" },
+        value: { type: ["string", "boolean", "number"], description: "Property value — boolean for boolean type, string for text/instanceSwap" },
+      },
+      required: ["templateId", "componentId", "propName", "propType", "value"],
+    },
+  },
+  {
+    name: "add_interaction",
+    description: "Add an interaction between frames or objects. Supports click-to-navigate, hover-to-overlay, press, and delay triggers with navigation, overlay, and scroll actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        sourceId: { type: "string", description: "Source frame or object ID that triggers the interaction" },
+        trigger: { type: "string", enum: ["onClick", "onHover", "onPress", "onDelay"], description: "Trigger type (default onClick)" },
+        action: { type: "string", enum: ["navigate", "overlay", "scroll", "back", "close"], description: "Action to perform (default navigate)" },
+        targetId: { type: "string", description: "Target frame ID for navigation or overlay" },
+        transition: { type: "string", enum: ["instant", "dissolve", "slide", "push", "smartAnimate"], description: "Transition animation (default instant)" },
+        duration: { type: "number", description: "Animation duration in ms (default 300)" },
+        delay: { type: "number", description: "Delay before trigger in ms (for onDelay trigger)" },
+        easing: { type: "string", enum: ["easeIn", "easeOut", "easeInOut", "linear"], description: "Easing curve (default easeOut)" },
+      },
+      required: ["templateId", "sourceId"],
+    },
+  },
+  {
+    name: "set_animation",
+    description: "Set entrance/exit animation on a frame or object. Supports dissolve, slide, smart animate, and custom easing curves.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        objectId: { type: "string", description: "Frame or object ID to animate" },
+        type: { type: "string", enum: ["dissolve", "slideIn", "slideOut", "push", "smartAnimate", "fade"], description: "Animation type" },
+        direction: { type: "string", enum: ["left", "right", "up", "down"], description: "Direction for slide animations" },
+        duration: { type: "number", description: "Duration in ms (default 300)" },
+        easing: { type: "string", enum: ["easeIn", "easeOut", "easeInOut", "linear", "spring", "bounce"], description: "Easing curve (default easeOut)" },
+        delay: { type: "number", description: "Delay in ms before animation starts" },
+      },
+      required: ["templateId", "objectId", "type"],
+    },
+  },
+  {
+    name: "add_overlay",
+    description: "Configure a frame as an overlay with positioning, backdrop, and close-on-click-outside behavior. Used for modals, tooltips, dropdowns, and slide-out panels.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to configure as overlay" },
+        position: { type: "string", enum: ["center", "topLeft", "topRight", "bottomLeft", "bottomRight", "manual"], description: "Overlay position (default center)" },
+        backdrop: { type: "boolean", description: "Show semi-transparent backdrop (default true)" },
+        backdropColor: { type: "string", description: "Backdrop color with opacity (default rgba(0,0,0,0.5))" },
+        closeOnBackdrop: { type: "boolean", description: "Close overlay when clicking backdrop (default true)" },
+        manualX: { type: "number", description: "Manual X offset (for manual position)" },
+        manualY: { type: "number", description: "Manual Y offset (for manual position)" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "set_scroll_position",
+    description: "Set scroll behavior for frames or objects within a scrolling container. Supports fixed positioning (stays in place during scroll) and sticky positioning.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        objectId: { type: "string", description: "Frame or object ID" },
+        behavior: { type: "string", enum: ["fixed", "sticky", "scroll", "auto"], description: "Scroll behavior (default auto)" },
+        stickyTop: { type: "number", description: "Top offset in px for sticky positioning" },
+        stickyBottom: { type: "number", description: "Bottom offset in px for sticky positioning" },
+        overflow: { type: "string", enum: ["visible", "hidden", "scroll", "auto"], description: "Overflow behavior for the container (default visible)" },
+      },
+      required: ["templateId", "objectId", "behavior"],
+    },
+  },
+  {
+    name: "canvas_pan",
+    description: "Pan the canvas viewport by delta X/Y or to an absolute position. Supports both relative and absolute panning.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        deltaX: { type: "number", description: "Horizontal pan delta in px (relative mode)" },
+        deltaY: { type: "number", description: "Vertical pan delta in px (relative mode)" },
+        x: { type: "number", description: "Absolute viewport X position" },
+        y: { type: "number", description: "Absolute viewport Y position" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "canvas_zoom",
+    description: "Zoom the canvas viewport to a specific level, by delta, or fit-to-selection. Zoom is centered on the cursor or a specific point.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        zoom: { type: "number", description: "Absolute zoom level (1 = 100%, 0.5 = 50%, 2 = 200%)" },
+        delta: { type: "number", description: "Zoom delta (e.g. 0.1 = zoom in 10%, -0.1 = zoom out 10%)" },
+        centerX: { type: "number", description: "Zoom center X coordinate (optional, for zoom-to-point)" },
+        centerY: { type: "number", description: "Zoom center Y coordinate (optional, for zoom-to-point)" },
+        fitSelection: { type: "boolean", description: "Zoom to fit all objects within viewport" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "add_toggle",
+    description: "Add a toggle/accordion block with a title and collapsible content. The toggle can be expanded or collapsed by default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        title: { type: "string", description: "Toggle title text" },
+        content: { type: "string", description: "Toggle body content (supports markdown)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Toggle width (default 400)" },
+        expanded: { type: "boolean", description: "Start expanded (default false)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "title", "content"],
+    },
+  },
+  {
+    name: "add_callout",
+    description: "Add a callout block with icon, background color, and text. Used for tips, warnings, info boxes, and notes — similar to Notion callouts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        type: { type: "string", enum: ["info", "warning", "tip", "note", "success", "error"], description: "Callout type (default info)" },
+        text: { type: "string", description: "Callout body text" },
+        title: { type: "string", description: "Optional callout title" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Callout width (default 400)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "text"],
+    },
+  },
+  {
+    name: "add_quote",
+    description: "Add a styled quote block with attribution. Renders a vertical accent bar with italic quote text and optional author caption.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        text: { type: "string", description: "Quote text" },
+        author: { type: "string", description: "Optional attribution author" },
+        source: { type: "string", description: "Optional source/title" },
+        color: { type: "string", description: "Accent bar color (default #cba6f7)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Quote width (default 500)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "text"],
+    },
+  },
+  {
+    name: "publish_library",
+    description: "Publish a style library from a template. Collections of styles (color, text, effect, grid) can be published and imported by other templates, enabling design system reuse across projects.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Source template ID containing the styles" },
+        name: { type: "string", description: "Library name (e.g. 'Brand Design System')" },
+        description: { type: "string", description: "Library description" },
+        styleIds: { type: "array", items: { type: "string" }, description: "Array of style IDs to include (omit to publish all)" },
+        visibility: { type: "string", enum: ["workspace", "public"], description: "Visibility scope (default workspace)" },
+      },
+      required: ["templateId", "name"],
+    },
+  },
+  {
+    name: "register_tool",
+    description: "Register a custom MCP tool (plugin) dynamically. Third-party tools can extend the MCP server with new functionality. Tools are validated and added to the runtime tool registry.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Unique tool name (must start with plugin_ prefix)" },
+        description: { type: "string", description: "Tool description" },
+        inputSchema: { type: "object", description: "JSON Schema for tool parameters" },
+        handler: { type: "string", description: "Handler endpoint URL (webhook) that will receive tool calls" },
+        secret: { type: "string", description: "Optional shared secret for webhook authentication" },
+      },
+      required: ["name", "description", "inputSchema", "handler"],
+    },
+  },
+  {
+    name: "auth_token",
+    description: "Create a Personal Access Token (PAT) for API authentication. Tokens support scoped permissions (read, write, admin) and optional expiry. Used for headless API access and CI/CD pipelines.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "User ID to create token for" },
+        name: { type: "string", description: "Token name/label (e.g. 'CI/CD Pipeline')" },
+        scopes: { type: "array", items: { type: "string", enum: ["read", "write", "admin"] }, description: "Permission scopes (default ['read'])" },
+        expiresIn: { type: "number", description: "Expiry in seconds (default 31536000 = 1 year, 0 = never)" },
+      },
+      required: ["userId", "name"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -4047,6 +4307,434 @@ async function handleMethod(method, params, userId) {
       autoSnapshot(params.templateId, method);
       const rows = Math.ceil(images.length / cols);
       return { created: true, images: images.length, columns: cols, rows, totalWidth: cols * iw + (cols - 1) * gap, totalHeight: rows * (ih + gap + (images[0]?.caption ? 24 : 0)) };
+    }
+
+    // ── F4: Components ──
+    case "create_component": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.components) tpl.metadata.components = [];
+      const compId = `comp_${Date.now().toString(36)}`;
+      const compObjects = (tpl.canvas?.objects || []).filter(o => params.objectIds.includes(o.id || o.layerName));
+      if (compObjects.length === 0) throw { code: -32000, message: "No matching objects found for the given IDs" };
+      const component = {
+        id: compId, name: params.name, description: params.description || "",
+        objectIds: params.objectIds, objects: JSON.parse(JSON.stringify(compObjects)),
+        variants: [], properties: [], created: new Date().toISOString(),
+      };
+      tpl.metadata.components.push(component);
+      // Tag source objects with componentId
+      for (const obj of tpl.canvas.objects) {
+        if (params.objectIds.includes(obj.id || obj.layerName)) obj.componentId = compId;
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { created: true, componentId: compId, name: params.name, objectCount: compObjects.length };
+    }
+
+    case "create_instance": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const components = tpl.metadata?.components || [];
+      const comp = components.find(c => c.id === params.componentId);
+      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
+      const instanceId = `inst_${Date.now().toString(36)}`;
+      const x = params.x ?? 0, y = params.y ?? 0;
+      // Clone component objects as instance
+      for (const obj of comp.objects) {
+        const instObj = JSON.parse(JSON.stringify(obj));
+        instObj.id = instObj.id ? `${instObj.id}_${instanceId}` : `obj_${Date.now().toString(36)}`;
+        instObj.layerName = (instObj.layerName || "instance") + `_${instanceId}`;
+        instObj.left = (instObj.left || 0) + x;
+        instObj.top = (instObj.top || 0) + y;
+        instObj.componentId = params.componentId;
+        instObj.instanceId = instanceId;
+        instObj.componentOverrides = {};
+        if (params.frameId) instObj.frameId = params.frameId;
+        tpl.canvas.objects.push(instObj);
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, instanceId, componentId: params.componentId, componentName: comp.name, objectCount: comp.objects.length };
+    }
+
+    case "add_variant": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata?.components) throw { code: -32000, message: "No components found in this template" };
+      const comp = tpl.metadata.components.find(c => c.id === params.componentId);
+      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
+      if (!comp.variants) comp.variants = [];
+      const varId = `var_${Date.now().toString(36)}`;
+      comp.variants.push({
+        id: varId, name: params.name,
+        overrides: params.overrides || {},
+        created: new Date().toISOString(),
+      });
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { created: true, variantId: varId, componentId: params.componentId, name: params.name, overrides: params.overrides || {} };
+    }
+
+    case "set_component_prop": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata?.components) throw { code: -32000, message: "No components found in this template" };
+      const comp = tpl.metadata.components.find(c => c.id === params.componentId);
+      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
+      if (!comp.properties) comp.properties = [];
+      if (params.instanceId) {
+        // Override on instance
+        for (const obj of tpl.canvas?.objects || []) {
+          if (obj.instanceId === params.instanceId) {
+            if (!obj.componentOverrides) obj.componentOverrides = {};
+            obj.componentOverrides[params.propName] = { type: params.propType, value: params.value };
+            // Apply boolean override (e.g. visibility)
+            if (params.propType === "boolean") obj.visible = params.value;
+          }
+        }
+      } else {
+        // Define on master
+        const existing = comp.properties.find(p => p.name === params.propName);
+        if (existing) { existing.type = params.propType; existing.defaultValue = params.value; }
+        else comp.properties.push({ name: params.propName, type: params.propType, defaultValue: params.value });
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { updated: true, componentId: params.componentId, propName: params.propName, propType: params.propType, value: params.value };
+    }
+
+    // ── F4: Prototyping ──
+    case "add_interaction": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.interactions) tpl.metadata.interactions = [];
+      const interaction = {
+        id: `iact_${Date.now().toString(36)}`,
+        sourceId: params.sourceId,
+        trigger: params.trigger || "onClick",
+        action: params.action || "navigate",
+        targetId: params.targetId || null,
+        transition: params.transition || "instant",
+        duration: params.duration ?? 300,
+        delay: params.delay ?? 0,
+        easing: params.easing || "easeOut",
+      };
+      tpl.metadata.interactions.push(interaction);
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { created: true, interactionId: interaction.id, sourceId: params.sourceId, trigger: interaction.trigger, action: interaction.action };
+    }
+
+    case "set_animation": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.animations) tpl.metadata.animations = [];
+      // Remove existing animation for this object
+      tpl.metadata.animations = tpl.metadata.animations.filter(a => a.objectId !== params.objectId);
+      const anim = {
+        id: `anim_${Date.now().toString(36)}`,
+        objectId: params.objectId,
+        type: params.type,
+        direction: params.direction || null,
+        duration: params.duration ?? 300,
+        easing: params.easing || "easeOut",
+        delay: params.delay ?? 0,
+      };
+      tpl.metadata.animations.push(anim);
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { created: true, animationId: anim.id, objectId: params.objectId, type: params.type, duration: anim.duration };
+    }
+
+    case "add_overlay": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frames = tpl.data?.frames || [];
+      const frameIdx = frames.findIndex(f => f.id === params.frameId);
+      if (frameIdx === -1) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
+      frames[frameIdx].metadata.overlay = {
+        position: params.position || "center",
+        backdrop: params.backdrop !== false,
+        backdropColor: params.backdropColor || "rgba(0,0,0,0.5)",
+        closeOnBackdrop: params.closeOnBackdrop !== false,
+        manualX: params.manualX ?? null,
+        manualY: params.manualY ?? null,
+      };
+      tpl.data.frames = frames;
+      await templates.updateTemplate(params.templateId, { data: tpl.data });
+      autoSnapshot(params.templateId, method);
+      return { updated: true, frameId: params.frameId, position: frames[frameIdx].metadata.overlay.position };
+    }
+
+    case "set_scroll_position": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      // Check frames first
+      const frames = tpl.data?.frames || [];
+      const frameIdx = frames.findIndex(f => f.id === params.objectId);
+      if (frameIdx !== -1) {
+        if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
+        frames[frameIdx].metadata.scrollBehavior = params.behavior;
+        if (params.stickyTop !== undefined) frames[frameIdx].metadata.stickyTop = params.stickyTop;
+        if (params.stickyBottom !== undefined) frames[frameIdx].metadata.stickyBottom = params.stickyBottom;
+        if (params.overflow) frames[frameIdx].metadata.overflow = params.overflow;
+        tpl.data.frames = frames;
+        await templates.updateTemplate(params.templateId, { data: tpl.data });
+      } else {
+        // Check canvas objects
+        const obj = (tpl.canvas?.objects || []).find(o => (o.id || o.layerName) === params.objectId);
+        if (!obj) throw { code: -32000, message: `Object not found: ${params.objectId}` };
+        if (!obj.metadata) obj.metadata = {};
+        obj.metadata.scrollBehavior = params.behavior;
+        if (params.stickyTop !== undefined) obj.metadata.stickyTop = params.stickyTop;
+        if (params.overflow) obj.metadata.overflow = params.overflow;
+        await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      }
+      autoSnapshot(params.templateId, method);
+      return { updated: true, objectId: params.objectId, behavior: params.behavior };
+    }
+
+    // ── F1: Canvas Navigation ──
+    case "canvas_pan": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      if (!tpl.canvas.viewport) tpl.canvas.viewport = { x: 0, y: 0, zoom: 1 };
+      if (params.x !== undefined) tpl.canvas.viewport.x = params.x;
+      else if (params.deltaX !== undefined) tpl.canvas.viewport.x = (tpl.canvas.viewport.x || 0) + params.deltaX;
+      if (params.y !== undefined) tpl.canvas.viewport.y = params.y;
+      else if (params.deltaY !== undefined) tpl.canvas.viewport.y = (tpl.canvas.viewport.y || 0) + params.deltaY;
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      return { viewport: { x: tpl.canvas.viewport.x, y: tpl.canvas.viewport.y, zoom: tpl.canvas.viewport.zoom || 1 } };
+    }
+
+    case "canvas_zoom": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      if (!tpl.canvas.viewport) tpl.canvas.viewport = { x: 0, y: 0, zoom: 1 };
+      const vp = tpl.canvas.viewport;
+      let newZoom = vp.zoom || 1;
+      if (params.zoom !== undefined) newZoom = Math.max(0.01, Math.min(10, params.zoom));
+      else if (params.delta !== undefined) newZoom = Math.max(0.01, Math.min(10, (vp.zoom || 1) + params.delta));
+      else if (params.fitSelection) {
+        const objects = tpl.canvas.objects || [];
+        if (objects.length > 0) {
+          const minX = Math.min(...objects.map(o => o.left || 0));
+          const minY = Math.min(...objects.map(o => o.top || 0));
+          const maxX = Math.max(...objects.map(o => (o.left || 0) + (o.width || 100) * (o.scaleX || 1)));
+          const maxY = Math.max(...objects.map(o => (o.top || 0) + (o.height || 100) * (o.scaleY || 1)));
+          const contentW = maxX - minX + 100, contentH = maxY - minY + 100;
+          newZoom = Math.min(1, Math.max(0.05, 1200 / Math.max(contentW, contentH)));
+          vp.x = minX - 50; vp.y = minY - 50;
+        }
+      }
+      // Zoom to point: adjust pan so centerX/Y stays in place
+      if (params.centerX !== undefined && params.centerY !== undefined) {
+        const oldZoom = vp.zoom || 1;
+        const ratio = newZoom / oldZoom;
+        vp.x = params.centerX - (params.centerX - vp.x) * ratio;
+        vp.y = params.centerY - (params.centerY - vp.y) * ratio;
+      }
+      vp.zoom = newZoom;
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      return { viewport: { x: vp.x || 0, y: vp.y || 0, zoom: newZoom } };
+    }
+
+    // ── F3: Paper-like Blocks ──
+    case "add_toggle": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const x = params.x ?? 0, y = params.y ?? 0;
+      const w = params.width || 400;
+      const expanded = params.expanded || false;
+      // Toggle header with arrow
+      tpl.canvas.objects.push({
+        type: "rect", layerName: `toggle_bg_${Date.now()}`, left: x, top: y, width: w, height: 36,
+        fill: "#313244", rx: 6, ry: 6, stroke: "#45475a", strokeWidth: 1,
+        frameId: params.frameId || undefined,
+      });
+      tpl.canvas.objects.push({
+        type: "text", layerName: `toggle_arrow_${Date.now()}`, text: expanded ? "▾" : "▸",
+        left: x + 10, top: y + 8, width: 16, fontSize: 14, fontFamily: "Inter",
+        fill: "#cdd6f4", frameId: params.frameId || undefined,
+      });
+      tpl.canvas.objects.push({
+        type: "text", layerName: `toggle_title_${Date.now()}`, text: params.title,
+        left: x + 30, top: y + 8, width: w - 40, fontSize: 14, fontFamily: "Inter",
+        fontWeight: "600", fill: "#cdd6f4", frameId: params.frameId || undefined,
+      });
+      // Content (visible if expanded)
+      if (expanded) {
+        tpl.canvas.objects.push({
+          type: "rect", layerName: `toggle_content_bg_${Date.now()}`, left: x, top: y + 36, width: w, height: 60,
+          fill: "#1e1e2e", rx: 0, ry: 0, stroke: "#45475a", strokeWidth: 1,
+          frameId: params.frameId || undefined,
+        });
+        tpl.canvas.objects.push({
+          type: "text", layerName: `toggle_content_${Date.now()}`, text: params.content,
+          left: x + 10, top: y + 42, width: w - 20, fontSize: 13, fontFamily: "Inter",
+          fill: "#a6adc8", lineHeight: 1.5, frameId: params.frameId || undefined,
+        });
+      }
+      // Store toggle metadata
+      if (!tpl.metadata) tpl.metadata = {};
+      if (!tpl.metadata.toggles) tpl.metadata.toggles = [];
+      tpl.metadata.toggles.push({ x, y, w, title: params.title, expanded, createdAt: new Date().toISOString() });
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { created: true, title: params.title, expanded };
+    }
+
+    case "add_callout": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const x = params.x ?? 0, y = params.y ?? 0;
+      const w = params.width || 400;
+      const calloutType = params.type || "info";
+      const palettes = { info: { bg: "#1e1e2e", border: "#89b4fa", icon: "ℹ" }, warning: { bg: "#2a2218", border: "#f9e2af", icon: "⚠" }, tip: { bg: "#1e2a1e", border: "#a6e3a1", icon: "💡" }, note: { bg: "#1e1e2e", border: "#cba6f7", icon: "📝" }, success: { bg: "#1e2e1e", border: "#a6e3a1", icon: "✓" }, error: { bg: "#2a1818", border: "#f38ba8", icon: "✕" } };
+      const p = palettes[calloutType] || palettes.info;
+      const h = 48 + (params.title ? 20 : 0);
+      tpl.canvas.objects.push({
+        type: "rect", layerName: `callout_bg_${Date.now()}`, left: x, top: y, width: w, height: h,
+        fill: p.bg, rx: 8, ry: 8, stroke: p.border, strokeWidth: 1,
+        frameId: params.frameId || undefined,
+      });
+      tpl.canvas.objects.push({
+        type: "text", layerName: `callout_icon_${Date.now()}`, text: p.icon,
+        left: x + 12, top: y + 10, width: 20, fontSize: 16, fontFamily: "Inter",
+        frameId: params.frameId || undefined,
+      });
+      if (params.title) {
+        tpl.canvas.objects.push({
+          type: "text", layerName: `callout_title_${Date.now()}`, text: params.title,
+          left: x + 38, top: y + 8, width: w - 50, fontSize: 13, fontFamily: "Inter",
+          fontWeight: "600", fill: "#cdd6f4", frameId: params.frameId || undefined,
+        });
+        tpl.canvas.objects.push({
+          type: "text", layerName: `callout_text_${Date.now()}`, text: params.text,
+          left: x + 38, top: y + 28, width: w - 50, fontSize: 12, fontFamily: "Inter",
+          fill: "#a6adc8", lineHeight: 1.4, frameId: params.frameId || undefined,
+        });
+      } else {
+        tpl.canvas.objects.push({
+          type: "text", layerName: `callout_text_${Date.now()}`, text: params.text,
+          left: x + 38, top: y + 10, width: w - 50, fontSize: 13, fontFamily: "Inter",
+          fill: "#a6adc8", lineHeight: 1.4, frameId: params.frameId || undefined,
+        });
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, type: calloutType };
+    }
+
+    case "add_quote": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const x = params.x ?? 0, y = params.y ?? 0;
+      const w = params.width || 500;
+      const color = params.color || "#cba6f7";
+      // Accent bar
+      tpl.canvas.objects.push({
+        type: "rect", layerName: `quote_bar_${Date.now()}`, left: x, top: y, width: 4, height: 60,
+        fill: color, rx: 2, ry: 2, frameId: params.frameId || undefined,
+      });
+      // Quote text
+      tpl.canvas.objects.push({
+        type: "text", layerName: `quote_text_${Date.now()}`, text: `"${params.text}"`,
+        left: x + 16, top: y + 2, width: w - 16, fontSize: 16, fontFamily: "Inter",
+        fontWeight: "italic", fill: "#cdd6f4", lineHeight: 1.5, fontStyle: "italic",
+        frameId: params.frameId || undefined,
+      });
+      let cy = y + 36;
+      if (params.author) {
+        tpl.canvas.objects.push({
+          type: "text", layerName: `quote_author_${Date.now()}`, text: `— ${params.author}${params.source ? `, ${params.source}` : ""}`,
+          left: x + 16, top: cy, width: w - 16, fontSize: 12, fontFamily: "Inter",
+          fill: "#a6adc8", frameId: params.frameId || undefined,
+        });
+        cy += 20;
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, author: params.author || null };
+    }
+
+    // ── F4: Libraries & Plugins ──
+    case "publish_library": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.metadata) tpl.metadata = {};
+      const styles = (tpl.data?.styles || []).filter(s => !params.styleIds || params.styleIds.includes(s.id));
+      const library = {
+        id: `lib_${Date.now().toString(36)}`,
+        name: params.name,
+        description: params.description || "",
+        styles: JSON.parse(JSON.stringify(styles)),
+        variables: tpl.metadata.variables || [],
+        collections: tpl.metadata.collections || [],
+        visibility: params.visibility || "workspace",
+        sourceTemplateId: params.templateId,
+        published: new Date().toISOString(),
+      };
+      // Store library globally in Supabase (or in-memory fallback)
+      const sb = getSupabase();
+      if (sb) {
+        const { error } = await sb.from("libraries").upsert({ id: library.id, data: library }, { onConflict: "id" });
+        if (error) throw { code: -32000, message: `Supabase error: ${error.message}` };
+      }
+      if (!tpl.metadata.libraries) tpl.metadata.libraries = [];
+      tpl.metadata.libraries.push({ id: library.id, name: params.name, published: library.published });
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { published: true, libraryId: library.id, name: params.name, styleCount: styles.length };
+    }
+
+    case "register_tool": {
+      const name = params.name;
+      if (!name.startsWith("plugin_")) throw { code: -32000, message: `Plugin tool names must start with 'plugin_' prefix. Got: ${name}` };
+      if (MCP_TOOLS.some(t => t.name === name)) throw { code: -32000, message: `Tool '${name}' is already registered` };
+      // Validate inputSchema is a valid JSON Schema object
+      if (!params.inputSchema || typeof params.inputSchema !== "object") throw { code: -32000, message: "inputSchema must be a valid JSON Schema object" };
+      // Store in in-memory plugin registry (survives warm instances)
+      if (!globalThis.__mcp_plugins) globalThis.__mcp_plugins = new Map();
+      globalThis.__mcp_plugins.set(name, {
+        name, description: params.description, inputSchema: params.inputSchema,
+        handler: params.handler, secret: params.secret || null,
+        registered: new Date().toISOString(),
+      });
+      // Dynamically add to MCP_TOOLS for discovery
+      MCP_TOOLS.push({
+        name, description: params.description, inputSchema: params.inputSchema,
+      });
+      return { registered: true, name, handler: params.handler, totalTools: MCP_TOOLS.length };
+    }
+
+    case "auth_token": {
+      const tokenId = `pat_${Date.now().toString(36)}`;
+      const scopes = params.scopes || ["read"];
+      const expiresIn = params.expiresIn ?? 31536000; // 1 year default
+      const expiresAt = expiresIn === 0 ? null : new Date(Date.now() + expiresIn * 1000).toISOString();
+      // Hash the token for storage (simple hash for free-tier, not cryptographic)
+      const tokenRaw = `${tokenId}_${params.userId}_${Date.now()}`;
+      const tokenHashed = [...tokenRaw].reduce((h, c) => (h = ((h << 5) - h) + c.charCodeAt(0)) & 0xffffffff, 0).toString(36);
+      // Store in metadata
+      const sb = getSupabase();
+      const patData = { id: tokenId, userId: params.userId, name: params.name, scopes, expiresAt, tokenHashed, created: new Date().toISOString() };
+      if (sb) {
+        const { error } = await sb.from("personal_access_tokens").upsert({ id: tokenId, data: patData }, { onConflict: "id" });
+        if (error) throw { code: -32000, message: `Supabase error: ${error.message}` };
+      }
+      return { created: true, tokenId, token: tokenRaw, name: params.name, scopes, expiresAt, note: "Store this token securely. It will not be shown again." };
     }
 
     default:
