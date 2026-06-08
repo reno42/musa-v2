@@ -37,6 +37,12 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
+  const [editingTplId, setEditingTplId] = useState<string | null>(null);
+  const [editingTplName, setEditingTplName] = useState("");
+  const [creatingTpl, setCreatingTpl] = useState(false);
+  const [newTplName, setNewTplName] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
   const loadingRef = useRef(true);
   const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
@@ -134,6 +140,39 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
     } catch { /* ignore */ }
   };
 
+  const startRename = (id: string, name: string) => {
+    setEditingTplId(id);
+    setEditingTplName(name);
+    setTimeout(() => editInputRef.current?.focus(), 50);
+  };
+
+  const commitRename = async () => {
+    const id = editingTplId;
+    const name = editingTplName.trim();
+    if (!id || !name) { setEditingTplId(null); return; }
+    try {
+      await apiFetch(`/templates/${id}`, { method: "PUT", body: JSON.stringify({ name }) });
+      setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+    } catch { /* ignore */ }
+    setEditingTplId(null);
+  };
+
+  const handleCreateWithName = async () => {
+    const name = newTplName.trim() || "Untitled";
+    if (!selectedWs) return;
+    try {
+      const res = await apiFetch<{ success: boolean; data: Template }>("/templates", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId: selectedWs, name, width: 1080, height: 1080 }),
+      });
+      if (res.data) {
+        setCreatingTpl(false);
+        setNewTplName("");
+        onSelectTemplate(res.data.id);
+      }
+    } catch { /* ignore */ }
+  };
+
   return (
     <div style={dashboardStyle}>
       {/* Header */}
@@ -159,7 +198,8 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
             onChange={e => handleWsChange(e.target.value || null)}
             style={selectStyle}
           >
-            {workspaces.length === 0 && <option value="">No workspaces</option>}
+            <option value="">📁 All Templates</option>
+            {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
             {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         )}
@@ -175,14 +215,28 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
           onChange={e => handleSearch(e.target.value)}
           style={{ ...inputStyle, width: 200 }}
         />
-        <button
-          type="button"
-          onClick={() => selectedWs && onCreateTemplate(selectedWs)}
-          style={btnPrimary}
-          disabled={!selectedWs}
-        >
-          + New Template
-        </button>
+        {creatingTpl ? (
+          <input
+            ref={newTplInputRef}
+            aria-label="New template name"
+            placeholder="Template name…"
+            value={newTplName}
+            onChange={e => setNewTplName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleCreateWithName(); if (e.key === "Escape") { setCreatingTpl(false); setNewTplName(""); } }}
+            onBlur={() => { if (!newTplName.trim()) { setCreatingTpl(false); } }}
+            style={{ ...inputStyle, width: 140 }}
+            autoFocus
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
+            style={btnPrimary}
+            disabled={!selectedWs}
+          >
+            + New Template
+          </button>
+        )}
       </div>
 
       {/* Template Grid */}
@@ -222,11 +276,28 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
                     {t.width}x{t.height}
                   </div>
                   <div style={{ padding: "8px 10px" }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                    {editingTplId === t.id ? (
+                      <input
+                        ref={editInputRef}
+                        value={editingTplName}
+                        onChange={e => setEditingTplName(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingTplId(null); }}
+                        onBlur={commitRename}
+                        style={{ ...inputStyle, width: "100%", fontSize: 12 }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div
+                        style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "text" }}
+                        onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
+                        title="Double-click to rename"
+                      >{t.name}</div>
+                    )}
                     <div style={{ fontSize: 12, color: "#5a5a70" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
                   </div>
                 </button>
                 <div style={{ display: "flex", borderTop: "1px solid #1c1c26", fontSize: 12 }}>
+                  <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }}>Delete</button>
