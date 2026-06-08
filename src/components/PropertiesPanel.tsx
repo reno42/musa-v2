@@ -619,6 +619,13 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
 
 // ── Shadow Editor — text shadow / box shadow ────────────────
 
+const SHADOW_PRESETS: { name: string; blur: number; offsetX: number; offsetY: number; color: string; opacity: number }[] = [
+  { name: "Subtle", blur: 4, offsetX: 0, offsetY: 2, color: "#000000", opacity: 0.12 },
+  { name: "Medium", blur: 8, offsetX: 0, offsetY: 4, color: "#000000", opacity: 0.2 },
+  { name: "Strong", blur: 16, offsetX: 0, offsetY: 8, color: "#000000", opacity: 0.3 },
+  { name: "Glow", blur: 20, offsetX: 0, offsetY: 0, color: "#6366f1", opacity: 0.5 },
+];
+
 function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fieldShadowBlur, fieldShadowX, fieldShadowY }: {
   obj: any; commit: (prop: string, value: any) => void; resetKey: number;
   hasShadow: boolean; fieldShadowColor: string; fieldShadowBlur: string; fieldShadowX: string; fieldShadowY: string;
@@ -635,6 +642,18 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
     }));
   };
 
+  const applyPreset = (preset: typeof SHADOW_PRESETS[number]) => {
+    const hex = preset.color + Math.round(preset.opacity * 255).toString(16).padStart(2, "0");
+    commit("shadow", new Shadow({
+      color: hex,
+      blur: preset.blur,
+      offsetX: preset.offsetX,
+      offsetY: preset.offsetY,
+      affectStroke: false,
+      nonScaling: false,
+    }));
+  };
+
   const updateShadow = (prop: string, val: string | number) => {
     const s = obj.shadow;
     if (!s) return;
@@ -645,6 +664,36 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
 
   return (
     <div style={{ padding: "0 10px 6px" }}>
+      {/* Presets */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 6 }}>
+        {SHADOW_PRESETS.map(p => (
+          <button
+            key={p.name}
+            type="button"
+            onClick={() => applyPreset(p)}
+            title={`${p.name}: blur ${p.blur} offset ${p.offsetX},${p.offsetY} ${p.color} ${Math.round(p.opacity * 100)}%`}
+            style={{
+              flex: 1, padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
+              background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90",
+              minWidth: 48,
+            }}
+          >
+            {p.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => commit("shadow", null)}
+          title="Remove shadow"
+          style={{
+            padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
+            background: "#1a1111", border: "1px solid #2a1a1a", color: "#7a5a5a",
+          }}
+        >
+          None
+        </button>
+      </div>
+      {/* Toggle */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <button
           type="button"
