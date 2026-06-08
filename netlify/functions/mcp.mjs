@@ -2768,7 +2768,20 @@ async function handleMethod(method, params, userId) {
 
     // ── search_google_fonts ──
     case "search_google_fonts": {
-      const GOOGLE_FONTS = [
+      // In-memory cache for Google Fonts API results (survives warm instances)
+      const CACHE_KEY = "__gf_cache";
+      const CACHE_TTL = 3600_000; // 1 hour
+
+      const getCachedFonts = () => {
+        if (!globalThis[CACHE_KEY] || Date.now() - globalThis[CACHE_KEY].ts > CACHE_TTL) return null;
+        return globalThis[CACHE_KEY].fonts;
+      };
+      const setCachedFonts = (fonts) => {
+        globalThis[CACHE_KEY] = { fonts, ts: Date.now() };
+      };
+
+      // Built-in curated list (72 fonts) — always available as fallback
+      const BUILTIN_FONTS = [
         { family:"Inter", category:"sans-serif", variants:["400","500","600","700","800"] },
         { family:"Roboto", category:"sans-serif", variants:["400","500","700"] },
         { family:"Open Sans", category:"sans-serif", variants:["400","500","600","700"] },
@@ -2869,6 +2882,30 @@ async function handleMethod(method, params, userId) {
       const category = params.category || "";
       const limit = Math.min(params.limit || 20, 100);
 
+      // Primary source: Google Fonts API (requires GOOGLE_FONTS_API_KEY env var)
+      let GOOGLE_FONTS = getCachedFonts();
+      if (!GOOGLE_FONTS) {
+        const apiKey = globalThis.process?.env?.GOOGLE_FONTS_API_KEY || "";
+        if (apiKey) {
+          try {
+            const resp = await fetch(`https://www.googleapis.com/webfonts/v1/webfonts?key=${apiKey}&sort=popularity`);
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data.items?.length) {
+                GOOGLE_FONTS = data.items.map(f => ({
+                  family: f.family,
+                  category: f.category || "sans-serif",
+                  variants: (f.variants || []).filter(v => !v.includes("italic")).map(v => v === "regular" ? "400" : v),
+                  subsets: f.subsets || [],
+                }));
+                setCachedFonts(GOOGLE_FONTS);
+              }
+            }
+          } catch (_) { /* API unavailable — use builtin */ }
+        }
+      }
+      if (!GOOGLE_FONTS || GOOGLE_FONTS.length === 0) GOOGLE_FONTS = BUILTIN_FONTS;
+
       let results = GOOGLE_FONTS;
       if (category) results = results.filter(f => f.category === category);
       if (search) {
@@ -2882,11 +2919,13 @@ async function handleMethod(method, params, userId) {
       results = results.slice(0, limit);
 
       const enriched = results.map(f => ({
-        ...f,
-        googleFontsUrl: `https://fonts.googleapis.com/css2?family=${f.family.replace(/ /g, "+")}:wght@${f.variants.join(";")}&display=swap`,
+        family: f.family,
+        category: f.category,
+        variants: f.variants || [],
+        googleFontsUrl: `https://fonts.googleapis.com/css2?family=${f.family.replace(/ /g, "+")}:wght@${(f.variants || ["400"]).join(";")}&display=swap`,
       }));
 
-      return { fonts: enriched, total, categories: [...new Set(GOOGLE_FONTS.map(f => f.category))] };
+      return { fonts: enriched, total, categories: [...new Set(GOOGLE_FONTS.map(f => f.category))], source: GOOGLE_FONTS === BUILTIN_FONTS ? "builtin" : "google-fonts-api" };
     }
 
     // ── set_gradient ──
