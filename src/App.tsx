@@ -8,6 +8,7 @@ import { BatchAMator } from "./components/BatchAMator";
 import { GovernancePanel } from "./components/GovernancePanel";
 import { ComponentsPanel } from "./components/ComponentsPanel";
 import { PrototypePanel } from "./components/PrototypePanel";
+import { PagesPanel } from "./components/PagesPanel";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { ToastProvider } from "./components/Toast";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -305,6 +306,9 @@ function App() {
           <button type="button" onClick={() => { prototypeOpenRef.current = !prototypeOpenRef.current; setProtoKey(n => n + 1); }} style={topBtn}>▶ Prototype</button>
           <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
         </div>
+
+        {/* Pages bar */}
+        <PagesPanel templateId={templateId} onPageChange={() => callCanvas("pushHistory")} />
 
         {/* Canvas */}
         <div style={{ flex: 1, position: "relative" }}>

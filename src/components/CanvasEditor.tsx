@@ -79,6 +79,20 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     queueMicrotask(() => loadTemplate(tj.canvas || tj));
   }, [loadTemplate, templateJson]);
 
+  // Step 3: Detect page changes via window.__pageCanvas (set by PagesPanel)
+  useEffect(() => {
+    if (!fabricRef.current || !initDoneRef.current) return;
+    const interval = setInterval(() => {
+      const pageCanvas = (window as any).__pageCanvas;
+      if (pageCanvas) {
+        delete (window as any).__pageCanvas;
+        templateJsonRef.current = pageCanvas;
+        loadTemplate(pageCanvas);
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [loadTemplate]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
