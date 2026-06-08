@@ -4112,7 +4112,7 @@ async function handleMethod(method, params, userId) {
       }
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
-      return { action, activePageId: tpl.metadata.activePageId, totalPages: tpl.metadata.pages.length };
+      return { action, activePageId: tpl.metadata.activePageId, totalPages: tpl.metadata.pages.length, pages: tpl.metadata.pages.map(p => ({ id: p.id, name: p.name, order: p.order, isActive: p.id === tpl.metadata.activePageId })) };
     }
 
     case "color_picker": {
@@ -4719,7 +4719,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (!tpl.metadata) tpl.metadata = {};
-      const styles = (tpl.data?.styles || []).filter(s => !params.styleIds || params.styleIds.includes(s.id));
+      const styles = (tpl.styles || []).filter(s => !params.styleIds || params.styleIds.includes(s.id));
       const library = {
         id: `lib_${Date.now().toString(36)}`,
         name: params.name,
@@ -4731,14 +4731,11 @@ async function handleMethod(method, params, userId) {
         sourceTemplateId: params.templateId,
         published: new Date().toISOString(),
       };
-      // Store library globally in Supabase (or in-memory fallback)
-      const sb = getSupabase();
-      if (sb) {
-        const { error } = await sb.from("libraries").upsert({ id: library.id, data: library }, { onConflict: "id" });
-        if (error) throw { code: -32000, message: `Supabase error: ${error.message}` };
-      }
+      // Store library in template metadata (free-tier: no separate libraries table)
       if (!tpl.metadata.libraries) tpl.metadata.libraries = [];
-      tpl.metadata.libraries.push({ id: library.id, name: params.name, published: library.published });
+      tpl.metadata.libraries.push(library);
+      // Also mark this template as a library source
+      tpl.metadata.isLibrary = true;
       await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
       return { published: true, libraryId: library.id, name: params.name, styleCount: styles.length };
