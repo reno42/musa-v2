@@ -13,6 +13,7 @@ import { useDropdowns } from "../hooks/useDropdowns";
 import { ToolBtn, Divider, Spacer } from "./toolbar/ToolbarButtons";
 import { ShapesDropdown, DrawDropdown, AlignDropdown, BooleanDropdown } from "./toolbar/ToolbarDropdowns";
 import { EmbedsDropdown } from "./toolbar/EmbedsDropdown";
+import { BlocksDropdown } from "./toolbar/BlocksDropdown";
 
 type AlignDirection = "left" | "center-h" | "right" | "top" | "center-v" | "bottom";
 type EmbedType = "video" | "audio" | "pdf" | "figma" | "social";
@@ -52,6 +53,7 @@ interface Props {
   onBooleanOp: (op: BooleanOperation) => void;
   onPrototypePreview?: () => void;
   onEmbed?: (url: string, type: EmbedType) => void;
+  onBlockAction?: (method: string, params: Record<string, any>) => void;
 }
 
 export function Toolbar({
@@ -66,6 +68,7 @@ export function Toolbar({
   onBooleanOp,
   onPrototypePreview,
   onEmbed,
+  onBlockAction,
 }: Props) {
   const {
     alignOpen, boolOpen, shapesOpen, drawOpen,
@@ -121,6 +124,9 @@ export function Toolbar({
 
       {/* ─── Embed ─── */}
       {onEmbed && <EmbedsDropdown onEmbed={onEmbed} />}
+
+      {/* ─── Blocks ─── */}
+      {onBlockAction && <BlocksDropdown onBlockAction={onBlockAction} />}
 
       <Divider />
 

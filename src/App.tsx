@@ -285,6 +285,15 @@ function App() {
               });
             } catch { /* silent */ }
           } : undefined}
+          onBlockAction={templateId ? async (method: string, params: Record<string, any>) => {
+            try {
+              await apiFetch("/mcp", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", method, params: { templateId, ...params }, id: 1 }),
+              });
+            } catch { /* silent */ }
+          } : undefined}
         />
 
         {/* Top bar: navigation */}
