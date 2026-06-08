@@ -669,6 +669,77 @@ const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: "set_gradient",
+    description: "Apply a linear, radial, or angular gradient fill to an object. Specify type, angle (for linear), and multiple color stops with offsets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Layer name to apply gradient to" },
+        frameId: { type: "string", description: "Optional frame ID" },
+        type: { type: "string", enum: ["linear", "radial"], description: "Gradient type" },
+        angle: { type: "number", description: "Angle in degrees for linear gradients (default 135)" },
+        colorStops: { type: "array", items: { type: "object", properties: { offset: { type: "number" }, color: { type: "string" } } }, description: "Array of {offset: 0-1, color: '#hex'} stops" },
+      },
+      required: ["templateId", "targetLayerName", "type", "colorStops"],
+    },
+  },
+  {
+    name: "set_shadow",
+    description: "Apply drop shadow or inner shadow to an object with color, blur, offset, and spread.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Layer name to apply shadow to" },
+        frameId: { type: "string", description: "Optional frame ID" },
+        color: { type: "string", description: "Shadow color hex (default #000000)" },
+        blur: { type: "number", description: "Blur radius in px (default 4)" },
+        offsetX: { type: "number", description: "Horizontal offset in px (default 2)" },
+        offsetY: { type: "number", description: "Vertical offset in px (default 2)" },
+      },
+      required: ["templateId", "targetLayerName"],
+    },
+  },
+  {
+    name: "image_filter",
+    description: "Apply CSS-like filters to an image layer: brightness, contrast, saturation, blur, grayscale, sepia, hue-rotate, invert.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Image layer name to filter" },
+        frameId: { type: "string", description: "Optional frame ID" },
+        brightness: { type: "number", description: "Brightness multiplier (1 = normal, 0 = black, 2 = double)" },
+        contrast: { type: "number", description: "Contrast multiplier (1 = normal)" },
+        saturation: { type: "number", description: "Saturation multiplier (1 = normal, 0 = grayscale)" },
+        blur: { type: "number", description: "Blur radius in px (0 = none)" },
+        grayscale: { type: "number", description: "Grayscale amount 0-1" },
+        sepia: { type: "number", description: "Sepia amount 0-1" },
+        hueRotate: { type: "number", description: "Hue rotation in degrees" },
+        invert: { type: "number", description: "Invert amount 0-1" },
+      },
+      required: ["templateId", "targetLayerName"],
+    },
+  },
+  {
+    name: "image_crop",
+    description: "Crop an image layer by setting cropX, cropY, width, and height properties.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Image layer name to crop" },
+        frameId: { type: "string", description: "Optional frame ID" },
+        cropX: { type: "number", description: "Crop origin X (default 0)" },
+        cropY: { type: "number", description: "Crop origin Y (default 0)" },
+        width: { type: "number", description: "Crop width in px" },
+        height: { type: "number", description: "Crop height in px" },
+      },
+      required: ["templateId", "targetLayerName"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -1884,6 +1955,87 @@ async function handleMethod(method, params, userId) {
       }));
 
       return { fonts: enriched, total, categories: [...new Set(GOOGLE_FONTS.map(f => f.category))] };
+    }
+
+    // ── set_gradient ──
+    case "set_gradient": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const stops = params.colorStops.map((s, i) => ({
+        offset: Math.max(0, Math.min(1, s.offset ?? i / (params.colorStops.length - 1))),
+        color: s.color || "#cccccc",
+      })).sort((a, b) => a.offset - b.offset);
+      const angle = params.angle ?? 135;
+      const rad = angle * Math.PI / 180;
+      const coords = params.type === "radial"
+        ? { x1: 0.5, y1: 0.5, r1: 0, x2: 0.5, y2: 0.5, r2: 0.5 }
+        : { x1: 0.5 - 0.5 * Math.cos(rad), y1: 0.5 - 0.5 * Math.sin(rad), x2: 0.5 + 0.5 * Math.cos(rad), y2: 0.5 + 0.5 * Math.sin(rad) };
+      obj.fill = { type: params.type, gradientUnits: "percentage", coords, colorStops: stops };
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { applied: true, targetLayerName: params.targetLayerName, type: params.type, stops: stops.length };
+    }
+
+    // ── set_shadow ──
+    case "set_shadow": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      obj.shadow = {
+        color: params.color || "#000000",
+        blur: params.blur ?? 4,
+        offsetX: params.offsetX ?? 2,
+        offsetY: params.offsetY ?? 2,
+        affectStroke: false,
+        nonScaling: false,
+      };
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { applied: true, targetLayerName: params.targetLayerName, shadow: obj.shadow };
+    }
+
+    // ── image_filter ──
+    case "image_filter": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const filters = [];
+      const f = params;
+      if (f.brightness !== undefined) filters.push({ type: "brightness", brightness: f.brightness });
+      if (f.contrast !== undefined) filters.push({ type: "contrast", contrast: f.contrast });
+      if (f.saturation !== undefined) filters.push({ type: "saturation", saturation: f.saturation });
+      if (f.blur !== undefined) filters.push({ type: "blur", blur: f.blur });
+      if (f.grayscale !== undefined) filters.push({ type: "grayscale", grayscale: f.grayscale });
+      if (f.sepia !== undefined) filters.push({ type: "sepia", sepia: f.sepia });
+      if (f.hueRotate !== undefined) filters.push({ type: "hueRotate", rotation: f.hueRotate });
+      if (f.invert !== undefined) filters.push({ type: "invert", invert: f.invert });
+      obj.filters = filters.length > 0 ? filters : undefined;
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { applied: true, targetLayerName: params.targetLayerName, filters: obj.filters?.length || 0 };
+    }
+
+    // ── image_crop ──
+    case "image_crop": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      if (params.cropX !== undefined) obj.cropX = params.cropX;
+      if (params.cropY !== undefined) obj.cropY = params.cropY;
+      if (params.width !== undefined) obj.width = params.width;
+      if (params.height !== undefined) obj.height = params.height;
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { cropped: true, targetLayerName: params.targetLayerName, cropX: obj.cropX, cropY: obj.cropY, width: obj.width, height: obj.height };
     }
 
     default:
