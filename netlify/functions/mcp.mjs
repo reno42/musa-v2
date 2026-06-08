@@ -1051,6 +1051,120 @@ const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: "create_style",
+    description: "Create a reusable style (fill, stroke, text, or effect) from a layer's current properties. Styles can be applied to other layers via apply_style.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        name: { type: "string", description: "Style name (e.g. 'Primary Blue', 'Heading H1')" },
+        type: { type: "string", enum: ["fill", "stroke", "text", "effect"], description: "Style type" },
+        sourceLayerName: { type: "string", description: "Layer name to extract style properties from" },
+        frameId: { type: "string", description: "Optional frame ID for source layer lookup" },
+      },
+      required: ["templateId", "name", "type", "sourceLayerName"],
+    },
+  },
+  {
+    name: "apply_style",
+    description: "Apply a saved style to one or more target layers, transferring fill/stroke/text/effect properties.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        styleId: { type: "string", description: "Style ID to apply" },
+        targetLayerNames: { type: "array", items: { type: "string" }, description: "Array of layer names to apply the style to" },
+        frameId: { type: "string", description: "Optional frame ID for target layer lookup" },
+      },
+      required: ["templateId", "styleId", "targetLayerNames"],
+    },
+  },
+  {
+    name: "create_variable",
+    description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        name: { type: "string", description: "Variable name (e.g. 'primary-color', 'spacing-md')" },
+        type: { type: "string", enum: ["color", "number", "string"], description: "Variable type" },
+        value: { type: "string", description: "Variable value (hex for color, number as string for number, any string for string)" },
+        collectionId: { type: "string", description: "Optional collection ID to group this variable" },
+      },
+      required: ["templateId", "name", "type", "value"],
+    },
+  },
+  {
+    name: "create_collection",
+    description: "Create a variable collection with optional modes (e.g. 'Light/Dark'). Collections group related design tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        name: { type: "string", description: "Collection name (e.g. 'Colors', 'Spacing', 'Typography')" },
+        modes: { type: "array", items: { type: "string" }, description: "Mode names (e.g. ['Light', 'Dark']). Default: ['Default']" },
+      },
+      required: ["templateId", "name"],
+    },
+  },
+  {
+    name: "link_variable",
+    description: "Bind a design token variable to a layer property, so the property value tracks the variable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        variableId: { type: "string", description: "Variable ID to link" },
+        targetLayerName: { type: "string", description: "Layer name to bind the variable to" },
+        property: { type: "string", enum: ["fill", "stroke", "fontSize", "opacity", "width", "height"], description: "Property to bind" },
+        frameId: { type: "string", description: "Optional frame ID for layer lookup" },
+      },
+      required: ["templateId", "variableId", "targetLayerName", "property"],
+    },
+  },
+  {
+    name: "export_batch",
+    description: "Batch export frames or layers as PNG/SVG with configurable presets (scale, suffix, format). Renders via the render pipeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameIds: { type: "array", items: { type: "string" }, description: "Frame IDs to export (exports all frames if omitted)" },
+        format: { type: "string", enum: ["png", "svg", "png@2x", "png@3x"], description: "Export format (default png)" },
+        scale: { type: "number", description: "Scale multiplier (1, 2, 3). Overridden by format suffix." },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "copy_as",
+    description: "Copy a layer or selection as code: SVG markup, CSS styles, or JSON representation. Useful for developer handoff.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Layer name to export as code" },
+        format: { type: "string", enum: ["svg", "css", "json"], description: "Output format (default json)" },
+        frameId: { type: "string", description: "Optional frame ID for layer lookup" },
+      },
+      required: ["templateId", "targetLayerName"],
+    },
+  },
+  {
+    name: "export_pdf",
+    description: "Export the entire template or specific frames as a PDF document via the render pipeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameIds: { type: "array", items: { type: "string" }, description: "Frame IDs to include (all frames if omitted)" },
+        orientation: { type: "string", enum: ["portrait", "landscape"], description: "Page orientation (default landscape)" },
+        format: { type: "string", enum: ["a4", "letter", "screen"], description: "Page size (default screen = canvas size)" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -3079,6 +3193,228 @@ async function handleMethod(method, params, userId) {
         return { original: textToTranslate, translated: data.choices?.[0]?.message?.content || "", targetLanguage: targetLang };
       }
       throw { code: -32000, message: "Provide either templateId (with targetLayerName) or text to translate" };
+    }
+
+    // ── F4: Styles, Variables, Export ──
+    case "create_style": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.sourceLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.sourceLayerName}` };
+      const styleType = params.type || "fill";
+      const props = {};
+      if (styleType === "fill") {
+        if (obj.fill) props.fill = obj.fill;
+        if (obj.opacity !== undefined) props.opacity = obj.opacity;
+      } else if (styleType === "stroke") {
+        if (obj.stroke) props.stroke = obj.stroke;
+        if (obj.strokeWidth !== undefined) props.strokeWidth = obj.strokeWidth;
+      } else if (styleType === "text") {
+        if (obj.fontSize) props.fontSize = obj.fontSize;
+        if (obj.fontFamily) props.fontFamily = obj.fontFamily;
+        if (obj.fontWeight) props.fontWeight = obj.fontWeight;
+        if (obj.fill) props.fill = obj.fill;
+        if (obj.lineHeight) props.lineHeight = obj.lineHeight;
+        if (obj.textAlign) props.textAlign = obj.textAlign;
+      } else if (styleType === "effect") {
+        if (obj.shadow) props.shadow = obj.shadow;
+        if (obj.filters) props.filters = obj.filters;
+      }
+      if (!tpl.styles) tpl.styles = [];
+      const style = {
+        id: `sty_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: params.name,
+        type: styleType,
+        properties: props,
+      };
+      tpl.styles.push(style);
+      await templates.updateTemplate(params.templateId, { styles: tpl.styles });
+      autoSnapshot(params.templateId, method);
+      return { created: true, styleId: style.id, name: style.name, type: styleType, properties: props };
+    }
+
+    case "apply_style": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.styles) throw { code: -32000, message: "No styles defined in this template" };
+      const style = tpl.styles.find(s => s.id === params.styleId);
+      if (!style) throw { code: -32000, message: `Style not found: ${params.styleId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const targets = objects.filter(o => (params.targetLayerNames || []).includes(o.layerName || o.name));
+      if (targets.length === 0) throw { code: -32000, message: "No matching layers found for targetLayerNames" };
+      for (const obj of targets) {
+        Object.assign(obj, style.properties);
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { applied: true, styleId: style.id, styleName: style.name, targetCount: targets.length };
+    }
+
+    case "create_variable": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.variables) tpl.variables = { collections: [], variables: [], bindings: {} };
+      if (!tpl.variables.variables) tpl.variables.variables = [];
+      const variable = {
+        id: `var_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: params.name,
+        type: params.type,
+        value: params.value,
+        collectionId: params.collectionId || null,
+      };
+      tpl.variables.variables.push(variable);
+      await templates.updateTemplate(params.templateId, { variables: tpl.variables });
+      autoSnapshot(params.templateId, method);
+      return { created: true, variableId: variable.id, name: variable.name, type: variable.type, value: variable.value };
+    }
+
+    case "create_collection": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.variables) tpl.variables = { collections: [], variables: [], bindings: {} };
+      if (!tpl.variables.collections) tpl.variables.collections = [];
+      const modes = params.modes?.length ? params.modes : ["Default"];
+      const collection = {
+        id: `col_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: params.name,
+        modes,
+      };
+      tpl.variables.collections.push(collection);
+      await templates.updateTemplate(params.templateId, { variables: tpl.variables });
+      autoSnapshot(params.templateId, method);
+      return { created: true, collectionId: collection.id, name: collection.name, modes };
+    }
+
+    case "link_variable": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.variables?.variables) throw { code: -32000, message: "No variables defined in this template" };
+      const variable = tpl.variables.variables.find(v => v.id === params.variableId);
+      if (!variable) throw { code: -32000, message: `Variable not found: ${params.variableId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const prop = params.property;
+      if (!tpl.variables.bindings) tpl.variables.bindings = {};
+      const key = `${obj.layerName || obj.name}.${prop}`;
+      if (!tpl.variables.bindings[key]) tpl.variables.bindings[key] = [];
+      tpl.variables.bindings[key].push({ variableId: variable.id, variableName: variable.name });
+      obj[prop] = variable.value;
+      if (prop === "fontSize" || prop === "width" || prop === "height") obj[prop] = Number(variable.value) || variable.value;
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, variables: tpl.variables });
+      autoSnapshot(params.templateId, method);
+      return { linked: true, variableName: variable.name, targetLayerName: params.targetLayerName, property: prop, value: variable.value };
+    }
+
+    case "export_batch": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const fmt = params.format || "png";
+      let scale = params.scale || 1;
+      if (fmt === "png@2x") scale = 2;
+      else if (fmt === "png@3x") scale = 3;
+      const isSvg = fmt === "svg";
+      const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || []).map(f => f.id);
+      const results = [];
+      for (const fid of frameIds) {
+        const frame = tpl.frames?.find(f => f.id === fid);
+        if (!frame && frameIds.length === 1 && !params.frameIds?.length) {
+          // Export whole canvas when no frames specified and no frames exist
+          results.push({
+            frameId: "canvas",
+            url: `https://futuraria.app/render/${params.templateId}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+            width: (tpl.width || 1080) * scale,
+            height: (tpl.height || 1080) * scale,
+            format: isSvg ? "svg" : `png@${scale}x`,
+          });
+          continue;
+        }
+        if (!frame) continue;
+        results.push({
+          frameId: fid,
+          frameName: frame.name,
+          url: `https://futuraria.app/render/${params.templateId}/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+          width: (frame.width || tpl.width) * scale,
+          height: (frame.height || tpl.height) * scale,
+          format: isSvg ? "svg" : `png@${scale}x`,
+        });
+      }
+      return { exported: results.length, results, format: isSvg ? "svg" : `png@${scale}x` };
+    }
+
+    case "copy_as": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const fmt = params.format || "json";
+      if (fmt === "svg") {
+        let svg = "";
+        if (obj.type === "rect") {
+          const rx = obj.rx || 0;
+          svg = `<rect x="${obj.left || 0}" y="${obj.top || 0}" width="${obj.width || 100}" height="${obj.height || 100}" rx="${rx}" fill="${obj.fill || "#ccc"}"${obj.stroke ? ` stroke="${obj.stroke}" stroke-width="${obj.strokeWidth || 1}"` : ""} />`;
+        } else if (obj.type === "text") {
+          svg = `<text x="${obj.left || 0}" y="${(obj.top || 0) + (obj.fontSize || 16)}" font-family="${obj.fontFamily || "sans-serif"}" font-size="${obj.fontSize || 16}" fill="${obj.fill || "#000"}">${(obj.text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;")}</text>`;
+        } else if (obj.type === "ellipse" || obj.type === "circle") {
+          const cx = (obj.left || 0) + (obj.width || 100) / 2;
+          const cy = (obj.top || 0) + (obj.height || 100) / 2;
+          svg = `<ellipse cx="${cx}" cy="${cy}" rx="${(obj.width || 100) / 2}" ry="${(obj.height || 100) / 2}" fill="${obj.fill || "#ccc"}" />`;
+        } else {
+          svg = `<!-- ${obj.type}: use JSON format for full data -->`;
+        }
+        return { format: "svg", layerName: params.targetLayerName, type: obj.type, svg };
+      } else if (fmt === "css") {
+        const props = [];
+        if (obj.left !== undefined) props.push(`  left: ${obj.left}px;`);
+        if (obj.top !== undefined) props.push(`  top: ${obj.top}px;`);
+        if (obj.width) props.push(`  width: ${obj.width}px;`);
+        if (obj.height) props.push(`  height: ${obj.height}px;`);
+        if (obj.fill) props.push(`  background-color: ${obj.fill};`);
+        if (obj.opacity !== undefined) props.push(`  opacity: ${obj.opacity};`);
+        if (obj.rx) props.push(`  border-radius: ${obj.rx}px;`);
+        if (obj.fontSize) props.push(`  font-size: ${obj.fontSize}px;`);
+        if (obj.fontFamily) props.push(`  font-family: ${obj.fontFamily};`);
+        if (obj.shadow) props.push(`  box-shadow: ${obj.shadow.offsetX || 0}px ${obj.shadow.offsetY || 0}px ${obj.shadow.blur || 4}px ${obj.shadow.color || "#000"};`);
+        const css = `.${params.targetLayerName.replace(/\s+/g, "-").toLowerCase()} {\n${props.join("\n")}\n}`;
+        return { format: "css", layerName: params.targetLayerName, type: obj.type, css };
+      } else {
+        return { format: "json", layerName: params.targetLayerName, type: obj.type, data: obj };
+      }
+    }
+
+    case "export_pdf": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const orientation = params.orientation || "landscape";
+      const pageFormat = params.format || "screen";
+      const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || []).map(f => f.id);
+      if (frameIds.length === 0) {
+        frameIds.push("canvas");
+      }
+      const pages = [];
+      for (const fid of frameIds) {
+        if (fid === "canvas") {
+          pages.push({
+            frameId: "canvas",
+            url: `https://futuraria.app/render/${params.templateId}?format=pdf&orientation=${orientation}&format=${pageFormat}`,
+            width: tpl.width || 1080,
+            height: tpl.height || 1080,
+          });
+        } else {
+          const frame = tpl.frames?.find(f => f.id === fid);
+          if (!frame) continue;
+          pages.push({
+            frameId: fid,
+            frameName: frame.name,
+            url: `https://futuraria.app/render/${params.templateId}/${fid}?format=pdf&orientation=${orientation}&format=${pageFormat}`,
+            width: frame.width,
+            height: frame.height,
+          });
+        }
+      }
+      return { exported: pages.length, orientation, pageFormat, pages, note: "PDF render URLs ready for the render pipeline." };
     }
 
     default:
