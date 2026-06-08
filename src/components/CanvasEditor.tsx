@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { useCanvas, ToolName } from "../hooks/useCanvas";
 import { useAutoSave } from "../hooks/useAutoSave";
 import type { Canvas as FabricCanvas } from "fabric";
+import { Line } from "fabric";
 
 interface CanvasEditorProps {
   templateId: string | null;
@@ -33,6 +34,8 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   templateJsonRef.current = templateJson;
   const initDoneRef = useRef(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [showRulers, setShowRulers] = useState(false);
+  const guidesRef = useRef<Line[]>([]);
 
   // Space-to-pan: hold Space to temporarily activate hand tool
   const spaceActiveRef = useRef(false);
@@ -130,6 +133,41 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     };
   }, [undo, redo, copySelected, pasteObject, duplicateSelected, deleteSelected, group, ungroup, setTool, onToolChange, showGrid]);
 
+  // Guide line helpers
+  const addGuide = useCallback((orientation: "h" | "v", pos: number) => {
+    const c = fabricRef.current;
+    if (!c) return;
+    const guide = new Line(
+      orientation === "h" ? [0, 0, c.width!, 0] : [0, 0, 0, c.height!],
+      {
+        stroke: "#f43f5e", strokeWidth: 1,
+        strokeDashArray: [6, 4],
+        selectable: false, evented: false, excludeFromExport: true,
+        left: orientation === "v" ? pos : undefined,
+        top: orientation === "h" ? pos : undefined,
+      },
+    );
+    (guide as any).isGuideLine = true;
+    c.add(guide);
+    guidesRef.current.push(guide);
+    c.requestRenderAll();
+  }, []);
+
+  const clearGuides = useCallback(() => {
+    const c = fabricRef.current;
+    if (!c) return;
+    for (const g of guidesRef.current) c.remove(g);
+    guidesRef.current = [];
+    c.requestRenderAll();
+  }, []);
+
+  const toggleRulers = useCallback(() => {
+    setShowRulers(prev => {
+      if (prev) clearGuides();
+      return !prev;
+    });
+  }, [clearGuides]);
+
   // Expose canvas controls via window for Toolbar integration
   useEffect(() => {
     (window as any).__canvasControls = {
@@ -144,11 +182,30 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
       exportFramePNG, exportAllFramesPNG,
       FRAME_MAX,
+      // Rulers & Guides
+      showRulers, toggleRulers, clearGuides,
     };
-  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX]);
+  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX, showRulers, toggleRulers, clearGuides]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#1e1e2e" }}>
+      {/* Ruler overlays */}
+      {showRulers && (
+        <>
+          <RulerBar
+            orientation="h"
+            zoom={zoom}
+            containerWidth={containerRef.current?.clientWidth ?? 0}
+            onCreateGuide={(pos) => addGuide("h", pos)}
+          />
+          <RulerBar
+            orientation="v"
+            zoom={zoom}
+            containerWidth={containerRef.current?.clientHeight ?? 0}
+            onCreateGuide={(pos) => addGuide("v", pos)}
+          />
+        </>
+      )}
       <canvas ref={mountRef} style={{ display: "block" }} />
       {/* Zoom badge */}
       <div style={badgeStyle(true)}>
@@ -175,4 +232,74 @@ function badgeStyle(isBottom: boolean): React.CSSProperties {
     fontFamily: "monospace", pointerEvents: "none",
     ...(isBottom ? { bottom: 12, right: 12 } : { top: 8, left: 8, pointerEvents: "auto" }),
   };
+}
+
+// ── Ruler Bar ───────────────────────────────────────────────
+
+const RULER_SIZE = 24;
+
+function RulerBar({ orientation, zoom, containerWidth, onCreateGuide }: {
+  orientation: "h" | "v";
+  zoom: number;
+  containerWidth: number;
+  onCreateGuide: (pos: number) => void;
+}) {
+  const isH = orientation === "h";
+  const tickStep = zoom < 0.5 ? 200 : zoom < 1 ? 100 : zoom < 2 ? 50 : 25;
+  const ticks: { pos: number; label: string }[] = [];
+  for (let i = 0; i <= containerWidth; i += tickStep) {
+    if (i % (tickStep * 5) === 0) {
+      ticks.push({ pos: i, label: String(Math.round(i / zoom)) });
+    } else {
+      ticks.push({ pos: i, label: "" });
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        [isH ? "top" : "left"]: 0,
+        [isH ? "left" : "top"]: isH ? RULER_SIZE : 0,
+        [isH ? "width" : "height"]: containerWidth,
+        [isH ? "height" : "width"]: RULER_SIZE,
+        background: "#16161e",
+        zIndex: 10,
+        borderBottom: isH ? "1px solid #2a2a3a" : undefined,
+        borderRight: !isH ? "1px solid #2a2a3a" : undefined,
+        overflow: "hidden",
+      }}
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const local = isH ? e.clientX - rect.left : e.clientY - rect.top;
+        onCreateGuide(local / zoom);
+      }}
+    >
+      {ticks.map((t, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            [isH ? "left" : "top"]: t.pos,
+            [isH ? "top" : "left"]: 0,
+            [isH ? "width" : "height"]: 1,
+            [isH ? "height" : "width"]: t.label ? 12 : 7,
+            background: "#4a4a5a",
+          }}
+        >
+          {t.label && (
+            <span style={{
+              position: "absolute",
+              [isH ? "top" : "left"]: 13,
+              [isH ? "left" : "top"]: 3,
+              fontSize: 9, fontFamily: "monospace", color: "#7a7a90",
+              whiteSpace: "nowrap",
+            }}>
+              {t.label}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
