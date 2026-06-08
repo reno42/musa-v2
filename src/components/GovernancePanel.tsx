@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { mcpCall } from "../lib/mcpClient";
 
 interface SnapshotMeta {
@@ -43,6 +43,10 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
   const [selectedSnapId, setSelectedSnapId] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<DiffResult[] | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   const loadSnapshots = useCallback(async () => {
     if (!templateId) return;
@@ -61,6 +65,21 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
   useEffect(() => {
     loadSnapshots();
   }, [loadSnapshots]);
+
+  // Poll canvas controls for undo/redo state
+  useEffect(() => {
+    pollRef.current = setInterval(() => {
+      const ctrl = (window as any).__canvasControls;
+      if (ctrl) {
+        setCanUndo(ctrl.canUndo ?? false);
+        setCanRedo(ctrl.canRedo ?? false);
+      }
+    }, 300);
+    return () => clearInterval(pollRef.current);
+  }, []);
+
+  const handleUndo = () => { (window as any).__canvasControls?.undo(); };
+  const handleRedo = () => { (window as any).__canvasControls?.redo(); };
 
   const handleDiff = async (snapId: string) => {
     setSelectedSnapId(snapId);
@@ -114,12 +133,23 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
       {/* Header */}
       <div style={{
         padding: "10px 12px", borderBottom: "1px solid #1c1c26",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
       }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>🕐 Governance Timeline</span>
-        <button onClick={onClose} style={{
-          background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
-        }}>✕</button>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>🕐 Timeline</span>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button type="button" onClick={handleUndo} disabled={!canUndo}
+            style={undoRedoBtn(!canUndo)} title="Undo (⌘Z)">
+            ↩
+          </button>
+          <button type="button" onClick={handleRedo} disabled={!canRedo}
+            style={undoRedoBtn(!canRedo)} title="Redo (⌘⇧Z)">
+            ↪
+          </button>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
+            marginLeft: 4,
+          }}>✕</button>
+        </div>
       </div>
 
       {/* Content */}
@@ -136,7 +166,27 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
           </div>
         )}
 
-        {snapshots.map((snap, i) => (
+        {/* Last 5 states header */}
+        {snapshots.length > 0 && (
+          <div style={{
+            padding: "6px 12px 4px", fontSize: 10, color: "#6a6a80",
+            textTransform: "uppercase", letterSpacing: 1,
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <span>Recent States ({Math.min(5, snapshots.length)})</span>
+            {snapshots.length > 5 && (
+              <button type="button" onClick={() => setShowAll(!showAll)}
+                style={{
+                  background: "none", border: "none", color: "#818cf8",
+                  cursor: "pointer", fontSize: 10,
+                }}>
+                {showAll ? "Show less" : `View all (${snapshots.length})`}
+              </button>
+            )}
+          </div>
+        )}
+
+        {(showAll ? snapshots : snapshots.slice(0, 5)).map((snap, i) => (
           <div key={snap.id} style={{
             padding: "6px 12px", cursor: "pointer",
             background: selectedSnapId === snap.id ? "#1a1a2e" : "transparent",
@@ -209,5 +259,18 @@ function actionBtn(color: string): React.CSSProperties {
   return {
     background: "#111118", border: `1px solid ${color}`, color,
     borderRadius: 3, padding: "2px 6px", fontSize: 10, cursor: "pointer",
+  };
+}
+
+function undoRedoBtn(disabled: boolean): React.CSSProperties {
+  return {
+    background: "#16161e",
+    border: "1px solid #2a2a3a",
+    color: disabled ? "#3a3a4a" : "#c4c4d4",
+    borderRadius: 4,
+    padding: "3px 7px",
+    fontSize: 14,
+    cursor: disabled ? "not-allowed" : "pointer",
+    lineHeight: 1,
   };
 }
