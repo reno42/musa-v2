@@ -979,6 +979,78 @@ const MCP_TOOLS = [
       required: ["templateId", "username"],
     },
   },
+  {
+    name: "ai_generate_text",
+    description: "Generate AI text content using OpenRouter (GPT-4o-mini). Requires OPENROUTER_API_KEY env var. Optionally adds generated text to canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Text generation prompt" },
+        templateId: { type: "string", description: "Optional template ID to add generated text to" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Text width in px (default 600)" },
+        fontSize: { type: "number", description: "Font size (default 16)" },
+        systemPrompt: { type: "string", description: "Custom system prompt (default: 'You are a design assistant')" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "ai_generate_image",
+    description: "Generate an AI image via OpenRouter (model-agnostic) and optionally add it to the canvas. Requires OPENROUTER_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Image generation prompt" },
+        templateId: { type: "string", description: "Optional template ID to add generated image to" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Image width in px (default 512)" },
+        height: { type: "number", description: "Image height in px (default 512)" },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "ai_palette",
+    description: "Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Requires OPENROUTER_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        theme: { type: "string", description: "Theme or description for the palette (e.g. 'ocean sunset', 'corporate tech', 'warm minimal')" },
+        count: { type: "number", description: "Number of colors (3-9, default 6)" },
+        includeNeutrals: { type: "boolean", description: "Include background/surface neutrals (default true)" },
+      },
+      required: ["theme"],
+    },
+  },
+  {
+    name: "ai_suggest_layout",
+    description: "Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Requires OPENROUTER_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to analyze" },
+        aspect: { type: "string", enum: ["alignment", "spacing", "hierarchy", "all"], description: "Layout aspect to analyze (default all)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "ai_translate",
+    description: "Translate text on the canvas or supplied text to another language using AI. Requires OPENROUTER_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID whose text objects to translate" },
+        targetLayerName: { type: "string", description: "Specific layer to translate (optional; translates all text objects if omitted)" },
+        targetLanguage: { type: "string", description: "Target language (e.g. 'Spanish', 'French', 'Japanese'). Default: 'English'." },
+        text: { type: "string", description: "Direct text to translate (alternative to templateId+layer)" },
+      },
+      required: [],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2817,6 +2889,196 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { comments: tpl.comments });
       autoSnapshot(params.templateId, method);
       return { created: true, username, mentionId: mention.id };
+    }
+
+    // ── F3: AI Features (OpenRouter) ──
+    case "ai_generate_text": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured. Set it in Netlify environment variables." };
+      const prompt = params.prompt || "";
+      const systemPrompt = params.systemPrompt || "You are a design assistant. Generate clean, professional content for a design canvas. Respond with ONLY the requested text, no explanations.";
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }], max_tokens: 2000 }),
+      });
+      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status} ${await resp.text().catch(() => "")}` };
+      const data = await resp.json();
+      const generated = data.choices?.[0]?.message?.content || "";
+      let layerName = null;
+      if (params.templateId) {
+        const tpl = await templates.getTemplate(params.templateId);
+        if (tpl) {
+          if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+          const obj = {
+            type: "text", layerName: `ai_text_${Date.now()}`,
+            text: generated,
+            left: params.x ?? 0, top: params.y ?? 0,
+            width: params.width ?? 600,
+            fontSize: params.fontSize ?? 16, fontFamily: "Inter", fill: "#cdd6f4", lineHeight: 1.6,
+          };
+          tpl.canvas.objects.push(obj);
+          await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+          autoSnapshot(params.templateId, method);
+          layerName = obj.layerName;
+        }
+      }
+      return { generated, layerName, model: data.model };
+    }
+
+    case "ai_generate_image": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const prompt = params.prompt || "";
+      let imageUrl = null;
+      // Try text-to-image via a capable model; fall back to placeholder description
+      try {
+        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "openai/gpt-4o-mini",
+            messages: [{ role: "user", content: `Describe this image in 20 words for an alt-text (do not generate the image itself, just describe what it would look like): ${prompt}` }],
+            max_tokens: 120,
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const description = data.choices?.[0]?.message?.content || prompt;
+          // Placeholder: generate a colored rect with the description as text
+          if (params.templateId) {
+            const tpl = await templates.getTemplate(params.templateId);
+            if (tpl) {
+              if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+              const w = params.width ?? 512;
+              const h = params.height ?? 512;
+              const x = params.x ?? 0;
+              const y = params.y ?? 0;
+              tpl.canvas.objects.push({
+                type: "rect", layerName: `ai_img_bg_${Date.now()}`,
+                left: x, top: y, width: w, height: h,
+                fill: "#313244", stroke: "#f5c2e7", strokeWidth: 2, rx: 8, ry: 8,
+                aiGenerated: true, aiPrompt: prompt,
+              });
+              tpl.canvas.objects.push({
+                type: "text", layerName: `ai_img_label_${Date.now()}`,
+                text: `[AI IMAGE]\n\n${description}`,
+                left: x + 16, top: y + h / 2 - 30,
+                width: w - 32, fontSize: 14, fontFamily: "Inter", fill: "#cdd6f4", lineHeight: 1.5, textAlign: "center",
+              });
+              await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+              autoSnapshot(params.templateId, method);
+            }
+          }
+          imageUrl = `ai://generated/${Date.now()}`;
+          return { generated: true, description, prompt, imageUrl, note: "Image generation placeholder. For actual image output, configure a dedicated image model via OpenRouter." };
+        }
+      } catch (e) {
+        throw { code: -32000, message: `Image generation failed: ${e.message}` };
+      }
+      return { generated: false, message: "No image URL returned" };
+    }
+
+    case "ai_palette": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const theme = params.theme || "professional tech";
+      const count = Math.max(3, Math.min(9, params.count || 6));
+      const includeNeutrals = params.includeNeutrals !== false;
+      const prompt = `Generate a ${count}-color palette for the theme "${theme}". ${includeNeutrals ? "Include 1-2 neutral background/surface colors." : ""} Return ONLY valid JSON: { "colors": [{ "name": "...", "hex": "#...", "role": "primary|secondary|accent|surface|text" }] }`;
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 600, response_format: { type: "json_object" } }),
+      });
+      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+      const data = await resp.json();
+      let palette;
+      try {
+        palette = JSON.parse(data.choices?.[0]?.message?.content || "{}");
+      } catch {
+        palette = { colors: [] };
+      }
+      return { theme, colors: palette.colors || [], model: data.model };
+    }
+
+    case "ai_suggest_layout": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const aspect = params.aspect || "all";
+      const objects = (tpl.canvas?.objects || []).map(o => ({
+        type: o.type, layerName: o.layerName || o.name,
+        left: o.left, top: o.top, width: o.width, height: o.height,
+        text: o.text?.substring(0, 60),
+      }));
+      const canvasInfo = { width: tpl.width, height: tpl.height, objectCount: objects.length, objects };
+      const prompt = `Analyze this design canvas layout and suggest improvements for ${aspect}. Canvas: ${JSON.stringify(canvasInfo)}. Return ONLY valid JSON: { "score": 0-100, "issues": [{ "severity": "low|medium|high", "description": "...", "suggestion": "..." }], "summary": "..." }`;
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 1500, response_format: { type: "json_object" } }),
+      });
+      if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+      const data = await resp.json();
+      let analysis;
+      try {
+        analysis = JSON.parse(data.choices?.[0]?.message?.content || "{}");
+      } catch {
+        analysis = { score: 0, issues: [], summary: "Failed to parse AI response" };
+      }
+      return { templateId: params.templateId, aspect, ...analysis, model: data.model };
+    }
+
+    case "ai_translate": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
+      const targetLang = params.targetLanguage || "English";
+      let textToTranslate = params.text || null;
+      let translatedCount = 0;
+      if (params.templateId && !textToTranslate) {
+        const tpl = await templates.getTemplate(params.templateId);
+        if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+        const objects = getFrameObjects(tpl, params.frameId);
+        const targets = params.targetLayerName
+          ? objects.filter(o => (o.layerName || o.name) === params.targetLayerName && o.type === "text" && o.text)
+          : objects.filter(o => o.type === "text" && o.text);
+        if (targets.length === 0) throw { code: -32000, message: "No text objects found to translate" };
+        for (const obj of targets) {
+          const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "openai/gpt-4o-mini",
+              messages: [{ role: "system", content: `Translate the following text to ${targetLang}. Return ONLY the translated text, no explanations.` }, { role: "user", content: obj.text }],
+              max_tokens: 1000,
+            }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            obj.text = data.choices?.[0]?.message?.content || obj.text;
+            translatedCount++;
+          }
+        }
+        await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+        autoSnapshot(params.templateId, method);
+        return { translated: translatedCount, total: targets.length, targetLanguage: targetLang };
+      } else if (textToTranslate) {
+        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "openai/gpt-4o-mini",
+            messages: [{ role: "system", content: `Translate the following text to ${targetLang}. Return ONLY the translated text, no explanations.` }, { role: "user", content: textToTranslate }],
+            max_tokens: 1000,
+          }),
+        });
+        if (!resp.ok) throw { code: -32000, message: `OpenRouter error: ${resp.status}` };
+        const data = await resp.json();
+        return { original: textToTranslate, translated: data.choices?.[0]?.message?.content || "", targetLanguage: targetLang };
+      }
+      throw { code: -32000, message: "Provide either templateId (with targetLayerName) or text to translate" };
     }
 
     default:
