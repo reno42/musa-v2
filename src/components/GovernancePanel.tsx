@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { apiFetch } from "../lib/supabase";
+import { mcpCall } from "../lib/mcpClient";
 
 interface SnapshotMeta {
   id: string;
@@ -35,18 +35,6 @@ const TYPE_LABEL: Record<string, string> = {
   human: "Human",
   system: "System",
 };
-
-/** JSON-RPC helper: POST to /mcp, parse response */
-async function mcpCall(method: string, params: Record<string, any>) {
-  const res = await apiFetch("/mcp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message || "MCP error");
-  return json.result;
-}
 
 export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePanelProps) {
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
