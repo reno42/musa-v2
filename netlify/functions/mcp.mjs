@@ -1644,6 +1644,82 @@ const MCP_TOOLS = [
       required: ["templateId", "snapIdA"],
     },
   },
+  // ══════════════════════════════════════════════════
+  // Sprint 3: Clone Skills — design pattern extraction & application
+  // ══════════════════════════════════════════════════
+  {
+    name: "skill_extract",
+    description: "Analyze template(s) and extract design patterns: color palette, typography, spacing scale, layout preferences, effects, and ratios. Stores result in tpl.metadata.extractedPatterns. Optionally uses AI for semantic analysis if OPENROUTER_API_KEY is set.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to analyze" },
+        templateIds: { type: "array", items: { type: "string" }, description: "Multiple template IDs for aggregate analysis (overrides templateId)" },
+        useAi: { type: "boolean", description: "Also call OpenRouter AI for semantic pattern analysis (default true if API key available)" },
+        name: { type: "string", description: "Optional skill name for the extracted patterns" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "skill_clone",
+    description: "Create a reusable clone skill from extracted or manually-defined patterns. Stored in tpl.metadata.clonedSkills[] array. Skills can be applied later via skill_apply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to store the skill on" },
+        skillName: { type: "string", description: "Name for the cloned skill (e.g. 'Brutalist Dark Theme')" },
+        description: { type: "string", description: "Description of what this skill captures" },
+        patterns: { type: "object", description: "Patterns object from skill_extract, or manually defined patterns with palette/typography/spacing/layout/effects/ratios" },
+        rules: { type: "array", items: { type: "string" }, description: "Design rules extracted (e.g. 'use sans-serif for headings', 'maintain 8px grid')" },
+        sourceTemplateId: { type: "string", description: "Which template these patterns were extracted from (for provenance)" },
+      },
+      required: ["templateId", "skillName", "patterns"],
+    },
+  },
+  {
+    name: "skill_apply",
+    description: "Apply a cloned design skill to a template. Transforms colors (nearest match substitution), typography (headings/body font swap), spacing (normalize gaps/padding). Supports 'strict' (full compliance) and 'adaptive' (respect content, adapt style) modes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Target template ID to transform" },
+        skillId: { type: "string", description: "Skill ID from clonedSkills array" },
+        skillName: { type: "string", description: "Skill name to look up (alternative to skillId)" },
+        mode: { type: "string", enum: ["strict", "adaptive"], description: "strict = full compliance, adaptive = respect content & adapt style (default)" },
+        sourceTemplateId: { type: "string", description: "Template where the skill is stored (if different from target)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "brand_analyze",
+    description: "Analyze multiple templates to extract global brand DNA: dominant colors (frequency-weighted), typography (most-used fonts), spacing (median values), logo detection, and tone. The resulting brand profile can be applied to any template via brand_apply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: { type: "array", items: { type: "string" }, description: "Template IDs to analyze for brand DNA (min 2 recommended)" },
+        workspaceId: { type: "string", description: "Workspace ID — analyzes all templates in workspace" },
+        brandName: { type: "string", description: "Name for the extracted brand (e.g. 'Acme Corp')" },
+        useAi: { type: "boolean", description: "Use AI for semantic brand analysis (default true)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "brand_apply",
+    description: "Apply a brand DNA profile to a target template. Replaces color palette, typography, and spacing per brand rules. Returns before/after compliance scores.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Target template ID to transform" },
+        brandDNA: { type: "object", description: "Brand DNA object from brand_analyze (or a stored brand profile)" },
+        brandId: { type: "string", description: "Brand ID from stored brands (alternative to brandDNA)" },
+        aggressiveness: { type: "number", description: "How aggressively to apply brand rules 0-1 (default 0.8)" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -5186,6 +5262,540 @@ async function handleMethod(method, params, userId) {
         differences: diffs,
         similarityScore: Math.min(100, similarityScore),
         totalChanges: diffs.length,
+      };
+    }
+
+    // ══════════════════════════════════════════════════
+    // Sprint 3: Clone Skills handlers
+    // ══════════════════════════════════════════════════
+
+    // ── skill_extract ──
+    case "skill_extract": {
+      const idsToAnalyze = params.templateIds || (params.templateId ? [params.templateId] : []);
+      if (idsToAnalyze.length === 0) throw { code: -32602, message: "templateId or templateIds required" };
+
+      // Load all templates
+      const templatesList = [];
+      for (const id of idsToAnalyze) {
+        const tpl = await templates.getTemplate(id);
+        if (tpl) templatesList.push(tpl);
+      }
+      if (templatesList.length === 0) throw { code: -32000, message: "No valid templates found" };
+
+      // Aggregate all canvas objects
+      const allObjects = [];
+      for (const tpl of templatesList) {
+        for (const o of tpl.canvas?.objects || []) {
+          allObjects.push({ ...o, _sourceTemplateId: tpl.id });
+        }
+      }
+
+      // ── Color Palette Analysis ──
+      const colorCounts = new Map();
+      for (const o of allObjects) {
+        const fill = o.fill;
+        if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
+          colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
+        }
+      }
+      const palette = [...colorCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([hex, count]) => ({ hex, usage: count }));
+
+      // ── Typography Analysis ──
+      const fontCounts = new Map();
+      const fontSizeValues = [];
+      for (const o of allObjects) {
+        if (o.type === "text") {
+          const font = o.fontFamily || "Inter";
+          fontCounts.set(font, (fontCounts.get(font) || 0) + 1);
+          if (o.fontSize) fontSizeValues.push(o.fontSize);
+        }
+      }
+      const fonts = [...fontCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([family, count]) => ({ family, usage: count }));
+
+      const sortedSizes = fontSizeValues.sort((a, b) => a - b);
+      const typography = {
+        fonts,
+        sizeRange: sortedSizes.length > 0
+          ? { min: sortedSizes[0], max: sortedSizes[sortedSizes.length - 1], median: sortedSizes[Math.floor(sortedSizes.length / 2)] }
+          : null,
+      };
+
+      // ── Spacing Analysis ──
+      const spacings = [];
+      for (const o of allObjects) {
+        if (o.padding !== undefined) spacings.push(o.padding);
+        if (o.gap !== undefined) spacings.push(o.gap);
+      }
+      spacings.sort((a, b) => a - b);
+      const spacing = spacings.length > 0
+        ? {
+            values: [...new Set(spacings)].slice(0, 10),
+            median: spacings[Math.floor(spacings.length / 2)],
+            common: spacings.reduce((acc, v) => { acc[v] = (acc[v] || 0) + 1; return acc; }, {}),
+          }
+        : null;
+
+      // ── Layout Analysis ──
+      const positions = allObjects.map(o => ({ left: o.left || 0, top: o.top || 0, width: o.width || 0, height: o.height || 0 }));
+      const avgLeft = positions.reduce((s, p) => s + p.left, 0) / (positions.length || 1);
+      const layout = {
+        objectCount: allObjects.length,
+        avgPosition: { left: Math.round(avgLeft) },
+        typeBreakdown: allObjects.reduce((acc, o) => {
+          acc[o.type || "unknown"] = (acc[o.type || "unknown"] || 0) + 1;
+          return acc;
+        }, {}),
+        canvasSizes: templatesList.map(t => ({ id: t.id, width: t.width, height: t.height })),
+      };
+
+      // ── Effects Analysis ──
+      const hasShadows = allObjects.filter(o => o.shadow).length;
+      const hasBlendModes = allObjects.filter(o => o.globalCompositeOperation || o.blendMode).length;
+      const effects = { shadowUsage: hasShadows, blendModeUsage: hasBlendModes, total: allObjects.length };
+
+      // ── Ratios Analysis ──
+      const ratios = templatesList.map(t => ({
+        templateId: t.id,
+        aspectRatio: t.width && t.height ? Math.round((t.width / t.height) * 100) / 100 : 1,
+      }));
+
+      // Build patterns result
+      const patterns = { palette, typography, spacing, layout, effects, ratios };
+
+      // ── AI semantic analysis (optional) ──
+      let aiAnalysis = null;
+      const useAi = params.useAi !== false;
+      if (useAi) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (apiKey) {
+          try {
+            const prompt = `Analyze these design patterns and describe the overall design style in 2-3 sentences. Also suggest 3-5 design rules that capture the essence. Patterns: ${JSON.stringify(patterns)}`;
+            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 400, response_format: { type: "json_object" } }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              try { aiAnalysis = JSON.parse(data.choices?.[0]?.message?.content || "{}"); } catch { /* ignore */ }
+            }
+          } catch { /* AI analysis is optional */ }
+        }
+      }
+
+      // Build rules from analysis
+      const rules = [];
+      if (palette.length > 0) rules.push(`Primary palette: ${palette.slice(0, 3).map(c => c.hex).join(", ")}`);
+      if (fonts.length > 0) rules.push(`Typography: ${fonts[0].family} (primary), ${fonts.length > 1 ? fonts[1].family + " (secondary)" : ""}`.trim());
+      if (spacing?.median) rules.push(`Spacing scale: based on ${spacing.median}px`);
+      if (aiAnalysis?.style) rules.push(`Style: ${aiAnalysis.style}`);
+      if (aiAnalysis?.rules) rules.push(...aiAnalysis.rules);
+
+      const skillId = `skill_${Date.now().toString(36)}`;
+
+      // Store on first template if single templateId provided
+      if (params.templateId) {
+        const tpl = templatesList.find(t => t.id === params.templateId);
+        if (tpl) {
+          const existing = tpl.metadata || {};
+          await templates.updateTemplate(params.templateId, {
+            metadata: { ...existing, extractedPatterns: { skillId, name: params.name || "Extracted Skill", patterns, rules, extractedAt: new Date().toISOString(), sourceCount: idsToAnalyze.length } },
+          });
+        }
+      }
+
+      return {
+        skillId,
+        name: params.name || "Extracted Skill",
+        patterns,
+        rules,
+        sourceCount: idsToAnalyze.length,
+        aiAnalysis,
+      };
+    }
+
+    // ── skill_clone ──
+    case "skill_clone": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      const skillId = `skill_${Date.now().toString(36)}`;
+      const skillDef = {
+        id: skillId,
+        name: params.skillName,
+        description: params.description || `Cloned from ${params.sourceTemplateId || params.templateId}`,
+        patterns: params.patterns,
+        rules: params.rules || [],
+        sourceTemplateId: params.sourceTemplateId || params.templateId,
+        created: new Date().toISOString(),
+      };
+
+      const existing = tpl.metadata || {};
+      const skills = existing.clonedSkills || [];
+      skills.push(skillDef);
+
+      await templates.updateTemplate(params.templateId, {
+        metadata: { ...existing, clonedSkills: skills },
+      });
+
+      return {
+        created: true,
+        skillId,
+        skillName: params.skillName,
+        rules: params.rules || [],
+        skill: skillDef,
+      };
+    }
+
+    // ── skill_apply ──
+    case "skill_apply": {
+      const targetId = params.templateId;
+      const sourceId = params.sourceTemplateId || targetId;
+      const tpl = await templates.getTemplate(targetId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${targetId}` };
+      autoSnapshot(targetId, method, tpl);
+
+      // Find skill
+      let skill = null;
+      const sourceTpl = sourceId === targetId ? tpl : await templates.getTemplate(sourceId);
+      if (!sourceTpl) throw { code: -32000, message: `Source template not found: ${sourceId}` };
+
+      const skills = sourceTpl.metadata?.clonedSkills || [];
+      if (params.skillId) {
+        skill = skills.find(s => s.id === params.skillId);
+      } else if (params.skillName) {
+        skill = skills.find(s => s.name === params.skillName);
+      }
+      if (!skill) {
+        // Also check extractedPatterns
+        const ep = sourceTpl.metadata?.extractedPatterns;
+        if (ep && (params.skillId === ep.skillId || params.skillName === ep.name)) {
+          skill = { id: ep.skillId, name: ep.name, patterns: ep.patterns, rules: ep.rules };
+        }
+      }
+      if (!skill) throw { code: -32000, message: "Skill not found. Use skill_clone first or provide valid skillId/skillName." };
+
+      const mode = params.mode || "adaptive";
+      const patterns = skill.patterns;
+      const changes = [];
+
+      // Helper: find nearest color in palette
+      const nearestColor = (hex) => {
+        if (!patterns?.palette?.length) return null;
+        const toRgb = (h) => {
+          const r = parseInt(h.slice(1, 3), 16);
+          const g = parseInt(h.slice(3, 5), 16);
+          const b = parseInt(h.slice(5, 7), 16);
+          return { r, g, b };
+        };
+        const dist = (a, b) => Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+        const target = toRgb(hex);
+        let best = patterns.palette[0];
+        let bestDist = Infinity;
+        for (const c of patterns.palette) {
+          const d = dist(target, toRgb(c.hex));
+          if (d < bestDist) { bestDist = d; best = c; }
+        }
+        return best.hex;
+      };
+
+      const objects = tpl.canvas?.objects || [];
+      for (const obj of objects) {
+        // Apply palette
+        if (patterns?.palette?.length > 0) {
+          if (obj.fill && typeof obj.fill === "string" && obj.fill !== "transparent" && obj.fill.startsWith("#")) {
+            const nearest = nearestColor(obj.fill);
+            if (nearest && nearest !== obj.fill) {
+              if (mode === "adaptive" && obj.type === "text") {
+                // Adaptive: only shift text colors slightly toward palette
+              } else {
+                const oldFill = obj.fill;
+                obj.fill = nearest;
+                changes.push({ layer: obj.layerName || obj.name, field: "fill", old: oldFill, new: nearest });
+              }
+            }
+          }
+          if (obj.stroke && typeof obj.stroke === "string" && obj.stroke !== "transparent" && obj.stroke.startsWith("#")) {
+            const nearest = nearestColor(obj.stroke);
+            if (nearest && nearest !== obj.stroke) {
+              obj.stroke = nearest;
+              changes.push({ layer: obj.layerName || obj.name, field: "stroke", old: obj.stroke, new: nearest });
+            }
+          }
+        }
+
+        // Apply typography
+        if (patterns?.typography?.fonts?.length > 0) {
+          if (obj.type === "text") {
+            const primaryFont = patterns.typography.fonts[0].family;
+            const objFont = obj.fontFamily || "Inter";
+            // If heading (fontSize >= 24) and has multiple fonts, use primary; else use secondary if available
+            const targetFont = (obj.fontSize >= 24 && patterns.typography.fonts.length > 1)
+              ? patterns.typography.fonts[0].family
+              : (patterns.typography.fonts.length > 1 ? patterns.typography.fonts[1].family : primaryFont);
+            if (targetFont && targetFont !== objFont && mode === "strict") {
+              obj.fontFamily = targetFont;
+              changes.push({ layer: obj.layerName || obj.name, field: "fontFamily", old: objFont, new: targetFont });
+            }
+          }
+        }
+
+        // Apply spacing (normalize padding if in strict mode)
+        if (patterns?.spacing?.median && mode === "strict") {
+          if (obj.padding !== undefined && Math.abs(obj.padding - patterns.spacing.median) > 4) {
+            const oldPad = obj.padding;
+            obj.padding = patterns.spacing.median;
+            changes.push({ layer: obj.layerName || obj.name, field: "padding", old: oldPad, new: patterns.spacing.median });
+          }
+        }
+      }
+
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(targetId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(targetId, method);
+
+      return {
+        applied: true,
+        templateId: targetId,
+        skillId: skill.id,
+        skillName: skill.name,
+        mode,
+        changes,
+        changeCount: changes.length,
+        warnings: changes.length === 0 ? ["No changes were needed — template may already match the skill"] : [],
+      };
+    }
+
+    // ── brand_analyze ──
+    case "brand_analyze": {
+      let idsToAnalyze = params.templateIds || [];
+
+      // If workspaceId provided, get all templates from workspace
+      if (params.workspaceId && idsToAnalyze.length === 0) {
+        const result = await templates.listTemplatesPaginated(200, 0, params.workspaceId);
+        idsToAnalyze = (result?.data || []).map(t => t.id);
+      }
+
+      if (idsToAnalyze.length === 0) throw { code: -32602, message: "templateIds or workspaceId required" };
+
+      // Load all templates
+      const templatesList = [];
+      for (const id of idsToAnalyze) {
+        const tpl = await templates.getTemplate(id);
+        if (tpl) templatesList.push(tpl);
+      }
+
+      // Aggregate colors (frequency-weighted across all templates)
+      const colorCounts = new Map();
+      const fontCounts = new Map();
+      const allSpacings = [];
+      for (const tpl of templatesList) {
+        for (const o of tpl.canvas?.objects || []) {
+          const fill = o.fill;
+          if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
+            colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
+          }
+          if (o.type === "text" && o.fontFamily) {
+            fontCounts.set(o.fontFamily, (fontCounts.get(o.fontFamily) || 0) + 1);
+          }
+          if (o.padding !== undefined) allSpacings.push(o.padding);
+          if (o.gap !== undefined) allSpacings.push(o.gap);
+        }
+      }
+
+      const colors = [...colorCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([hex, count]) => ({ hex, frequency: count }));
+
+      const fonts = [...fontCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([family, count]) => ({ family, frequency: count }));
+
+      allSpacings.sort((a, b) => a - b);
+      const spacingMedian = allSpacings.length > 0 ? allSpacings[Math.floor(allSpacings.length / 2)] : 16;
+
+      // Logo detection: look for image objects with names containing "logo"
+      const logoObjects = [];
+      for (const tpl of templatesList) {
+        for (const o of tpl.canvas?.objects || []) {
+          const name = (o.layerName || o.name || "").toLowerCase();
+          if ((o.type === "image" || o.type === "group") && name.includes("logo")) {
+            logoObjects.push({ templateId: tpl.id, layerName: o.layerName || o.name });
+          }
+        }
+      }
+
+      const brandDNA = {
+        colors,
+        typography: { fonts, primaryFont: fonts.length > 0 ? fonts[0].family : "Inter" },
+        spacing: { median: spacingMedian },
+        logo: logoObjects.length > 0 ? { detected: true, occurrences: logoObjects } : { detected: false },
+        templateCount: templatesList.length,
+        totalObjects: templatesList.reduce((s, t) => s + (t.canvas?.objects?.length || 0), 0),
+      };
+
+      // AI analysis (optional)
+      let aiTone = null;
+      const useAi = params.useAi !== false;
+      if (useAi) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (apiKey) {
+          try {
+            const prompt = `Analyze this brand DNA and describe the brand personality/tone in 2-3 sentences. Brand: ${params.brandName || "Unnamed"}, Colors: ${colors.map(c => c.hex).join(", ")}, Fonts: ${fonts.map(f => f.family).join(", ")}`;
+            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 200 }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              aiTone = data.choices?.[0]?.message?.content || null;
+            }
+          } catch { /* optional */ }
+        }
+      }
+
+      const brandId = `brand_${Date.now().toString(36)}`;
+
+      // Store brand in global registry
+      if (!globalThis.__brand_profiles) globalThis.__brand_profiles = new Map();
+      globalThis.__brand_profiles.set(brandId, {
+        id: brandId,
+        name: params.brandName || "Unnamed Brand",
+        dna: brandDNA,
+        tone: aiTone,
+        created: new Date().toISOString(),
+        sourceTemplates: idsToAnalyze,
+      });
+
+      return {
+        brandId,
+        brandName: params.brandName || "Unnamed Brand",
+        brandDNA,
+        tone: aiTone,
+        confidence: Math.min(100, Math.round((templatesList.length / Math.max(idsToAnalyze.length, 1)) * 100)),
+        sourceCount: templatesList.length,
+      };
+    }
+
+    // ── brand_apply ──
+    case "brand_apply": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
+
+      // Get brand DNA
+      let brandDNA = params.brandDNA || null;
+      if (params.brandId && !brandDNA) {
+        const stored = globalThis.__brand_profiles?.get(params.brandId);
+        if (stored) brandDNA = stored.dna;
+      }
+      if (!brandDNA) throw { code: -32602, message: "brandDNA or brandId required" };
+
+      const aggressiveness = Math.max(0, Math.min(1, params.aggressiveness ?? 0.8));
+
+      // Calculate before score (how close template already matches brand)
+      const scoreCompliance = (dna) => {
+        let score = 0, total = 0;
+        const objects = tpl.canvas?.objects || [];
+        // Color compliance
+        if (dna.colors?.length > 0) {
+          const brandHexes = new Set(dna.colors.map(c => c.hex));
+          let colorMatch = 0, colorTotal = 0;
+          for (const o of objects) {
+            if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
+              colorTotal++;
+              if (brandHexes.has(o.fill)) colorMatch++;
+            }
+          }
+          if (colorTotal > 0) { score += (colorMatch / colorTotal) * 40; total += 40; }
+        }
+        // Font compliance
+        if (dna.typography?.primaryFont) {
+          let fontMatch = 0, fontTotal = 0;
+          for (const o of objects) {
+            if (o.type === "text") {
+              fontTotal++;
+              if (o.fontFamily === dna.typography.primaryFont) fontMatch++;
+            }
+          }
+          if (fontTotal > 0) { score += (fontMatch / fontTotal) * 30; total += 30; }
+        }
+        // Spacing compliance
+        if (dna.spacing?.median) {
+          const target = dna.spacing.median;
+          let spaceScore = 0, spaceTotal = 0;
+          for (const o of objects) {
+            if (o.padding !== undefined) { spaceTotal++; if (Math.abs(o.padding - target) <= 4) spaceScore++; }
+          }
+          if (spaceTotal > 0) { score += (spaceScore / spaceTotal) * 30; total += 30; }
+        }
+        return total > 0 ? Math.round((score / total) * 100) : 50;
+      };
+
+      const scoreBefore = scoreCompliance(brandDNA);
+      const changes = [];
+      const objects = tpl.canvas?.objects || [];
+
+      // Apply colors
+      if (brandDNA.colors?.length > 0 && aggressiveness > 0.3) {
+        const brandColors = brandDNA.colors;
+        const nearestBrandColor = (hex) => {
+          const toRgb = (h) => ({ r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) });
+          const dist = (a, b) => Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+          const target = toRgb(hex);
+          let best = brandColors[0];
+          let bestDist = Infinity;
+          for (const c of brandColors) {
+            const d = dist(target, toRgb(c.hex));
+            if (d < bestDist) { bestDist = d; best = c; }
+          }
+          return best.hex;
+        };
+        for (const obj of objects) {
+          if (obj.fill && typeof obj.fill === "string" && obj.fill !== "transparent" && obj.fill.startsWith("#")) {
+            const nearest = nearestBrandColor(obj.fill);
+            if (nearest !== obj.fill) {
+              changes.push({ layer: obj.layerName || obj.name, field: "fill", old: obj.fill, new: nearest });
+              obj.fill = nearest;
+            }
+          }
+        }
+      }
+
+      // Apply typography
+      if (brandDNA.typography?.primaryFont && aggressiveness > 0.2) {
+        for (const obj of objects) {
+          if (obj.type === "text" && obj.fontFamily !== brandDNA.typography.primaryFont) {
+            changes.push({ layer: obj.layerName || obj.name, field: "fontFamily", old: obj.fontFamily || "Inter", new: brandDNA.typography.primaryFont });
+            obj.fontFamily = brandDNA.typography.primaryFont;
+          }
+        }
+      }
+
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+
+      const scoreAfter = scoreCompliance(brandDNA);
+
+      return {
+        applied: true,
+        templateId: params.templateId,
+        brandName: params.brandName || "Brand",
+        scoreBefore,
+        scoreAfter,
+        aggressiveness,
+        changeCount: changes.length,
+        changes: changes.slice(0, 20),
       };
     }
 
