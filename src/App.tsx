@@ -11,6 +11,10 @@ import { PrototypePanel } from "./components/PrototypePanel";
 import { PagesPanel } from "./components/PagesPanel";
 import { AIPanel } from "./components/AIPanel";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
+import { SkillPanel } from "./components/SkillPanel";
+import { BatchPanel } from "./components/BatchPanel";
+import { QualityPanel } from "./components/QualityPanel";
+import { CreativePanel } from "./components/CreativePanel";
 import { ToastProvider } from "./components/Toast";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { getTemplate } from "./lib/templateApi";
@@ -79,6 +83,14 @@ function App() {
   const [, setProtoKey] = useState(0);
   const aiOpenRef = useRef(false);
   const [, setAiKey] = useState(0);
+  const skillsOpenRef = useRef(false);
+  const [, setSkillsKey] = useState(0);
+  const batchPanelOpenRef = useRef(false);
+  const [, setBatchPanelKey] = useState(0);
+  const qualityOpenRef = useRef(false);
+  const [, setQualityKey] = useState(0);
+  const creativeOpenRef = useRef(false);
+  const [, setCreativeKey] = useState(0);
 
   const { view, templateId, templateJson, canvas: canvasState, shortcutsOpen } = state;
   const zoom = canvasState.zoom;
@@ -319,6 +331,10 @@ function App() {
           <button type="button" onClick={() => { prototypeOpenRef.current = !prototypeOpenRef.current; setProtoKey(n => n + 1); }} style={topBtn}>▶ Prototype</button>
           <button type="button" onClick={() => { aiOpenRef.current = !aiOpenRef.current; setAiKey(n => n + 1); }} style={topBtn}>🤖 AI Tools</button>
           <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
+          <button type="button" onClick={() => { skillsOpenRef.current = !skillsOpenRef.current; setSkillsKey(n => n + 1); }} style={topBtn}>🧬 Skills</button>
+          <button type="button" onClick={() => { batchPanelOpenRef.current = !batchPanelOpenRef.current; setBatchPanelKey(n => n + 1); }} style={topBtn}>📦 Batch</button>
+          <button type="button" onClick={() => { qualityOpenRef.current = !qualityOpenRef.current; setQualityKey(n => n + 1); }} style={topBtn}>✨ Quality</button>
+          <button type="button" onClick={() => { creativeOpenRef.current = !creativeOpenRef.current; setCreativeKey(n => n + 1); }} style={topBtn}>🎨 Creative</button>
         </div>
 
         {/* Pages bar */}
@@ -358,6 +374,10 @@ function App() {
       {prototypeOpenRef.current && <PrototypePanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { prototypeOpenRef.current = false; setProtoKey(n => n + 1); }} />}
       {aiOpenRef.current && <AIPanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { aiOpenRef.current = false; setAiKey(n => n + 1); }} />}
       {governanceOpenRef.current && <GovernancePanel templateId={templateId} onClose={() => { governanceOpenRef.current = false; setGovKey(n => n + 1); }} onRestore={() => callCanvas("pushHistory")} />}
+      {skillsOpenRef.current && <SkillPanel templateId={templateId} onClose={() => { skillsOpenRef.current = false; setSkillsKey(n => n + 1); }} onUpdate={() => callCanvas("pushHistory")} />}
+      {batchPanelOpenRef.current && <BatchPanel templateId={templateId} onClose={() => { batchPanelOpenRef.current = false; setBatchPanelKey(n => n + 1); }} />}
+      {qualityOpenRef.current && <QualityPanel templateId={templateId} onClose={() => { qualityOpenRef.current = false; setQualityKey(n => n + 1); }} onUpdate={() => callCanvas("pushHistory")} />}
+      {creativeOpenRef.current && <CreativePanel templateId={templateId} selectedObjects={selectedObjects} onClose={() => { creativeOpenRef.current = false; setCreativeKey(n => n + 1); }} onUpdate={() => callCanvas("pushHistory")} />}
     </ToastProvider>
   );
 }
