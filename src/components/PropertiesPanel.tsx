@@ -192,27 +192,11 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {/* Background (Frame) */}
       {isFrameType && (
         <Section label="Background">
-          <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
-            <input
-              type="color"
-              aria-label="Frame background color"
-              key={`fbgcolor-${resetKey}`}
-              defaultValue={(obj as any).frameFill || "#ffffff"}
-              onChange={e => {
-                commit("frameFill", e.target.value);
-                commit("fill", e.target.value);
-              }}
-              style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
-            />
-            <input
-              aria-label="Frame background hex"
-              key={`fbghex-${resetKey}`}
-              defaultValue={(obj as any).frameFill || "#ffffff"}
-              onChange={e => {
-                commit("frameFill", e.target.value);
-                commit("fill", e.target.value);
-              }}
-              style={inputStyle}
+          <div style={{ padding: "0 10px 6px" }}>
+            <ColorPicker
+              color={(obj as any).frameFill || "#ffffff"}
+              onChange={v => { commit("frameFill", v); commit("fill", v); }}
+              resetKey={resetKey}
             />
           </div>
         </Section>
@@ -222,29 +206,11 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {isFrameType && (
         <Section label="Border">
           <div style={{ padding: "0 10px 0" }}>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                type="color"
-                aria-label="Frame border color"
-                key={`fscolor-${resetKey}`}
-                defaultValue={(obj as any).frameStroke || "#6366f1"}
-                onChange={e => {
-                  commit("frameStroke", e.target.value);
-                  commit("stroke", e.target.value);
-                }}
-                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
-              />
-              <input
-                aria-label="Frame border hex"
-                key={`fshex-${resetKey}`}
-                defaultValue={(obj as any).frameStroke || "#6366f1"}
-                onChange={e => {
-                  commit("frameStroke", e.target.value);
-                  commit("stroke", e.target.value);
-                }}
-                style={inputStyle}
-              />
-            </div>
+            <ColorPicker
+              color={(obj as any).frameStroke || "#6366f1"}
+              onChange={v => { commit("frameStroke", v); commit("stroke", v); }}
+              resetKey={resetKey}
+            />
             <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
           </div>
         </Section>
@@ -290,21 +256,11 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {/* Fill (hidden for frames) */}
       {!isFrameType && (
         <Section label="Fill">
-          <div style={{ padding: "0 10px 6px", display: "flex", gap: 6 }}>
-            <input
-              type="color"
-              aria-label="Fill color"
-              key={`fillcolor-${resetKey}`}
-              defaultValue={fieldFill.match(/^#[0-9a-fA-F]{6}$/) ? fieldFill : "#000000"}
-              onChange={e => commit("fill", e.target.value)}
-              style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
-            />
-            <input
-              aria-label="Fill color hex"
-              key={`fillhex-${resetKey}`}
-              defaultValue={fieldFill}
-              onChange={e => commit("fill", e.target.value)}
-              style={inputStyle}
+          <div style={{ padding: "0 10px 6px" }}>
+            <ColorPicker
+              color={fieldFill.match(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/) ? fieldFill : "#000000"}
+              onChange={v => commit("fill", v)}
+              resetKey={resetKey}
             />
           </div>
         </Section>
@@ -314,23 +270,11 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {!isFrameType && (
         <Section label="Stroke">
           <div style={{ padding: "0 10px 0" }}>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                type="color"
-                aria-label="Stroke color"
-                key={`strokecolor-${resetKey}`}
-                defaultValue={fieldStroke.match(/^#[0-9a-fA-F]{6}$/) ? fieldStroke : "#000000"}
-                onChange={e => commit("stroke", e.target.value)}
-                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+            <ColorPicker
+              color={fieldStroke.match(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/) ? fieldStroke : "#000000"}
+              onChange={v => commit("stroke", v)}
+              resetKey={resetKey}
             />
-            <input
-              aria-label="Stroke color hex"
-              key={`strokehex-${resetKey}`}
-              defaultValue={fieldStroke}
-              onChange={e => commit("stroke", e.target.value)}
-              style={inputStyle}
-            />
-          </div>
           <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
           <Row label="Dash" defaultValue={(obj as any).strokeDashArray?.join(",") || ""} onChange={v => {
             const arr = v ? v.split(",").map(Number).filter(n => !isNaN(n) && n >= 0) : null;
@@ -742,3 +686,82 @@ const selectStyle: React.CSSProperties = {
   flex: 1, background: "#111118", border: "1px solid #1c1c26",
   color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
 };
+
+// ── Color Picker with hex/rgba toggle + alpha slider ────────
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+  if (!m) return null;
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return "#" + [r, g, b].map(c => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, "0")).join("");
+}
+
+function ColorPicker({ color, onChange, resetKey }: { color: string; onChange: (v: string) => void; resetKey: number }) {
+  const [mode, setMode] = useState<"hex" | "rgba">("hex");
+  const alpha = color.length === 9 ? parseInt(color.slice(7, 9), 16) / 255 : 1;
+  const rgb = hexToRgb(color);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input
+          type="color"
+          defaultValue={color.slice(0, 7)}
+          onChange={e => onChange(e.target.value + (alpha < 1 ? Math.round(alpha * 255).toString(16).padStart(2, "0") : ""))}
+          style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+        />
+        <input
+          key={`cphex-${resetKey}`}
+          defaultValue={color}
+          onBlur={e => { const v = e.target.value.trim(); if (v.match(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/)) onChange(v); }}
+          style={{ ...inputStyle, flex: 1 }}
+        />
+        <button
+          type="button"
+          onClick={() => setMode(m => m === "hex" ? "rgba" : "hex")}
+          style={{
+            background: "none", border: "1px solid #1c1c26", color: "#7a7a90",
+            borderRadius: 4, padding: "2px 5px", fontSize: 10, cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+          title="Toggle hex/RGBA"
+        >
+          {mode === "hex" ? "#" : "RGBA"}
+        </button>
+      </div>
+      {mode === "rgba" && rgb && (
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {["r", "g", "b"].map(ch => (
+            <input
+              key={ch}
+              defaultValue={String(rgb[ch as keyof typeof rgb])}
+              onBlur={e => {
+                const v = Math.max(0, Math.min(255, Number(e.target.value) || 0));
+                const c = { ...rgb, [ch]: v };
+                onChange(rgbToHex(c.r, c.g, c.b) + (alpha < 1 ? Math.round(alpha * 255).toString(16).padStart(2, "0") : ""));
+              }}
+              style={{ ...inputStyle, width: 36, textAlign: "center" }}
+              placeholder={ch.toUpperCase()}
+            />
+          ))}
+          <input
+            type="range"
+            min={0} max={100} defaultValue={Math.round(alpha * 100)}
+            onChange={e => {
+              const a = Number(e.target.value) / 100;
+              onChange(color.slice(0, 7) + (a < 1 ? Math.round(a * 255).toString(16).padStart(2, "0") : ""));
+            }}
+            style={{ flex: 1, accentColor: "#6366f1" }}
+            title="Alpha"
+          />
+          <span style={{ fontSize: 10, color: "#7a7a90", minWidth: 28, textAlign: "right" }}>
+            {Math.round(alpha * 100)}%
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
