@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { FabricObject, Canvas } from "fabric";
-import { Gradient, Shadow } from "fabric";
+import { Gradient, Shadow, FabricImage } from "fabric";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 
 interface PropertiesPanelProps {
@@ -326,6 +326,13 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {!isTextType && !isFrameType && (
         <Section label="Box Shadow">
           <ShadowEditor obj={obj} commit={commit} resetKey={resetKey} hasShadow={hasShadow} fieldShadowColor={fieldShadowColor} fieldShadowBlur={fieldShadowBlur} fieldShadowX={fieldShadowX} fieldShadowY={fieldShadowY} />
+        </Section>
+      )}
+
+      {/* Blur */}
+      {!isFrameType && (
+        <Section label="Blur">
+          <BlurEditor obj={obj} commit={commit} resetKey={resetKey} />
         </Section>
       )}
 
@@ -727,6 +734,80 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
           <Row label="X" defaultValue={fieldShadowX} onChange={v => updateShadow("offsetX", v)} />
           <Row label="Y" defaultValue={fieldShadowY} onChange={v => updateShadow("offsetY", v)} />
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Blur Editor ────────────────────────────────────────────
+
+function BlurEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string, value: any) => void; resetKey: number }) {
+  // Fabric.js v6 stores blur as 0-1; we display as 0-50px
+  const blurFilter = (obj.filters || []).find((f: any) => f?.type === 'Blur' || f?.constructor?.type === 'Blur');
+  const hasBlur = !!blurFilter;
+  const blurValue = blurFilter?.blur ? Math.round(blurFilter.blur * 50) : 0;
+
+  const applyBlur = (enabled: boolean, value?: number) => {
+    const otherFilters = (obj.filters || []).filter((f: any) => {
+      const t = f?.type || f?.constructor?.type;
+      return t !== 'Blur' && t !== 'blur';
+    });
+    if (!enabled) {
+      obj.filters = otherFilters.length > 0 ? otherFilters : [];
+      (obj as any).dirty = true;
+      obj.canvas?.requestRenderAll();
+      return;
+    }
+    const radius = (value ?? Math.max(1, blurValue)) / 50;
+    try {
+      const BlurClass = (FabricImage as any)?.filters?.Blur;
+      if (BlurClass) {
+        obj.filters = [...otherFilters, new BlurClass({ blur: Math.max(0.001, radius) })];
+      }
+    } catch { /* fallback: filter class not available */ }
+    (obj as any).dirty = true;
+    obj.canvas?.requestRenderAll();
+  };
+
+  const updateBlur = (value: number) => applyBlur(true, value);
+
+  return (
+    <div style={{ padding: "0 10px 6px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <button
+          type="button"
+          onClick={() => applyBlur(!hasBlur)}
+          style={{
+            flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
+            background: hasBlur ? "#2a4a2a" : "#111118",
+            border: hasBlur ? "1px solid #4ade80" : "1px solid #1c1c26",
+            color: hasBlur ? "#4ade80" : "#7a7a90",
+          }}
+        >
+          {hasBlur ? `Enabled \u2014 ${blurValue}px \u2713` : "Disabled"}
+        </button>
+      </div>
+      {hasBlur && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="range"
+            min={0} max={50} step={0.5}
+            key={`blur-r-${resetKey}`}
+            defaultValue={blurValue}
+            onChange={e => updateBlur(Number(e.target.value))}
+            style={{ flex: 1, accentColor: "#6366f1" }}
+          />
+          <input
+            key={`blur-v-${resetKey}`}
+            defaultValue={String(blurValue)}
+            onBlur={e => {
+              const v = Math.max(0, Math.min(50, Number(e.target.value) || 0));
+              updateBlur(v);
+            }}
+            style={{ width: 40, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace", textAlign: "center" }}
+          />
+          <span style={{ fontSize: 10, color: "#7a7a90" }}>px</span>
+        </div>
       )}
     </div>
   );
