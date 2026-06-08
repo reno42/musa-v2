@@ -481,11 +481,29 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
   const isGradient = fill && typeof fill === "object" && fill.type && fill.colorStops;
   const gradType = isGradient ? fill.type : "none";
 
+  // Derive angle from coords for linear gradients
+  const getAngle = () => {
+    if (!isGradient || gradType !== "linear") return 0;
+    const c = fill.coords || {};
+    const dx = (c.x2 ?? 1) - (c.x1 ?? 0);
+    const dy = (c.y2 ?? 1) - (c.y1 ?? 0);
+    return Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
+  };
+
+  const angleToCoords = (deg: number) => {
+    const rad = deg * Math.PI / 180;
+    const cx = 0.5, cy = 0.5, r = 0.5;
+    return {
+      x1: cx - r * Math.cos(rad), y1: cy - r * Math.sin(rad),
+      x2: cx + r * Math.cos(rad), y2: cy + r * Math.sin(rad),
+    };
+  };
+
   const applyGradient = (type: string) => {
     if (type === "none") { commit("fill", "#cccccc"); return; }
     const coords = type === "radial"
       ? { x1: 0.5, y1: 0.5, r1: 0, x2: 0.5, y2: 0.5, r2: 0.5 }
-      : { x1: 0, y1: 0, x2: 1, y2: 1 };
+      : angleToCoords(135);
     commit("fill", new Gradient({
       type: type as "linear" | "radial",
       gradientUnits: "percentage",
@@ -497,10 +515,24 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
     }));
   };
 
+  const setAngle = (deg: number) => {
+    if (!isGradient || gradType !== "linear") return;
+    commit("fill", new Gradient({ ...fill, coords: angleToCoords(deg) }));
+  };
+
   const updateStop = (i: number, color: string) => {
     if (!isGradient) return;
     const stops = [...fill.colorStops];
     stops[i] = { ...stops[i], color };
+    commit("fill", new Gradient({ ...fill, colorStops: stops }));
+  };
+
+  const updateStopOffset = (i: number, offset: number) => {
+    if (!isGradient) return;
+    const stops = fill.colorStops.map((s: any, j: number) =>
+      j === i ? { ...s, offset: Math.max(0, Math.min(1, offset)) } : s
+    );
+    stops.sort((a: any, b: any) => a.offset - b.offset);
     commit("fill", new Gradient({ ...fill, colorStops: stops }));
   };
 
@@ -518,6 +550,8 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
     commit("fill", new Gradient({ ...fill, colorStops: stops }));
   };
 
+  const angle = getAngle();
+
   return (
     <div style={{ padding: "0 10px 6px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
@@ -532,21 +566,33 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
           <option value="radial">Radial</option>
         </select>
       </div>
+      {isGradient && gradType === "linear" && (
+        <div style={{ marginBottom: 4 }}>
+          <Row label="Angle" defaultValue={String(angle)} onChange={v => setAngle(Number(v))} />
+        </div>
+      )}
       {isGradient && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {fill.colorStops.map((stop: any, i: number) => (
-            <div key={`grad-${resetKey}-${i}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 11, color: "#7a7a90", minWidth: 30 }}>{Math.round(stop.offset * 100)}%</span>
+            <div key={`grad-${resetKey}-${i}`} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <input
+                key={`gradoff-${resetKey}-${i}`}
+                defaultValue={String(Math.round(stop.offset * 100))}
+                onBlur={e => updateStopOffset(i, Number(e.target.value) / 100)}
+                style={{ width: 28, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90", borderRadius: 4, padding: "3px 2px", fontSize: 10, fontFamily: "monospace", textAlign: "center" }}
+                title="Offset %"
+              />
+              <span style={{ fontSize: 10, color: "#5a5a70" }}>%</span>
               <input
                 type="color"
                 defaultValue={stop.color}
                 onChange={e => updateStop(i, e.target.value)}
-                style={{ width: 24, height: 22, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+                style={{ width: 22, height: 20, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
               />
               <input
                 defaultValue={stop.color}
                 onBlur={e => updateStop(i, e.target.value)}
-                style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12, fontFamily: "monospace" }}
+                style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace" }}
               />
               <button
                 type="button"
