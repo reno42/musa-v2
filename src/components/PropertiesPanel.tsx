@@ -344,6 +344,13 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
         </Section>
       )}
 
+      {/* Image Crop — only for image objects */}
+      {isImageType && (
+        <Section label="Crop">
+          <CropEditor obj={obj} commit={commit} resetKey={resetKey} canvasRef={canvasRef} />
+        </Section>
+      )}
+
       {/* Corner Radius (rect only) */}
       {isRectType && (
         <Section label="Corner Radius">
@@ -1011,6 +1018,80 @@ function ImageFiltersEditor({ obj, resetKey }: { obj: any; resetKey: number }) {
         >
           Invert
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Crop Editor ────────────────────────────────────────────
+
+function CropEditor({ obj, commit, resetKey, canvasRef }: {
+  obj: any; commit: (prop: string, value: any) => void; resetKey: number;
+  canvasRef?: React.RefObject<Canvas | null>;
+}) {
+  const origW = (obj as any)._originalWidth || obj.width || 0;
+  const origH = (obj as any)._originalHeight || obj.height || 0;
+  const fieldCropX = em(obj.cropX ?? 0);
+  const fieldCropY = em(obj.cropY ?? 0);
+  const fieldCropW = em((obj.width ?? origW) * ((obj as any).scaleX ?? 1));
+  const fieldCropH = em((obj.height ?? origH) * ((obj as any).scaleY ?? 1));
+  const hasCrop = (obj.cropX ?? 0) !== 0 || (obj.cropY ?? 0) !== 0 || Math.abs((obj.width ?? origW) - origW) > 1 || Math.abs((obj.height ?? origH) - origH) > 1;
+
+  const enterCropMode = () => {
+    const ctrl = (window as any).__canvasControls;
+    if (ctrl?.enterCropMode) {
+      ctrl.enterCropMode(obj);
+    }
+  };
+
+  const resetCrop = () => {
+    commit("cropX", 0);
+    commit("cropY", 0);
+    if (origW) { obj.set("width", origW); obj.set("scaleX", 1); }
+    if (origH) { obj.set("height", origH); obj.set("scaleY", 1); }
+    obj.setCoords();
+    obj.canvas?.requestRenderAll();
+  };
+
+  return (
+    <div style={{ padding: "0 10px 6px" }}>
+      <div style={{ fontSize: 10, color: "#5a5a70", marginBottom: 6 }}>
+        Original: {Math.round(origW)}×{Math.round(origH)}px
+        {hasCrop && ` · Cropped: ${Math.round(obj.width * ((obj as any).scaleX ?? 1))}×${Math.round(obj.height * ((obj as any).scaleY ?? 1))}px`}
+      </div>
+      <Row label="X" defaultValue={fieldCropX} onChange={v => commit("cropX", Math.max(0, Number(v)))} />
+      <Row label="Y" defaultValue={fieldCropY} onChange={v => commit("cropY", Math.max(0, Number(v)))} />
+      <Row label="W" defaultValue={fieldCropW} onChange={v => {
+        const nv = Math.max(1, Number(v));
+        if (origW > 0) obj.set("scaleX", nv / origW);
+        obj.set("width", nv);
+        obj.setCoords();
+        obj.canvas?.requestRenderAll();
+      }} />
+      <Row label="H" defaultValue={fieldCropH} onChange={v => {
+        const nv = Math.max(1, Number(v));
+        if (origH > 0) obj.set("scaleY", nv / origH);
+        obj.set("height", nv);
+        obj.setCoords();
+        obj.canvas?.requestRenderAll();
+      }} />
+      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+        <button type="button" onClick={enterCropMode}
+          style={{
+            flex: 1, padding: "4px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
+            background: "#1a2a3a", border: "1px solid #2a3a5a", color: "#60a5fa",
+          }}>
+          ✂ Crop Mode
+        </button>
+        {hasCrop && (
+          <button type="button" onClick={resetCrop}
+            style={{
+              padding: "4px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
+              background: "#1a1111", border: "1px solid #2a1a1a", color: "#7a5a5a",
+            }}>
+            Reset
+          </button>
+        )}
       </div>
     </div>
   );

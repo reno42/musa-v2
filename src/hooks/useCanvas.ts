@@ -50,6 +50,9 @@ export function useCanvas() {
   const panningRef = useRef(false);
   const snapRef = useRef(false);
   const gridSizeRef = useRef(50);
+  const cropTargetRef = useRef<any>(null);
+  const cropRectRef = useRef<any>(null);
+  const cropOverlayRef = useRef<any>(null);
 
   const pushHistory = useCallback(() => {
     const c = canvasRef.current;
@@ -972,6 +975,91 @@ export function useCanvas() {
     return results;
   }, [exportFramePNG]);
 
+  // ── Crop Mode ────────────────────────────────────────────
+
+  const exitCropMode = useCallback(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    cropTargetRef.current = null;
+    if (cropRectRef.current) { c.remove(cropRectRef.current); cropRectRef.current = null; }
+    if (cropOverlayRef.current) { c.remove(cropOverlayRef.current); cropOverlayRef.current = null; }
+    c.discardActiveObject();
+    c.requestRenderAll();
+  }, []);
+
+  const enterCropMode = useCallback((targetObj: any) => {
+    const c = canvasRef.current;
+    if (!c || !targetObj) return;
+
+    // Cancel any existing crop mode
+    if (cropTargetRef.current) exitCropMode();
+
+    cropTargetRef.current = targetObj;
+    c.discardActiveObject();
+    c.requestRenderAll();
+
+    const origW = targetObj._originalWidth || targetObj.width || 200;
+    const origH = targetObj._originalHeight || targetObj.height || 200;
+    const visW = (targetObj.width ?? origW) * (targetObj.scaleX ?? 1);
+    const visH = (targetObj.height ?? origH) * (targetObj.scaleY ?? 1);
+
+    // Create semi-transparent overlay (full canvas)
+    const overlay = new Rect({
+      left: 0, top: 0, width: c.width ?? 1080, height: c.height ?? 1080,
+      fill: "rgba(0,0,0,0.5)", selectable: false, evented: false,
+      excludeFromExport: true,
+    });
+    (overlay as any).isCropOverlay = true;
+    c.add(overlay);
+    cropOverlayRef.current = overlay;
+
+    // Create crop rect with handles
+    const cropRect = new Rect({
+      left: targetObj.left ?? 0, top: targetObj.top ?? 0,
+      width: visW, height: visH,
+      fill: "rgba(255,255,255,0.05)",
+      stroke: "#6366f1", strokeWidth: 2, strokeDashArray: [6, 4],
+      hasControls: true, hasBorders: true,
+      lockRotation: true, lockScalingFlip: true,
+      selectable: true, evented: true,
+    });
+    (cropRect as any).isCropRect = true;
+    c.add(cropRect);
+    c.setActiveObject(cropRect);
+    cropRectRef.current = cropRect;
+
+    // Bring target image to front for visibility
+    c.bringObjectToFront(targetObj);
+    c.bringObjectToFront(cropRect);
+    c.bringObjectToFront(overlay);
+    c.sendObjectToBack(overlay);
+
+    c.requestRenderAll();
+    pushHistory();
+  }, [exitCropMode, pushHistory]);
+
+  const applyCropMode = useCallback(() => {
+    const target = cropTargetRef.current;
+    const cropRect = cropRectRef.current;
+    if (!target || !cropRect) return;
+
+    const origW = target._originalWidth || target.width || 200;
+    const origH = target._originalHeight || target.height || 200;
+
+    const relLeft = (cropRect.left ?? 0) - (target.left ?? 0);
+    const relTop = (cropRect.top ?? 0) - (target.top ?? 0);
+
+    target.set("cropX", Math.max(0, relLeft));
+    target.set("cropY", Math.max(0, relTop));
+    target.set("width", cropRect.width ?? origW);
+    target.set("height", cropRect.height ?? origH);
+    target.set("scaleX", (cropRect.width ?? origW) / origW);
+    target.set("scaleY", (cropRect.height ?? origH) / origH);
+    target.setCoords();
+
+    exitCropMode();
+  }, [exitCropMode]);
+
   return {
     canvasRef, containerRef,
     tool, setTool, zoom, zoomIn, zoomOut, zoomToFit,
@@ -982,6 +1070,7 @@ export function useCanvas() {
     group, ungroup, deleteSelected, copySelected, pasteObject, duplicateSelected,
     toggleLock, showGrid, toggleSnap, setGridSize, pushHistory,
     align, distribute, booleanOp, autoLayout,
+    enterCropMode, exitCropMode, applyCropMode,
     // Frame management
     getFrames, getFrameCount, getFrameObjects, getFreeObjects,
     createFrame, deleteFrame, renameFrame, moveObjectToFrame,

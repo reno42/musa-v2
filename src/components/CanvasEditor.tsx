@@ -23,6 +23,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     toggleLock, showGrid, align, distribute, booleanOp, autoLayout,
     getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
     exportFramePNG, exportAllFramesPNG, FRAME_MAX,
+    enterCropMode, exitCropMode, applyCropMode,
   } = useCanvas();
 
   const mountRef = useRef<HTMLCanvasElement>(null);
@@ -178,6 +179,8 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       align, distribute, booleanOp, autoLayout,
       selectedObjects,
       _canvas: fabricRef.current,
+      // Crop mode
+      enterCropMode, exitCropMode, applyCropMode,
       // Frame management
       getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
       exportFramePNG, exportAllFramesPNG,
@@ -185,7 +188,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       // Rulers & Guides
       showRulers, toggleRulers, clearGuides,
     };
-  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX, showRulers, toggleRulers, clearGuides]);
+  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, enterCropMode, exitCropMode, applyCropMode, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX, showRulers, toggleRulers, clearGuides]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#1e1e2e" }}>
