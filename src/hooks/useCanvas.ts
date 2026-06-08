@@ -95,17 +95,19 @@ export function useCanvas() {
   // --- Zoom ---
   const zoomIn = useCallback(() => {
     const c = canvasRef.current;
-    if (!c) return;
+    const el = containerRef.current;
+    if (!c || !el) return;
     const z = Math.min(c.getZoom() * 1.2, 5);
-    (c as any).zoomToPoint(new Point(c.width! / 2, c.height! / 2), z);
+    (c as any).zoomToPoint(new Point(el.clientWidth / 2, el.clientHeight / 2), z);
     setZoom(z);
   }, []);
 
   const zoomOut = useCallback(() => {
     const c = canvasRef.current;
-    if (!c) return;
+    const el = containerRef.current;
+    if (!c || !el) return;
     const z = Math.max(c.getZoom() / 1.2, 0.1);
-    (c as any).zoomToPoint(new Point(c.width! / 2, c.height! / 2), z);
+    (c as any).zoomToPoint(new Point(el.clientWidth / 2, el.clientHeight / 2), z);
     setZoom(z);
   }, []);
 
