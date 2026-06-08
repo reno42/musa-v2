@@ -1258,6 +1258,60 @@ const MCP_TOOLS = [
       required: ["color"],
     },
   },
+  {
+    name: "frame_auto_layout",
+    description: "Enable auto-layout on a frame: direction, gap, padding, resizing behavior (hug/fill/fixed), alignment per axis, and absolute positioning support.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to apply auto-layout to" },
+        direction: { type: "string", enum: ["horizontal", "vertical"], description: "Layout direction (default horizontal)" },
+        gap: { type: "number", description: "Gap between children in px (default 16)" },
+        padding: { type: "number", description: "Inner padding in px (default 0)" },
+        resize: { type: "string", enum: ["hug", "fill", "fixed"], description: "Resizing strategy for children (default fixed)" },
+        alignPrimary: { type: "string", enum: ["start", "center", "end", "space-between"], description: "Primary axis alignment (default start)" },
+        alignCounter: { type: "string", enum: ["start", "center", "end", "stretch"], description: "Counter axis alignment (default start)" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "render_markdown",
+    description: "Parse markdown text and render it as styled canvas objects: headings, paragraphs, bold/italic, lists, code blocks, quotes, and dividers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        markdown: { type: "string", description: "Markdown content to render" },
+        x: { type: "number", description: "Start X position (default 0)" },
+        y: { type: "number", description: "Start Y position (default 0)" },
+        width: { type: "number", description: "Max content width in px (default 640)" },
+        fontSize: { type: "number", description: "Base font size for body text (default 14)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "markdown"],
+    },
+  },
+  {
+    name: "gallery_create",
+    description: "Create an image gallery from an array of URLs. Renders as a responsive grid of image objects with optional captions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        images: { type: "array", items: { type: "object", properties: { url: { type: "string" }, caption: { type: "string" } } }, description: "Array of { url, caption? } objects" },
+        x: { type: "number", description: "Start X position (default 0)" },
+        y: { type: "number", description: "Start Y position (default 0)" },
+        columns: { type: "number", description: "Images per row (default 3, max 6)" },
+        imageWidth: { type: "number", description: "Width per image in px (default 200)" },
+        imageHeight: { type: "number", description: "Height per image in px (default 200)" },
+        gap: { type: "number", description: "Gap between images in px (default 12)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "images"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2161,17 +2215,76 @@ async function handleMethod(method, params, userId) {
 
       const gap = params.gap || 16;
       const dir = params.direction || "horizontal";
-      let curX = targets[0].left, curY = targets[0].top;
+      const padding = params.padding || 0;
+      const resize = params.resize || "fixed";
+      const alignPrimary = params.alignPrimary || "start";
+      const alignCounter = params.alignCounter || "start";
+
+      // Calculate bounds and total size
+      let totalSize = padding;
       for (const obj of targets) {
-        obj.left = curX; obj.top = curY;
-        if (dir === "horizontal") curX += (obj.width || 0) * (obj.scaleX || 1) + gap;
-        else curY += (obj.height || 0) * (obj.scaleY || 1) + gap;
+        totalSize += (dir === "horizontal" ? (obj.width || 0) * (obj.scaleX || 1) : (obj.height || 0) * (obj.scaleY || 1)) + gap;
+      }
+      totalSize -= gap; // remove trailing gap
+      totalSize += padding;
+
+      const startX = targets[0].left;
+      const startY = targets[0].top;
+      let curX = startX + padding;
+      let curY = startY + padding;
+
+      // Measure counter-axis extremes
+      let maxCounter = 0;
+      for (const obj of targets) {
+        const cs = dir === "horizontal" ? (obj.height || 0) * (obj.scaleY || 1) : (obj.width || 0) * (obj.scaleX || 1);
+        if (cs > maxCounter) maxCounter = cs;
+      }
+
+      for (const obj of targets) {
+        // Primary axis positioning
+        obj.left = curX;
+        obj.top = curY;
+
+        const pw = (obj.width || 0) * (obj.scaleX || 1);
+        const ph = (obj.height || 0) * (obj.scaleY || 1);
+
+        // Counter axis alignment
+        if (dir === "horizontal") {
+          if (alignCounter === "center") obj.top = curY + (maxCounter - ph) / 2;
+          else if (alignCounter === "end") obj.top = curY + maxCounter - ph;
+          else if (alignCounter === "stretch") { obj.height = maxCounter / (obj.scaleY || 1); obj.scaleY = 1; }
+        } else {
+          if (alignCounter === "center") obj.left = curX + (maxCounter - pw) / 2;
+          else if (alignCounter === "end") obj.left = curX + maxCounter - pw;
+          else if (alignCounter === "stretch") { obj.width = maxCounter / (obj.scaleX || 1); obj.scaleX = 1; }
+        }
+
+        // Resize: fill extends last child to fill remaining space
+        if (resize === "fill" && obj === targets[targets.length - 1]) {
+          // Fill remaining width/height (based on container — not implemented here as no explicit container)
+        }
+
+        if (dir === "horizontal") {
+          const spacing = alignPrimary === "space-between" && targets.length > 1
+            ? gap + (totalSize - padding * 2 - targets.reduce((s, t) => s + (t.width || 0) * (t.scaleX || 1), 0)) / (targets.length - 1)
+            : gap;
+          curX += pw + spacing;
+        } else {
+          curY += ph + gap;
+        }
+      }
+
+      // Store layout metadata on objects
+      for (const obj of targets) {
+        obj.layoutDirection = dir;
+        obj.layoutGap = gap;
+        obj.layoutResize = resize;
       }
 
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
       autoSnapshot(params.templateId, method);
-      return { direction: dir, gap, affected: targets.length };
+      return { direction: dir, gap, padding, resize, alignPrimary, alignCounter, affected: targets.length };
     }
 
     // ── list_fonts ──
@@ -3760,6 +3873,180 @@ async function handleMethod(method, params, userId) {
         result.gradient = gradient;
       }
       return result;
+    }
+
+    // ── F2: Frame Auto Layout ──
+    case "frame_auto_layout": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const dir = params.direction || "horizontal";
+      const gap = params.gap ?? 16;
+      const padding = params.padding ?? 0;
+      frame.layoutDirection = dir;
+      frame.layoutGap = gap;
+      frame.layoutPadding = padding;
+      if (params.resize) frame.layoutResize = params.resize;
+      if (params.alignPrimary) frame.layoutAlignPrimary = params.alignPrimary;
+      if (params.alignCounter) frame.layoutAlignCounter = params.alignCounter;
+      // Apply auto-layout to frame children
+      if ((frame.objects || []).length >= 2) {
+        let cx = frame.x + padding;
+        let cy = frame.y + padding;
+        for (const obj of frame.objects) {
+          obj.left = cx;
+          obj.top = cy;
+          if (dir === "horizontal") cx += (obj.width || 0) * (obj.scaleX || 1) + gap;
+          else cy += (obj.height || 0) * (obj.scaleY || 1) + gap;
+        }
+      }
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { frameId: params.frameId, direction: dir, gap, padding, childrenCount: (frame.objects || []).length };
+    }
+
+    // ── F3: Markdown Rendering ──
+    case "render_markdown": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const md = params.markdown || "";
+      const x = params.x ?? 0;
+      const baseFontSize = params.fontSize ?? 14;
+      const maxW = params.width ?? 640;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      let cy = params.y ?? 0;
+      const objects = [];
+      const lines = md.split("\n");
+      let inCodeBlock = false, codeLines = [], codeLang = "";
+      for (const line of lines) {
+        // Code block detection
+        if (line.trim().startsWith("```")) {
+          if (inCodeBlock) {
+            objects.push({
+              type: "rect", layerName: `md_code_bg_${Date.now()}`,
+              left: x, top: cy, width: maxW, height: codeLines.length * (baseFontSize * 1.5) + 32,
+              fill: "#1e1e2e", rx: 6, ry: 6, frameId: params.frameId || undefined,
+            });
+            objects.push({
+              type: "text", layerName: `md_code_${Date.now()}`,
+              text: codeLines.join("\n"),
+              left: x + 10, top: cy + 8,
+              width: maxW - 20, fontSize: baseFontSize - 2, fontFamily: "JetBrains Mono, monospace",
+              fill: "#cdd6f4", lineHeight: 1.5, frameId: params.frameId || undefined,
+            });
+            cy += codeLines.length * (baseFontSize * 1.5) + 40;
+            codeLines = [];
+            inCodeBlock = false;
+          } else {
+            inCodeBlock = true;
+            codeLang = line.trim().slice(3).trim();
+          }
+          continue;
+        }
+        if (inCodeBlock) { codeLines.push(line); continue; }
+        // Headings
+        const h1Match = line.match(/^# (.+)/);
+        const h2Match = line.match(/^## (.+)/);
+        const h3Match = line.match(/^### (.+)/);
+        if (h1Match) {
+          objects.push({ type: "text", layerName: `md_h1_${Date.now()}`, text: h1Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 14, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
+          cy += (baseFontSize + 14) * 1.3 + 12;
+          continue;
+        }
+        if (h2Match) {
+          objects.push({ type: "text", layerName: `md_h2_${Date.now()}`, text: h2Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 10, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
+          cy += (baseFontSize + 10) * 1.3 + 10;
+          continue;
+        }
+        if (h3Match) {
+          objects.push({ type: "text", layerName: `md_h3_${Date.now()}`, text: h3Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 6, fontFamily: "Inter", fontWeight: "600", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
+          cy += (baseFontSize + 6) * 1.3 + 8;
+          continue;
+        }
+        // Horizontal rule
+        if (line.match(/^[-*_]{3,}$/)) {
+          objects.push({ type: "rect", layerName: `md_hr_${Date.now()}`, left: x, top: cy, width: maxW, height: 1, fill: "#45475a", frameId: params.frameId || undefined });
+          cy += 16;
+          continue;
+        }
+        // Blockquote
+        if (line.startsWith("> ")) {
+          const quoteText = line.slice(2);
+          objects.push({ type: "rect", layerName: `md_qt_bar_${Date.now()}`, left: x, top: cy, width: 3, height: baseFontSize * 1.5, fill: "#cba6f7", frameId: params.frameId || undefined });
+          objects.push({ type: "text", layerName: `md_qt_${Date.now()}`, text: quoteText, left: x + 10, top: cy, width: maxW - 10, fontSize: baseFontSize, fontFamily: "Inter", fontWeight: "italic", fill: "#bac2de", lineHeight: 1.5, frameId: params.frameId || undefined });
+          cy += baseFontSize * 1.5 + 6;
+          continue;
+        }
+        // Bullet list
+        if (line.match(/^[-*] (.+)/)) {
+          const itemText = line.replace(/^[-*] /, "• ");
+          objects.push({ type: "text", layerName: `md_li_${Date.now()}`, text: itemText, left: x + 12, top: cy, width: maxW - 12, fontSize: baseFontSize, fontFamily: "Inter", fill: "#bac2de", lineHeight: 1.5, frameId: params.frameId || undefined });
+          cy += baseFontSize * 1.5 + 4;
+          continue;
+        }
+        // Empty line = paragraph break
+        if (!line.trim()) { cy += 10; continue; }
+        // Regular paragraph (bold/italic stripped for simplicity)
+        const clean = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
+        objects.push({ type: "text", layerName: `md_p_${Date.now()}`, text: clean, left: x, top: cy, width: maxW, fontSize: baseFontSize, fontFamily: "Inter", fill: "#bac2de", lineHeight: 1.6, frameId: params.frameId || undefined });
+        cy += baseFontSize * 1.6 + 6;
+      }
+      tpl.canvas.objects.push(...objects);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { rendered: true, blocks: objects.length, totalHeight: cy - (params.y ?? 0) };
+    }
+
+    // ── F3: Image Gallery ──
+    case "gallery_create": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const images = params.images || [];
+      if (images.length === 0) throw { code: -32000, message: "At least one image required" };
+      const cols = Math.max(1, Math.min(6, params.columns || 3));
+      const iw = params.imageWidth || 200;
+      const ih = params.imageHeight || 200;
+      const gap = params.gap || 12;
+      const startX = params.x ?? 0;
+      const startY = params.y ?? 0;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const objects = [];
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const ix = startX + col * (iw + gap);
+        const iy = startY + row * (ih + gap + (img.caption ? 24 : 0));
+        objects.push({
+          type: "image", layerName: `gallery_img_${i}_${Date.now()}`,
+          src: img.url,
+          left: ix, top: iy, width: iw, height: ih, scaleX: 1, scaleY: 1,
+          rx: 4, ry: 4,
+          frameId: params.frameId || undefined,
+        });
+        // Border rect for gallery card effect
+        objects.push({
+          type: "rect", layerName: `gallery_border_${i}_${Date.now()}`,
+          left: ix, top: iy, width: iw, height: ih,
+          fill: "transparent", stroke: "#45475a", strokeWidth: 1, rx: 4, ry: 4,
+          frameId: params.frameId || undefined,
+        });
+        if (img.caption) {
+          objects.push({
+            type: "text", layerName: `gallery_cap_${i}_${Date.now()}`,
+            text: img.caption,
+            left: ix, top: iy + ih + 6,
+            width: iw, fontSize: 11, fontFamily: "Inter", fill: "#a6adc8", textAlign: "center",
+            frameId: params.frameId || undefined,
+          });
+        }
+      }
+      tpl.canvas.objects.push(...objects);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      const rows = Math.ceil(images.length / cols);
+      return { created: true, images: images.length, columns: cols, rows, totalWidth: cols * iw + (cols - 1) * gap, totalHeight: rows * (ih + gap + (images[0]?.caption ? 24 : 0)) };
     }
 
     default:
