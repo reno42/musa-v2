@@ -136,6 +136,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox" || obj.type === "textbox";
   const isRectType = obj.type === "rect" || obj.type === "Rect" || (obj as any).isFrameVisual;
   const isFrameType = !!(obj as any).isFrameVisual;
+  const isImageType = obj.type === "image" || obj.type === "Image" || obj.type === "FabricImage";
   const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;
 
   return (
@@ -333,6 +334,13 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       {!isFrameType && (
         <Section label="Blur">
           <BlurEditor obj={obj} commit={commit} resetKey={resetKey} />
+        </Section>
+      )}
+
+      {/* Image Filters — only for image objects */}
+      {isImageType && (
+        <Section label="Filters">
+          <ImageFiltersEditor obj={obj} resetKey={resetKey} />
         </Section>
       )}
 
@@ -809,6 +817,201 @@ function BlurEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string
           <span style={{ fontSize: 10, color: "#7a7a90" }}>px</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Image Filters Editor ───────────────────────────────────
+
+const IMAGE_FILTER_PRESETS: { name: string; filters: { type: string; value?: number }[] }[] = [
+  {
+    name: "Grayscale",
+    filters: [{ type: "Grayscale" }],
+  },
+  {
+    name: "Sepia",
+    filters: [{ type: "Sepia" }],
+  },
+  {
+    name: "Vivid",
+    filters: [
+      { type: "Brightness", value: 0.1 },
+      { type: "Contrast", value: 0.2 },
+      { type: "Saturation", value: 0.5 },
+    ],
+  },
+  {
+    name: "Warm",
+    filters: [
+      { type: "HueRotation", value: 0.05 },
+      { type: "Saturation", value: 0.15 },
+    ],
+  },
+  {
+    name: "Cool",
+    filters: [
+      { type: "HueRotation", value: -0.08 },
+      { type: "Brightness", value: -0.05 },
+    ],
+  },
+];
+
+const FILTER_SLIDERS = [
+  { type: "Brightness", label: "Brightness", min: -0.5, max: 0.5, step: 0.02, default: 0 },
+  { type: "Contrast", label: "Contrast", min: -0.5, max: 0.5, step: 0.02, default: 0 },
+  { type: "Saturation", label: "Saturation", min: -1, max: 1, step: 0.05, default: 0 },
+  { type: "HueRotation", label: "Hue", min: -0.5, max: 0.5, step: 0.02, default: 0 },
+  { type: "Blur", label: "Blur", min: 0, max: 0.3, step: 0.005, default: 0 },
+];
+
+function getFilterValue(obj: any, filterType: string): number {
+  const f = (obj.filters || []).find((x: any) => x?.type === filterType || x?.constructor?.type === filterType);
+  if (!f) return 0;
+  const key = filterType === "HueRotation" ? "rotation" : filterType.toLowerCase();
+  return f[key] ?? 0;
+}
+
+function setFilter(obj: any, filterType: string, value: number | undefined) {
+  const filters = (obj.filters || []).filter((x: any) => {
+    const t = x?.type || x?.constructor?.type;
+    return t !== filterType;
+  });
+  if (value === undefined || value === 0) {
+    // For slider types, remove if at default (except Sepia/Grayscale which are toggles)
+    if (filterType === "Sepia" || filterType === "Grayscale") {
+      // Don't remove — handled by presets
+    }
+  }
+  if (value !== undefined && (value !== 0 || filterType === "Blur")) {
+    try {
+      const FilterClass = (FabricImage as any)?.filters?.[filterType];
+      if (FilterClass) {
+        const key = filterType === "HueRotation" ? "rotation" : filterType.toLowerCase();
+        const params: any = { [key]: value };
+        if (filterType === "Grayscale") params.mode = "average";
+        if (filterType === "Invert") { params.alpha = false; params.invert = true; }
+        filters.push(new FilterClass(params));
+      }
+    } catch { /* fallback */ }
+  }
+  obj.filters = filters;
+  (obj as any).dirty = true;
+  obj.canvas?.requestRenderAll();
+}
+
+function ImageFiltersEditor({ obj, resetKey }: { obj: any; resetKey: number }) {
+  const applyPreset = (preset: typeof IMAGE_FILTER_PRESETS[number]) => {
+    // Clear non-structural filters
+    obj.filters = (obj.filters || []).filter((f: any) => {
+      const t = f?.type || f?.constructor?.type;
+      return !["Brightness", "Contrast", "Saturation", "HueRotation", "Blur", "Grayscale", "Sepia", "Invert"].includes(t);
+    });
+    for (const pf of preset.filters) {
+      try {
+        const FilterClass = (FabricImage as any)?.filters?.[pf.type];
+        if (FilterClass) {
+          const key = pf.type === "HueRotation" ? "rotation" : pf.type.toLowerCase();
+          let params: any = { [key]: pf.value ?? 0 };
+          if (pf.type === "Grayscale") params.mode = "average";
+          if (pf.type === "Sepia") params = {};
+          obj.filters.push(new FilterClass(params));
+        }
+      } catch { /* fallback */ }
+    }
+    (obj as any).dirty = true;
+    obj.canvas?.requestRenderAll();
+  };
+
+  const hasAnyFilter = (obj.filters || []).some((f: any) => {
+    const t = f?.type || f?.constructor?.type;
+    return ["Brightness", "Contrast", "Saturation", "HueRotation", "Blur", "Grayscale", "Sepia", "Invert"].includes(t);
+  });
+
+  return (
+    <div style={{ padding: "0 10px 6px" }}>
+      {/* Presets */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 6 }}>
+        {IMAGE_FILTER_PRESETS.map(p => (
+          <button
+            key={p.name}
+            type="button"
+            onClick={() => applyPreset(p)}
+            title={p.name}
+            style={{
+              flex: 1, padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
+              background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90",
+              minWidth: 44,
+            }}
+          >
+            {p.name}
+          </button>
+        ))}
+        {hasAnyFilter && (
+          <button
+            type="button"
+            onClick={() => {
+              obj.filters = (obj.filters || []).filter((f: any) => {
+                const t = f?.type || f?.constructor?.type;
+                return !["Brightness", "Contrast", "Saturation", "HueRotation", "Blur", "Grayscale", "Sepia", "Invert"].includes(t);
+              });
+              (obj as any).dirty = true;
+              obj.canvas?.requestRenderAll();
+            }}
+            title="Reset all filters"
+            style={{
+              padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
+              background: "#1a1111", border: "1px solid #2a1a1a", color: "#7a5a5a",
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
+      {/* Sliders */}
+      {FILTER_SLIDERS.map(s => {
+        const cur = getFilterValue(obj, s.type);
+        return (
+          <div key={`ifl-${s.type}-${resetKey}`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+            <span style={{ fontSize: 11, color: "#7a7a90", flex: "0 0 72px", textAlign: "right" }}>{s.label}</span>
+            <input
+              type="range"
+              min={s.min} max={s.max} step={s.step}
+              defaultValue={cur}
+              onChange={e => setFilter(obj, s.type, Number(e.target.value))}
+              style={{ flex: 1, accentColor: "#6366f1" }}
+            />
+            <span style={{ fontSize: 10, color: "#5a5a70", width: 32, textAlign: "right", fontFamily: "monospace" }}>
+              {Math.round(cur * 100)}
+            </span>
+          </div>
+        );
+      })}
+
+      {/* Toggle filters: Invert */}
+      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+        <button
+          type="button"
+          onClick={() => {
+            const hasInvert = (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert");
+            if (hasInvert) {
+              obj.filters = obj.filters.filter((f: any) => (f?.type || f?.constructor?.type) !== "Invert");
+            } else {
+              setFilter(obj, "Invert", 0); // Invert is a toggle, not a slider
+            }
+            (obj as any).dirty = true;
+            obj.canvas?.requestRenderAll();
+          }}
+          style={{
+            flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 11, cursor: "pointer",
+            background: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "#2a4a2a" : "#111118",
+            border: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "1px solid #4ade80" : "1px solid #1c1c26",
+            color: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "#4ade80" : "#7a7a90",
+          }}
+        >
+          Invert
+        </button>
+      </div>
     </div>
   );
 }
