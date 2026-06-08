@@ -1572,6 +1572,78 @@ const MCP_TOOLS = [
       required: ["userId", "name"],
     },
   },
+  // ══════════════════════════════════════════════════
+  // Sprint 2: Ghost System — snapshot overlays & diffs
+  // ══════════════════════════════════════════════════
+  {
+    name: "ghost_show",
+    description: "Overlay a snapshot as a translucent ghost layer on the canvas. Clones snapshot objects with configurable opacity (0.1-0.5) and tint color, storing them as a ghostLayer group in template metadata. Use to visually compare current state against a past snapshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to apply ghost to" },
+        snapId: { type: "string", description: "Specific snapshot ID to show as ghost. Omit to use the last snapshot of the requested type." },
+        type: { type: "string", enum: ["ia", "human", "system"], description: "Snapshot type filter (default 'ia'). Used when snapId is not provided." },
+        opacity: { type: "number", description: "Ghost opacity 0.10-0.50 (default 0.25)" },
+        tint: { type: "string", description: "Tint color as hex (e.g. '#ff6600'). Applied as overlayFill on ghost objects." },
+        showDiff: { type: "boolean", description: "If true, color-code objects: green=added, red=deleted, yellow=modified (default false)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "ghost_diff",
+    description: "Compare current canvas against a baseline snapshot and return a structured diff with color coding. Green=added since snapshot, red=deleted since snapshot, yellow=modified. Useful before a ghost_merge to understand what changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        baselineSnapId: { type: "string", description: "Baseline snapshot ID. Omit to use the last human snapshot." },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "ghost_merge",
+    description: "Merge snapshot changes into current state with selective keep/discard. 'I want what the AI did but keeping my header and footer.' Returns merged, kept, discarded, and conflict counts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to merge into" },
+        sourceSnapId: { type: "string", description: "Source snapshot ID whose changes to merge" },
+        keepLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to KEEP from current state (not overwritten by snapshot)" },
+        discardLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to DISCARD from the snapshot (don't apply these)" },
+        mode: { type: "string", enum: ["prefer_snapshot", "prefer_current", "ask"], description: "Merge mode: prefer_snapshot (default, snapshot wins), prefer_current (current wins on conflict), ask (return conflicts without applying)" },
+      },
+      required: ["templateId", "sourceSnapId"],
+    },
+  },
+  {
+    name: "ghost_timeline",
+    description: "Return the full snapshot timeline with mini-thumbnail data for visual Time Machine navigation. Each entry includes object count, frame count, dominant colors, and a compact representation for timeline rendering.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        limit: { type: "number", description: "Max entries (default 20)" },
+        typeFilter: { type: "string", enum: ["ia", "human", "system"], description: "Filter by snapshot type (optional)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "ghost_compare",
+    description: "Side-by-side comparison of two snapshots. Returns structural diff between them plus a similarity score (0-100) based on matching objects, positions, and types.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        snapIdA: { type: "string", description: "First snapshot ID (baseline / older)" },
+        snapIdB: { type: "string", description: "Second snapshot ID (comparison / newer). Omit to compare snapIdA against current state." },
+      },
+      required: ["templateId", "snapIdA"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -4773,6 +4845,348 @@ async function handleMethod(method, params, userId) {
       if (!globalThis.__pat_tokens) globalThis.__pat_tokens = new Map();
       globalThis.__pat_tokens.set(tokenId, { id: tokenId, userId: params.userId, name: params.name, scopes, expiresAt, tokenHashed, created: new Date().toISOString() });
       return { created: true, tokenId, token: tokenRaw, name: params.name, scopes, expiresAt, note: "Store this token securely. It will not be shown again." };
+    }
+
+    // ══════════════════════════════════════════════════
+    // Sprint 2: Ghost System handlers
+    // ══════════════════════════════════════════════════
+
+    // ── ghost_show ──
+    case "ghost_show": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      // Find target snapshot
+      let snapData = null;
+      if (params.snapId) {
+        const snap = store.getSnapshot(params.templateId, params.snapId);
+        snapData = snap?.data || snap;
+      } else {
+        // Find last snapshot of requested type
+        const all = store.listSnapshots(params.templateId);
+        const typedSnaps = params.type ? all.filter(e => e.type === params.type) : all;
+        if (typedSnaps.length > 0) snapData = typedSnaps[0].data;
+      }
+      if (!snapData) throw { code: -32000, message: "No snapshot found for the requested criteria" };
+
+      const opacity = Math.max(0.1, Math.min(0.5, params.opacity ?? 0.25));
+      const tint = params.tint || null;
+      const showDiff = params.showDiff || false;
+
+      // Build ghost objects from snapshot canvas
+      const ghostObjects = (snapData.canvas?.objects || []).map(o => {
+        const clone = JSON.parse(JSON.stringify(o));
+        clone.ghostOriginal = true;
+        clone.opacity = opacity;
+        clone.selectable = false;
+        clone.evented = false;
+        if (tint) clone.overlayFill = tint;
+        return clone;
+      });
+
+      // If diff mode, compare current vs snapshot and color-code
+      let diffData = null;
+      if (showDiff) {
+        diffData = compareTemplates(snapData, tpl);
+        for (const d of diffData) {
+          const ghostObj = ghostObjects.find(o => (o.layerName || o.name) === d.layerName);
+          if (ghostObj && d.action === "modified") ghostObj.ghostStatus = "modified";
+          else if (ghostObj && d.action === "added") ghostObj.ghostStatus = "added";
+          else if (d.action === "deleted" && !ghostObj) {
+            // Object exists in snapshot but not current — mark it as "deleted"
+            ghostObjects.push({
+              ...d.old, layerName: d.layerName, type: d.old?.type || "rect",
+              ghostOriginal: true, ghostStatus: "deleted",
+              opacity: opacity, selectable: false, evented: false,
+            });
+          }
+        }
+      }
+
+      // Store ghost metadata on template (non-destructive, only in metadata)
+      const ghostMeta = {
+        ghostLayer: {
+          active: true,
+          snapId: params.snapId || (snapData.metadata?.snapId || "last"),
+          type: params.type || "ia",
+          opacity,
+          tint,
+          showDiff,
+          objectCount: ghostObjects.length,
+          appliedAt: new Date().toISOString(),
+          objects: ghostObjects,
+        },
+      };
+
+      // Update template metadata only (not canvas)
+      const existingMeta = tpl.metadata || {};
+      const updatedMeta = { ...existingMeta, ...ghostMeta };
+      await templates.updateTemplate(params.templateId, { metadata: updatedMeta });
+      autoSnapshot(params.templateId, method);
+
+      return {
+        ghostApplied: true,
+        templateId: params.templateId,
+        objectCount: ghostObjects.length,
+        opacity,
+        tint,
+        showDiff,
+        diff: diffData ? { added: diffData.filter(d => d.action === "added").length, deleted: diffData.filter(d => d.action === "deleted").length, modified: diffData.filter(d => d.action === "modified").length, total: diffData.length } : null,
+      };
+    }
+
+    // ── ghost_diff ──
+    case "ghost_diff": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      let snapData = null;
+      if (params.baselineSnapId) {
+        const snap = store.getSnapshot(params.templateId, params.baselineSnapId);
+        snapData = snap?.data || snap;
+      } else {
+        // Default: last human snapshot
+        const all = store.listSnapshots(params.templateId);
+        const humanSnaps = all.filter(e => e.type === "human");
+        if (humanSnaps.length > 0) snapData = humanSnaps[0].data;
+        else if (all.length > 0) snapData = all[0].data;
+      }
+      if (!snapData || !snapData.canvas) throw { code: -32000, message: "No baseline snapshot found" };
+
+      const diffs = compareTemplates(snapData, tpl);
+
+      // Color-code the diff entries
+      const colored = diffs.map(d => ({
+        ...d,
+        color: d.action === "added" ? "#4ade80" : d.action === "deleted" ? "#f87171" : "#fbbf24",
+      }));
+
+      const added = colored.filter(d => d.action === "added");
+      const deleted = colored.filter(d => d.action === "deleted");
+      const modified = colored.filter(d => d.action === "modified");
+
+      return {
+        templateId: params.templateId,
+        baselineType: params.baselineSnapId ? "specific" : "last_human",
+        changes: colored,
+        summary: { added: added.length, deleted: deleted.length, modified: modified.length, total: diffs.length },
+        added,
+        deleted,
+        modified,
+      };
+    }
+
+    // ── ghost_merge ──
+    case "ghost_merge": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
+
+      const snap = store.getSnapshot(params.templateId, params.sourceSnapId);
+      const snapData = snap?.data || snap;
+      if (!snapData || !snapData.canvas) throw { code: -32000, message: `Source snapshot not found: ${params.sourceSnapId}` };
+
+      const keepSet = new Set(params.keepLayerNames || []);
+      const discardSet = new Set(params.discardLayerNames || []);
+      const mode = params.mode || "prefer_snapshot";
+
+      const currentObjects = tpl.canvas?.objects || [];
+      const snapshotObjects = snapData.canvas?.objects || [];
+
+      const currentById = new Map();
+      for (const o of currentObjects) {
+        const id = o.layerName || o.name || o.id;
+        if (id) currentById.set(id, o);
+      }
+
+      const snapById = new Map();
+      for (const o of snapshotObjects) {
+        const id = o.layerName || o.name || o.id;
+        if (id) snapById.set(id, o);
+      }
+
+      let merged = 0, kept = 0, discarded = 0, conflicts = [];
+      const resultObjects = [];
+      const allIds = new Set([...currentById.keys(), ...snapById.keys()]);
+
+      for (const id of allIds) {
+        const cur = currentById.get(id);
+        const src = snapById.get(id);
+
+        // Keep: always preserve current version
+        if (keepSet.has(id)) {
+          if (cur) { resultObjects.push(cur); kept++; }
+          continue;
+        }
+
+        // Discard: skip snapshot additions
+        if (discardSet.has(id)) {
+          if (cur && mode !== "prefer_snapshot") { resultObjects.push(cur); kept++; }
+          else discarded++;
+          continue;
+        }
+
+        if (cur && src) {
+          // Both exist — conflict resolution
+          const changes = compareValues(src, cur);
+          if (changes.length === 0) {
+            resultObjects.push(cur);
+          } else {
+            if (mode === "prefer_snapshot") {
+              resultObjects.push(JSON.parse(JSON.stringify(src)));
+              merged++;
+            } else if (mode === "prefer_current") {
+              resultObjects.push(cur);
+              kept++;
+            } else {
+              // "ask" mode — don't apply, record conflict
+              resultObjects.push(cur);
+              conflicts.push({ layerName: id, changes });
+            }
+          }
+        } else if (!cur && src) {
+          // Only in snapshot — add it
+          resultObjects.push(JSON.parse(JSON.stringify(src)));
+          merged++;
+        } else if (cur && !src) {
+          // Only in current — keep it
+          resultObjects.push(cur);
+          kept++;
+        }
+      }
+
+      tpl.canvas.objects = resultObjects;
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+
+      return {
+        merged: true,
+        templateId: params.templateId,
+        mode,
+        counts: { merged, kept, discarded, conflicts: conflicts.length },
+        conflicts: conflicts.length > 0 ? conflicts : undefined,
+        totalObjects: resultObjects.length,
+      };
+    }
+
+    // ── ghost_timeline ──
+    case "ghost_timeline": {
+      const limit = Math.max(1, Math.min(100, params.limit || 20));
+      let timeline = store.listSnapshots(params.templateId);
+
+      if (params.typeFilter) {
+        timeline = timeline.filter(e => e.type === params.typeFilter);
+      }
+
+      const entries = timeline.slice(0, limit).map(e => {
+        // Extract dominant colors from snapshot data
+        const objects = e.data?.canvas?.objects || [];
+        const colorCounts = new Map();
+        for (const o of objects) {
+          const fill = o.fill;
+          if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
+            colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
+          }
+        }
+        const sortedColors = [...colorCounts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([hex, count]) => ({ hex, count }));
+
+        // Count by type
+        const typeCounts = {};
+        for (const o of objects) {
+          const t = o.type || "unknown";
+          typeCounts[t] = (typeCounts[t] || 0) + 1;
+        }
+
+        return {
+          snapshotId: e.id,
+          type: e.type,
+          trigger: e.trigger,
+          timestamp: e.timestamp,
+          objectCount: e.objectCount,
+          frameCount: e.frameCount,
+          thumbnailData: {
+            dominantColors: sortedColors,
+            typeBreakdown: typeCounts,
+            canvasWidth: e.data?.width || 1080,
+            canvasHeight: e.data?.height || 1080,
+          },
+        };
+      });
+
+      return {
+        templateId: params.templateId,
+        timeline: entries,
+        total: timeline.length,
+        filtered: !!params.typeFilter,
+      };
+    }
+
+    // ── ghost_compare ──
+    case "ghost_compare": {
+      const snapA = store.getSnapshot(params.templateId, params.snapIdA);
+      if (!snapA || !snapA.data) throw { code: -32000, message: `Snapshot A not found: ${params.snapIdA}` };
+      const dataA = snapA.data;
+
+      let dataB, snapIdB;
+      if (params.snapIdB) {
+        const snapB = store.getSnapshot(params.templateId, params.snapIdB);
+        if (!snapB || !snapB.data) throw { code: -32000, message: `Snapshot B not found: ${params.snapIdB}` };
+        dataB = snapB.data;
+        snapIdB = params.snapIdB;
+      } else {
+        dataB = await templates.getTemplate(params.templateId);
+        if (!dataB) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+        snapIdB = "current";
+      }
+
+      const diffs = compareTemplates(dataA, dataB);
+
+      // Calculate similarity score
+      const objsA = dataA.canvas?.objects || [];
+      const objsB = dataB.canvas?.objects || [];
+      const totalObjects = Math.max(objsA.length, objsB.length);
+      const unchanged = totalObjects - diffs.filter(d => d.action !== "modified" || (d.changes?.length || 0) === 0).length;
+      // More nuanced: count matching positions and types
+      let matchScore = 0;
+      const idsA = new Map();
+      for (const o of objsA) { const id = o.layerName || o.name; if (id) idsA.set(id, o); }
+      for (const o of objsB) {
+        const id = o.layerName || o.name;
+        const match = idsA.get(id);
+        if (match) {
+          matchScore += 0.5; // Same name = 50%
+          if (match.type === o.type) matchScore += 0.3; // Same type = 30%
+          if (Math.abs((match.left || 0) - (o.left || 0)) < 5 && Math.abs((match.top || 0) - (o.top || 0)) < 5) matchScore += 0.2; // Same position ±5px = 20%
+        }
+      }
+      const similarityScore = totalObjects > 0 ? Math.round((matchScore / totalObjects) * 100) : 100;
+
+      // Summary stats for each side
+      const summarize = (data) => ({
+        objectCount: data.canvas?.objects?.length || 0,
+        frameCount: data.frames?.length || 0,
+        width: data.width,
+        height: data.height,
+        typeBreakdown: (data.canvas?.objects || []).reduce((acc, o) => {
+          acc[o.type || "unknown"] = (acc[o.type || "unknown"] || 0) + 1;
+          return acc;
+        }, {}),
+      });
+
+      return {
+        templateId: params.templateId,
+        comparisonData: {
+          a: { snapId: params.snapIdA, ...summarize(dataA), timestamp: snapA.timestamp },
+          b: { snapId: snapIdB, ...summarize(dataB), timestamp: snapB?.timestamp || new Date().toISOString() },
+        },
+        differences: diffs,
+        similarityScore: Math.min(100, similarityScore),
+        totalChanges: diffs.length,
+      };
     }
 
     default:

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { GhostPanel } from "./GhostPanel";
 
 interface SnapshotMeta {
   id: string;
@@ -151,6 +152,9 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
           }}>✕</button>
         </div>
       </div>
+
+      {/* Ghost Layer Section */}
+      <GhostPanel templateId={templateId} />
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
