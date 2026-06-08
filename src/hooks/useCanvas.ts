@@ -176,7 +176,7 @@ export function useCanvas() {
     const c = canvasRef.current;
     if (!c) return;
     c.isDrawingMode = t === "pencil";
-    c.selection = t === "select" || t === "hand";
+    c.selection = t === "select";
     (c as any).defaultCursor = t === "hand" ? "grab" : "default";
   }, []);
 

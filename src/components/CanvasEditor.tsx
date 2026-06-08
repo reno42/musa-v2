@@ -34,6 +34,12 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   const initDoneRef = useRef(false);
   const [canvasReady, setCanvasReady] = useState(false);
 
+  // Space-to-pan: hold Space to temporarily activate hand tool
+  const spaceActiveRef = useRef(false);
+  const prevToolRef = useRef<ToolName>("select");
+  // Keep prevToolRef in sync with current tool
+  useEffect(() => { if (!spaceActiveRef.current) prevToolRef.current = tool; }, [tool]);
+
   // Auto-save
   const { status: saveStatus } = useAutoSave({
     fabricRef,
@@ -84,6 +90,16 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       if (mod && e.key === "g") { e.preventDefault(); group(); return; }
       if (mod && e.key === "G") { e.preventDefault(); ungroup(); return; }
 
+      // Space-to-pan: hold Space for temporary hand tool
+      if (!isInput && !mod && e.key === " " && !spaceActiveRef.current) {
+        e.preventDefault();
+        spaceActiveRef.current = true;
+        prevToolRef.current = tool;
+        setTool("hand");
+        onToolChange?.("hand");
+        return;
+      }
+
       // Tool switching (not when typing)
       if (!isInput && !mod) {
         switch (e.key.toLowerCase()) {
@@ -99,8 +115,19 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
         }
       }
     };
+    const keyupHandler = (e: KeyboardEvent) => {
+      if (e.key === " " && spaceActiveRef.current) {
+        spaceActiveRef.current = false;
+        setTool(prevToolRef.current);
+        onToolChange?.(prevToolRef.current);
+      }
+    };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keyup", keyupHandler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      window.removeEventListener("keyup", keyupHandler);
+    };
   }, [undo, redo, copySelected, pasteObject, duplicateSelected, deleteSelected, group, ungroup, setTool, onToolChange, showGrid]);
 
   // Expose canvas controls via window for Toolbar integration
