@@ -30,6 +30,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricRef = useRef<FabricCanvas | null>(null);
   const gridOnRef = useRef(false);
+  const snapOnRef = useRef(false);
   const clipboardRef = useRef<any>(null);
   const templateJsonRef = useRef(templateJson);
   templateJsonRef.current = templateJson;
@@ -120,6 +121,13 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
 
       // Tool switching (not when typing)
       if (!isInput && !mod) {
+        // Shift+G: toggle snap (must check before toLowerCase() which maps G→g)
+        if (e.shiftKey && e.key.toLowerCase() === "g") {
+          e.preventDefault();
+          snapOnRef.current = !snapOnRef.current;
+          toggleSnap(snapOnRef.current);
+          return;
+        }
         switch (e.key.toLowerCase()) {
           case "v": setTool("select"); onToolChange?.("select"); break;
           case "h": setTool("hand"); onToolChange?.("hand"); break;
