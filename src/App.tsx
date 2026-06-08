@@ -6,6 +6,7 @@ import { LayersPanel } from "./components/LayersPanel";
 import { Dashboard } from "./components/Dashboard";
 import { BatchAMator } from "./components/BatchAMator";
 import { GovernancePanel } from "./components/GovernancePanel";
+import { ComponentsPanel } from "./components/ComponentsPanel";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { ToastProvider } from "./components/Toast";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -69,6 +70,8 @@ function App() {
   const governanceOpenRef = useRef(false);
   const governanceRefreshRef = useRef(0);
   const [, setGovKey] = useState(0);
+  const componentsOpenRef = useRef(false);
+  const [, setCompKey] = useState(0);
 
   const { view, templateId, templateJson, canvas: canvasState, shortcutsOpen } = state;
   const zoom = canvasState.zoom;
@@ -274,6 +277,7 @@ function App() {
           <button type="button" onClick={() => dispatch({ type: "BACK_TO_DASHBOARD" })} style={topBtn}>← Home</button>
           <button type="button" onClick={() => dispatch({ type: "SET_SHORTCUTS", open: true })} style={topBtn}>⌨ Shortcuts</button>
           <button type="button" onClick={() => setBatchOpen(true)} style={topBtn}>⚡ Batch</button>
+          <button type="button" onClick={() => { componentsOpenRef.current = !componentsOpenRef.current; setCompKey(n => n + 1); }} style={topBtn}>📦 Components</button>
           <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
         </div>
 
@@ -307,6 +311,7 @@ function App() {
       {/* Modals */}
       <KeyboardShortcuts open={shortcutsOpen} onClose={() => dispatch({ type: "SET_SHORTCUTS", open: false })} />
       {batchOpen && <BatchAMator templateId={templateId} onClose={() => setBatchOpen(false)} />}
+      {componentsOpenRef.current && <ComponentsPanel templateId={templateId} selectedObjects={selectedObjects} onUpdate={() => callCanvas("pushHistory")} onClose={() => { componentsOpenRef.current = false; setCompKey(n => n + 1); }} />}
       {governanceOpenRef.current && <GovernancePanel templateId={templateId} onClose={() => { governanceOpenRef.current = false; setGovKey(n => n + 1); }} onRestore={() => callCanvas("pushHistory")} />}
     </ToastProvider>
   );
