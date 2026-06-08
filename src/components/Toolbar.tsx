@@ -15,6 +15,7 @@ import { ShapesDropdown, DrawDropdown, AlignDropdown, BooleanDropdown } from "./
 import { EmbedsDropdown } from "./toolbar/EmbedsDropdown";
 import { BlocksDropdown } from "./toolbar/BlocksDropdown";
 import { SnapDropdown } from "./toolbar/SnapDropdown";
+import { GalleryDropdown } from "./toolbar/GalleryDropdown";
 
 type AlignDirection = "left" | "center-h" | "right" | "top" | "center-v" | "bottom";
 type EmbedType = "video" | "audio" | "pdf" | "figma" | "social";
@@ -30,6 +31,7 @@ interface SelectionState {
 }
 
 interface Props {
+  templateId: string | null;
   tool: ToolName;
   onToolChange: (tool: ToolName) => void;
   onExportPNG: () => void;
@@ -55,9 +57,19 @@ interface Props {
   onPrototypePreview?: () => void;
   onEmbed?: (url: string, type: EmbedType) => void;
   onBlockAction?: (method: string, params: Record<string, any>) => void;
+  onGalleryCreate?: (params: {
+    images: { url: string; caption?: string }[];
+    columns: number;
+    imageWidth: number;
+    imageHeight: number;
+    gap: number;
+    x: number;
+    y: number;
+  }) => void;
 }
 
 export function Toolbar({
+  templateId,
   tool, onToolChange,
   onExportPNG, onExportSVG, onExportJSON,
   onExportFrame, onExportAllFrames,
@@ -70,6 +82,7 @@ export function Toolbar({
   onPrototypePreview,
   onEmbed,
   onBlockAction,
+  onGalleryCreate,
 }: Props) {
   const {
     alignOpen, boolOpen, shapesOpen, drawOpen,
@@ -131,6 +144,9 @@ export function Toolbar({
 
       {/* ─── Snap ─── */}
       <SnapDropdown />
+
+      {/* ─── Gallery ─── */}
+      {onGalleryCreate && <GalleryDropdown templateId={templateId} onGalleryCreate={onGalleryCreate} />}
 
       <Divider />
 

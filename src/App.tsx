@@ -238,6 +238,7 @@ function App() {
       <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
         {/* Toolbar */}
         <Toolbar
+          templateId={templateId}
           tool={tool}
           onToolChange={(t) => { setTool(t); callCanvas("setTool", t); }}
           onExportPNG={async () => { const blob = await callCanvas("exportPNG", 2); if (blob) downloadBlob(blob, "design.png"); }}
@@ -295,6 +296,15 @@ function App() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ jsonrpc: "2.0", method, params: { templateId, ...params }, id: 1 }),
+              });
+            } catch { /* silent */ }
+          } : undefined}
+          onGalleryCreate={templateId ? async (params) => {
+            try {
+              await apiFetch("/mcp", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", method: "gallery_create", params: { templateId, ...params }, id: 1 }),
               });
             } catch { /* silent */ }
           } : undefined}
