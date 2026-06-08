@@ -314,6 +314,9 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
 const dashboardStyle: React.CSSProperties = {
   height: "100vh", background: "#080808", color: "#f0ebe0",
   fontFamily: "Inter, system-ui, sans-serif", display: "flex", flexDirection: "column",
+  backgroundImage: "url(/bg-dashboard.jpg)",
+  backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
+  backgroundAttachment: "fixed",
 };
 
 const dashHeaderStyle: React.CSSProperties = {
