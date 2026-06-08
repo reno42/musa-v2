@@ -20,7 +20,7 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
     exportPNG, exportSVG, exportJSON,
     group, ungroup, deleteSelected,
     copySelected, pasteObject, duplicateSelected,
-    toggleLock, showGrid, align, distribute, booleanOp, autoLayout,
+    toggleLock, showGrid, toggleSnap, setGridSize, align, distribute, booleanOp, autoLayout,
     getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame,
     exportFramePNG, exportAllFramesPNG, FRAME_MAX,
     enterCropMode, exitCropMode, applyCropMode,
@@ -201,8 +201,10 @@ export function CanvasEditor({ templateId, templateJson, onToolChange }: CanvasE
       FRAME_MAX,
       // Rulers & Guides
       showRulers, toggleRulers, clearGuides,
+      // Snap
+      toggleSnap, setGridSize,
     };
-  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, enterCropMode, exitCropMode, applyCropMode, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX, showRulers, toggleRulers, clearGuides]);
+  }, [zoom, zoomIn, zoomOut, zoomToFit, undo, redo, canUndo, canRedo, getCanvasJSON, exportPNG, exportSVG, exportJSON, pushHistory, tool, setTool, onToolChange, align, distribute, booleanOp, autoLayout, selectedObjects, enterCropMode, exitCropMode, applyCropMode, getFrameCount, getFrames, createFrame, deleteFrame, renameFrame, moveObjectToFrame, exportFramePNG, exportAllFramesPNG, FRAME_MAX, showRulers, toggleRulers, clearGuides, toggleSnap, setGridSize]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "#1e1e2e" }}>

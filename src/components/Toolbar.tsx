@@ -14,6 +14,7 @@ import { ToolBtn, Divider, Spacer } from "./toolbar/ToolbarButtons";
 import { ShapesDropdown, DrawDropdown, AlignDropdown, BooleanDropdown } from "./toolbar/ToolbarDropdowns";
 import { EmbedsDropdown } from "./toolbar/EmbedsDropdown";
 import { BlocksDropdown } from "./toolbar/BlocksDropdown";
+import { SnapDropdown } from "./toolbar/SnapDropdown";
 
 type AlignDirection = "left" | "center-h" | "right" | "top" | "center-v" | "bottom";
 type EmbedType = "video" | "audio" | "pdf" | "figma" | "social";
@@ -127,6 +128,9 @@ export function Toolbar({
 
       {/* ─── Blocks ─── */}
       {onBlockAction && <BlocksDropdown onBlockAction={onBlockAction} />}
+
+      {/* ─── Snap ─── */}
+      <SnapDropdown />
 
       <Divider />
 
