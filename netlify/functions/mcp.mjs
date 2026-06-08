@@ -860,6 +860,125 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  {
+    name: "set_blur",
+    description: "Apply a gaussian blur effect to a layer. For background blur (frosted glass), use image_filter with blur on a background object.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerName: { type: "string", description: "Layer name to apply blur to" },
+        blur: { type: "number", description: "Blur radius in pixels (0-50, default 8)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "targetLayerName"],
+    },
+  },
+  {
+    name: "preview_font",
+    description: "Render a font preview on the canvas showing the font family name at large size and a sample pangram in that typeface.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        fontFamily: { type: "string", description: "Google Font family name (e.g. 'Inter', 'Roboto', 'Playfair Display')" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 600)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "fontFamily"],
+    },
+  },
+  {
+    name: "add_columns",
+    description: "Add a multi-column layout with equal-width columns. Each column gets styled text objects with optional headers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        columns: { type: "number", description: "Number of columns (2-6, default 2)" },
+        columnTexts: { type: "array", items: { type: "string" }, description: "Text content for each column" },
+        headers: { type: "array", items: { type: "string" }, description: "Optional header text for each column" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Total width in px (default 720)" },
+        gap: { type: "number", description: "Gap between columns in px (default 16)" },
+        fontSize: { type: "number", description: "Body font size (default 14)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "columnTexts"],
+    },
+  },
+  {
+    name: "embed_audio",
+    description: "Embed an audio player placeholder for SoundCloud, Spotify, or direct audio URLs. Renders as a sleek audio card.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        url: { type: "string", description: "Audio URL (SoundCloud, Spotify, or direct .mp3 link)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 480)" },
+        height: { type: "number", description: "Height in px (default 80)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "url"],
+    },
+  },
+  {
+    name: "embed_pdf",
+    description: "Embed a PDF document as a placeholder with file metadata. Requires a PDF URL accessible from Supabase Storage or external CDN.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        url: { type: "string", description: "PDF file URL" },
+        title: { type: "string", description: "Document title (default extracted from URL)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 480)" },
+        height: { type: "number", description: "Height in px (default 320)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "url"],
+    },
+  },
+  {
+    name: "embed_social",
+    description: "Embed a social media post placeholder (Twitter/X, GitHub repo, Instagram, LinkedIn). Auto-detects platform from URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        url: { type: "string", description: "Social media post URL" },
+        platform: { type: "string", enum: ["twitter", "github", "instagram", "linkedin"], description: "Platform (auto-detected if omitted)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 480)" },
+        height: { type: "number", description: "Height in px (default 200)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "url"],
+    },
+  },
+  {
+    name: "mention_user",
+    description: "Add an @mention annotation to an object or canvas position. Stored as a styled comment with the mention data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        username: { type: "string", description: "Username to mention (e.g. 'lara', '@lara' — @ prefix added if missing)" },
+        targetLayerName: { type: "string", description: "Layer name to attach mention to (optional)" },
+        x: { type: "number", description: "X position for canvas-level mention" },
+        y: { type: "number", description: "Y position for canvas-level mention" },
+        message: { type: "string", description: "Optional message text with the mention" },
+      },
+      required: ["templateId", "username"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2439,6 +2558,265 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
       return { shared: true, shareUrl, permission, shareToken };
+    }
+
+    case "set_blur": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const objects = getFrameObjects(tpl, params.frameId);
+      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const blurRadius = params.blur ?? 8;
+      if (!obj.filters) obj.filters = [];
+      const existingIdx = obj.filters.findIndex(f => f.type === "blur");
+      if (blurRadius <= 0) {
+        if (existingIdx >= 0) obj.filters.splice(existingIdx, 1);
+        obj.filters = obj.filters.length > 0 ? obj.filters : undefined;
+      } else {
+        const blurFilter = { type: "blur", blur: Math.min(50, Math.max(0, blurRadius)) };
+        if (existingIdx >= 0) obj.filters[existingIdx] = blurFilter;
+        else obj.filters.push(blurFilter);
+      }
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { applied: true, targetLayerName: params.targetLayerName, blur: blurRadius };
+    }
+
+    case "preview_font": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const fontFamily = params.fontFamily || "Inter";
+      const pangram = "The quick brown fox jumps over the lazy dog";
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const titleObj = {
+        type: "text", layerName: `font_title_${Date.now()}`,
+        text: fontFamily,
+        left: params.x ?? 0, top: params.y ?? 0,
+        width: params.width ?? 600,
+        fontSize: 36, fontFamily, fontWeight: "bold", fill: "#cdd6f4",
+        frameId: params.frameId || undefined,
+      };
+      const sampleObj = {
+        type: "text", layerName: `font_sample_${Date.now()}`,
+        text: pangram,
+        left: params.x ?? 0, top: (params.y ?? 0) + 50,
+        width: params.width ?? 600,
+        fontSize: 18, fontFamily, fontWeight: "normal", fill: "#bac2de",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(titleObj, sampleObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, fontFamily, layerName: sampleObj.layerName };
+    }
+
+    case "add_columns": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const texts = params.columnTexts || [];
+      const headers = params.headers || [];
+      const numCols = Math.max(2, Math.min(6, params.columns || texts.length || 2));
+      const totalW = params.width ?? 720;
+      const gap = params.gap ?? 16;
+      const colW = (totalW - gap * (numCols - 1)) / numCols;
+      const fontSize = params.fontSize ?? 14;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const objects = [];
+      for (let i = 0; i < numCols; i++) {
+        const cx = x + i * (colW + gap);
+        const header = headers[i] || null;
+        const text = texts[i] || "";
+        let cy = y;
+        if (header) {
+          objects.push({
+            type: "text", layerName: `col_hdr_${i}_${Date.now()}`,
+            text: header,
+            left: cx, top: cy,
+            width: colW - 8,
+            fontSize: fontSize + 4, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4",
+            frameId: params.frameId || undefined,
+          });
+          cy += fontSize + 20;
+        }
+        objects.push({
+          type: "text", layerName: `col_body_${i}_${Date.now()}`,
+          text,
+          left: cx, top: cy,
+          width: colW - 8,
+          fontSize, fontFamily: "Inter", lineHeight: 1.6, fill: "#bac2de",
+          frameId: params.frameId || undefined,
+        });
+      }
+      tpl.canvas.objects.push(...objects);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, columns: numCols, totalObjects: objects.length };
+    }
+
+    case "embed_audio": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const w = params.width ?? 480;
+      const h = params.height ?? 80;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      let platformHint = "audio";
+      if (params.url.includes("soundcloud")) platformHint = "SoundCloud";
+      else if (params.url.includes("spotify")) platformHint = "Spotify";
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const bgObj = {
+        type: "rect", layerName: `audio_bg_${Date.now()}`,
+        left: x, top: y, width: w, height: h,
+        fill: "#1e1e2e", stroke: "#cba6f7", strokeWidth: 2, rx: 10, ry: 10,
+        frameId: params.frameId || undefined,
+        embedType: "audio", embedUrl: params.url,
+      };
+      const iconObj = {
+        type: "text", layerName: `audio_icon_${Date.now()}`,
+        text: "♪",
+        left: x + 14, top: y + (h - 28) / 2,
+        fontSize: 28, fontFamily: "Inter", fill: "#cba6f7",
+        frameId: params.frameId || undefined,
+      };
+      const labelObj = {
+        type: "text", layerName: `audio_label_${Date.now()}`,
+        text: `${platformHint}: ${params.url.substring(0, 50)}`,
+        left: x + 50, top: y + (h - 14) / 2,
+        fontSize: 13, fontFamily: "Inter", fill: "#a6adc8",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(bgObj, iconObj, labelObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, url: params.url, platform: platformHint };
+    }
+
+    case "embed_pdf": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const w = params.width ?? 480;
+      const h = params.height ?? 320;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      const title = params.title || params.url.split("/").pop()?.replace(/\.pdf$/i, "") || "PDF Document";
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const bgObj = {
+        type: "rect", layerName: `pdf_bg_${Date.now()}`,
+        left: x, top: y, width: w, height: h,
+        fill: "#181825", stroke: "#f38ba8", strokeWidth: 2, rx: 10, ry: 10,
+        frameId: params.frameId || undefined,
+        embedType: "pdf", embedUrl: params.url,
+      };
+      const iconObj = {
+        type: "text", layerName: `pdf_icon_${Date.now()}`,
+        text: "📄",
+        left: x + w / 2 - 20, top: y + h / 2 - 40,
+        fontSize: 40, fontFamily: "Inter", fill: "#f38ba8",
+        frameId: params.frameId || undefined,
+      };
+      const titleObj = {
+        type: "text", layerName: `pdf_title_${Date.now()}`,
+        text: title,
+        left: x + 12, top: y + h / 2 + 10,
+        width: w - 24,
+        fontSize: 16, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", textAlign: "center",
+        frameId: params.frameId || undefined,
+      };
+      const urlObj = {
+        type: "text", layerName: `pdf_url_${Date.now()}`,
+        text: params.url.substring(0, 60),
+        left: x + 12, top: y + h - 24,
+        fontSize: 10, fontFamily: "Inter", fill: "#6c7086",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(bgObj, iconObj, titleObj, urlObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, title, url: params.url };
+    }
+
+    case "embed_social": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const url = params.url || "";
+      let platform = params.platform || null;
+      let icon = "🔗";
+      let color = "#89b4fa";
+      if (!platform) {
+        if (url.includes("twitter.com") || url.includes("x.com")) { platform = "twitter"; icon = "𝕏"; color = "#74c7ec"; }
+        else if (url.includes("github.com")) { platform = "github"; icon = "⬡"; color = "#a6e3a1"; }
+        else if (url.includes("instagram.com")) { platform = "instagram"; icon = "📷"; color = "#f5c2e7"; }
+        else if (url.includes("linkedin.com")) { platform = "linkedin"; icon = "in"; color = "#89b4fa"; }
+        else platform = "link";
+      } else {
+        const platIcons = { twitter: "𝕏", github: "⬡", instagram: "📷", linkedin: "in" };
+        const platColors = { twitter: "#74c7ec", github: "#a6e3a1", instagram: "#f5c2e7", linkedin: "#89b4fa" };
+        icon = platIcons[platform] || "🔗";
+        color = platColors[platform] || "#89b4fa";
+      }
+      const w = params.width ?? 480;
+      const h = params.height ?? 200;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const bgObj = {
+        type: "rect", layerName: `social_bg_${Date.now()}`,
+        left: x, top: y, width: w, height: h,
+        fill: "#1e1e2e", stroke: color, strokeWidth: 2, rx: 12, ry: 12,
+        frameId: params.frameId || undefined,
+        embedType: "social", embedPlatform: platform, embedUrl: url,
+      };
+      const iconObj = {
+        type: "text", layerName: `social_icon_${Date.now()}`,
+        text: icon,
+        left: x + 16, top: y + 16,
+        fontSize: 24, fontFamily: "Inter", fill: color,
+        frameId: params.frameId || undefined,
+      };
+      const platObj = {
+        type: "text", layerName: `social_plat_${Date.now()}`,
+        text: platform.charAt(0).toUpperCase() + platform.slice(1),
+        left: x + 50, top: y + 20,
+        fontSize: 14, fontFamily: "Inter", fontWeight: "bold", fill: color,
+        frameId: params.frameId || undefined,
+      };
+      const urlObj = {
+        type: "text", layerName: `social_url_${Date.now()}`,
+        text: url.substring(0, 65),
+        left: x + 16, top: y + h / 2 - 8,
+        width: w - 32,
+        fontSize: 12, fontFamily: "Inter", fill: "#bac2de",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(bgObj, iconObj, platObj, urlObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, platform, url: params.url };
+    }
+
+    case "mention_user": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      let username = params.username || "anonymous";
+      if (!username.startsWith("@")) username = "@" + username;
+      if (!tpl.comments) tpl.comments = [];
+      const mention = {
+        id: `mtn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId: username,
+        text: params.message ? `${username} ${params.message}` : `${username}`,
+        targetLayerName: params.targetLayerName || null,
+        x: params.x ?? 0,
+        y: params.y ?? 0,
+        resolved: false,
+        createdAt: new Date().toISOString(),
+        type: "mention",
+      };
+      tpl.comments.push(mention);
+      await templates.updateTemplate(params.templateId, { comments: tpl.comments });
+      autoSnapshot(params.templateId, method);
+      return { created: true, username, mentionId: mention.id };
     }
 
     default:
