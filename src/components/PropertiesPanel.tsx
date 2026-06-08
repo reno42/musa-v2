@@ -2,14 +2,11 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import type { FabricObject, Canvas } from "fabric";
 import { Gradient, Shadow, FabricImage } from "fabric";
 import { GoogleFontPicker } from "./GoogleFontPicker";
-import { StylesTab } from "./StylesPanel";
-import { VariablesTab } from "./VariablesPanel";
 
 interface PropertiesPanelProps {
   selectedObjects: FabricObject[];
   onUpdate?: () => void;
   canvasRef?: React.RefObject<Canvas | null>;
-  templateId?: string | null;
 }
 
 const em = (n: number) => {
@@ -17,7 +14,7 @@ const em = (n: number) => {
   return parseFloat(n.toFixed(2)).toString();
 };
 
-export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef, templateId }: PropertiesPanelProps) {
+export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: PropertiesPanelProps) {
   // Track last committed object identity for key-based reset
   const lastObjRef = useRef<any>(null);
   // Use a reset key to remount inputs when selection changes
@@ -142,8 +139,6 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef, template
   const isImageType = obj.type === "image" || obj.type === "Image" || obj.type === "FabricImage";
   const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;
 
-  const [activeTab, setActiveTab] = useState<"properties" | "styles" | "variables">("properties");
-
   return (
     <div key={resetKey} style={panelStyle}>
       {/* Header */}
@@ -174,23 +169,6 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef, template
         </span>
       </div>
 
-      {/* Tab bar */}
-      <div style={tabBarStyle}>
-        {(["properties", "styles", "variables"] as const).map(tab => (
-          <button key={tab} type="button" onClick={() => setActiveTab(tab)}
-            style={{
-              flex: 1, padding: "4px 6px", borderRadius: 0, fontSize: 11, cursor: "pointer",
-              background: activeTab === tab ? "#1a2a3a" : "transparent",
-              border: "none", borderBottom: activeTab === tab ? "2px solid #60a5fa" : "2px solid transparent",
-              color: activeTab === tab ? "#60a5fa" : "#7a7a90",
-              textTransform: "capitalize",
-            }}>
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {activeTab !== "properties" ? null : <>
       {/* Frame Name */}
       {isFrameType && (
         <Section label="Frame Name">
@@ -481,11 +459,6 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef, template
           <Row label="Pad" defaultValue={fieldPadding} onChange={v => commit("padding", Math.max(0, Math.min(100, Number(v))))} />
         </Section>
       )}
-      </>
-      }
-
-      {activeTab === "styles" && <StylesTab templateId={templateId ?? null} selectedObjects={selectedObjects} canvasRef={canvasRef} onUpdate={onUpdate} />}
-      {activeTab === "variables" && <VariablesTab templateId={templateId ?? null} selectedObjects={selectedObjects} onUpdate={onUpdate} />}
     </div>
   );
 }
@@ -1131,10 +1104,6 @@ function iconBtn(): React.CSSProperties {
     lineHeight: "18px",
   };
 }
-
-const tabBarStyle: React.CSSProperties = {
-  display: "flex", borderBottom: "1px solid #1c1c26",
-};
 
 const panelStyle: React.CSSProperties = {
   width: 240, height: "100%", background: "#0a0a0f", color: "#e4e4f0",
