@@ -115,9 +115,11 @@ class Store {
   updateTemplate(id: string, data: Partial<DesignTemplate>): DesignTemplate | undefined {
     const tpl = this.templates.get(id);
     if (!tpl) return undefined;
-    Object.assign(tpl, data, {
-      metadata: { ...tpl.metadata, updatedAt: new Date().toISOString() },
-    });
+    // Apply all props except metadata (handled separately to merge)
+    const { metadata: incomingMeta, ...rest } = data as any;
+    Object.assign(tpl, rest);
+    // Deep-merge metadata: preserve existing keys, override with incoming, always update timestamp
+    tpl.metadata = { ...(tpl.metadata || {}), ...(incomingMeta || {}), updatedAt: new Date().toISOString() };
     return tpl;
   }
 

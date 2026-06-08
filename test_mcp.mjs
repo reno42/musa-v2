@@ -120,7 +120,7 @@ async function main() {
   ok("canvas_grid snap", gridRes.snapToGrid === true);
   const rulersRes = await mcp("tools/call", { name: "canvas_rulers", arguments: { templateId: idA, visible: true } });
   ok("canvas_rulers visible", rulersRes.visible === true);
-  const snapRes = await mcp("tools/call", { name: "canvas_snap", arguments: { templateId: idA, enabled: true, threshold: 8 } });
+  const snapRes = await mcp("tools/call", { name: "canvas_snap", arguments: { templateId: idA, enabled: true, snapThreshold: 8 } });
   ok("canvas_snap enabled", snapRes.enabled === true);
 
   // Test 8: Color picker

@@ -4007,12 +4007,18 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (!tpl.metadata) tpl.metadata = {};
+      // `enabled` shorthand sets both snapToObject and snapToGrid
+      if (params.enabled !== undefined) {
+        tpl.metadata.snapToObject = params.enabled;
+        tpl.metadata.snapToGrid = params.enabled;
+      }
       if (params.snapToObject !== undefined) tpl.metadata.snapToObject = params.snapToObject;
       if (params.snapToGrid !== undefined) tpl.metadata.snapToGrid = params.snapToGrid;
       if (params.snapThreshold !== undefined) tpl.metadata.snapThreshold = Math.max(1, Math.min(50, params.snapThreshold));
       await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
       return {
+        enabled: tpl.metadata.snapToObject !== false || tpl.metadata.snapToGrid === true,
         snapToObject: tpl.metadata.snapToObject !== false,
         snapToGrid: tpl.metadata.snapToGrid || false,
         snapThreshold: tpl.metadata.snapThreshold || 5,
