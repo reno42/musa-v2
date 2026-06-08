@@ -123,9 +123,9 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
   }, [templateId, diffData]);
 
   return (
-    <div style={{
-      padding: "8px 12px", borderBottom: "1px solid #1c1c26",
-      fontFamily: "Inter, sans-serif", fontSize: 11, color: "#c4c4d4",
+    <div className="glass-panel" style={{
+      padding: "8px 12px",
+      fontFamily: "Inter, sans-serif", fontSize: 11, color: "#c4c0b4",
     }}>
       {/* Section Header */}
       <div style={{
@@ -136,7 +136,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
         <span style={{
           fontSize: 10, padding: "2px 6px", borderRadius: 3,
           background: ghostActive ? "#1a2a2a" : "#1a1a1a",
-          color: ghostActive ? "#4ade80" : "#5a5a70",
+          color: ghostActive ? "#4ade80" : "#7a7668",
         }}>
           {ghostActive ? "ACTIVE" : "OFF"}
         </span>
@@ -146,7 +146,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {/* Type selector */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ minWidth: 36, color: "#7a7a90", fontSize: 10 }}>Type</span>
+          <span style={{ minWidth: 36, color: "#7a7668", fontSize: 10 }}>Type</span>
           {(["ia", "human", "system"] as const).map(t => (
             <button
               key={t}
@@ -154,9 +154,9 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
               onClick={() => setGhostType(t)}
               style={{
                 flex: 1, padding: "3px 0", borderRadius: 4, border: "1px solid",
-                borderColor: ghostType === t ? "#818cf8" : "#2a2a3a",
-                background: ghostType === t ? "#1a1a2e" : "#111118",
-                color: ghostType === t ? "#c4c4d4" : "#7a7a90",
+                borderColor: ghostType === t ? "#c8b898" : "rgba(255, 255, 255, 0.04)",
+                background: ghostType === t ? "rgba(200, 184, 152, 0.08)" : "rgba(15, 15, 15, 0.5)",
+                color: ghostType === t ? "#c4c0b4" : "#7a7668",
                 cursor: "pointer", fontSize: 10, textAlign: "center" as const,
               }}>
               {t === "ia" ? "🤖 IA" : t === "human" ? "👤 Human" : "⚙️ Sys"}
@@ -166,22 +166,22 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
 
         {/* Opacity slider */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ minWidth: 36, color: "#7a7a90", fontSize: 10 }}>Opacity</span>
+          <span style={{ minWidth: 36, color: "#7a7668", fontSize: 10 }}>Opacity</span>
           <input
             type="range"
             min={10} max={50} step={5}
             value={Math.round(opacity * 100)}
             onChange={e => setOpacity(Number(e.target.value) / 100)}
-            style={{ flex: 1, accentColor: "#818cf8", height: 16 }}
+            style={{ flex: 1, accentColor: "#c8b898", height: 16 }}
           />
-          <span style={{ fontSize: 10, color: "#818cf8", minWidth: 28, textAlign: "right" }}>
+          <span style={{ fontSize: 10, color: "#c8b898", minWidth: 28, textAlign: "right" }}>
             {Math.round(opacity * 100)}%
           </span>
         </div>
 
         {/* Tint color */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ minWidth: 36, color: "#7a7a90", fontSize: 10 }}>Tint</span>
+          <span style={{ minWidth: 36, color: "#7a7668", fontSize: 10 }}>Tint</span>
           <input
             type="color"
             value={tint}
@@ -191,20 +191,20 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
               background: "transparent", cursor: "pointer",
             }}
           />
-          <span style={{ fontSize: 10, color: "#7a7a90" }}>{tint}</span>
+          <span style={{ fontSize: 10, color: "#7a7668" }}>{tint}</span>
         </div>
 
         {/* Diff toggle */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ minWidth: 36, color: "#7a7a90", fontSize: 10 }}>Diff</span>
+          <span style={{ minWidth: 36, color: "#7a7668", fontSize: 10 }}>Diff</span>
           <button
             type="button"
             onClick={() => setShowDiff(!showDiff)}
             style={{
               padding: "3px 8px", borderRadius: 4,
-              border: `1px solid ${showDiff ? "#fbbf24" : "#2a2a3a"}`,
-              background: showDiff ? "#2a2a1a" : "#111118",
-              color: showDiff ? "#fbbf24" : "#7a7a90",
+              border: `1px solid ${showDiff ? "#fbbf24" : "rgba(255, 255, 255, 0.04)"}`,
+              background: showDiff ? "rgba(200, 184, 152, 0.08)" : "rgba(15, 15, 15, 0.5)",
+              color: showDiff ? "#fbbf24" : "#7a7668",
               cursor: "pointer", fontSize: 10,
             }}>
             {showDiff ? "Diff ON 🟡" : "Diff OFF"}
@@ -263,17 +263,17 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
             <div key={i} style={{
               fontSize: 10, padding: "1px 0",
               display: "flex", gap: 4, alignItems: "center",
-              borderBottom: "1px solid #1c1c26",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
             }}>
               <span style={{
-                color: DIFF_COLORS[d.action] || "#7a7a90",
+                color: DIFF_COLORS[d.action] || "#7a7668",
                 fontWeight: 600, minWidth: 50, fontSize: 9,
               }}>
                 {d.action.toUpperCase()}
               </span>
-              <span style={{ color: "#7a7a90" }}>{d.layerName || "?"}</span>
+              <span style={{ color: "#7a7668" }}>{d.layerName || "?"}</span>
               {d.action === "modified" && d.changes && (
-                <span style={{ color: "#5a5a70", fontSize: 9 }}>
+                <span style={{ color: "#7a7668", fontSize: 9 }}>
                   ({d.changes.length} fields)
                 </span>
               )}
@@ -288,9 +288,9 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
 function primaryBtn(disabled: boolean): React.CSSProperties {
   return {
     flex: 1, padding: "4px 8px", borderRadius: 4,
-    border: `1px solid ${disabled ? "#2a2a3a" : "#818cf8"}`,
-    background: disabled ? "#111118" : "#1a1a2e",
-    color: disabled ? "#4a4a5a" : "#c4c4d4",
+    border: `1px solid ${disabled ? "rgba(255, 255, 255, 0.04)" : "#c8b898"}`,
+    background: disabled ? "rgba(15, 15, 15, 0.5)" : "rgba(200, 184, 152, 0.1)",
+    color: disabled ? "#7a7668" : "#c8b898",
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 10, fontWeight: 600,
   };
@@ -299,9 +299,9 @@ function primaryBtn(disabled: boolean): React.CSSProperties {
 function secondaryBtn(disabled: boolean): React.CSSProperties {
   return {
     padding: "4px 8px", borderRadius: 4,
-    border: `1px solid ${disabled ? "#2a2a3a" : "#3a3a4a"}`,
-    background: disabled ? "#111118" : "#16161e",
-    color: disabled ? "#4a4a5a" : "#7a7a90",
+    border: `1px solid ${disabled ? "rgba(255, 255, 255, 0.04)" : "rgba(200, 184, 152, 0.1)"}`,
+    background: disabled ? "rgba(15, 15, 15, 0.5)" : "rgba(12, 12, 12, 0.4)",
+    color: disabled ? "#7a7668" : "#c4c0b4",
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 10,
   };

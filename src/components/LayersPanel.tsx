@@ -176,7 +176,7 @@ export function LayersPanel({
   };
 
   return (
-    <div style={panelStyle}>
+    <div className="glass-panel" style={panelStyle}>
       <div style={layersHeaderStyle}>
         <span>Layers ({layers.length})</span>
         <button
@@ -191,7 +191,7 @@ export function LayersPanel({
       </div>
       <div style={{ overflowY: "auto", flex: 1 }}>
         {layers.length === 0 && (
-          <div style={{ padding: 20, color: "#4a4a60", fontSize: 12, textAlign: "center" }}>
+          <div style={{ padding: 20, color: "#7a7668", fontSize: 12, textAlign: "center" }}>
             No layers yet
           </div>
         )}
@@ -243,11 +243,11 @@ export function LayersPanel({
                   />
                 ) : (
                   <>
-                    <span style={{ color: "#6366f1", marginRight: 4 }}>{'\u25A3'}</span>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e4e4f0", fontWeight: 500 }}>
+                    <span style={{ color: "#c8b898", marginRight: 4 }}>{'\u25A3'}</span>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#f0ebe0", fontWeight: 500 }}>
                       {fg.frameName}
                     </span>
-                    <span style={{ fontSize: 10, color: "#5a5a70", marginLeft: 4 }}>
+                    <span style={{ fontSize: 10, color: "#7a7668", marginLeft: 4 }}>
                       ({fg.children.length})
                     </span>
                   </>
@@ -332,7 +332,7 @@ export function LayersPanel({
                   if (frame) {
                     const origFid = (frame as any).frameId;
                     const origFill = (frame as any).frameFill || "#ffffff";
-                    const origStroke = (frame as any).frameStroke || "#6366f1";
+                    const origStroke = (frame as any).frameStroke || "#c8b898";
                     const origName = (frame as any).frameName || "Frame";
                     const json = (frame as any).toJSON(["isFrameVisual", "frameId", "frameName", "frameFill", "frameStroke", "layerId", "layerName", "styleId"]);
                     // Duplicate frame
@@ -471,7 +471,7 @@ function LayerRow({
         style={layerSelectBtnStyle}
       >
         <span style={{ width: 16, textAlign: "center", fontSize: 12, opacity: 0.7 }}>{iconForType(item.type)}</span>
-        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e4e4f0" }}>{item.name}</span>
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#f0ebe0" }}>{item.name}</span>
       </button>
       <button
         type="button"
@@ -508,35 +508,35 @@ function LayerRow({
 }
 
 function tinyBtn(icon: string): React.CSSProperties {
-  return { background: "none", border: "none", color: "#5a5a70", fontSize: 10, cursor: "pointer", padding: 0, lineHeight: 1, width: 18, textAlign: "center" };
+  return { background: "none", border: "none", color: "#7a7668", fontSize: 10, cursor: "pointer", padding: 0, lineHeight: 1, width: 18, textAlign: "center" };
 }
 
 // ── Styles ──
 
 const layersHeaderStyle: React.CSSProperties = {
-  padding: "6px 10px", borderBottom: "1px solid #1c1c26",
-  fontSize: 12, color: "#5a5a70", textTransform: "uppercase", letterSpacing: 1,
+  padding: "6px 10px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+  fontSize: 12, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1,
   display: "flex", justifyContent: "space-between", alignItems: "center",
 };
 
 const addFrameBtnStyle: React.CSSProperties = {
-  background: "#7c6fff20", border: "1px solid #7c6fff40", color: "#7c6fff",
-  borderRadius: 4, padding: "2px 8px", fontSize: 11, cursor: "pointer",
+  background: "rgba(200, 184, 152, 0.1)", border: "1px solid rgba(200, 184, 152, 0.2)", color: "#c8b898",
+  borderRadius: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer",
 };
 
 const sectionHeaderStyle: React.CSSProperties = {
-  padding: "4px 10px", fontSize: 10, color: "#4a4a60",
-  textTransform: "uppercase", letterSpacing: 1, borderBottom: "1px solid #1c1c26",
+  padding: "4px 10px", fontSize: 10, color: "#5a564c",
+  textTransform: "uppercase", letterSpacing: 1, borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
 };
 
 function frameHeaderStyle(dragOver: boolean): React.CSSProperties {
   return {
     display: "flex", alignItems: "center", gap: 2,
     padding: "4px 8px", cursor: "pointer",
-    background: dragOver ? "#7c6fff20" : "#0d0d14",
-    borderLeft: "2px solid #6366f1",
-    borderBottom: "1px solid #1c1c26",
-    borderTop: dragOver ? "1px solid #7c6fff" : "1px solid transparent",
+    background: dragOver ? "rgba(200, 184, 152, 0.1)" : "rgba(12, 12, 12, 0.4)",
+    borderLeft: "2px solid #c8b898",
+    borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+    borderTop: dragOver ? "1px solid #c8b898" : "1px solid transparent",
   };
 }
 
@@ -544,17 +544,17 @@ function layerItemStyle(isSel: boolean, visible: boolean, indent: boolean, dragO
   return {
     display: "flex", alignItems: "center", gap: 4,
     padding: `3px 8px`, paddingLeft: indent ? 20 : 8, cursor: "grab",
-    background: dragOver ? "#7c6fff20" : isSel ? "#17171f" : "transparent",
-    borderLeft: isSel ? "2px solid #7c6fff" : "2px solid transparent",
-    borderTop: dragOver ? "1px solid #7c6fff" : "1px solid transparent",
+    background: dragOver ? "rgba(200, 184, 152, 0.1)" : isSel ? "rgba(200, 184, 152, 0.06)" : "transparent",
+    borderLeft: isSel ? "2px solid #c8b898" : "2px solid transparent",
+    borderTop: dragOver ? "1px solid #c8b898" : "1px solid transparent",
     opacity: visible ? 1 : 0.4,
     fontSize: 12,
-    transition: "background 0.1s",
+    transition: "background 0.2s ease",
   };
 }
 
 const chevronBtnStyle: React.CSSProperties = {
-  background: "none", border: "none", color: "#5a5a70",
+  background: "none", border: "none", color: "#7a7668",
   cursor: "pointer", padding: 0, fontSize: 10, width: 14, textAlign: "center",
 };
 
@@ -572,29 +572,30 @@ const layerSelectBtnStyle: React.CSSProperties = {
 };
 
 const renameInputStyle: React.CSSProperties = {
-  flex: 1, background: "#111118", border: "1px solid #7c6fff", color: "#e4e4f0",
-  borderRadius: 3, padding: "2px 4px", fontSize: 11, outline: "none",
+  flex: 1, background: "rgba(15, 15, 15, 0.5)", border: "1px solid #c8b898", color: "#f0ebe0",
+  borderRadius: 4, padding: "2px 4px", fontSize: 11, outline: "none",
   fontFamily: "inherit",
 };
 
 function contextMenuStyle(x: number, y: number): React.CSSProperties {
   return {
     position: "fixed", left: x, top: y, zIndex: 9999,
-    background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 6,
-    padding: "4px 0", minWidth: 160, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+    background: "rgba(12, 12, 12, 0.8)", backdropFilter: "blur(16px) saturate(180%)",
+    border: "1px solid rgba(255, 255, 255, 0.05)", borderRadius: 10,
+    padding: "4px 0", minWidth: 160, boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)",
   };
 }
 
 const ctxMenuItemStyle: React.CSSProperties = {
   display: "block", width: "100%", textAlign: "left",
-  background: "none", border: "none", color: "#e4e4f0",
+  background: "none", border: "none", color: "#c4c0b4",
   padding: "6px 14px", fontSize: 12, cursor: "pointer",
   fontFamily: "inherit",
 };
 
 const panelStyle: React.CSSProperties = {
-  width: 200, height: "100%", background: "#0a0a0f", color: "#e4e4f0",
+  width: 200, height: "calc(100vh - 24px)", color: "#f0ebe0",
   fontFamily: "Inter, system-ui, sans-serif", fontSize: 12,
   display: "flex", flexDirection: "column",
-  borderLeft: "1px solid #1c1c26",
+  margin: "12px 12px 12px 0",
 };

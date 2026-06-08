@@ -64,7 +64,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
     if (canvas) {
       const bg = (canvas as any).backgroundColor || "transparent";
       return (
-        <div style={panelStyle}>
+        <div className="glass-panel" style={panelStyle}>
           <div style={propsHeaderStyle}>
             <span>Canvas</span>
           </div>
@@ -75,7 +75,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                 aria-label="Canvas background color"
                 defaultValue={typeof bg === "string" && bg.startsWith("#") ? bg : "#ffffff"}
                 onChange={e => commitCanvas("backgroundColor", e.target.value)}
-                style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer" }}
+                style={{ width: 28, height: 26, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 4, cursor: "pointer" }}
               />
               <input
                 aria-label="Canvas background hex"
@@ -93,7 +93,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
       );
     }
     return (
-      <div style={panelStyle}>
+      <div className="glass-panel" style={panelStyle}>
         <div style={emptyStateStyle}>
           Select an object to edit properties
         </div>
@@ -140,7 +140,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;
 
   return (
-    <div key={resetKey} style={panelStyle}>
+    <div key={resetKey} className="glass-panel" style={panelStyle}>
       {/* Header */}
       <div style={propsHeaderStyle}>
         <span>{isFrameType ? "Frame" : (obj.type || "Object")}{isFrameType ? ` (${frameObjCount} objects)` : ""}</span>
@@ -208,7 +208,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
         <Section label="Border">
           <div style={{ padding: "0 10px 0" }}>
             <ColorPicker
-              color={(obj as any).frameStroke || "#6366f1"}
+              color={(obj as any).frameStroke || "#c8b898"}
               onChange={v => { commit("frameStroke", v); commit("stroke", v); }}
               resetKey={resetKey}
             />
@@ -373,13 +373,13 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
           <Row label="Size" defaultValue={fieldFontSize} onChange={v => commit("fontSize", Number(v))} />
           <div style={{ padding: "0 10px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Font</span>
+              <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Font</span>
               <GoogleFontPicker value={fieldFontFamily} onChange={v => commit("fontFamily", v)} />
             </div>
           </div>
           <div style={{ padding: "0 10px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Weight</span>
+              <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Weight</span>
               <select
                 defaultValue={fieldFontWeight}
                 onChange={e => commit("fontWeight", Number(e.target.value))}
@@ -393,7 +393,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
           </div>
           <div style={{ padding: "0 10px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Style</span>
+              <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Style</span>
               <select
                 defaultValue={fieldFontStyle}
                 onChange={e => commit("fontStyle", e.target.value)}
@@ -406,15 +406,15 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
           </div>
           <div style={{ padding: "0 10px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Deco</span>
+              <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Deco</span>
               <button
                 type="button"
                 onClick={() => commit("underline", !fieldUnderline)}
                 style={{
                   flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
-                  background: fieldUnderline ? "#2a4a2a" : "#111118",
-                  border: fieldUnderline ? "1px solid #4ade80" : "1px solid #1c1c26",
-                  color: fieldUnderline ? "#4ade80" : "#7a7a90",
+                  background: fieldUnderline ? "rgba(200, 184, 152, 0.12)" : "rgba(15, 15, 15, 0.5)",
+                  border: fieldUnderline ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+                  color: fieldUnderline ? "#c8b898" : "#7a7668",
                   textDecoration: "underline",
                 }}
               >
@@ -425,7 +425,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
           {/* Text Alignment */}
           <div style={{ padding: "0 10px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Align</span>
+              <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Align</span>
               <div style={{ flex: 1, display: "flex", gap: 2 }}>
                 {[
                   { value: "left", label: "\u2190" },
@@ -442,9 +442,9 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
                       onClick={() => commit("textAlign", value)}
                       style={{
                         flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
-                        background: active ? "#1a3a5c" : "#111118",
-                        border: active ? "1px solid #3b82f6" : "1px solid #1c1c26",
-                        color: active ? "#60a5fa" : "#7a7a90",
+                        background: active ? "rgba(200, 184, 152, 0.12)" : "rgba(15, 15, 15, 0.5)",
+                        border: active ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+                        color: active ? "#c8b898" : "#7a7668",
                       }}
                     >
                       {label}
@@ -468,7 +468,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
   return (
-    <div style={{ borderBottom: "1px solid #1c1c26" }}>
+    <div style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
       <button
         type="button"
         aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
@@ -577,7 +577,7 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
   return (
     <div style={{ padding: "0 10px 6px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-        <span style={{ fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right" }}>Type</span>
+        <span style={{ fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right" }}>Type</span>
         <select
           defaultValue={gradType}
           onChange={e => applyGradient(e.target.value)}
@@ -601,25 +601,25 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
                 key={`gradoff-${resetKey}-${i}`}
                 defaultValue={String(Math.round(stop.offset * 100))}
                 onBlur={e => updateStopOffset(i, Number(e.target.value) / 100)}
-                style={{ width: 28, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90", borderRadius: 4, padding: "3px 2px", fontSize: 10, fontFamily: "monospace", textAlign: "center" }}
+                style={{ width: 28, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668", borderRadius: 4, padding: "3px 2px", fontSize: 10, fontFamily: "monospace", textAlign: "center" }}
                 title="Offset %"
               />
-              <span style={{ fontSize: 10, color: "#5a5a70" }}>%</span>
+              <span style={{ fontSize: 10, color: "#7a7668" }}>%</span>
               <input
                 type="color"
                 defaultValue={stop.color}
                 onChange={e => updateStop(i, e.target.value)}
-                style={{ width: 22, height: 20, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+                style={{ width: 22, height: 20, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
               />
               <input
                 defaultValue={stop.color}
                 onBlur={e => updateStop(i, e.target.value)}
-                style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace" }}
+                style={{ flex: 1, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#f0ebe0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace" }}
               />
               <button
                 type="button"
                 onClick={() => removeStop(i)}
-                style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 14, padding: 0, lineHeight: 1 }}
+                style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14, padding: 0, lineHeight: 1 }}
                 aria-label="Remove gradient stop"
               >
                 ×
@@ -629,7 +629,7 @@ function GradientEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: st
           <button
             type="button"
             onClick={addStop}
-            style={{ background: "#1a2a1a", border: "1px solid #1c1c26", color: "#4ade80", borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11 }}
+            style={{ background: "rgba(200, 184, 152, 0.1)", border: "1px solid rgba(200, 184, 152, 0.2)", color: "#c8b898", borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11 }}
           >
             + Add Stop
           </button>
@@ -645,7 +645,7 @@ const SHADOW_PRESETS: { name: string; blur: number; offsetX: number; offsetY: nu
   { name: "Subtle", blur: 4, offsetX: 0, offsetY: 2, color: "#000000", opacity: 0.12 },
   { name: "Medium", blur: 8, offsetX: 0, offsetY: 4, color: "#000000", opacity: 0.2 },
   { name: "Strong", blur: 16, offsetX: 0, offsetY: 8, color: "#000000", opacity: 0.3 },
-  { name: "Glow", blur: 20, offsetX: 0, offsetY: 0, color: "#6366f1", opacity: 0.5 },
+  { name: "Glow", blur: 20, offsetX: 0, offsetY: 0, color: "#c8b898", opacity: 0.5 },
 ];
 
 function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fieldShadowBlur, fieldShadowX, fieldShadowY }: {
@@ -696,7 +696,7 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
             title={`${p.name}: blur ${p.blur} offset ${p.offsetX},${p.offsetY} ${p.color} ${Math.round(p.opacity * 100)}%`}
             style={{
               flex: 1, padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
-              background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90",
+              background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668",
               minWidth: 48,
             }}
           >
@@ -722,9 +722,9 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
           onClick={() => applyShadow(!hasShadow)}
           style={{
             flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
-            background: hasShadow ? "#2a4a2a" : "#111118",
-            border: hasShadow ? "1px solid #4ade80" : "1px solid #1c1c26",
-            color: hasShadow ? "#4ade80" : "#7a7a90",
+            background: hasShadow ? "rgba(200, 184, 152, 0.12)" : "rgba(15, 15, 15, 0.5)",
+            border: hasShadow ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+            color: hasShadow ? "#c8b898" : "#7a7668",
           }}
         >
           {hasShadow ? "Enabled ✓" : "Disabled"}
@@ -737,12 +737,12 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
               type="color"
               defaultValue={fieldShadowColor}
               onChange={e => updateShadow("color", e.target.value)}
-              style={{ width: 24, height: 22, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+              style={{ width: 24, height: 22, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
             />
             <input
               defaultValue={fieldShadowColor}
               onBlur={e => updateShadow("color", e.target.value)}
-              style={{ flex: 1, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12, fontFamily: "monospace" }}
+              style={{ flex: 1, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12, fontFamily: "monospace" }}
             />
           </div>
           <Row label="Blur" defaultValue={fieldShadowBlur} onChange={v => updateShadow("blur", v)} />
@@ -794,9 +794,9 @@ function BlurEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string
           onClick={() => applyBlur(!hasBlur)}
           style={{
             flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 12, cursor: "pointer",
-            background: hasBlur ? "#2a4a2a" : "#111118",
-            border: hasBlur ? "1px solid #4ade80" : "1px solid #1c1c26",
-            color: hasBlur ? "#4ade80" : "#7a7a90",
+            background: hasBlur ? "rgba(200, 184, 152, 0.12)" : "rgba(15, 15, 15, 0.5)",
+            border: hasBlur ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+            color: hasBlur ? "#c8b898" : "#7a7668",
           }}
         >
           {hasBlur ? `Enabled \u2014 ${blurValue}px \u2713` : "Disabled"}
@@ -810,7 +810,7 @@ function BlurEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string
             key={`blur-r-${resetKey}`}
             defaultValue={blurValue}
             onChange={e => updateBlur(Number(e.target.value))}
-            style={{ flex: 1, accentColor: "#6366f1" }}
+            style={{ flex: 1, accentColor: "#c8b898" }}
           />
           <input
             key={`blur-v-${resetKey}`}
@@ -819,9 +819,9 @@ function BlurEditor({ obj, commit, resetKey }: { obj: any; commit: (prop: string
               const v = Math.max(0, Math.min(50, Number(e.target.value) || 0));
               updateBlur(v);
             }}
-            style={{ width: 40, background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace", textAlign: "center" }}
+            style={{ width: 40, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#f0ebe0", borderRadius: 4, padding: "3px 4px", fontSize: 11, fontFamily: "monospace", textAlign: "center" }}
           />
-          <span style={{ fontSize: 10, color: "#7a7a90" }}>px</span>
+          <span style={{ fontSize: 10, color: "#7a7668" }}>px</span>
         </div>
       )}
     </div>
@@ -946,7 +946,7 @@ function ImageFiltersEditor({ obj, resetKey }: { obj: any; resetKey: number }) {
             title={p.name}
             style={{
               flex: 1, padding: "2px 4px", borderRadius: 4, fontSize: 10, cursor: "pointer",
-              background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90",
+              background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668",
               minWidth: 44,
             }}
           >
@@ -980,15 +980,15 @@ function ImageFiltersEditor({ obj, resetKey }: { obj: any; resetKey: number }) {
         const cur = getFilterValue(obj, s.type);
         return (
           <div key={`ifl-${s.type}-${resetKey}`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-            <span style={{ fontSize: 11, color: "#7a7a90", flex: "0 0 72px", textAlign: "right" }}>{s.label}</span>
+            <span style={{ fontSize: 11, color: "#7a7668", flex: "0 0 72px", textAlign: "right" }}>{s.label}</span>
             <input
               type="range"
               min={s.min} max={s.max} step={s.step}
               defaultValue={cur}
               onChange={e => setFilter(obj, s.type, Number(e.target.value))}
-              style={{ flex: 1, accentColor: "#6366f1" }}
+              style={{ flex: 1, accentColor: "#c8b898" }}
             />
-            <span style={{ fontSize: 10, color: "#5a5a70", width: 32, textAlign: "right", fontFamily: "monospace" }}>
+            <span style={{ fontSize: 10, color: "#7a7668", width: 32, textAlign: "right", fontFamily: "monospace" }}>
               {Math.round(cur * 100)}
             </span>
           </div>
@@ -1011,9 +1011,9 @@ function ImageFiltersEditor({ obj, resetKey }: { obj: any; resetKey: number }) {
           }}
           style={{
             flex: 1, padding: "3px 6px", borderRadius: 4, fontSize: 11, cursor: "pointer",
-            background: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "#2a4a2a" : "#111118",
-            border: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "1px solid #4ade80" : "1px solid #1c1c26",
-            color: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "#4ade80" : "#7a7a90",
+            background: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "rgba(200, 184, 152, 0.12)" : "rgba(15, 15, 15, 0.5)",
+            border: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+            color: (obj.filters || []).some((f: any) => (f?.type || f?.constructor?.type) === "Invert") ? "#c8b898" : "#7a7668",
           }}
         >
           Invert
@@ -1055,7 +1055,7 @@ function CropEditor({ obj, commit, resetKey, canvasRef }: {
 
   return (
     <div style={{ padding: "0 10px 6px" }}>
-      <div style={{ fontSize: 10, color: "#5a5a70", marginBottom: 6 }}>
+      <div style={{ fontSize: 10, color: "#7a7668", marginBottom: 6 }}>
         Original: {Math.round(origW)}×{Math.round(origH)}px
         {hasCrop && ` · Cropped: ${Math.round(obj.width * ((obj as any).scaleX ?? 1))}×${Math.round(obj.height * ((obj as any).scaleY ?? 1))}px`}
       </div>
@@ -1079,7 +1079,7 @@ function CropEditor({ obj, commit, resetKey, canvasRef }: {
         <button type="button" onClick={enterCropMode}
           style={{
             flex: 1, padding: "4px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
-            background: "#1a2a3a", border: "1px solid #2a3a5a", color: "#60a5fa",
+            background: "rgba(200, 184, 152, 0.1)", border: "1px solid rgba(200, 184, 152, 0.2)", color: "#c8b898",
           }}>
           ✂ Crop Mode
         </button>
@@ -1099,39 +1099,43 @@ function CropEditor({ obj, commit, resetKey, canvasRef }: {
 
 function iconBtn(): React.CSSProperties {
   return {
-    background: "none", border: "1px solid #1c1c26", color: "#7a7a90",
+    background: "none", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668",
     fontSize: 12, cursor: "pointer", borderRadius: 4, padding: "0 4px",
     lineHeight: "18px",
   };
 }
 
 const panelStyle: React.CSSProperties = {
-  width: 240, height: "100%", background: "#0a0a0f", color: "#e4e4f0",
+  width: 240, height: "calc(100vh - 24px)", color: "#f0ebe0",
   fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, overflowY: "auto",
-  borderLeft: "1px solid #1c1c26",
+  margin: "12px 12px 12px 0",
 };
 
 const inputStyle: React.CSSProperties = {
-  flex: 1, width: "100%", background: "#111118", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
+  flex: 1, width: "100%",
+  background: "rgba(15, 15, 15, 0.5)",
+  backdropFilter: "blur(8px) saturate(150%)",
+  WebkitBackdropFilter: "blur(8px) saturate(150%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)",
+  color: "#f0ebe0", borderRadius: 6, padding: "3px 6px", fontSize: 12,
   fontFamily: "monospace",
 };
 
 const sectionHeaderStyle: React.CSSProperties = {
-  width: "100%", padding: "5px 10px", fontSize: 12, color: "#5a5a70",
+  width: "100%", padding: "5px 10px", fontSize: 12, color: "#7a7668",
   textTransform: "uppercase", letterSpacing: 1, cursor: "pointer",
   display: "flex", justifyContent: "space-between", userSelect: "none",
   background: "none", border: "none", textAlign: "left",
 };
 
 const propsHeaderStyle: React.CSSProperties = {
-  padding: "6px 10px", borderBottom: "1px solid #1c1c26",
-  fontSize: 12, color: "#5a5a70", textTransform: "uppercase", letterSpacing: 1,
+  padding: "6px 10px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+  fontSize: 12, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1,
   display: "flex", justifyContent: "space-between",
 };
 
 const emptyStateStyle: React.CSSProperties = {
-  padding: 20, color: "#666", fontSize: 12, textAlign: "center",
+  padding: 20, color: "#7a7668", fontSize: 12, textAlign: "center",
 };
 
 const rowStyle: React.CSSProperties = {
@@ -1139,12 +1143,12 @@ const rowStyle: React.CSSProperties = {
 };
 
 const rowLabelStyle: React.CSSProperties = {
-  fontSize: 12, color: "#7a7a90", flex: "0 0 40px", textAlign: "right",
+  fontSize: 12, color: "#7a7668", flex: "0 0 40px", textAlign: "right",
 };
 
 const selectStyle: React.CSSProperties = {
-  flex: 1, background: "#111118", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
+  flex: 1, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
 };
 
 // ── Color Picker with hex/rgba toggle + alpha slider ────────
@@ -1171,7 +1175,7 @@ function ColorPicker({ color, onChange, resetKey }: { color: string; onChange: (
           type="color"
           defaultValue={color.slice(0, 7)}
           onChange={e => onChange(e.target.value + (alpha < 1 ? Math.round(alpha * 255).toString(16).padStart(2, "0") : ""))}
-          style={{ width: 28, height: 26, border: "1px solid #1c1c26", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
+          style={{ width: 28, height: 26, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 4, cursor: "pointer", background: "none", padding: 0 }}
         />
         <input
           key={`cphex-${resetKey}`}
@@ -1183,7 +1187,7 @@ function ColorPicker({ color, onChange, resetKey }: { color: string; onChange: (
           type="button"
           onClick={() => setMode(m => m === "hex" ? "rgba" : "hex")}
           style={{
-            background: "none", border: "1px solid #1c1c26", color: "#7a7a90",
+            background: "none", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668",
             borderRadius: 4, padding: "2px 5px", fontSize: 10, cursor: "pointer",
             whiteSpace: "nowrap",
           }}
@@ -1214,10 +1218,10 @@ function ColorPicker({ color, onChange, resetKey }: { color: string; onChange: (
               const a = Number(e.target.value) / 100;
               onChange(color.slice(0, 7) + (a < 1 ? Math.round(a * 255).toString(16).padStart(2, "0") : ""));
             }}
-            style={{ flex: 1, accentColor: "#6366f1" }}
+            style={{ flex: 1, accentColor: "#c8b898" }}
             title="Alpha"
           />
-          <span style={{ fontSize: 10, color: "#7a7a90", minWidth: 28, textAlign: "right" }}>
+          <span style={{ fontSize: 10, color: "#7a7668", minWidth: 28, textAlign: "right" }}>
             {Math.round(alpha * 100)}%
           </span>
         </div>

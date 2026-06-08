@@ -75,7 +75,7 @@ export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {
                   type="button"
                   onClick={() => handleSelect(opt.type)}
                   style={{
-                    background: "none", border: "none", color: "#c4c4d4",
+                    background: "none", border: "none", color: "#c4c0b4",
                     padding: "4px 8px", fontSize: 12, cursor: "pointer",
                     textAlign: "left", borderRadius: 4, width: "100%",
                   }}
@@ -101,7 +101,7 @@ export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {
             background: "#14141e", border: "1px solid #2a2a3a", borderRadius: 8,
             padding: 16, width: 360,
           }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: "#e4e4f0" }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: "#f0ebe0" }}>
               {embedOptions.find(o => o.type === urlModal)?.label || "Embed URL"}
             </div>
             <input
@@ -116,7 +116,7 @@ export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {
                 "https://twitter.com/..."}
               style={{
                 width: "100%", background: "#0a0a14", border: "1px solid #2a2a3a",
-                color: "#e4e4f0", borderRadius: 4, padding: "6px 10px", fontSize: 12,
+                color: "#f0ebe0", borderRadius: 4, padding: "6px 10px", fontSize: 12,
                 fontFamily: "monospace", boxSizing: "border-box",
               }}
             />
@@ -124,7 +124,7 @@ export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {
               <button type="button" onClick={() => setUrlModal(null)}
                 style={{
                   padding: "4px 12px", borderRadius: 4, fontSize: 12, cursor: "pointer",
-                  background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90",
+                  background: "#111118", border: "1px solid #1c1c26", color: "#7a7668",
                 }}>
                 Cancel
               </button>
@@ -133,7 +133,7 @@ export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {
                   padding: "4px 12px", borderRadius: 4, fontSize: 12, cursor: "pointer",
                   background: url.trim() ? "#1a2a1a" : "#111118",
                   border: url.trim() ? "1px solid #2a4a2a" : "1px solid #1c1c26",
-                  color: url.trim() ? "#4ade80" : "#5a5a70",
+                  color: url.trim() ? "#4ade80" : "#7a7668",
                 }}>
                 Embed
               </button>

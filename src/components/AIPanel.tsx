@@ -139,11 +139,10 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
   ];
 
   return (
-    <div style={{
+    <div className="glass-panel" style={{
       position: "fixed", top: 48, right: 0, bottom: 0, width: 360,
-      background: "#0e0e14", borderLeft: "1px solid #1c1c26",
       display: "flex", flexDirection: "column", zIndex: 50,
-      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c4d4",
+      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c0b4",
     }}>
       {/* Header */}
       <div style={{
@@ -152,7 +151,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
       }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>🤖 AI Tools</span>
         <button onClick={onClose} style={{
-          background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
+          background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
         }}>✕</button>
       </div>
 
@@ -163,8 +162,8 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
             style={{
               flex: 1, padding: "8px 4px", border: "none", cursor: "pointer",
               background: tab === t.id ? "#1a1a2e" : "transparent",
-              color: tab === t.id ? "#c4b5fd" : "#6a6a80",
-              borderBottom: tab === t.id ? "2px solid #818cf8" : "2px solid transparent",
+              color: tab === t.id ? "#c8b898" : "#7a7668",
+              borderBottom: tab === t.id ? "2px solid #c8b898" : "2px solid transparent",
               fontSize: 11, fontWeight: tab === t.id ? 600 : 400,
             }}>
             {t.label}
@@ -184,8 +183,8 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                   style={{
                     flex: 1, padding: "6px", borderRadius: 4, cursor: "pointer",
                     background: genType === t ? "#1a1a2e" : "transparent",
-                    border: genType === t ? "1px solid #818cf8" : "1px solid #2a2a3a",
-                    color: genType === t ? "#c4b5fd" : "#7a7a90",
+                    border: genType === t ? "1px solid #c8b898" : "1px solid #2a2a3a",
+                    color: genType === t ? "#c8b898" : "#7a7668",
                     fontSize: 11, textTransform: "capitalize",
                   }}>
                   {t}
@@ -206,7 +205,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
             {/* Placement toggle */}
             <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
               <input type="checkbox" checked={placeOnCanvas} onChange={e => setPlaceOnCanvas(e.target.checked)}
-                style={{ accentColor: "#818cf8" }} />
+                style={{ accentColor: "#c8b898" }} />
               Place result on canvas
             </label>
 
@@ -286,7 +285,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                   <span style={{ fontSize: 28, fontWeight: 700, color: scoreColor(layoutResult.score) }}>
                     {layoutResult.score}
                   </span>
-                  <span style={{ fontSize: 11, color: "#7a7a90" }}>Layout Score / 100</span>
+                  <span style={{ fontSize: 11, color: "#7a7668" }}>Layout Score / 100</span>
                 </div>
 
                 {/* Summary */}
@@ -303,7 +302,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                 {/* Issues */}
                 {layoutResult.issues?.length > 0 && (
                   <>
-                    <div style={{ fontSize: 10, color: "#6a6a80", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>
+                    <div style={{ fontSize: 10, color: "#7a7668", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>
                       Issues ({layoutResult.issues.length})
                     </div>
                     {layoutResult.issues.map((issue: any, i: number) => (
@@ -322,7 +321,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                           <span style={{ fontSize: 11, fontWeight: 500 }}>{issue.description}</span>
                         </div>
                         {issue.suggestion && (
-                          <div style={{ fontSize: 10, color: "#818cf8", marginTop: 2 }}>
+                          <div style={{ fontSize: 10, color: "#c8b898", marginTop: 2 }}>
                             💡 {issue.suggestion}
                           </div>
                         )}
@@ -352,11 +351,11 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                 <label style={labelStyle}>Colors ({palCount})</label>
                 <input type="range" min={3} max={9} value={palCount}
                   onChange={e => setPalCount(Number(e.target.value))}
-                  style={{ width: "100%", accentColor: "#818cf8" }} />
+                  style={{ width: "100%", accentColor: "#c8b898" }} />
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input type="checkbox" checked={palNeutrals} onChange={e => setPalNeutrals(e.target.checked)}
-                  style={{ accentColor: "#818cf8" }} />
+                  style={{ accentColor: "#c8b898" }} />
                 <label style={{ ...labelStyle, marginTop: 0, cursor: "pointer" }}>Neutrals</label>
               </div>
             </div>
@@ -385,12 +384,12 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                     }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 11, fontWeight: 600 }}>{c.name}</div>
-                      <div style={{ fontSize: 10, color: "#7a7a90" }}>{c.hex} · {c.role}</div>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>{c.hex} · {c.role}</div>
                     </div>
                     <button type="button" onClick={() => { navigator.clipboard?.writeText(c.hex); }}
                       style={{
                         background: "none", border: "1px solid #2a2a3a",
-                        color: "#7a7a90", borderRadius: 3, padding: "2px 6px",
+                        color: "#7a7668", borderRadius: 3, padding: "2px 6px",
                         cursor: "pointer", fontSize: 10,
                       }} title="Copy hex">
                       📋
@@ -419,7 +418,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
               <option value="Arabic">Arabic</option>
             </select>
 
-            <p style={{ fontSize: 10, color: "#6a6a80", marginTop: 8, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 10, color: "#7a7668", marginTop: 8, lineHeight: 1.5 }}>
               Translates all text objects on the canvas to the selected language using AI.
             </p>
 
@@ -452,7 +451,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
         }}>
           ⚠ {error}
           <button type="button" onClick={() => setError(null)}
-            style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", float: "right" }}>
+            style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", float: "right" }}>
             ✕
           </button>
         </div>
@@ -464,7 +463,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
 // ── Styles ──
 
 const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 10, color: "#6a6a80",
+  display: "block", fontSize: 10, color: "#7a7668",
   marginBottom: 3, textTransform: "uppercase", letterSpacing: 1,
 };
 
@@ -472,7 +471,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box",
   padding: "6px 8px", borderRadius: 4,
   background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", fontSize: 11, outline: "none",
+  color: "#f0ebe0", fontSize: 11, outline: "none",
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -488,8 +487,8 @@ const selectStyle: React.CSSProperties = {
 
 const btnPrimary: React.CSSProperties = {
   padding: "8px 14px", borderRadius: 6,
-  background: "#2a1a4a", border: "1px solid #4a2a7a",
-  color: "#c4b5fd", fontSize: 12, fontWeight: 600,
+  background: "rgba(200, 184, 152, 0.12)", border: "1px solid #c8b898",
+  color: "#c8b898", fontSize: 12, fontWeight: 600,
   cursor: "pointer",
 };
 

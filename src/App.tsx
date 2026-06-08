@@ -247,7 +247,7 @@ function App() {
   // Editor view
   return (
     <ToastProvider>
-      <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "#080808" }}>
         {/* Toolbar */}
         <Toolbar
           templateId={templateId}
@@ -395,9 +395,12 @@ function downloadText(content: string, filename: string, mime: string) {
 }
 
 const topBtn: React.CSSProperties = {
-  background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.1)",
-  color: "#e4e4f0", borderRadius: 4, padding: "3px 8px", fontSize: 10,
-  cursor: "pointer",
+  background: "rgba(12, 12, 12, 0.55)",
+  backdropFilter: "blur(10px) saturate(160%)",
+  WebkitBackdropFilter: "blur(10px) saturate(160%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)",
+  color: "#c4c0b4", borderRadius: 8, padding: "4px 10px", fontSize: 10,
+  cursor: "pointer", transition: "all 0.2s ease",
 };
 
 export { App };

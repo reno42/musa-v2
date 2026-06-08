@@ -85,7 +85,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
         aria-label="Select font"
         style={{
           width: "100%", background: "#111118", border: "1px solid #1c1c26",
-          color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
+          color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
           textAlign: "left", cursor: "pointer", fontFamily: value,
         }}
       >
@@ -105,7 +105,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
             style={{
               margin: 4, width: "calc(100% - 8px)", padding: "4px 6px",
               background: "#0a0a0f", border: "1px solid #1c1c26",
-              color: "#e4e4f0", borderRadius: 4, fontSize: 12,
+              color: "#f0ebe0", borderRadius: 4, fontSize: 12,
             }}
           />
           {/* Category filter pills */}
@@ -134,7 +134,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
               onClick={() => select(f)}
               style={{
                 padding: "4px 8px", cursor: "pointer", fontSize: 13,
-                fontFamily: f.family, color: f.family === value ? "#4ade80" : "#e4e4f0",
+                fontFamily: f.family, color: f.family === value ? "#4ade80" : "#f0ebe0",
                 background: f.family === value ? "#1a2a1a" : "transparent",
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                 display: "flex", alignItems: "center", gap: 6,
@@ -142,7 +142,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
             >
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{f.family}</span>
               <span style={{
-                fontSize: 9, color: "#5a5a70", background: "#1a1a26",
+                fontSize: 9, color: "#7a7668", background: "#1a1a26",
                 padding: "0 4px", borderRadius: 2, fontFamily: "Inter",
               }}>
                 {CATEGORY_LABELS[f.category] || f.category}
@@ -150,7 +150,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
             </div>
           ))}
           {filtered.length === 0 && (
-            <div style={{ padding: "8px 12px", color: "#7a7a90", fontSize: 11 }}>
+            <div style={{ padding: "8px 12px", color: "#7a7668", fontSize: 11 }}>
               {catalog.length === 0 ? "Loading catalog…" : "No matching fonts"}
             </div>
           )}

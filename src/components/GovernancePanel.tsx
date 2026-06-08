@@ -125,15 +125,14 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
   };
 
   return (
-    <div style={{
+    <div className="glass-panel" style={{
       position: "fixed", top: 48, right: 0, bottom: 0, width: 340,
-      background: "#0e0e14", borderLeft: "1px solid #1c1c26",
       display: "flex", flexDirection: "column", zIndex: 50,
-      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c4d4",
+      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c0b4",
     }}>
       {/* Header */}
       <div style={{
-        padding: "10px 12px", borderBottom: "1px solid #1c1c26",
+        padding: "10px 12px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
       }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>🕐 Timeline</span>
@@ -147,7 +146,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
             ↪
           </button>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
             marginLeft: 4,
           }}>✕</button>
         </div>
@@ -159,13 +158,13 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
         {loading && (
-          <div style={{ padding: 20, textAlign: "center", color: "#7a7a90" }}>Loading...</div>
+          <div style={{ padding: 20, textAlign: "center", color: "#7a7668" }}>Loading...</div>
         )}
         {error && (
           <div style={{ padding: 20, textAlign: "center", color: "#e44" }}>{error}</div>
         )}
         {!loading && !error && snapshots.length === 0 && (
-          <div style={{ padding: 20, textAlign: "center", color: "#7a7a90" }}>
+          <div style={{ padding: 20, textAlign: "center", color: "#7a7668" }}>
             No snapshots yet. Edits will auto-trigger snapshots.
           </div>
         )}
@@ -173,7 +172,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
         {/* Last 5 states header */}
         {snapshots.length > 0 && (
           <div style={{
-            padding: "6px 12px 4px", fontSize: 10, color: "#6a6a80",
+            padding: "6px 12px 4px", fontSize: 10, color: "#7a7668",
             textTransform: "uppercase", letterSpacing: 1,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
@@ -181,7 +180,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
             {snapshots.length > 5 && (
               <button type="button" onClick={() => setShowAll(!showAll)}
                 style={{
-                  background: "none", border: "none", color: "#818cf8",
+                  background: "none", border: "none", color: "#c8b898",
                   cursor: "pointer", fontSize: 10,
                 }}>
                 {showAll ? "Show less" : `View all (${snapshots.length})`}
@@ -193,14 +192,14 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
         {(showAll ? snapshots : snapshots.slice(0, 5)).map((snap, i) => (
           <div key={snap.id} style={{
             padding: "6px 12px", cursor: "pointer",
-            background: selectedSnapId === snap.id ? "#1a1a2e" : "transparent",
-            borderBottom: "1px solid #111118",
+            background: selectedSnapId === snap.id ? "rgba(200, 184, 152, 0.08)" : "transparent",
+            borderBottom: "1px solid rgba(255, 255, 255, 0.03)",
           }}
             onClick={() => handleDiff(snap.id)}
           >
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <span style={{ fontSize: 14 }}>{TYPE_ICON[snap.type] || "•"}</span>
-              <span style={{ fontWeight: 600, fontSize: 11, color: "#7a7a90" }}>
+              <span style={{ fontWeight: 600, fontSize: 11, color: "#7a7668" }}>
                 {formatTime(snap.timestamp)}
               </span>
               <span style={{
@@ -211,7 +210,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
                 {TYPE_LABEL[snap.type]}
               </span>
             </div>
-            <div style={{ fontSize: 10, color: "#5a5a70", marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: "#7a7668", marginTop: 2 }}>
               {snap.trigger} • {snap.objectCount} objects • {snap.frameCount} frames
             </div>
             {selectedSnapId === snap.id && (
@@ -229,14 +228,14 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
       {/* Diff panel */}
       {diffs && diffs.length > 0 && (
         <div style={{
-          borderTop: "1px solid #1c1c26", maxHeight: 200, overflowY: "auto", padding: "8px 12px",
+          borderTop: "1px solid rgba(255, 255, 255, 0.04)", maxHeight: 200, overflowY: "auto", padding: "8px 12px",
         }}>
           <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 4 }}>
             Changes ({diffs.length})
           </div>
           {diffs.slice(0, 10).map((d, i) => (
             <div key={i} style={{
-              fontSize: 10, padding: "2px 0", borderBottom: "1px solid #111118",
+              fontSize: 10, padding: "2px 0", borderBottom: "1px solid rgba(255, 255, 255, 0.03)",
               display: "flex", gap: 4, alignItems: "center",
             }}>
               <span style={{
@@ -245,11 +244,11 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
               }}>
                 {d.action.toUpperCase()}
               </span>
-              <span style={{ color: "#7a7a90" }}>{d.layerName || "?"}</span>
+              <span style={{ color: "#7a7668" }}>{d.layerName || "?"}</span>
             </div>
           ))}
           {diffs.length > 10 && (
-            <div style={{ fontSize: 10, color: "#5a5a70", padding: "4px 0" }}>
+            <div style={{ fontSize: 10, color: "#7a7668", padding: "4px 0" }}>
               +{diffs.length - 10} more changes
             </div>
           )}
@@ -261,16 +260,16 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
 
 function actionBtn(color: string): React.CSSProperties {
   return {
-    background: "#111118", border: `1px solid ${color}`, color,
+    background: "rgba(15, 15, 15, 0.5)", border: `1px solid ${color}`, color,
     borderRadius: 3, padding: "2px 6px", fontSize: 10, cursor: "pointer",
   };
 }
 
 function undoRedoBtn(disabled: boolean): React.CSSProperties {
   return {
-    background: "#16161e",
-    border: "1px solid #2a2a3a",
-    color: disabled ? "#3a3a4a" : "#c4c4d4",
+    background: "rgba(15, 15, 15, 0.5)",
+    border: "1px solid rgba(255, 255, 255, 0.04)",
+    color: disabled ? "#7a7668" : "#c4c0b4",
     borderRadius: 4,
     padding: "3px 7px",
     fontSize: 14,

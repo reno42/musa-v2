@@ -229,12 +229,12 @@ export function useCanvas() {
       }
       case "frame": {
         const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        obj = new Rect({ left: x, top: y, width: w, height: h, fill: "#ffffff", stroke: "#6366f1", strokeWidth: 2, rx: 0, ry: 0 });
+        obj = new Rect({ left: x, top: y, width: w, height: h, fill: "#ffffff", stroke: "#c8b898", strokeWidth: 2, rx: 0, ry: 0 });
         (obj as any).isFrameVisual = true;
         (obj as any).frameId = frameId;
         (obj as any).frameName = `Frame ${Date.now() % 1000}`;
         (obj as any).frameFill = "#ffffff";
-        (obj as any).frameStroke = "#6366f1";
+        (obj as any).frameStroke = "#c8b898";
         (obj as any).layerName = (obj as any).frameName;
         break;
       }
@@ -870,13 +870,13 @@ export function useCanvas() {
     const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const frame = new Rect({
       left: x, top: y, width: w, height: h,
-      fill: "#ffffff", stroke: "#6366f1", strokeWidth: 2, rx: 0, ry: 0,
+      fill: "#ffffff", stroke: "#c8b898", strokeWidth: 2, rx: 0, ry: 0,
     });
     (frame as any).isFrameVisual = true;
     (frame as any).frameId = frameId;
     (frame as any).frameName = name || `Frame ${count + 1}`;
     (frame as any).frameFill = "#ffffff";
-    (frame as any).frameStroke = "#6366f1";
+    (frame as any).frameStroke = "#c8b898";
     (frame as any).layerName = (frame as any).frameName;
     c.add(frame);
     c.setActiveObject(frame);
@@ -1018,7 +1018,7 @@ export function useCanvas() {
       left: targetObj.left ?? 0, top: targetObj.top ?? 0,
       width: visW, height: visH,
       fill: "rgba(255,255,255,0.05)",
-      stroke: "#6366f1", strokeWidth: 2, strokeDashArray: [6, 4],
+      stroke: "#c8b898", strokeWidth: 2, strokeDashArray: [6, 4],
       hasControls: true, hasBorders: true,
       lockRotation: true, lockScalingFlip: true,
       selectable: true, evented: true,

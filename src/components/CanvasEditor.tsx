@@ -319,7 +319,7 @@ function RulerBar({ orientation, zoom, containerWidth, onCreateGuide }: {
               position: "absolute",
               [isH ? "top" : "left"]: 13,
               [isH ? "left" : "top"]: 3,
-              fontSize: 9, fontFamily: "monospace", color: "#7a7a90",
+              fontSize: 9, fontFamily: "monospace", color: "#7a7668",
               whiteSpace: "nowrap",
             }}>
               {t.label}

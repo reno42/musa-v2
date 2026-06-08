@@ -120,7 +120,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
             onClick={() => { setModalOpen(true); setOpen(false); }}
             style={{
               display: "block", width: "100%", padding: "6px 12px",
-              border: "none", background: "transparent", color: "#c4c4d4",
+              border: "none", background: "transparent", color: "#c4c0b4",
               cursor: "pointer", fontSize: 12, textAlign: "left",
             }}
           >
@@ -141,7 +141,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
             borderRadius: 12, padding: "16px 20px",
             width: 440, maxHeight: "90vh", overflowY: "auto",
             boxShadow: "0 16px 48px rgba(0,0,0,0.6)",
-            fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c4d4",
+            fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c0b4",
           }}>
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -149,7 +149,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
             }}>
               <span style={{ fontWeight: 600, fontSize: 14 }}>🖼 Image Gallery</span>
               <button type="button" onClick={() => setModalOpen(false)}
-                style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16 }}>
+                style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16 }}>
                 ✕
               </button>
             </div>
@@ -207,7 +207,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
             {/* Caption toggle */}
             <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
               <input type="checkbox" checked={withCaptions} onChange={e => setWithCaptions(e.target.checked)}
-                style={{ accentColor: "#818cf8" }} />
+                style={{ accentColor: "#c8b898" }} />
               Enable image captions
             </label>
 
@@ -215,7 +215,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
             {imageCount > 0 && (
               <div style={{
                 marginTop: 10, padding: "8px 10px", background: "#0a0a14",
-                borderRadius: 6, fontSize: 10, color: "#7a7a90",
+                borderRadius: 6, fontSize: 10, color: "#7a7668",
                 border: "1px solid #1c1c26",
               }}>
                 Grid: {imageCount} images, {Math.min(columns, imageCount)} col(s) × {Math.ceil(imageCount / columns)} row(s)
@@ -240,7 +240,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
 }
 
 const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 10, color: "#6a6a80",
+  display: "block", fontSize: 10, color: "#7a7668",
   marginBottom: 3, textTransform: "uppercase", letterSpacing: 1,
 };
 
@@ -248,7 +248,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box",
   padding: "5px 8px", borderRadius: 4,
   background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", fontSize: 11, outline: "none",
+  color: "#f0ebe0", fontSize: 11, outline: "none",
 };
 
 const textareaStyle: React.CSSProperties = {

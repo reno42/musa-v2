@@ -88,9 +88,8 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
   const maxOrder = pages.reduce((max, p) => Math.max(max, p.order || 0), 0);
 
   return (
-    <div style={{
+    <div className="glass-panel" style={{
       height: 34, display: "flex", alignItems: "center", gap: 2,
-      background: "#0a0a10", borderBottom: "1px solid #1a1a2a",
       padding: "0 8px", overflowX: "auto", flexShrink: 0,
     }}>
       {/* Page tabs */}
@@ -105,8 +104,8 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
             borderRadius: "4px 4px 0 0",
             background: isActive ? "#1a1a2e" : "transparent",
             border: isActive ? "1px solid #2a2a4a" : "1px solid transparent",
-            borderBottom: isActive ? "2px solid #818cf8" : "2px solid transparent",
-            cursor: "pointer", fontSize: 11, color: isActive ? "#e4e4f0" : "#6a6a80",
+            borderBottom: isActive ? "2px solid #c8b898" : "2px solid transparent",
+            cursor: "pointer", fontSize: 11, color: isActive ? "#f0ebe0" : "#7a7668",
             fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap",
             transition: "background 0.15s",
           }} onClick={() => handleSwitch(page.id)}>
@@ -122,7 +121,7 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
                 onBlur={() => setRenamingId(null)}
                 style={{
                   background: "#0a0a14", border: "1px solid #2a2a4a",
-                  color: "#e4e4f0", borderRadius: 3, padding: "1px 4px",
+                  color: "#f0ebe0", borderRadius: 3, padding: "1px 4px",
                   fontSize: 11, width: 80,
                 }}
                 onClick={e => e.stopPropagation()}
@@ -160,7 +159,7 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
             placeholder={`Page ${maxOrder + 2}`}
             style={{
               background: "#0a0a14", border: "1px solid #2a2a4a",
-              color: "#e4e4f0", borderRadius: 4, padding: "2px 6px",
+              color: "#f0ebe0", borderRadius: 4, padding: "2px 6px",
               fontSize: 11, width: 100,
             }}
           />
@@ -175,13 +174,13 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
           style={{
             padding: "3px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
             background: "transparent", border: "1px solid transparent",
-            color: "#6a6a80", marginLeft: 4,
+            color: "#7a7668", marginLeft: 4,
           }} title="Add page">
           + Page
         </button>
       )}
 
-      {loading && <span style={{ fontSize: 10, color: "#5a5a70", marginLeft: 8 }}>Loading...</span>}
+      {loading && <span style={{ fontSize: 10, color: "#7a7668", marginLeft: 8 }}>Loading...</span>}
     </div>
   );
 }

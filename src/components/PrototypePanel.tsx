@@ -168,11 +168,10 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
   if (loading) return <div style={emptyStyle}>Loading...</div>;
 
   return (
-    <div style={{
+    <div className="glass-panel" style={{
       position: "fixed", top: 48, right: 0, bottom: 0, width: 300,
-      background: "#0e0e14", borderLeft: "1px solid #1c1c26",
       display: "flex", flexDirection: "column", zIndex: 50,
-      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c4d4",
+      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c0b4",
     }}>
       {/* Header */}
       <div style={{
@@ -181,7 +180,7 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
       }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>▶ Prototype</span>
         <button onClick={onClose} style={{
-          background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
+          background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
         }}>✕</button>
       </div>
 
@@ -192,8 +191,8 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
             style={{
               flex: 1, padding: "6px 4px", fontSize: 11, cursor: "pointer",
               background: activeTab === tab ? "#1a1a2e" : "transparent",
-              border: "none", borderBottom: activeTab === tab ? "2px solid #818cf8" : "2px solid transparent",
-              color: activeTab === tab ? "#e4e4f0" : "#7a7a90",
+              border: "none", borderBottom: activeTab === tab ? "2px solid #c8b898" : "2px solid transparent",
+              color: activeTab === tab ? "#f0ebe0" : "#7a7668",
               fontWeight: activeTab === tab ? 600 : 400,
             }}>
             {tab === "interactions" ? "Interactions" : tab === "animations" ? "Animations" : "Overlay"}
@@ -216,7 +215,7 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                   width: "100%", padding: "5px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer", marginBottom: 8,
                   background: frames.length > 0 ? "#1a2a3a" : "#111118",
                   border: frames.length > 0 ? "1px solid #2a3a5a" : "1px solid #1c1c26",
-                  color: frames.length > 0 ? "#60a5fa" : "#5a5a70",
+                  color: frames.length > 0 ? "#60a5fa" : "#7a7668",
                 }}>
                 + Add Interaction
               </button>
@@ -268,14 +267,14 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                     <span style={labelStyle}>Duration</span>
                     <input type="number" value={ixDuration} onChange={e => setIxDuration(Number(e.target.value))}
                       style={inputStyle} min={0} max={5000} step={100} />
-                    <span style={{ fontSize: 10, color: "#5a5a70" }}>ms</span>
+                    <span style={{ fontSize: 10, color: "#7a7668" }}>ms</span>
                   </div>
                   {/* Delay */}
                   <div style={rowStyle}>
                     <span style={labelStyle}>Delay</span>
                     <input type="number" value={ixDelay} onChange={e => setIxDelay(Number(e.target.value))}
                       style={inputStyle} min={0} max={10000} step={100} />
-                    <span style={{ fontSize: 10, color: "#5a5a70" }}>ms</span>
+                    <span style={{ fontSize: 10, color: "#7a7668" }}>ms</span>
                   </div>
                   {/* Easing */}
                   <div style={rowStyle}>
@@ -291,7 +290,7 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                       Save
                     </button>
                     <button type="button" onClick={() => setShowAddInteraction(false)}
-                      style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90" }}>
+                      style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7668" }}>
                       Cancel
                     </button>
                   </div>
@@ -313,19 +312,19 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                   fontSize: 11,
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ color: "#e4e4f0", fontWeight: 600 }}>
+                    <span style={{ color: "#f0ebe0", fontWeight: 600 }}>
                       {srcFrame?.name || ix.sourceId}
                     </span>
                     <button type="button" onClick={() => handleDeleteInteraction(ix.id)}
-                      style={{ background: "none", border: "none", color: "#5a5a70", cursor: "pointer", fontSize: 12 }}>
+                      style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 12 }}>
                       ✕
                     </button>
                   </div>
-                  <div style={{ color: "#7a7a90", marginTop: 2 }}>
+                  <div style={{ color: "#7a7668", marginTop: 2 }}>
                     {triggerLabel[ix.trigger] || ix.trigger} → {actionLabel[ix.action] || ix.action}
                     {tgtFrame && ` → ${tgtFrame.name}`}
                   </div>
-                  <div style={{ color: "#5a5a70", fontSize: 10, marginTop: 1 }}>
+                  <div style={{ color: "#7a7668", fontSize: 10, marginTop: 1 }}>
                     {transitionLabel[ix.transition] || ix.transition} · {ix.duration}ms · {ix.easing}
                   </div>
                 </div>
@@ -351,7 +350,7 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
               </button>
             ) : (
               <div style={{ background: "#111118", border: "1px solid #1c1c26", borderRadius: 6, padding: 8, marginBottom: 8 }}>
-                <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 6, color: "#818cf8" }}>New Animation</div>
+                <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 6, color: "#c8b898" }}>New Animation</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <div style={rowStyle}>
                     <span style={labelStyle}>Object</span>
@@ -385,13 +384,13 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                     <span style={labelStyle}>Duration</span>
                     <input type="number" value={animDuration} onChange={e => setAnimDuration(Number(e.target.value))}
                       style={inputStyle} min={0} max={5000} step={100} />
-                    <span style={{ fontSize: 10, color: "#5a5a70" }}>ms</span>
+                    <span style={{ fontSize: 10, color: "#7a7668" }}>ms</span>
                   </div>
                   <div style={rowStyle}>
                     <span style={labelStyle}>Delay</span>
                     <input type="number" value={animDelay} onChange={e => setAnimDelay(Number(e.target.value))}
                       style={inputStyle} min={0} max={10000} step={100} />
-                    <span style={{ fontSize: 10, color: "#5a5a70" }}>ms</span>
+                    <span style={{ fontSize: 10, color: "#7a7668" }}>ms</span>
                   </div>
                   <div style={rowStyle}>
                     <span style={labelStyle}>Easing</span>
@@ -407,7 +406,7 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                       Save
                     </button>
                     <button type="button" onClick={() => setShowAddAnimation(false)}
-                      style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90" }}>
+                      style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7668" }}>
                       Cancel
                     </button>
                   </div>
@@ -426,16 +425,16 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
                 fontSize: 11,
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ color: "#e4e4f0", fontWeight: 600 }}>{anim.objectId}</span>
+                  <span style={{ color: "#f0ebe0", fontWeight: 600 }}>{anim.objectId}</span>
                   <button type="button" onClick={() => handleDeleteAnimation(anim.id)}
-                    style={{ background: "none", border: "none", color: "#5a5a70", cursor: "pointer", fontSize: 12 }}>
+                    style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 12 }}>
                     ✕
                   </button>
                 </div>
-                <div style={{ color: "#7a7a90", marginTop: 2 }}>
+                <div style={{ color: "#7a7668", marginTop: 2 }}>
                   {anim.type} {anim.direction ? `· ${anim.direction}` : ""}
                 </div>
-                <div style={{ color: "#5a5a70", fontSize: 10, marginTop: 1 }}>
+                <div style={{ color: "#7a7668", fontSize: 10, marginTop: 1 }}>
                   {anim.duration}ms · {anim.easing} · delay {anim.delay}ms
                 </div>
               </div>
@@ -549,14 +548,14 @@ export function PrototypePanel({ templateId, selectedObjects, onUpdate, onClose 
             {/* Show existing overlays */}
             {frames.filter(f => f.metadata?.overlay).length > 0 && (
               <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: "#5a5a70", marginBottom: 4 }}>Existing Overlays:</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: "#7a7668", marginBottom: 4 }}>Existing Overlays:</div>
                 {frames.filter(f => f.metadata?.overlay).map(f => (
                   <div key={f.id} style={{
                     padding: "6px 8px", marginBottom: 4, borderRadius: 4,
                     background: "#111118", border: "1px solid #1c1c26", fontSize: 11,
                   }}>
                     <span style={{ color: "#c084fc", fontWeight: 600 }}>{f.name}</span>
-                    <span style={{ color: "#5a5a70", marginLeft: 8 }}>
+                    <span style={{ color: "#7a7668", marginLeft: 8 }}>
                       {f.metadata!.overlay!.position}
                       {f.metadata!.overlay!.backdrop ? " · backdrop" : ""}
                     </span>
@@ -580,18 +579,18 @@ const rowStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 10, color: "#7a7a90", minWidth: 60, textAlign: "right",
+  fontSize: 10, color: "#7a7668", minWidth: 60, textAlign: "right",
 };
 
 const inputStyle: React.CSSProperties = {
   flex: 1, background: "#0a0a14", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 4, padding: "2px 6px", fontSize: 11,
+  color: "#f0ebe0", borderRadius: 4, padding: "2px 6px", fontSize: 11,
   fontFamily: "monospace", minWidth: 60,
 };
 
 const selectStyle: React.CSSProperties = {
   flex: 1, background: "#0a0a14", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 4, padding: "2px 4px", fontSize: 11,
+  color: "#f0ebe0", borderRadius: 4, padding: "2px 4px", fontSize: 11,
   minWidth: 60,
 };
 

@@ -103,27 +103,26 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
   const selCount = selectedObjects.length;
 
   return (
-    <div style={{
+    <div className="glass-panel" style={{
       position: "fixed", top: 48, right: 0, bottom: 0, width: 300,
-      background: "#0e0e14", borderLeft: "1px solid #1c1c26",
       display: "flex", flexDirection: "column", zIndex: 50,
-      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c4d4",
+      fontFamily: "Inter, sans-serif", fontSize: 12, color: "#c4c0b4",
     }}>
       {/* Header */}
       <div style={{
-        padding: "10px 12px", borderBottom: "1px solid #1c1c26",
+        padding: "10px 12px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
         display: "flex", justifyContent: "space-between", alignItems: "center",
       }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>📦 Components</span>
         <button onClick={onClose} style={{
-          background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 16,
+          background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
         }}>✕</button>
       </div>
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
         {/* Create component */}
-        <div style={{ padding: "0 10px 8px", borderBottom: "1px solid #1c1c26", marginBottom: 4 }}>
+        <div style={{ padding: "0 10px 8px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)", marginBottom: 4 }}>
           {showCreate ? (
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <input
@@ -139,7 +138,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                 Save
               </button>
               <button type="button" onClick={() => setShowCreate(false)}
-                style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90" }}>
+                style={{ ...btnSm, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)", color: "#7a7668" }}>
                 ✕
               </button>
             </div>
@@ -150,7 +149,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                 width: "100%", padding: "5px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
                 background: selCount > 0 ? "#1a2a3a" : "#111118",
                 border: selCount > 0 ? "1px solid #2a3a5a" : "1px solid #1c1c26",
-                color: selCount > 0 ? "#60a5fa" : "#5a5a70",
+                color: selCount > 0 ? "#60a5fa" : "#7a7668",
               }}>
               + Create Component {selCount > 0 ? `(${selCount} selected)` : ""}
             </button>
@@ -170,7 +169,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
           return (
             <div key={comp.id} style={{
               margin: "4px 8px", borderRadius: 4,
-              background: "#111118", border: "1px solid #1c1c26",
+              background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
             }}>
               {/* Main row */}
               <div
@@ -181,15 +180,15 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#e4e4f0" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#f0ebe0" }}>
                     ◈ {comp.name}
                   </div>
-                  <div style={{ fontSize: 10, color: "#5a5a70", marginTop: 2 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 2 }}>
                     {comp.objectIds?.length || 0} objects
                     {variantCount > 0 && ` · ${variantCount} variants`}
                   </div>
                 </div>
-                <span style={{ fontSize: 10, color: "#5a5a70", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+                <span style={{ fontSize: 10, color: "#7a7668", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
               </div>
 
               {/* Expanded: actions + variants */}
@@ -215,7 +214,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                     }}
                       style={{
                         flex: 1, padding: "3px 6px", borderRadius: 3, fontSize: 10, cursor: "pointer",
-                        background: "#1a1a2a", border: "1px solid #2a2a4a", color: "#818cf8",
+                        background: "#1a1a2a", border: "1px solid #2a2a4a", color: "#c8b898",
                       }}>
                       + Variant
                     </button>
@@ -245,7 +244,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                           padding: "2px 6px", borderRadius: 3, fontSize: 10, cursor: "pointer",
                           background: varName.trim() ? "#1a2a1a" : "#111118",
                           border: varName.trim() ? "1px solid #2a4a2a" : "1px solid #1c1c26",
-                          color: varName.trim() ? "#4ade80" : "#5a5a70",
+                          color: varName.trim() ? "#4ade80" : "#7a7668",
                         }}>
                         Save Variant
                       </button>
@@ -255,7 +254,7 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                   {/* Variants list */}
                   {variantCount > 0 && (
                     <div style={{ marginTop: 2 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: "#7a7a90", marginBottom: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#7a7668", marginBottom: 2 }}>
                         Variants:
                       </div>
                       {(comp.variants || []).map(v => (
@@ -264,9 +263,9 @@ export function ComponentsPanel({ templateId, selectedObjects, onUpdate, onClose
                           background: "#0a0a14", border: "1px solid #1a1a2a",
                           fontSize: 10,
                         }}>
-                          <span style={{ color: "#c4c4d4" }}>{v.name}</span>
+                          <span style={{ color: "#c4c0b4" }}>{v.name}</span>
                           {v.overrides && Object.keys(v.overrides).length > 0 && (
-                            <span style={{ color: "#5a5a70", marginLeft: 6 }}>
+                            <span style={{ color: "#7a7668", marginLeft: 6 }}>
                               {JSON.stringify(v.overrides).slice(0, 60)}
                             </span>
                           )}
@@ -289,8 +288,8 @@ const emptyStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  flex: 1, background: "#111118", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
+  flex: 1, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
   fontFamily: "monospace", minWidth: 80,
 };
 

@@ -106,12 +106,12 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
         {/* Header */}
         <div style={batchHeaderStyle}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Batch-a-mator</h3>
-          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#7a7a90", fontSize: 18, cursor: "pointer" }}>✕</button>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#7a7668", fontSize: 18, cursor: "pointer" }}>✕</button>
         </div>
 
         <div style={{ padding: 18 }}>
           {/* Mode tabs */}
-          <div style={{ display: "flex", gap: 4, marginBottom: 18, background: "#111118", borderRadius: 8, padding: 3 }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 18, background: "rgba(15, 15, 15, 0.5)", borderRadius: 8, padding: 3 }}>
             {([
               ["single-post", "Post Único"],
               ["multi-post", "Multi Posts"],
@@ -151,7 +151,7 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
               onClick={() => fileRef.current?.click()}
             >
               <div style={{ fontSize: 20, marginBottom: 4 }}>📁</div>
-              <div style={{ fontSize: 12, color: "#5a5a70" }}>Drop CSV file or click to browse</div>
+              <div style={{ fontSize: 12, color: "#7a7668" }}>Drop CSV file or click to browse</div>
               <input ref={fileRef} type="file" accept=".csv" aria-label="CSV file input" style={{ display: "none" }} onChange={handleFile} />
             </button>
             <textarea
@@ -165,10 +165,10 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
 
           {/* Column headers */}
           {headers.length > 0 && (
-            <div style={{ marginBottom: 12, fontSize: 12, color: "#5a5a70" }}>
+            <div style={{ marginBottom: 12, fontSize: 12, color: "#7a7668" }}>
               <span style={{ textTransform: "uppercase", letterSpacing: 1 }}>Columns: </span>
               {headers.map(h => (
-                <span key={h} style={{ background: "#1c1c26", padding: "2px 6px", borderRadius: 3, margin: "0 2px", color: "#e4e4f0" }}>
+                <span key={h} style={{ background: "rgba(200, 184, 152, 0.08)", padding: "2px 6px", borderRadius: 3, margin: "0 2px", color: "#f0ebe0" }}>
                   {h}
                 </span>
               ))}
@@ -181,12 +181,12 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
               <div style={batchSectionLabelStyle}>
                 Preview (first {preview.length} of {rows.length} rows)
               </div>
-              <div style={{ overflow: "auto", maxHeight: 150, border: "1px solid #1c1c26", borderRadius: 6 }}>
+              <div style={{ overflow: "auto", maxHeight: 150, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 6 }}>
                 <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                   <thead>
-                    <tr style={{ background: "#111118" }}>
+                    <tr style={{ background: "rgba(15, 15, 15, 0.5)" }}>
                       {headers.map(h => (
-                        <th key={h} style={{ padding: "4px 8px", textAlign: "left", color: "#5a5a70", fontWeight: 400, borderBottom: "1px solid #1c1c26" }}>{h}</th>
+                        <th key={h} style={{ padding: "4px 8px", textAlign: "left", color: "#7a7668", fontWeight: 400, borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -196,7 +196,7 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
                       return (
                       <tr key={rowKey || `row-${preview.indexOf(row)}`}>
                         {headers.map(h => (
-                          <td key={h} style={{ padding: "3px 8px", borderBottom: "1px solid #0e0e16" }}>{row[h]}</td>
+                          <td key={h} style={{ padding: "3px 8px", borderBottom: "1px solid rgba(255, 255, 255, 0.03)" }}>{row[h]}</td>
                         ))}
                       </tr>
                       );
@@ -230,15 +230,15 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                 Generated {results.length} templates
               </div>
-              <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid #1c1c26", borderRadius: 6 }}>
+              <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 6 }}>
                 {results.slice(0, 20).map((r: any, i: number) => (
-                  <div key={r.id} style={{ padding: "6px 10px", fontSize: 12, borderBottom: "1px solid #0e0e16", display: "flex", justifyContent: "space-between" }}>
+                  <div key={r.id} style={{ padding: "6px 10px", fontSize: 12, borderBottom: "1px solid rgba(255, 255, 255, 0.03)", display: "flex", justifyContent: "space-between" }}>
                     <span>{i + 1}. {r.name}</span>
-                    <span style={{ color: "#5a5a70" }}>{r.id}</span>
+                    <span style={{ color: "#7a7668" }}>{r.id}</span>
                   </div>
                 ))}
                 {results.length > 20 && (
-                  <div style={{ padding: "6px 10px", fontSize: 12, color: "#5a5a70", textAlign: "center" }}>
+                  <div style={{ padding: "6px 10px", fontSize: 12, color: "#7a7668", textAlign: "center" }}>
                     …and {results.length - 20} more
                   </div>
                 )}
@@ -257,39 +257,41 @@ const batchOverlayStyle: React.CSSProperties = {
   background: "rgba(0,0,0,0.6)",
 };
 const batchDialogStyle: React.CSSProperties = {
-  background: "#0e0e16", border: "1px solid #1c1c26", borderRadius: 10,
+  background: "rgba(12, 12, 12, 0.65)", backdropFilter: "blur(20px) saturate(180%)",
+  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)", borderRadius: 10,
   width: 700, maxHeight: "85vh", overflow: "auto",
-  color: "#e4e4f0", fontFamily: "Inter, system-ui, sans-serif",
+  color: "#f0ebe0", fontFamily: "Inter, system-ui, sans-serif",
 };
 const batchHeaderStyle: React.CSSProperties = {
-  padding: "14px 18px", borderBottom: "1px solid #1c1c26",
+  padding: "14px 18px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
   display: "flex", alignItems: "center", justifyContent: "space-between",
 };
 function batchTabStyle(active: boolean): React.CSSProperties {
   return {
     flex: 1, padding: "6px 0", border: "none", borderRadius: 6,
-    background: active ? "#7c6fff" : "transparent",
-    color: active ? "#fff" : "#7a7a90",
+    background: active ? "#c8b898" : "transparent",
+    color: active ? "#fff" : "#7a7668",
     fontSize: 12, cursor: "pointer", fontWeight: active ? 500 : 400,
   };
 }
 const batchSectionLabelStyle: React.CSSProperties = {
-  fontSize: 12, color: "#5a5a70", marginBottom: 6,
+  fontSize: 12, color: "#7a7668", marginBottom: 6,
   textTransform: "uppercase", letterSpacing: 1,
 };
 const batchDropZoneStyle: React.CSSProperties = {
-  border: "1px dashed #2a2a3a", borderRadius: 8, padding: 20,
+  border: "1px dashed rgba(200, 184, 152, 0.12)", borderRadius: 8, padding: 20,
   textAlign: "center", cursor: "pointer", marginBottom: 8,
 };
 const batchTextareaStyle: React.CSSProperties = {
-  width: "100%", height: 80, background: "#111118", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 6, padding: 8, fontSize: 12,
+  width: "100%", height: 80, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#f0ebe0", borderRadius: 6, padding: 8, fontSize: 12,
   fontFamily: "monospace", resize: "vertical",
 };
 function batchGenerateBtnStyle(disabled: boolean, generating: boolean): React.CSSProperties {
   return {
     width: "100%", padding: "10px 0", border: "none", borderRadius: 8,
-    background: disabled ? "#1c1c26" : "#7c6fff",
+    background: disabled ? "rgba(200, 184, 152, 0.05)" : "#c8b898",
     color: "#fff", fontSize: 13, fontWeight: 600,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: generating ? 0.7 : 1,

@@ -90,7 +90,7 @@ export function Toolbar({
   } = useDropdowns();
 
   return (
-    <div className="toolbar">
+    <div className="toolbar glass-topbar">
       {/* ─── Undo / Redo ─── */}
       <button type="button" className={`tool-btn ${!history.canUndo ? "disabled" : ""}`} onClick={onUndo} disabled={!history.canUndo} title="Undo (⌘Z)" aria-label="Undo">
         <svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05 1.04-6.83 2.73L3 8v9h9l-3.62-3.62C9.89 12.02 11.12 11.5 12.5 11.5c2.28 0 4.22 1.52 4.84 3.58l2.87-.78C19.36 11.38 16.21 8 12.5 8z" /></svg>

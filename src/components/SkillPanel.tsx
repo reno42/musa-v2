@@ -204,12 +204,10 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "Inter, sans-serif",
     }}>
-      <div style={{
-        width: 620, maxHeight: "85vh", background: "#0e0e14",
-        border: "1px solid #1c1c26", borderRadius: 10,
+      <div className="glass-panel" style={{
+        width: 620, maxHeight: "85vh",
         display: "flex", flexDirection: "column",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-        fontSize: 12, color: "#c4c4d4",
+        fontSize: 12, color: "#c4c0b4",
       }}>
         {/* Header */}
         <div style={{
@@ -218,7 +216,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
         }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>🧬 Clone Skills</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 18,
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
           }}>✕</button>
         </div>
 
@@ -229,8 +227,8 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
               style={{
                 flex: 1, padding: "8px 4px", border: "none", cursor: "pointer",
                 background: tab === t.id ? "#1a1a2e" : "transparent",
-                color: tab === t.id ? "#c4b5fd" : "#6a6a80",
-                borderBottom: tab === t.id ? "2px solid #818cf8" : "2px solid transparent",
+                color: tab === t.id ? "#c8b898" : "#7a7668",
+                borderBottom: tab === t.id ? "2px solid #c8b898" : "2px solid transparent",
                 fontSize: 11, fontWeight: tab === t.id ? 600 : 400,
               }}>
               {t.label}
@@ -254,7 +252,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                 <label style={{ ...labelStyle, marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={useAi} onChange={e => setUseAi(e.target.checked)}
-                    style={{ accentColor: "#818cf8" }} />
+                    style={{ accentColor: "#c8b898" }} />
                   Use AI semantic analysis
                 </label>
 
@@ -265,14 +263,14 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                 {extracted && (
                   <div style={{ marginTop: 14 }}>
-                    <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
                       Extracted Patterns
                     </div>
                     <div style={{ ...codeBlock, maxHeight: 200, overflowY: "auto" }}>
                       <div style={{ fontSize: 10, color: "#4ade80", marginBottom: 4 }}>Skill: {extracted.name}</div>
                       {extracted.patterns?.palette?.length > 0 && (
                         <div style={{ marginTop: 6 }}>
-                          <span style={{ color: "#6a6a80" }}>Palette: </span>
+                          <span style={{ color: "#7a7668" }}>Palette: </span>
                           <span style={{ display: "flex", gap: 3, marginTop: 2 }}>
                             {extracted.patterns.palette.slice(0, 6).map((c: any, i: number) => (
                               <span key={i} style={{
@@ -285,15 +283,15 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                       )}
                       {extracted.patterns?.typography?.fonts?.length > 0 && (
                         <div style={{ marginTop: 6, fontSize: 10 }}>
-                          <span style={{ color: "#6a6a80" }}>Fonts: </span>
+                          <span style={{ color: "#7a7668" }}>Fonts: </span>
                           {extracted.patterns.typography.fonts.map((f: any, i: number) => (
-                            <span key={i} style={{ color: "#c4c4d4" }}>{f.family}{i < extracted.patterns.typography.fonts.length - 1 ? ", " : ""}</span>
+                            <span key={i} style={{ color: "#c4c0b4" }}>{f.family}{i < extracted.patterns.typography.fonts.length - 1 ? ", " : ""}</span>
                           ))}
                         </div>
                       )}
                       {extracted.rules?.length > 0 && (
                         <div style={{ marginTop: 6 }}>
-                          <span style={{ color: "#6a6a80", fontSize: 10 }}>Rules:</span>
+                          <span style={{ color: "#7a7668", fontSize: 10 }}>Rules:</span>
                           {extracted.rules.map((r: string, i: number) => (
                             <div key={i} style={{ fontSize: 10, color: "#fbbf24", marginTop: 1 }}>• {r}</div>
                           ))}
@@ -353,7 +351,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                   ))}
                 </select>
                 {savedSkills.length === 0 && (
-                  <div style={{ fontSize: 10, color: "#6a6a80", marginTop: 4 }}>No saved skills. Extract or clone one first.</div>
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>No saved skills. Extract or clone one first.</div>
                 )}
 
                 <label style={{ ...labelStyle, marginTop: 12 }}>Mode</label>
@@ -363,15 +361,15 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                       style={{
                         flex: 1, padding: "6px", borderRadius: 4, cursor: "pointer",
                         background: applyMode === m ? "#1a1a2e" : "transparent",
-                        border: applyMode === m ? "1px solid #818cf8" : "1px solid #2a2a3a",
-                        color: applyMode === m ? "#c4b5fd" : "#7a7a90", fontSize: 11,
+                        border: applyMode === m ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+                        color: applyMode === m ? "#c8b898" : "#7a7668", fontSize: 11,
                         textTransform: "capitalize",
                       }}>
                       {m}
                     </button>
                   ))}
                 </div>
-                <div style={{ fontSize: 10, color: "#6a6a80", marginTop: 3 }}>
+                <div style={{ fontSize: 10, color: "#7a7668", marginTop: 3 }}>
                   {applyMode === "adaptive" ? "Respect content, adapt style" : "Full compliance with skill rules"}
                 </div>
 
@@ -387,13 +385,13 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                     </div>
                     {applyResult.changes?.length > 0 && (
                       <div style={{ ...codeBlock, marginTop: 8, maxHeight: 160, overflowY: "auto" }}>
-                        <div style={{ fontSize: 10, color: "#6a6a80", marginBottom: 4 }}>Changes ({applyResult.changeCount})</div>
+                        <div style={{ fontSize: 10, color: "#7a7668", marginBottom: 4 }}>Changes ({applyResult.changeCount})</div>
                         {applyResult.changes.slice(0, 10).map((c: any, i: number) => (
                           <div key={i} style={{ fontSize: 10, padding: "2px 0", borderBottom: "1px solid #1c1c26" }}>
-                            <span style={{ color: "#818cf8" }}>{c.layer}</span>
-                            <span style={{ color: "#7a7a90" }}> {c.field}: </span>
+                            <span style={{ color: "#c8b898" }}>{c.layer}</span>
+                            <span style={{ color: "#7a7668" }}> {c.field}: </span>
                             <span style={{ color: "#f87171" }}>{String(c.old).substring(0, 20)}</span>
-                            <span style={{ color: "#6a6a80" }}> → </span>
+                            <span style={{ color: "#7a7668" }}> → </span>
                             <span style={{ color: "#4ade80" }}>{String(c.new).substring(0, 20)}</span>
                           </div>
                         ))}
@@ -413,8 +411,8 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                       style={{
                         flex: 1, padding: "6px", borderRadius: 4, cursor: "pointer",
                         background: brandTab === b ? "#1a1a2e" : "transparent",
-                        border: brandTab === b ? "1px solid #818cf8" : "1px solid #2a2a3a",
-                        color: brandTab === b ? "#c4b5fd" : "#7a7a90", fontSize: 11,
+                        border: brandTab === b ? "1px solid #c8b898" : "1px solid #2a2a3a",
+                        color: brandTab === b ? "#c8b898" : "#7a7668", fontSize: 11,
                         textTransform: "capitalize",
                       }}>
                       {b === "analyze" ? "🔬 Analyze" : "🎯 Apply"}
@@ -434,7 +432,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                     <label style={{ ...labelStyle, marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
                       <input type="checkbox" checked={brandUseAi} onChange={e => setBrandUseAi(e.target.checked)}
-                        style={{ accentColor: "#818cf8" }} />
+                        style={{ accentColor: "#c8b898" }} />
                       Use AI for tone analysis
                     </label>
 
@@ -445,17 +443,17 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                     {brandDNA && (
                       <div style={{ marginTop: 14 }}>
-                        <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                        <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
                           Brand DNA: {brandDNA.brandName}
                         </div>
                         <div style={{ ...codeBlock }}>
                           <div style={{ fontSize: 11, fontWeight: 600 }}>{brandDNA.brandName}</div>
-                          <div style={{ fontSize: 10, color: "#6a6a80", marginTop: 2 }}>
+                          <div style={{ fontSize: 10, color: "#7a7668", marginTop: 2 }}>
                             Confidence: {brandDNA.confidence}%
                           </div>
                           {brandDNA.brandDNA?.colors?.length > 0 && (
                             <div style={{ marginTop: 8 }}>
-                              <span style={{ fontSize: 10, color: "#6a6a80" }}>Colors:</span>
+                              <span style={{ fontSize: 10, color: "#7a7668" }}>Colors:</span>
                               <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
                                 {brandDNA.brandDNA.colors.map((c: any, i: number) => (
                                   <span key={i} style={{
@@ -468,9 +466,9 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                           )}
                           {brandDNA.brandDNA?.typography?.fonts?.length > 0 && (
                             <div style={{ marginTop: 6, fontSize: 10 }}>
-                              <span style={{ color: "#6a6a80" }}>Fonts: </span>
+                              <span style={{ color: "#7a7668" }}>Fonts: </span>
                               {brandDNA.brandDNA.typography.fonts.map((f: any, i: number) => (
-                                <span key={i} style={{ color: "#c4c4d4" }}>{f.family}{f.frequency ? ` (${f.frequency}×)` : ""}{i < brandDNA.brandDNA.typography.fonts.length - 1 ? ", " : ""}</span>
+                                <span key={i} style={{ color: "#c4c0b4" }}>{f.family}{f.frequency ? ` (${f.frequency}×)` : ""}{i < brandDNA.brandDNA.typography.fonts.length - 1 ? ", " : ""}</span>
                               ))}
                             </div>
                           )}
@@ -487,12 +485,12 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                 {brandTab === "apply" && (
                   <>
                     {!brandDNA && (
-                      <div style={{ fontSize: 10, color: "#6a6a80", marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, color: "#7a7668", marginBottom: 10 }}>
                         Analyze a brand first, or the last analyzed brand will be used.
                       </div>
                     )}
                     {brandDNA && (
-                      <div style={{ fontSize: 11, marginBottom: 10, color: "#818cf8" }}>
+                      <div style={{ fontSize: 11, marginBottom: 10, color: "#c8b898" }}>
                         Brand: {brandDNA.brandName} (confidence: {brandDNA.confidence}%)
                       </div>
                     )}
@@ -500,8 +498,8 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                     <label style={labelStyle}>Aggressiveness: {Math.round(brandAggressiveness * 100)}%</label>
                     <input type="range" min={0} max={100} value={Math.round(brandAggressiveness * 100)}
                       onChange={e => setBrandAggressiveness(Number(e.target.value) / 100)}
-                      style={{ width: "100%", accentColor: "#818cf8" }} />
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#6a6a80" }}>
+                      style={{ width: "100%", accentColor: "#c8b898" }} />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#7a7668" }}>
                       <span>Gentle</span><span>Aggressive</span>
                     </div>
 
@@ -514,12 +512,12 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                       <div style={{ marginTop: 12 }}>
                         <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 8 }}>
                           <div style={{ textAlign: "center", padding: "8px 12px", background: "#111118", borderRadius: 6, flex: 1 }}>
-                            <div style={{ fontSize: 9, color: "#6a6a80" }}>Before</div>
+                            <div style={{ fontSize: 9, color: "#7a7668" }}>Before</div>
                             <div style={{ fontSize: 20, fontWeight: 700, color: scoreColor(brandApplyResult.scoreBefore) }}>{brandApplyResult.scoreBefore}</div>
                           </div>
                           <div style={{ fontSize: 16, color: "#4ade80" }}>→</div>
                           <div style={{ textAlign: "center", padding: "8px 12px", background: "#111118", borderRadius: 6, flex: 1 }}>
-                            <div style={{ fontSize: 9, color: "#6a6a80" }}>After</div>
+                            <div style={{ fontSize: 9, color: "#7a7668" }}>After</div>
                             <div style={{ fontSize: 20, fontWeight: 700, color: scoreColor(brandApplyResult.scoreAfter) }}>{brandApplyResult.scoreAfter}</div>
                           </div>
                         </div>
@@ -539,7 +537,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
             width: 180, borderLeft: "1px solid #1c1c26", paddingLeft: 12,
             display: "flex", flexDirection: "column", gap: 4,
           }}>
-            <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+            <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
               Saved Skills
             </div>
             {savedSkills.length === 0 && (
@@ -551,20 +549,20 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                 style={{
                   padding: "6px 8px", borderRadius: 4, cursor: "pointer",
                   background: applySkillId === s.id ? "#1a1a2e" : "#0a0a10",
-                  border: applySkillId === s.id ? "1px solid #818cf8" : "1px solid #1c1c26",
+                  border: applySkillId === s.id ? "1px solid #c8b898" : "1px solid #1c1c26",
                   fontSize: 10,
                 }}>
-                <div style={{ fontWeight: 600, color: "#c4c4d4" }}>{s.name}</div>
-                {s.description && <div style={{ color: "#6a6a80", fontSize: 9, marginTop: 1 }}>{s.description.substring(0, 40)}</div>}
+                <div style={{ fontWeight: 600, color: "#c4c0b4" }}>{s.name}</div>
+                {s.description && <div style={{ color: "#7a7668", fontSize: 9, marginTop: 1 }}>{s.description.substring(0, 40)}</div>}
                 {s.patterns && (
-                  <div style={{ color: "#5a5a70", fontSize: 9, marginTop: 2 }}>
+                  <div style={{ color: "#7a7668", fontSize: 9, marginTop: 2 }}>
                     {Object.keys(s.patterns).length} pattern groups
                   </div>
                 )}
                 <button type="button" onClick={(e) => { e.stopPropagation(); selectSkill(s); }}
                   style={{
                     marginTop: 4, background: "none", border: "1px solid #2a2a3a",
-                    color: "#818cf8", borderRadius: 3, padding: "1px 6px",
+                    color: "#c8b898", borderRadius: 3, padding: "1px 6px",
                     cursor: "pointer", fontSize: 9, width: "100%",
                   }}>
                   ▶ Apply
@@ -583,7 +581,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
           }}>
             <span>⚠ {error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 14 }}>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
               ✕
             </button>
           </div>
@@ -596,7 +594,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 // ── Styles ──
 
 const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 10, color: "#6a6a80",
+  display: "block", fontSize: 10, color: "#7a7668",
   marginBottom: 3, textTransform: "uppercase", letterSpacing: 1,
 };
 
@@ -604,7 +602,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box",
   padding: "6px 8px", borderRadius: 4,
   background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", fontSize: 11, outline: "none",
+  color: "#f0ebe0", fontSize: 11, outline: "none",
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -620,22 +618,22 @@ const selectStyle: React.CSSProperties = {
 
 const btnPrimary: React.CSSProperties = {
   padding: "8px 14px", borderRadius: 6,
-  background: "#2a1a4a", border: "1px solid #4a2a7a",
-  color: "#c4b5fd", fontSize: 12, fontWeight: 600,
+  background: "rgba(200, 184, 152, 0.12)", border: "1px solid #c8b898",
+  color: "#c8b898", fontSize: 12, fontWeight: 600,
   cursor: "pointer",
 };
 
 const btnSecondary: React.CSSProperties = {
   padding: "6px 12px", borderRadius: 4,
   background: "#111118", border: "1px solid #2a2a3a",
-  color: "#818cf8", fontSize: 11, cursor: "pointer",
+  color: "#c8b898", fontSize: 11, cursor: "pointer",
 };
 
 const codeBlock: React.CSSProperties = {
   padding: "8px 10px", background: "#0a0a10",
   border: "1px solid #1c1c26", borderRadius: 6,
   fontSize: 10, fontFamily: "monospace",
-  lineHeight: 1.5, color: "#c4c4d4",
+  lineHeight: 1.5, color: "#c4c0b4",
 };
 
 const successBox: React.CSSProperties = {

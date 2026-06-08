@@ -95,7 +95,7 @@ export function SnapDropdown(_props: SnapDropdownProps) {
               padding: "6px 12px",
               border: "none",
               background: "transparent",
-              color: snapOn ? "#4ade80" : "#8a8aa0",
+              color: snapOn ? "#4ade80" : "#7a7668",
               cursor: "pointer",
               fontSize: 12,
               textAlign: "left",
@@ -141,7 +141,7 @@ export function SnapDropdown(_props: SnapDropdownProps) {
             style={{
               padding: "4px 12px 2px",
               fontSize: 10,
-              color: "#6a6a80",
+              color: "#7a7668",
               textTransform: "uppercase",
               letterSpacing: 1,
             }}
@@ -158,8 +158,8 @@ export function SnapDropdown(_props: SnapDropdownProps) {
                 width: "100%",
                 padding: "5px 12px 5px 24px",
                 border: "none",
-                background: gridSize === size ? "rgba(129,140,248,0.15)" : "transparent",
-                color: gridSize === size ? "#c4b5fd" : "#8a8aa0",
+                background: gridSize === size ? "rgba(200,184,152,0.15)" : "transparent",
+                color: gridSize === size ? "#c8b898" : "#7a7668",
                 cursor: "pointer",
                 fontSize: 12,
                 textAlign: "left",

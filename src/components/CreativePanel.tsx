@@ -215,7 +215,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
           cx = 8 + (i % 4) * 12;
           cy = 8 + (i >= 4 ? 24 : 0);
         }
-        els.push(<circle key={i} cx={cx} cy={cy} r={r} fill="#818cf8" opacity={0.6 + (i / n) * 0.4} />);
+        els.push(<circle key={i} cx={cx} cy={cy} r={r} fill="#c8b898" opacity={0.6 + (i / n) * 0.4} />);
       }
       return els;
     };
@@ -261,12 +261,10 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "Inter, sans-serif",
     }}>
-      <div style={{
-        width: 600, maxHeight: "85vh", background: "#0e0e14",
-        border: "1px solid #1c1c26", borderRadius: 10,
+      <div className="glass-panel" style={{
+        width: 600, maxHeight: "85vh",
         display: "flex", flexDirection: "column",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-        fontSize: 12, color: "#c4c4d4",
+        fontSize: 12, color: "#c4c0b4",
       }}>
         {/* Header */}
         <div style={{
@@ -275,7 +273,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
         }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>🎨 Creative Tools</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 18,
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
           }}>✕</button>
         </div>
 
@@ -286,8 +284,8 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
               style={{
                 flex: 1, padding: "8px 4px", border: "none", cursor: "pointer",
                 background: tab === t.id ? "#1a1a2e" : "transparent",
-                color: tab === t.id ? "#c4b5fd" : "#6a6a80",
-                borderBottom: tab === t.id ? "2px solid #818cf8" : "2px solid transparent",
+                color: tab === t.id ? "#c8b898" : "#7a7668",
+                borderBottom: tab === t.id ? "2px solid #c8b898" : "2px solid transparent",
                 fontSize: 11, fontWeight: tab === t.id ? 600 : 400,
               }}>
               {t.label}
@@ -306,8 +304,8 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                     style={{
                       padding: "8px 6px", borderRadius: 6, cursor: "pointer",
                       background: layoutAlgo === l.value ? "#1a1a2e" : "transparent",
-                      border: layoutAlgo === l.value ? "1px solid #818cf8" : "1px solid #2a2a3a",
-                      color: layoutAlgo === l.value ? "#c4b5fd" : "#7a7a90",
+                      border: layoutAlgo === l.value ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+                      color: layoutAlgo === l.value ? "#c8b898" : "#7a7668",
                       display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
                     }}>
                     {layoutPreview(l.value)}
@@ -403,7 +401,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
           {/* ── Remix Tab ── */}
           {tab === "remix" && (
             <>
-              <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
                 Choose Style
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>
@@ -420,10 +418,10 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                       background: `linear-gradient(135deg, ${s.accent}44, ${s.accent}22)`,
                       border: `1px solid ${s.accent}33`,
                     }} />
-                    <div style={{ fontSize: 11, fontWeight: 600, color: remixStyle === s.value ? s.accent : "#c4c4d4" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: remixStyle === s.value ? s.accent : "#c4c0b4" }}>
                       {s.label}
                     </div>
-                    <div style={{ fontSize: 9, color: "#6a6a80", marginTop: 2 }}>
+                    <div style={{ fontSize: 9, color: "#7a7668", marginTop: 2 }}>
                       {s.desc}
                     </div>
                   </button>
@@ -435,7 +433,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                   <label style={labelStyle}>Variations ({remixCount})</label>
                   <input type="range" min={1} max={5} value={remixCount}
                     onChange={e => setRemixCount(Number(e.target.value))}
-                    style={{ width: "100%", accentColor: "#818cf8" }} />
+                    style={{ width: "100%", accentColor: "#c8b898" }} />
                 </div>
                 <div style={{ display: "flex", alignItems: "flex-end" }}>
                   <button type="button" onClick={handleRemix} disabled={loading || !templateId}
@@ -447,7 +445,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
 
               {remixResults.length > 0 && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
                     Variations
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -461,7 +459,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                           <div style={{ fontSize: 11, fontWeight: 600 }}>
                             {r.style || r.name || `Variation ${i + 1}`}
                           </div>
-                          <div style={{ fontSize: 9, color: "#6a6a80", fontFamily: "monospace" }}>
+                          <div style={{ fontSize: 9, color: "#7a7668", fontFamily: "monospace" }}>
                             {r.templateId || r.id || `#${i + 1}`}
                           </div>
                         </div>
@@ -473,7 +471,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                             style={{
                               padding: "3px 8px", borderRadius: 3, cursor: "pointer",
                               background: "#1a1a2e", border: "1px solid #2a2a3a",
-                              color: "#818cf8", fontSize: 10,
+                              color: "#c8b898", fontSize: 10,
                             }}>
                             Open
                           </button>
@@ -531,7 +529,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                       {Math.round(diffResult.similarityScore)}%
                     </span>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>Similarity Score</div>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>Similarity Score</div>
                       <div style={{ height: 4, background: "#0a0a10", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
                         <div style={{
                           height: "100%", width: `${diffResult.similarityScore}%`,
@@ -544,26 +542,26 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                   {/* Side-by-side summaries */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
                     <div style={{ ...summaryBox }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: "#818cf8", marginBottom: 4 }}>Template A</div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#c8b898", marginBottom: 4 }}>Template A</div>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Objects: {diffResult.a.objects}
                       </div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Types: {Object.entries(diffResult.a.types).map(([k, v]) => `${k}(${v})`).join(", ") || "none"}
                       </div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Fonts: {Object.entries(diffResult.a.fonts).map(([k, v]) => `${k}(${v})`).join(", ") || "none"}
                       </div>
                     </div>
                     <div style={{ ...summaryBox }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: "#4ade80", marginBottom: 4 }}>Template B</div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Objects: {diffResult.b.objects}
                       </div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Types: {Object.entries(diffResult.b.types).map(([k, v]) => `${k}(${v})`).join(", ") || "none"}
                       </div>
-                      <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                      <div style={{ fontSize: 10, color: "#7a7668" }}>
                         Fonts: {Object.entries(diffResult.b.fonts).map(([k, v]) => `${k}(${v})`).join(", ") || "none"}
                       </div>
                     </div>
@@ -572,7 +570,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                   {/* Diff list */}
                   {diffResult.diffs.length > 0 && (
                     <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                      <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
                         Layer Differences ({diffResult.diffs.length})
                       </div>
                       {diffResult.diffs.map((d, i) => (
@@ -589,8 +587,8 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                           }}>
                             {d.status.toUpperCase()}
                           </span>
-                          <span style={{ color: "#818cf8" }}>{d.layer}</span>
-                          {d.detail && <span style={{ color: "#6a6a80", marginLeft: 6 }}>{d.detail}</span>}
+                          <span style={{ color: "#c8b898" }}>{d.layer}</span>
+                          {d.detail && <span style={{ color: "#7a7668", marginLeft: 6 }}>{d.detail}</span>}
                         </div>
                       ))}
                     </div>
@@ -615,11 +613,11 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                   background: isRecording ? "#f87171" : "#4a4a5a",
                   animation: isRecording ? "pulse 1.5s infinite" : "none",
                 }} />
-                <span style={{ fontSize: 12, fontWeight: 600, color: isRecording ? "#f87171" : "#6a6a80" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: isRecording ? "#f87171" : "#7a7668" }}>
                   {isRecording ? "🔴 RECORDING" : "⚪ IDLE"}
                 </span>
                 {isRecording && (
-                  <span style={{ fontSize: 10, color: "#7a7a90", marginLeft: "auto" }}>
+                  <span style={{ fontSize: 10, color: "#7a7668", marginLeft: "auto" }}>
                     {Math.floor(elapsed / 60)}m {elapsed % 60}s · {observeEvents} events
                   </span>
                 )}
@@ -648,7 +646,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
 
               {observeResult && (
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
                     Session Analysis
                   </div>
 
@@ -656,14 +654,14 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                     {/* Duration & events */}
                     <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
                       <div>
-                        <div style={{ fontSize: 9, color: "#6a6a80" }}>Duration</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: "#c4c4d4" }}>
+                        <div style={{ fontSize: 9, color: "#7a7668" }}>Duration</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#c4c0b4" }}>
                           {observeResult.duration || observeResult.elapsed || "—"}
                         </div>
                       </div>
                       <div>
-                        <div style={{ fontSize: 9, color: "#6a6a80" }}>Total Events</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: "#c4c4d4" }}>
+                        <div style={{ fontSize: 9, color: "#7a7668" }}>Total Events</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#c4c0b4" }}>
                           {observeResult.totalEvents || 0}
                         </div>
                       </div>
@@ -672,7 +670,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                     {/* Top tools */}
                     {observeResult.topTools?.length > 0 && (
                       <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 9, color: "#6a6a80", marginBottom: 4 }}>Most Used Tools</div>
+                        <div style={{ fontSize: 9, color: "#7a7668", marginBottom: 4 }}>Most Used Tools</div>
                         {observeResult.topTools.slice(0, 5).map((t: any, i: number) => {
                           const max = observeResult.topTools[0]?.count || 1;
                           const barWidth = Math.max(4, (t.count / max) * 120);
@@ -680,11 +678,11 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                             <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                               <div style={{
                                 height: 8, width: barWidth, borderRadius: 2,
-                                background: i === 0 ? "#818cf8" : i === 1 ? "#6366f1" : "#4f46e5",
+                                background: i === 0 ? "#c8b898" : i === 1 ? "#a89a78" : "#8a7a5a",
                                 flexShrink: 0,
                               }} />
-                              <span style={{ fontSize: 9, color: "#c4c4d4" }}>{t.name || t.tool}</span>
-                              <span style={{ fontSize: 9, color: "#6a6a80", marginLeft: "auto" }}>{t.count} calls</span>
+                              <span style={{ fontSize: 9, color: "#c4c0b4" }}>{t.name || t.tool}</span>
+                              <span style={{ fontSize: 9, color: "#7a7668", marginLeft: "auto" }}>{t.count} calls</span>
                             </div>
                           );
                         })}
@@ -694,11 +692,11 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                     {/* Action breakdown */}
                     {observeResult.breakdown && (
                       <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 9, color: "#6a6a80", marginBottom: 4 }}>Action Breakdown</div>
+                        <div style={{ fontSize: 9, color: "#7a7668", marginBottom: 4 }}>Action Breakdown</div>
                         {Object.entries(observeResult.breakdown).map(([k, v]: [string, any], i) => (
                           <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 9, marginBottom: 2 }}>
-                            <span style={{ color: "#c4c4d4" }}>{k}</span>
-                            <span style={{ color: "#6a6a80" }}>{v} ({observeResult.totalEvents ? Math.round((Number(v) / observeResult.totalEvents) * 100) : 0}%)</span>
+                            <span style={{ color: "#c4c0b4" }}>{k}</span>
+                            <span style={{ color: "#7a7668" }}>{v} ({observeResult.totalEvents ? Math.round((Number(v) / observeResult.totalEvents) * 100) : 0}%)</span>
                           </div>
                         ))}
                       </div>
@@ -707,9 +705,9 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                     {/* Insights */}
                     {observeResult.insights?.length > 0 && (
                       <div>
-                        <div style={{ fontSize: 9, color: "#6a6a80", marginBottom: 4 }}>Insights</div>
+                        <div style={{ fontSize: 9, color: "#7a7668", marginBottom: 4 }}>Insights</div>
                         {observeResult.insights.map((ins: any, i: number) => (
-                          <div key={i} style={{ fontSize: 9, color: "#c4b5fd", marginBottom: 2 }}>
+                          <div key={i} style={{ fontSize: 9, color: "#c8b898", marginBottom: 2 }}>
                             • {typeof ins === "string" ? ins : ins.message || JSON.stringify(ins)}
                           </div>
                         ))}
@@ -739,7 +737,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
           }}>
             <span>⚠ {error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 14 }}>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
               ✕
             </button>
           </div>
@@ -752,7 +750,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
 // ── Styles ──
 
 const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 10, color: "#6a6a80",
+  display: "block", fontSize: 10, color: "#7a7668",
   marginBottom: 3, textTransform: "uppercase", letterSpacing: 1,
 };
 
@@ -760,7 +758,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box",
   padding: "6px 8px", borderRadius: 4,
   background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", fontSize: 11, outline: "none",
+  color: "#f0ebe0", fontSize: 11, outline: "none",
 };
 
 const selectStyle: React.CSSProperties = {
@@ -770,22 +768,22 @@ const selectStyle: React.CSSProperties = {
 
 const btnPrimary: React.CSSProperties = {
   padding: "8px 14px", borderRadius: 6,
-  background: "#2a1a4a", border: "1px solid #4a2a7a",
-  color: "#c4b5fd", fontSize: 12, fontWeight: 600,
+  background: "rgba(200, 184, 152, 0.12)", border: "1px solid #c8b898",
+  color: "#c8b898", fontSize: 12, fontWeight: 600,
   cursor: "pointer",
 };
 
 const btnSecondary: React.CSSProperties = {
   padding: "6px 12px", borderRadius: 4,
-  background: "#111118", border: "1px solid #2a2a3a",
-  color: "#818cf8", fontSize: 11, cursor: "pointer",
+  background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#c8b898", fontSize: 11, cursor: "pointer",
 };
 
 const codeBlock: React.CSSProperties = {
   padding: "8px 10px", background: "#0a0a10",
   border: "1px solid #1c1c26", borderRadius: 6,
   fontSize: 10, fontFamily: "monospace",
-  lineHeight: 1.5, color: "#c4c4d4",
+  lineHeight: 1.5, color: "#c4c0b4",
 };
 
 const summaryBox: React.CSSProperties = {

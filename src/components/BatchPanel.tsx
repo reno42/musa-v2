@@ -230,32 +230,30 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "Inter, sans-serif",
     }}>
-      <div style={{
-        width: 580, maxHeight: "85vh", background: "#0e0e14",
-        border: "1px solid #1c1c26", borderRadius: 10,
+      <div className="glass-panel" style={{
+        width: 580, maxHeight: "85vh",
         display: "flex", flexDirection: "column",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-        fontSize: 12, color: "#c4c4d4",
+        fontSize: 12, color: "#c4c0b4",
       }}>
         {/* Header */}
         <div style={{
-          padding: "12px 16px", borderBottom: "1px solid #1c1c26",
+          padding: "12px 16px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
           display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>📦 Batch Design</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 18,
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
           }}>✕</button>
         </div>
 
         {/* Step indicators */}
-        <div style={{ display: "flex", borderBottom: "1px solid #1c1c26" }}>
+        <div style={{ display: "flex", borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
           {stepLabels.map((label, i) => (
             <div key={i} style={{
               flex: 1, padding: "8px 4px", textAlign: "center",
-              background: step === i + 1 ? "#1a1a2e" : "transparent",
-              color: step === i + 1 ? "#c4b5fd" : "#4a4a5a",
-              borderBottom: step === i + 1 ? "2px solid #818cf8" : "2px solid transparent",
+              background: step === i + 1 ? "rgba(200, 184, 152, 0.08)" : "transparent",
+              color: step === i + 1 ? "#c8b898" : "#7a7668",
+              borderBottom: step === i + 1 ? "2px solid #c8b898" : "2px solid transparent",
               fontSize: 10, fontWeight: step === i + 1 ? 600 : 400,
               cursor: i + 1 < step ? "pointer" : "default",
             }} onClick={() => { if (i + 1 < step) setStep((i + 1) as Step); }}>
@@ -274,9 +272,9 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
                   <button key={t} type="button" onClick={() => setSourceType(t)}
                     style={{
                       flex: 1, padding: "6px 4px", borderRadius: 4, cursor: "pointer",
-                      background: sourceType === t ? "#1a1a2e" : "transparent",
-                      border: sourceType === t ? "1px solid #818cf8" : "1px solid #2a2a3a",
-                      color: sourceType === t ? "#c4b5fd" : "#7a7a90", fontSize: 10,
+                      background: sourceType === t ? "rgba(200, 184, 152, 0.08)" : "transparent",
+                      border: sourceType === t ? "1px solid #c8b898" : "1px solid rgba(255, 255, 255, 0.04)",
+                      color: sourceType === t ? "#c8b898" : "#7a7668", fontSize: 10,
                       textTransform: "uppercase",
                     }}>
                     {t === "csv-file" ? "📁 CSV File" : t === "csv-url" ? "🔗 CSV URL" : "📝 JSON"}
@@ -286,16 +284,16 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
 
               {sourceType === "csv-file" && (
                 <div style={{
-                  padding: "20px", border: "2px dashed #2a2a3a", borderRadius: 8,
+                  padding: "20px", border: "2px dashed rgba(200, 184, 152, 0.12)", borderRadius: 8,
                   textAlign: "center", cursor: "pointer",
                 }} onClick={() => document.getElementById("csv-file-input")?.click()}>
                   <input id="csv-file-input" type="file" accept=".csv" style={{ display: "none" }}
                     onChange={handleCsvFile} />
                   <div style={{ fontSize: 24, marginBottom: 4 }}>📁</div>
-                  <div style={{ fontSize: 12, color: "#c4c4d4", marginBottom: 2 }}>
+                  <div style={{ fontSize: 12, color: "#c4c0b4", marginBottom: 2 }}>
                     {csvFileName || "Click to upload CSV file"}
                   </div>
-                  <div style={{ fontSize: 10, color: "#6a6a80" }}>
+                  <div style={{ fontSize: 10, color: "#7a7668" }}>
                     .csv files with headers in first row
                   </div>
                 </div>
@@ -331,16 +329,16 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
           {/* ── Step 2: Field Mapping ── */}
           {step === 2 && (
             <>
-              <div style={{ fontSize: 10, color: "#6a6a80", marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#7a7668", marginBottom: 8 }}>
                 {parsedHeaders.length} columns · {parsedRows.length} rows detected
               </div>
 
               <div style={{ ...codeBlock, marginBottom: 12, maxHeight: 80, overflowY: "auto" }}>
-                <span style={{ color: "#6a6a80", fontSize: 10 }}>Headers: </span>
-                <span style={{ color: "#818cf8", fontSize: 10 }}>{parsedHeaders.join(", ")}</span>
+                <span style={{ color: "#7a7668", fontSize: 10 }}>Headers: </span>
+                <span style={{ color: "#c8b898", fontSize: 10 }}>{parsedHeaders.join(", ")}</span>
               </div>
 
-              <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
                 Map Columns → Layers
               </div>
 
@@ -348,10 +346,10 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
                 <div key={h} style={{
                   display: "flex", alignItems: "center", gap: 8, marginBottom: 6,
                   padding: "4px 8px", background: "#0a0a10", borderRadius: 4,
-                  border: "1px solid #1c1c26",
+                  border: "1px solid rgba(255, 255, 255, 0.04)",
                 }}>
-                  <span style={{ fontSize: 11, color: "#818cf8", width: 100, flexShrink: 0 }}>{h}</span>
-                  <span style={{ color: "#6a6a80", fontSize: 14 }}>→</span>
+                  <span style={{ fontSize: 11, color: "#c8b898", width: 100, flexShrink: 0 }}>{h}</span>
+                  <span style={{ color: "#7a7668", fontSize: 14 }}>→</span>
                   <select value={fieldMapping[h] || ""} onChange={e => setFieldMapping({ ...fieldMapping, [h]: e.target.value })}
                     style={{ ...selectStyle, flex: 1, fontSize: 11 }}>
                     <option value="">Skip</option>
@@ -394,7 +392,7 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
               <label style={{ ...labelStyle, marginTop: 12 }}>Name Template</label>
               <input type="text" value={nameTemplate} onChange={e => setNameTemplate(e.target.value)}
                 placeholder="Post - {title}" style={inputStyle} />
-              <div style={{ fontSize: 9, color: "#6a6a80", marginTop: 2 }}>
+              <div style={{ fontSize: 9, color: "#7a7668", marginTop: 2 }}>
                 Use {"{column}"} placeholders. Available: {parsedHeaders.map(h => `{${h}}`).join(", ")}
               </div>
 
@@ -407,29 +405,29 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
               {/* Results preview */}
               {results.length > 0 && (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 10, color: "#6a6a80", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
                     Results ({results.length})
                   </div>
                   <div style={{ ...codeBlock, maxHeight: 250, overflowY: "auto", padding: 0 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
                       <thead>
                         <tr style={{ background: "#0d0d14" }}>
-                          <th style={{ padding: "6px 8px", textAlign: "left", color: "#6a6a80", fontWeight: 500 }}>#</th>
-                          <th style={{ padding: "6px 8px", textAlign: "left", color: "#6a6a80", fontWeight: 500 }}>Name</th>
-                          <th style={{ padding: "6px 8px", textAlign: "center", color: "#6a6a80", fontWeight: 500 }}>Status</th>
+                          <th style={{ padding: "6px 8px", textAlign: "left", color: "#7a7668", fontWeight: 500 }}>#</th>
+                          <th style={{ padding: "6px 8px", textAlign: "left", color: "#7a7668", fontWeight: 500 }}>Name</th>
+                          <th style={{ padding: "6px 8px", textAlign: "center", color: "#7a7668", fontWeight: 500 }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
                         {results.map((r, i) => (
-                          <tr key={i} style={{ borderBottom: "1px solid #1c1c26" }}>
-                            <td style={{ padding: "6px 8px", color: "#6a6a80" }}>{r.row}</td>
-                            <td style={{ padding: "6px 8px", color: "#c4c4d4" }}>{r.name}</td>
+                          <tr key={i} style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
+                            <td style={{ padding: "6px 8px", color: "#7a7668" }}>{r.row}</td>
+                            <td style={{ padding: "6px 8px", color: "#c4c0b4" }}>{r.name}</td>
                             <td style={{ padding: "6px 8px", textAlign: "center" }}>
                               <span style={{ color: r.status === "success" ? "#4ade80" : r.status === "warning" ? "#fbbf24" : "#f87171" }}>
                                 {r.status === "success" ? "✅" : r.status === "warning" ? "⚠️" : "❌"}
                               </span>
                               {r.message && (
-                                <div style={{ fontSize: 8, color: "#6a6a80" }} title={r.message}>
+                                <div style={{ fontSize: 8, color: "#7a7668" }} title={r.message}>
                                   {r.message.substring(0, 30)}
                                 </div>
                               )}
@@ -453,13 +451,13 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
         {/* Error bar */}
         {error && (
           <div style={{
-            padding: "8px 12px", borderTop: "1px solid #2a1a1a",
-            background: "#1a0a0a", color: "#f87171", fontSize: 11,
+            padding: "8px 12px", borderTop: "1px solid rgba(239, 68, 68, 0.15)",
+            background: "rgba(239, 68, 68, 0.08)", color: "#f87171", fontSize: 11,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
             <span>⚠ {error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7a90", cursor: "pointer", fontSize: 14 }}>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
               ✕
             </button>
           </div>
@@ -472,15 +470,15 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
 // ── Styles ──
 
 const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 10, color: "#6a6a80",
+  display: "block", fontSize: 10, color: "#7a7668",
   marginBottom: 3, textTransform: "uppercase", letterSpacing: 1,
 };
 
 const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box",
   padding: "6px 8px", borderRadius: 4,
-  background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", fontSize: 11, outline: "none",
+  background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#f0ebe0", fontSize: 11, outline: "none",
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -496,20 +494,20 @@ const selectStyle: React.CSSProperties = {
 
 const btnPrimary: React.CSSProperties = {
   padding: "8px 14px", borderRadius: 6,
-  background: "#2a1a4a", border: "1px solid #4a2a7a",
-  color: "#c4b5fd", fontSize: 12, fontWeight: 600,
+  background: "rgba(200, 184, 152, 0.12)", border: "1px solid #c8b898",
+  color: "#c8b898", fontSize: 12, fontWeight: 600,
   cursor: "pointer",
 };
 
 const btnSecondary: React.CSSProperties = {
   padding: "6px 12px", borderRadius: 4,
-  background: "#111118", border: "1px solid #2a2a3a",
-  color: "#818cf8", fontSize: 11, cursor: "pointer",
+  background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#c8b898", fontSize: 11, cursor: "pointer",
 };
 
 const codeBlock: React.CSSProperties = {
   padding: "8px 10px", background: "#0a0a10",
-  border: "1px solid #1c1c26", borderRadius: 6,
+  border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 6,
   fontSize: 10, fontFamily: "monospace",
-  lineHeight: 1.5, color: "#c4c4d4",
+  lineHeight: 1.5, color: "#c4c0b4",
 };

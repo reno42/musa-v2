@@ -242,9 +242,9 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
       {/* Template Grid */}
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loading ? (
-          <div style={{ textAlign: "center", color: "#5a5a70", padding: 60 }}>Loading…</div>
+          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
-          <div style={{ textAlign: "center", color: "#5a5a70", padding: 60 }}>
+          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
             <div>No templates yet. Create your first one!</div>
             <button
@@ -262,8 +262,8 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
               <div
                 key={t.id}
                 style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#7c6fff"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "#1c1c26"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#c8b898"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 32px rgba(0, 0, 0, 0.5)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.05)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 24px rgba(0, 0, 0, 0.3)"; }}
               >
                 <button
                   type="button"
@@ -293,10 +293,10 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
                         title="Double-click to rename"
                       >{t.name}</div>
                     )}
-                    <div style={{ fontSize: 12, color: "#5a5a70" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                    <div style={{ fontSize: 12, color: "#7a7668" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
                   </div>
                 </button>
-                <div style={{ display: "flex", borderTop: "1px solid #1c1c26", fontSize: 12 }}>
+                <div style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.04)", fontSize: 12 }}>
                   <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
@@ -312,45 +312,74 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
 }
 
 const dashboardStyle: React.CSSProperties = {
-  height: "100vh", background: "#0a0a0f", color: "#e4e4f0",
+  height: "100vh", background: "#080808", color: "#f0ebe0",
   fontFamily: "Inter, system-ui, sans-serif", display: "flex", flexDirection: "column",
 };
 
 const dashHeaderStyle: React.CSSProperties = {
-  padding: "16px 20px", borderBottom: "1px solid #1c1c26",
-  display: "flex", alignItems: "center", gap: 16,
+  padding: "16px 20px",
+  background: "rgba(8, 8, 8, 0.85)",
+  backdropFilter: "blur(20px) saturate(180%)",
+  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+  borderBottom: "1px solid rgba(200, 184, 152, 0.08)",
+  display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, zIndex: 10,
 };
 
 const thumbnailStyle: React.CSSProperties = {
-  background: "#111118", height: 140, borderRadius: "4px 4px 0 0",
+  background: "rgba(15, 15, 15, 0.6)",
+  backdropFilter: "blur(8px) saturate(150%)",
+  WebkitBackdropFilter: "blur(8px) saturate(150%)",
+  height: 140, borderRadius: "10px 10px 0 0",
   display: "flex", alignItems: "center", justifyContent: "center",
-  color: "#2a2a3a", fontSize: 32,
+  color: "#2a2a2a", fontSize: 32,
 };
 
 const selectStyle: React.CSSProperties = {
-  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
-  borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none",
+  background: "rgba(15, 15, 15, 0.5)",
+  backdropFilter: "blur(10px) saturate(160%)",
+  WebkitBackdropFilter: "blur(10px) saturate(160%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)",
+  color: "#f0ebe0",
+  borderRadius: 8, padding: "5px 10px", fontSize: 12, outline: "none",
+  cursor: "pointer",
 };
 
 const inputStyle: React.CSSProperties = {
-  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
-  borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none",
+  background: "rgba(15, 15, 15, 0.45)",
+  backdropFilter: "blur(10px) saturate(160%)",
+  WebkitBackdropFilter: "blur(10px) saturate(160%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)",
+  color: "#f0ebe0",
+  borderRadius: 8, padding: "5px 10px", fontSize: 12, outline: "none",
+  transition: "border-color 0.2s ease",
 };
 
 const btnPrimary: React.CSSProperties = {
-  background: "#7c6fff", border: "none", color: "#fff",
-  borderRadius: 6, padding: "6px 16px", fontSize: 12, cursor: "pointer", fontWeight: 500,
+  background: "rgba(200, 184, 152, 0.12)",
+  backdropFilter: "blur(8px) saturate(150%)",
+  WebkitBackdropFilter: "blur(8px) saturate(150%)",
+  border: "1px solid #c8b898", color: "#c8b898",
+  borderRadius: 8, padding: "6px 16px", fontSize: 12, cursor: "pointer", fontWeight: 500,
+  transition: "all 0.2s ease",
 };
 
 const btnSecondary: React.CSSProperties = {
-  background: "#111118", border: "1px solid #1c1c26", color: "#e4e4f0",
-  borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer",
+  background: "rgba(15, 15, 15, 0.5)",
+  backdropFilter: "blur(8px) saturate(150%)",
+  WebkitBackdropFilter: "blur(8px) saturate(150%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)", color: "#c4c0b4",
+  borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer",
+  transition: "all 0.2s ease",
 };
 
 const cardStyle: React.CSSProperties = {
-  background: "#0e0e16", border: "1px solid #1c1c26", borderRadius: 6,
-  cursor: "pointer", overflow: "hidden", transition: "border-color 0.15s",
+  background: "rgba(12, 12, 12, 0.6)",
+  backdropFilter: "blur(14px) saturate(160%)",
+  WebkitBackdropFilter: "blur(14px) saturate(160%)",
+  border: "1px solid rgba(255, 255, 255, 0.05)", borderRadius: 12,
+  cursor: "pointer", overflow: "hidden", transition: "all 0.25s ease",
   display: "flex", flexDirection: "column",
+  boxShadow: "0 4px 24px rgba(0, 0, 0, 0.3)",
 };
 
 const cardBtnStyle: React.CSSProperties = {
@@ -361,6 +390,7 @@ const cardBtnStyle: React.CSSProperties = {
 };
 
 const cardAction: React.CSSProperties = {
-  flex: 1, background: "none", border: "none", borderRight: "1px solid #1c1c26",
-  color: "#7a7a90", fontSize: 12, cursor: "pointer", padding: "4px 0",
+  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "#7a7668", fontSize: 12, cursor: "pointer", padding: "4px 0",
+  transition: "all 0.15s ease",
 };

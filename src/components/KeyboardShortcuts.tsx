@@ -81,13 +81,13 @@ interface KeyboardShortcutsProps {
 // Extracted style constants
 const dialogBaseStyle: React.CSSProperties = {
   border: "none", borderRadius: 10, padding: 0,
-  background: "transparent", color: "#e4e4f0",
+  background: "transparent", color: "#f0ebe0",
   maxWidth: 560, width: "100%", overflow: "visible",
 };
 const dialogStyle: React.CSSProperties = {
   background: "#0e0e16", border: "1px solid #1c1c26", borderRadius: 10,
   width: 560, maxHeight: "80vh", overflow: "auto",
-  color: "#e4e4f0", fontFamily: "Inter, system-ui, sans-serif",
+  color: "#f0ebe0", fontFamily: "Inter, system-ui, sans-serif",
 };
 const headerStyle: React.CSSProperties = {
   padding: "14px 18px", borderBottom: "1px solid #1c1c26",
@@ -95,16 +95,16 @@ const headerStyle: React.CSSProperties = {
 };
 const searchInputStyle: React.CSSProperties = {
   width: "100%", background: "#111118", border: "1px solid #1c1c26",
-  color: "#e4e4f0", borderRadius: 6, padding: "6px 10px", fontSize: 12,
+  color: "#f0ebe0", borderRadius: 6, padding: "6px 10px", fontSize: 12,
 };
 const categoryLabelStyle: React.CSSProperties = {
-  fontSize: 12, color: "#5a5a70", textTransform: "uppercase",
+  fontSize: 12, color: "#7a7668", textTransform: "uppercase",
   letterSpacing: 1, marginBottom: 6,
 };
 const kbdStyle: React.CSSProperties = {
   background: "#1c1c26", border: "1px solid #2a2a3a", borderRadius: 4,
   padding: "1px 8px", fontSize: 12, fontWeight: 500, fontFamily: "monospace",
-  color: "#e4e4f0", whiteSpace: "nowrap",
+  color: "#f0ebe0", whiteSpace: "nowrap",
 };
 
 export function KeyboardShortcuts({ open, onClose }: KeyboardShortcutsProps) {
@@ -149,7 +149,7 @@ export function KeyboardShortcuts({ open, onClose }: KeyboardShortcutsProps) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            style={{ background: "none", border: "none", color: "#7a7a90", fontSize: 18, cursor: "pointer" }}
+            style={{ background: "none", border: "none", color: "#7a7668", fontSize: 18, cursor: "pointer" }}
           >
             ✕
           </button>
@@ -169,7 +169,7 @@ export function KeyboardShortcuts({ open, onClose }: KeyboardShortcutsProps) {
         {/* Content */}
         <div style={{ padding: "12px 18px" }}>
           {filtered.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#5a5a70", padding: 20, fontSize: 12 }}>
+            <div style={{ textAlign: "center", color: "#7a7668", padding: 20, fontSize: 12 }}>
               No shortcuts found
             </div>
           ) : (

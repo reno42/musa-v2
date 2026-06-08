@@ -140,7 +140,7 @@ export function BlocksDropdown({ onBlockAction }: BlocksDropdownProps) {
                   type="button"
                   onClick={() => handleSelect(opt.type)}
                   style={{
-                    background: "none", border: "none", color: "#c4c4d4",
+                    background: "none", border: "none", color: "#c4c0b4",
                     padding: "4px 8px", fontSize: 12, cursor: "pointer",
                     textAlign: "left", borderRadius: 4, width: "100%",
                   }}
@@ -159,7 +159,7 @@ export function BlocksDropdown({ onBlockAction }: BlocksDropdownProps) {
       {activeModal && (
         <div style={overlayStyle} onClick={() => setActiveModal(null)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#e4e4f0" }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#f0ebe0" }}>
               {blockOptions.find(o => o.type === activeModal)?.label}
             </div>
 
@@ -292,7 +292,7 @@ export function BlocksDropdown({ onBlockAction }: BlocksDropdownProps) {
             {/* Submit / Cancel */}
             <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
               <button type="button" onClick={() => setActiveModal(null)}
-                style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7a90" }}>
+                style={{ ...btnSm, background: "#111118", border: "1px solid #1c1c26", color: "#7a7668" }}>
                 Cancel
               </button>
               <button type="button" onClick={handleSubmit}
@@ -319,23 +319,23 @@ const modalStyle: React.CSSProperties = {
 };
 
 const rowStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6 };
-const labelStyle: React.CSSProperties = { fontSize: 11, color: "#7a7a90", minWidth: 65, textAlign: "right" };
+const labelStyle: React.CSSProperties = { fontSize: 11, color: "#7a7668", minWidth: 65, textAlign: "right" };
 
 const inputStl: React.CSSProperties = {
   flex: 1, background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", borderRadius: 4, padding: "5px 8px", fontSize: 12,
+  color: "#f0ebe0", borderRadius: 4, padding: "5px 8px", fontSize: 12,
   fontFamily: "monospace", boxSizing: "border-box",
 };
 
 const textareaStyle: React.CSSProperties = {
   width: "100%", background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", borderRadius: 4, padding: "6px 8px", fontSize: 12,
+  color: "#f0ebe0", borderRadius: 4, padding: "6px 8px", fontSize: 12,
   resize: "vertical", boxSizing: "border-box",
 };
 
 const selectStyle: React.CSSProperties = {
   flex: 1, background: "#0a0a14", border: "1px solid #2a2a3a",
-  color: "#e4e4f0", borderRadius: 4, padding: "4px 6px", fontSize: 11,
+  color: "#f0ebe0", borderRadius: 4, padding: "4px 6px", fontSize: 11,
 };
 
 const btnSm: React.CSSProperties = { padding: "4px 12px", borderRadius: 4, fontSize: 12, cursor: "pointer" };
