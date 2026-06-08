@@ -584,6 +584,20 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "render_frame",
+    description: "Render a single frame to a viewable image URL (PNG/JPG/SVG). Returns the render URL that can be opened in a browser.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to render" },
+        format: { type: "string", enum: ["png", "jpg", "svg"], description: "Output format (default png)" },
+        scale: { type: "number", description: "Render scale 1-4 (default 1)" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
     name: "snapshot_template",
     description: "Save the current state of a template as a reference point. Used with diff_template to detect changes made by another user or agent.",
     inputSchema: {
