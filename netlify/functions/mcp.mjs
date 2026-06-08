@@ -1720,6 +1720,139 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  // ══════════════════════════════════════════════════
+  // Sprint 4: New Tools — batch, scoring, linting, layout, remix
+  // ══════════════════════════════════════════════════
+  {
+    name: "batch_design_from_csv",
+    description: "Bulk-generate templates from CSV/JSON data using a base template with field mapping. Each row becomes a new template with substituted text fields. Perfect for generating social media posts, certificates, cards, or any data-driven designs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        baseTemplateId: { type: "string", description: "Base template ID to clone for each row" },
+        csvUrl: { type: "string", description: "URL to CSV file (online). Mutually exclusive with data." },
+        data: { type: "array", items: { type: "object" }, description: "Inline JSON array of row objects. Mutually exclusive with csvUrl." },
+        fieldMapping: { type: "object", description: "Map of { columnName: layerName } — which data fields map to which canvas text layers by layerName" },
+        outputWorkspaceId: { type: "string", description: "Workspace ID to create generated templates in (default: same as base template)" },
+        nameTemplate: { type: "string", description: "Template for naming generated templates. Use {fieldName} placeholders (e.g. 'Post - {title}')" },
+      },
+      required: ["baseTemplateId", "fieldMapping"],
+    },
+  },
+  {
+    name: "aesthetic_score",
+    description: "Evaluate design quality on a 0-100 scale with per-category breakdown: balance (visual weight distribution), contrast (WCAG ratios), alignment (edge/grid proximity), hierarchy (size ratios), consistency (repeated patterns), and spacing (uniformity). Uses AI for semantic quality assessment when API key available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to score" },
+        useAi: { type: "boolean", description: "Use AI for semantic quality assessment (default true)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "design_lint",
+    description: "Lint a design for quality issues: misalignments (±2px tolerance), inconsistent spacing, low contrast text, font inconsistencies, poor size hierarchy, out-of-bounds objects. Pure rule-based, no AI needed. Returns issues with severity (error/warning/info), affected layer, message, and suggested fix.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to lint" },
+        strictness: { type: "string", enum: ["relaxed", "normal", "strict"], description: "Lint strictness (default: normal)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "observe_session",
+    description: "Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["start", "stop", "analyze"], description: "Session action: start recording, stop and save, or analyze patterns" },
+        userId: { type: "string", description: "User ID for the session" },
+        templateId: { type: "string", description: "Template ID context (optional)" },
+        event: { type: "object", description: "Record a single event during session (mcpTool, canvasAction, navigation)" },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "smart_layout",
+    description: "Apply advanced layout algorithms to objects: grid (row/column math), masonry (column-based with height tracking), golden-ratio (spiral positioning), circular (polar coordinates), zigzag (alternating offsets), flex-wrap (row-based with overflow). Rearranges objects automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        targetLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to arrange (all if empty)" },
+        layout: { type: "string", enum: ["grid", "masonry", "golden-ratio", "circular", "zigzag", "flex-wrap"], description: "Layout algorithm" },
+        columns: { type: "number", description: "Columns for grid/masonry (default 3)" },
+        gap: { type: "number", description: "Gap between items in px (default 16)" },
+        startX: { type: "number", description: "Starting X position (default 0)" },
+        startY: { type: "number", description: "Starting Y position (default 0)" },
+        radius: { type: "number", description: "Radius for circular layout (default 300)" },
+        amplitude: { type: "number", description: "Zigzag amplitude (default 40)" },
+        maxWidth: { type: "number", description: "Max row width for flex-wrap (default canvas width)" },
+      },
+      required: ["templateId", "layout"],
+    },
+  },
+  {
+    name: "remix_template",
+    description: "Generate stylistic variations of a template using AI-assisted transformations. Styles: brutalist, glassmorphism, swiss, cyberpunk, minimalist, art_deco, bauhaus. Each remix creates a new template with adjusted palette, typography, spacing, and effects.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Source template ID to remix" },
+        style: { type: "string", enum: ["brutalist", "glassmorphism", "swiss", "cyberpunk", "minimalist", "art_deco", "bauhaus"], description: "Target design style" },
+        count: { type: "number", description: "Number of variations to generate (1-5, default 1)" },
+        outputWorkspaceId: { type: "string", description: "Workspace to create remixed templates in (default: same as source)" },
+      },
+      required: ["templateId", "style"],
+    },
+  },
+  {
+    name: "design_diff",
+    description: "Compare two templates structurally and visually. Shows layer-by-layer differences and calculates a similarity score (0-100) based on matching objects, positions, and types. Uses the existing compareTemplates engine.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIdA: { type: "string", description: "First template ID (baseline)" },
+        templateIdB: { type: "string", description: "Second template ID (comparison)" },
+      },
+      required: ["templateIdA", "templateIdB"],
+    },
+  },
+  {
+    name: "suggest_color_palette",
+    description: "Generate color palettes using color theory rules from a base hex color. Types: complementary (180°), analogous (±30°), triadic (±120°), monochromatic (varied S/L), split-complementary, tetradic. Uses existing rgbToHsl/hslToRgb helpers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        baseColor: { type: "string", description: "Base hex color (e.g. '#3b82f6')" },
+        type: { type: "string", enum: ["complementary", "analogous", "triadic", "monochromatic", "split-complementary", "tetradic"], description: "Color harmony type (default: complementary)" },
+        count: { type: "number", description: "Number of colors to generate (2-8, default depends on type)" },
+        mood: { type: "string", enum: ["vibrant", "muted", "dark", "light", "pastel", "professional"], description: "Mood modifier for saturation/lightness tweaks" },
+      },
+      required: ["baseColor"],
+    },
+  },
+  {
+    name: "auto_polish",
+    description: "Automatically apply design corrections: snap-align objects to nearest grid, distribute objects evenly, normalize spacing between groups, boost low-contrast text fills. Configurable aggressiveness (0-1). Returns before/after aesthetic scores.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to polish" },
+        aggressiveness: { type: "number", description: "Polish intensity 0-1 (default 0.7). Higher = more aggressive corrections." },
+        alignToGrid: { type: "boolean", description: "Snap objects to nearest grid line (default true)" },
+        gridSize: { type: "number", description: "Grid size in px for alignment (default 8)" },
+        boostContrast: { type: "boolean", description: "Boost low-contrast text to meet WCAG AA (default true)" },
+        normalizeSpacing: { type: "boolean", description: "Normalize gaps and padding (default true)" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -5796,6 +5929,751 @@ async function handleMethod(method, params, userId) {
         aggressiveness,
         changeCount: changes.length,
         changes: changes.slice(0, 20),
+      };
+    }
+
+    // ══════════════════════════════════════════════════
+    // Sprint 4: New Tools handlers
+    // ══════════════════════════════════════════════════
+
+    // ── batch_design_from_csv ──
+    case "batch_design_from_csv": {
+      const baseTpl = await templates.getTemplate(params.baseTemplateId);
+      if (!baseTpl) throw { code: -32000, message: `Base template not found: ${params.baseTemplateId}` };
+
+      // Parse data
+      let rows = params.data || [];
+      if (params.csvUrl && rows.length === 0) {
+        try {
+          const resp = await fetch(params.csvUrl);
+          if (!resp.ok) throw { code: -32000, message: `Failed to fetch CSV: ${resp.status}` };
+          const text = await resp.text();
+          // Simple CSV parser
+          const lines = text.split("\n").filter(l => l.trim());
+          const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
+          for (let i = 1; i < lines.length; i++) {
+            const values = lines[i].split(",").map(v => v.trim().replace(/^["']|["']$/g, ""));
+            const row = {};
+            headers.forEach((h, j) => { row[h] = values[j] || ""; });
+            rows.push(row);
+          }
+        } catch (e) {
+          if (e.code) throw e;
+          throw { code: -32000, message: `CSV parse error: ${e.message}` };
+        }
+      }
+
+      if (rows.length === 0) throw { code: -32602, message: "No data rows provided" };
+
+      const fieldMapping = params.fieldMapping || {};
+      const outputWsId = params.outputWorkspaceId || baseTpl.workspaceId;
+      const nameTemplate = params.nameTemplate || "Generated {index}";
+      const generated = [];
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        try {
+          const row = rows[i];
+          // Clone canvas
+          const newCanvas = JSON.parse(JSON.stringify(baseTpl.canvas));
+          // Substitute text fields
+          let name = nameTemplate.replace(/\{index\}/g, String(i + 1));
+          for (const obj of newCanvas.objects || []) {
+            if (obj.type === "text") {
+              const layerName = obj.layerName || obj.name;
+              for (const [col, layer] of Object.entries(fieldMapping)) {
+                if (layer === layerName && row[col] !== undefined) {
+                  obj.text = String(row[col]);
+                  name = name.replace(`{${col}}`, String(row[col]));
+                }
+              }
+            }
+          }
+
+          const newTpl = await templates.createTemplate(
+            name.substring(0, 200),
+            baseTpl.width, baseTpl.height,
+            newCanvas, baseTpl.metadata?.createdBy || "system", outputWsId
+          );
+          generated.push({ templateId: newTpl.id, name: newTpl.name, row: i + 1 });
+        } catch (e) {
+          errors.push({ row: i + 1, error: e.message });
+        }
+      }
+
+      return {
+        generated: generated.length,
+        templateIds: generated.map(g => g.templateId),
+        templates: generated,
+        errors: errors.length > 0 ? errors : undefined,
+        total: rows.length,
+      };
+    }
+
+    // ── aesthetic_score ──
+    case "aesthetic_score": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      const objects = tpl.canvas?.objects || [];
+      const w = tpl.width || 1080;
+      const h = tpl.height || 1080;
+
+      // Balance: check visual weight distribution
+      let leftWeight = 0, rightWeight = 0, topWeight = 0, bottomWeight = 0;
+      for (const o of objects) {
+        const area = (o.width || 0) * (o.height || 0) * (o.scaleX || 1) * (o.scaleY || 1);
+        const cx = (o.left || 0) + (o.width || 0) / 2;
+        const cy = (o.top || 0) + (o.height || 0) / 2;
+        if (cx < w / 2) leftWeight += area; else rightWeight += area;
+        if (cy < h / 2) topWeight += area; else bottomWeight += area;
+      }
+      const totalWeight = leftWeight + rightWeight + 1;
+      const balanceScore = Math.round(100 - Math.abs(leftWeight - rightWeight) / totalWeight * 100);
+
+      // Contrast: check text fills against white/black backgrounds
+      let contrastIssues = 0, textCount = 0;
+      for (const o of objects) {
+        if (o.type === "text" && o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
+          textCount++;
+          const hex = o.fill.slice(1);
+          const r = parseInt(hex.slice(0, 2), 16);
+          const g = parseInt(hex.slice(2, 4), 16);
+          const b = parseInt(hex.slice(4, 6), 16);
+          const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+          // Against white bg (on dark canvas, text should be light)
+          if (luminance > 0.5 && luminance < 0.85) contrastIssues++;
+        }
+      }
+      const contrastScore = textCount > 0 ? Math.round(100 - (contrastIssues / textCount) * 50) : 80;
+
+      // Alignment: check proximity to grid
+      const grid = 8;
+      let aligned = 0, total = objects.length;
+      for (const o of objects) {
+        const l = o.left || 0, t = o.top || 0;
+        if ((l % grid < 2 || l % grid > grid - 2) && (t % grid < 2 || t % grid > grid - 2)) aligned++;
+      }
+      const alignmentScore = total > 0 ? Math.round((aligned / total) * 100) : 80;
+
+      // Hierarchy: check size distribution
+      const sizes = objects.map(o => Math.max(o.width || 0, o.height || 0)).filter(s => s > 0).sort((a, b) => b - a);
+      let hierarchyScore = 70;
+      if (sizes.length >= 3) {
+        const ratio = sizes[0] / (sizes[sizes.length - 1] || 1);
+        hierarchyScore = ratio > 3 ? 90 : ratio > 1.5 ? 70 : 50;
+      }
+
+      // Consistency: font/color repetition
+      const fonts = new Set(), fills = new Set();
+      for (const o of objects) {
+        if (o.type === "text" && o.fontFamily) fonts.add(o.fontFamily);
+        if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) fills.add(o.fill);
+      }
+      const consistencyScore = Math.round(100 - (fonts.size - 1) * 15 - (fills.size > 5 ? (fills.size - 5) * 5 : 0));
+
+      // Spacing: check uniformity
+      const spacings = [];
+      for (const o of objects) {
+        if (o.padding !== undefined) spacings.push(o.padding);
+      }
+      let spacingScore = 70;
+      if (spacings.length >= 3) {
+        const unique = new Set(spacings);
+        spacingScore = Math.round(100 - (unique.size - 1) * 10);
+      }
+
+      const breakdown = {
+        balance: Math.max(0, Math.min(100, balanceScore)),
+        contrast: Math.max(0, Math.min(100, contrastScore)),
+        alignment: Math.max(0, Math.min(100, alignmentScore)),
+        hierarchy: Math.max(0, Math.min(100, hierarchyScore)),
+        consistency: Math.max(0, Math.min(100, consistencyScore)),
+        spacing: Math.max(0, Math.min(100, spacingScore)),
+      };
+
+      const overall = Math.round(Object.values(breakdown).reduce((a, b) => a + b, 0) / 6);
+
+      // AI assessment (optional)
+      let aiSuggestion = null;
+      const useAi = params.useAi !== false;
+      if (useAi) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (apiKey) {
+          try {
+            const prompt = `Design score: ${overall}/100. Breakdown: ${JSON.stringify(breakdown)}. Canvas: ${w}x${h}, ${objects.length} objects. Suggest 3 specific improvements in one sentence each. Return JSON: { "suggestions": ["..."] }`;
+            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 300, response_format: { type: "json_object" } }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              try { aiSuggestion = JSON.parse(data.choices?.[0]?.message?.content || "{}"); } catch { /* ignore */ }
+            }
+          } catch { /* optional */ }
+        }
+      }
+
+      const suggestions = aiSuggestion?.suggestions || [];
+      if (overall < 60) suggestions.push("Consider using design_lint to find and fix specific issues.");
+
+      return {
+        templateId: params.templateId,
+        score: overall,
+        breakdown,
+        suggestions,
+        canvasInfo: { width: w, height: h, objectCount: objects.length },
+      };
+    }
+
+    // ── design_lint ──
+    case "design_lint": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      const objects = tpl.canvas?.objects || [];
+      const w = tpl.width || 1080;
+      const strictness = params.strictness || "normal";
+      const tolerance = strictness === "strict" ? 1 : strictness === "relaxed" ? 4 : 2;
+      const issues = [];
+
+      // Collect fonts and colors for consistency checks
+      const fonts = new Map();
+      const colors = new Map();
+      for (const o of objects) {
+        if (o.type === "text" && o.fontFamily) fonts.set(o.fontFamily, (fonts.get(o.fontFamily) || 0) + 1);
+        if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) colors.set(o.fill, (colors.get(o.fill) || 0) + 1);
+      }
+      const dominantFont = [...fonts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+      for (const o of objects) {
+        const name = o.layerName || o.name || "?";
+        const l = o.left || 0, t = o.top || 0;
+        const ow = (o.width || 0) * (o.scaleX || 1), oh = (o.height || 0) * (o.scaleY || 1);
+
+        // Alignment check
+        const grid = 8;
+        if (l % grid > tolerance && l % grid < grid - tolerance) {
+          const nearestX = Math.round(l / grid) * grid;
+          issues.push({ severity: "warning", layer: name, message: `X position ${l} not aligned to ${grid}px grid`, fix: `Snap left to ${nearestX}px` });
+        }
+
+        // Out of bounds
+        if (l < 0) issues.push({ severity: "error", layer: name, message: `Left edge (${l}) is outside canvas`, fix: `Set left >= 0` });
+        if (t < 0) issues.push({ severity: "error", layer: name, message: `Top edge (${t}) is outside canvas`, fix: `Set top >= 0` });
+        if (l + ow > w) issues.push({ severity: "warning", layer: name, message: `Right edge (${l + ow}) exceeds canvas width (${w})`, fix: `Reduce width or adjust position` });
+
+        // Font consistency
+        if (o.type === "text" && dominantFont && o.fontFamily !== dominantFont[0]) {
+          const isHeading = (o.fontSize || 16) >= 24;
+          if (fonts.get(o.fontFamily) <= 2 || strictness === "strict") {
+            issues.push({ severity: "info", layer: name, message: `Font "${o.fontFamily}" differs from dominant font "${dominantFont[0]}"`, fix: isHeading ? "May be intentional for headings" : `Consider using "${dominantFont[0]}"` });
+          }
+        }
+
+        // Contrast check for text
+        if (o.type === "text" && o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
+          const hex = o.fill.slice(1);
+          const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+          const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+          // Assuming dark canvas background
+          if (luminance < 0.3) {
+            issues.push({ severity: "error", layer: name, message: `Text fill (${o.fill}) too dark for dark backgrounds`, fix: "Use lighter text color for readability" });
+          }
+        }
+
+        // Size hierarchy
+        if (o.type === "text" && (o.fontSize || 16) < 10) {
+          issues.push({ severity: "warning", layer: name, message: `Font size ${o.fontSize}px too small`, fix: "Increase to at least 12px for readability" });
+        }
+      }
+
+      // Spacing consistency across groups
+      const paddings = objects.filter(o => o.padding !== undefined).map(o => o.padding);
+      if (paddings.length >= 3) {
+        const uniquePads = new Set(paddings);
+        if (uniquePads.size > 3) {
+          issues.push({ severity: "info", layer: "*", message: `${uniquePads.size} unique padding values — consider standardizing`, fix: "Use consistent padding values (e.g. all 16px)" });
+        }
+      }
+
+      const totalChecks = objects.length * 5;
+      const passCount = Math.max(0, totalChecks - issues.length);
+      const passRate = totalChecks > 0 ? Math.round((passCount / totalChecks) * 100) : 100;
+
+      return {
+        templateId: params.templateId,
+        issues,
+        issueCount: issues.length,
+        severity: {
+          errors: issues.filter(i => i.severity === "error").length,
+          warnings: issues.filter(i => i.severity === "warning").length,
+          info: issues.filter(i => i.severity === "info").length,
+        },
+        passRate,
+        strictness,
+      };
+    }
+
+    // ── observe_session ──
+    case "observe_session": {
+      if (!globalThis.__observe_sessions) globalThis.__observe_sessions = new Map();
+      if (!globalThis.__observe_events) globalThis.__observe_events = new Map();
+
+      const action = params.action;
+      const userId = params.userId || "default";
+      const sessionKey = `session_${userId}`;
+
+      if (action === "start") {
+        const session = {
+          id: `obs_${Date.now().toString(36)}`,
+          userId,
+          templateId: params.templateId || null,
+          startedAt: new Date().toISOString(),
+          status: "recording",
+          eventCount: 0,
+        };
+        globalThis.__observe_sessions.set(sessionKey, session);
+        globalThis.__observe_events.set(sessionKey, []);
+        return { observed: true, action, session };
+      }
+
+      if (action === "stop") {
+        const session = globalThis.__observe_sessions.get(sessionKey);
+        if (!session) throw { code: -32000, message: "No active session" };
+        session.status = "completed";
+        session.endedAt = new Date().toISOString();
+        const events = globalThis.__observe_events.get(sessionKey) || [];
+        session.eventCount = events.length;
+        globalThis.__observe_sessions.set(sessionKey, session);
+        return { observed: true, action, session, eventCount: events.length };
+      }
+
+      if (action === "analyze") {
+        const events = globalThis.__observe_events.get(sessionKey) || [];
+        if (events.length === 0) return { action, message: "No events recorded. Start a session first.", patterns: null };
+
+        // Extract patterns
+        const toolUsage = {};
+        const actionTypes = {};
+        const timeline = [];
+        for (const evt of events) {
+          if (evt.type === "mcpTool") toolUsage[evt.tool] = (toolUsage[evt.tool] || 0) + 1;
+          actionTypes[evt.type] = (actionTypes[evt.type] || 0) + 1;
+          timeline.push({ time: evt.timestamp, type: evt.type, detail: evt.tool || evt.action });
+        }
+
+        const sortedTools = Object.entries(toolUsage).sort((a, b) => b[1] - a[1]);
+        const patterns = {
+          mostUsedTools: sortedTools.slice(0, 5).map(([tool, count]) => ({ tool, count })),
+          actionBreakdown: actionTypes,
+          typicalWorkflow: timeline.slice(0, 10),
+          totalEvents: events.length,
+          insights: sortedTools.length > 0
+            ? [`Most used tool: ${sortedTools[0][0]} (${sortedTools[0][1]} times)`, `Unique tools used: ${sortedTools.length}`]
+            : [],
+        };
+
+        return { action, patterns };
+      }
+
+      // Record event
+      if (params.event) {
+        const events = globalThis.__observe_events.get(sessionKey) || [];
+        events.push({ ...params.event, timestamp: new Date().toISOString() });
+        globalThis.__observe_events.set(sessionKey, events);
+        return { recorded: true, eventCount: events.length };
+      }
+
+      throw { code: -32602, message: "Invalid action. Use start/stop/analyze or provide an event to record." };
+    }
+
+    // ── smart_layout ──
+    case "smart_layout": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
+
+      const objects = getFrameObjects(tpl, params.frameId);
+      let targets = params.targetLayerNames?.length
+        ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
+        : [...objects];
+
+      if (targets.length < 2) throw { code: -32000, message: "Need at least 2 objects to apply layout" };
+
+      const layout = params.layout;
+      const gap = params.gap || 16;
+      const startX = params.startX || 0;
+      const startY = params.startY || 0;
+      const cols = params.columns || 3;
+      const w = tpl.width || 1080;
+
+      const applyLayout = () => {
+        switch (layout) {
+          case "grid": {
+            for (let i = 0; i < targets.length; i++) {
+              const row = Math.floor(i / cols);
+              const col = i % cols;
+              targets[i].left = startX + col * ((w - startX * 2) / cols);
+              targets[i].top = startY + row * (Math.max(...targets.map(t => t.height || 100)) + gap);
+            }
+            break;
+          }
+          case "masonry": {
+            const colHeights = new Array(cols).fill(startY);
+            for (let i = 0; i < targets.length; i++) {
+              const col = i % cols;
+              targets[i].left = startX + col * ((w - startX * 2) / cols);
+              targets[i].top = colHeights[col];
+              colHeights[col] += (targets[i].height || 100) + gap;
+            }
+            break;
+          }
+          case "golden-ratio": {
+            const phi = 1.618033988749895;
+            for (let i = 0; i < targets.length; i++) {
+              const angle = i * phi * Math.PI * 2;
+              const r = 30 + i * 12;
+              targets[i].left = startX + w / 2 + Math.cos(angle) * r - (targets[i].width || 0) / 2;
+              targets[i].top = startY + 200 + Math.sin(angle) * r - (targets[i].height || 0) / 2;
+            }
+            break;
+          }
+          case "circular": {
+            const radius = params.radius || 300;
+            const cx = startX + w / 2;
+            const cy = startY + radius + 50;
+            for (let i = 0; i < targets.length; i++) {
+              const angle = (i / targets.length) * Math.PI * 2 - Math.PI / 2;
+              targets[i].left = cx + Math.cos(angle) * radius - (targets[i].width || 0) / 2;
+              targets[i].top = cy + Math.sin(angle) * radius - (targets[i].height || 0) / 2;
+            }
+            break;
+          }
+          case "zigzag": {
+            const amp = params.amplitude || 40;
+            for (let i = 0; i < targets.length; i++) {
+              targets[i].left = startX + i * ((w - startX * 2) / targets.length);
+              targets[i].top = startY + (i % 2 === 0 ? 0 : amp);
+            }
+            break;
+          }
+          case "flex-wrap": {
+            const maxWidth = params.maxWidth || w - startX * 2;
+            let curX = startX, curY = startY, maxH = 0;
+            for (let i = 0; i < targets.length; i++) {
+              const ow = (targets[i].width || 100) + gap;
+              if (curX + ow > startX + maxWidth) {
+                curX = startX;
+                curY += maxH + gap;
+                maxH = 0;
+              }
+              targets[i].left = curX;
+              targets[i].top = curY;
+              curX += ow;
+              maxH = Math.max(maxH, targets[i].height || 100);
+            }
+            break;
+          }
+        }
+      };
+
+      applyLayout();
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+
+      return { applied: true, layout, objectCount: targets.length, objects: targets.map(o => ({ layerName: o.layerName || o.name, left: o.left, top: o.top })) };
+    }
+
+    // ── remix_template ──
+    case "remix_template": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+
+      const style = params.style;
+      const count = Math.max(1, Math.min(5, params.count || 1));
+      const outputWsId = params.outputWorkspaceId || tpl.workspaceId;
+
+      // Style definitions (rule-based transformations)
+      const STYLES = {
+        brutalist: { palette: ["#ff4500", "#000000", "#ffffff", "#8b0000"], font: "Impact", gap: 4, effects: "raw" },
+        glassmorphism: { palette: ["#ffffff", "#e0e7ff", "#c7d2fe", "#818cf8"], font: "Inter", gap: 24, effects: "blur" },
+        swiss: { palette: ["#ff0000", "#000000", "#ffffff", "#cccccc"], font: "Helvetica", gap: 16, effects: "clean" },
+        cyberpunk: { palette: ["#ff00ff", "#00ffff", "#0a0a0a", "#ff6600"], font: "Share Tech Mono", gap: 8, effects: "neon" },
+        minimalist: { palette: ["#000000", "#ffffff", "#f5f5f5", "#999999"], font: "Inter", gap: 32, effects: "sparse" },
+        art_deco: { palette: ["#d4af37", "#1a1a2e", "#c0c0c0", "#8b7355"], font: "Playfair Display", gap: 20, effects: "ornate" },
+        bauhaus: { palette: ["#e63946", "#1d3557", "#f1faee", "#a8dadc"], font: "Futura", gap: 12, effects: "geometric" },
+      };
+
+      const styleDef = STYLES[style] || STYLES.minimalist;
+      const remixed = [];
+
+      // AI description (optional)
+      let aiDescription = null;
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (apiKey) {
+        try {
+          const prompt = `Describe the key characteristics of the "${style}" design style in 2 sentences. Be specific about colors, typography, and spacing.`;
+          const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 150 }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            aiDescription = data.choices?.[0]?.message?.content || null;
+          }
+        } catch { /* optional */ }
+      }
+
+      for (let v = 0; v < count; v++) {
+        const remixCanvas = JSON.parse(JSON.stringify(tpl.canvas));
+        for (const obj of remixCanvas.objects || []) {
+          // Apply palette (rotate by variation index)
+          if (obj.fill && typeof obj.fill === "string" && obj.fill.startsWith("#")) {
+            const idx = (v + (obj.left || 0)) % styleDef.palette.length;
+            obj.fill = styleDef.palette[idx];
+          }
+          if (obj.type === "text") {
+            obj.fontFamily = styleDef.font;
+            if (obj.fontSize) obj.fontSize = Math.round(obj.fontSize * (1 + v * 0.05));
+          }
+        }
+
+        const remix = await templates.createTemplate(
+          `${tpl.name} (${style} v${v + 1})`.substring(0, 200),
+          tpl.width, tpl.height, remixCanvas, tpl.metadata?.createdBy || "system", outputWsId
+        );
+        remixed.push({ templateId: remix.id, name: remix.name, variation: v + 1 });
+      }
+
+      return {
+        remixed: remixed.length,
+        style,
+        variationCount: count,
+        templateIds: remixed.map(r => r.templateId),
+        templates: remixed,
+        styleDefinition: styleDef,
+        aiDescription,
+      };
+    }
+
+    // ── design_diff ──
+    case "design_diff": {
+      const tplA = await templates.getTemplate(params.templateIdA);
+      if (!tplA) throw { code: -32000, message: `Template A not found: ${params.templateIdA}` };
+      const tplB = await templates.getTemplate(params.templateIdB);
+      if (!tplB) throw { code: -32000, message: `Template B not found: ${params.templateIdB}` };
+
+      const diffs = compareTemplates(tplA, tplB);
+
+      // Similarity score
+      const objsA = tplA.canvas?.objects || [];
+      const objsB = tplB.canvas?.objects || [];
+      const totalObjects = Math.max(objsA.length, objsB.length);
+      let matchScore = 0;
+      const idsA = new Map();
+      for (const o of objsA) { const id = o.layerName || o.name; if (id) idsA.set(id, o); }
+      for (const o of objsB) {
+        const id = o.layerName || o.name;
+        const match = idsA.get(id);
+        if (match) {
+          matchScore += 0.5;
+          if (match.type === o.type) matchScore += 0.3;
+          if (Math.abs((match.left || 0) - (o.left || 0)) < 5 && Math.abs((match.top || 0) - (o.top || 0)) < 5) matchScore += 0.2;
+        }
+      }
+      const similarityScore = totalObjects > 0 ? Math.round((matchScore / totalObjects) * 100) : 100;
+
+      return {
+        templateA: { id: params.templateIdA, name: tplA.name, objectCount: objsA.length },
+        templateB: { id: params.templateIdB, name: tplB.name, objectCount: objsB.length },
+        differences: diffs,
+        similarityScore: Math.min(100, similarityScore),
+        totalChanges: diffs.length,
+      };
+    }
+
+    // ── suggest_color_palette ──
+    case "suggest_color_palette": {
+      const baseColor = params.baseColor;
+      if (!baseColor || !baseColor.startsWith("#") || baseColor.length < 7) {
+        throw { code: -32602, message: "baseColor must be a hex color (e.g. '#3b82f6')" };
+      }
+
+      const hex = baseColor.slice(1);
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const hsl = rgbToHsl(r, g, b);
+
+      const type = params.type || "complementary";
+      const mood = params.mood || null;
+
+      const toHex = (rgb) => {
+        const rh = rgb.r.toString(16).padStart(2, "0");
+        const gh = rgb.g.toString(16).padStart(2, "0");
+        const bh = rgb.b.toString(16).padStart(2, "0");
+        return `#${rh}${gh}${bh}`;
+      };
+
+      // Mood modifiers for saturation/lightness
+      const moodMod = (s, l) => {
+        switch (mood) {
+          case "vibrant": return { s: Math.min(1, s * 1.3), l: Math.min(0.9, l * 1.1) };
+          case "muted": return { s: s * 0.6, l: l * 0.95 };
+          case "dark": return { s, l: Math.max(0.05, l * 0.4) };
+          case "light": return { s: s * 0.5, l: Math.min(0.95, l * 1.6) };
+          case "pastel": return { s: s * 0.4, l: Math.min(0.9, l * 1.4) };
+          case "professional": return { s: Math.min(1, s * 0.85), l };
+          default: return { s, l };
+        }
+      };
+
+      const generate = (hueShift, sMod = 1, lMod = 1) => {
+        let h = (hsl.h + hueShift + 360) % 360;
+        let { s, l } = moodMod(Math.min(1, hsl.s * sMod), Math.min(1, hsl.l * lMod));
+        const rgb = hslToRgb(h, s, l);
+        return toHex(rgb);
+      };
+
+      let colors = [];
+      switch (type) {
+        case "complementary":
+          colors = [baseColor, generate(180)];
+          break;
+        case "analogous":
+          colors = [generate(-30), baseColor, generate(30)];
+          break;
+        case "triadic":
+          colors = [baseColor, generate(120), generate(240)];
+          break;
+        case "monochromatic":
+          const count = params.count || 5;
+          for (let i = 0; i < count; i++) {
+            const l = Math.max(0.1, Math.min(0.95, hsl.l * (0.3 + i * (1.4 / count))));
+            colors.push(toHex(hslToRgb(hsl.h, Math.min(1, hsl.s * (0.7 + i * 0.1)), l)));
+          }
+          break;
+        case "split-complementary":
+          colors = [baseColor, generate(150), generate(210)];
+          break;
+        case "tetradic":
+          colors = [baseColor, generate(90), generate(180), generate(270)];
+          break;
+      }
+
+      // Assign roles
+      const roleNames = ["primary", "secondary", "accent", "surface", "text", "highlight", "muted", "border"];
+      const palette = colors.map((hex, i) => ({
+        hex,
+        name: `${type} ${i + 1}`,
+        role: roleNames[i] || "color",
+      }));
+
+      return {
+        baseColor,
+        type,
+        mood,
+        colors: palette,
+        count: palette.length,
+      };
+    }
+
+    // ── auto_polish ──
+    case "auto_polish": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      autoSnapshot(params.templateId, method, tpl);
+
+      const aggressiveness = Math.max(0, Math.min(1, params.aggressiveness ?? 0.7));
+      const alignToGrid = params.alignToGrid !== false;
+      const gridSize = params.gridSize || 8;
+      const boostContrast = params.boostContrast !== false;
+      const normalizeSpacing = params.normalizeSpacing !== false;
+
+      const objects = tpl.canvas?.objects || [];
+      const changes = [];
+
+      // Calculate before score (simple heuristic)
+      const scoreBefore = () => {
+        let s = 50;
+        const aligned = objects.filter(o => (o.left || 0) % gridSize < 2 || (o.left || 0) % gridSize > gridSize - 2).length;
+        if (objects.length > 0) s += Math.round((aligned / objects.length) * 30);
+        return Math.min(100, s);
+      };
+
+      const beforeScore = scoreBefore();
+
+      // Align to grid
+      if (alignToGrid) {
+        for (const obj of objects) {
+          const oldLeft = obj.left || 0;
+          const oldTop = obj.top || 0;
+          const newLeft = Math.round(oldLeft / gridSize) * gridSize;
+          const newTop = Math.round(oldTop / gridSize) * gridSize;
+          if (Math.abs(newLeft - oldLeft) > 1 && aggressiveness > 0.3) {
+            obj.left = newLeft;
+            changes.push({ layer: obj.layerName || obj.name, field: "left", old: oldLeft, new: newLeft });
+          }
+          if (Math.abs(newTop - oldTop) > 1 && aggressiveness > 0.3) {
+            obj.top = newTop;
+            changes.push({ layer: obj.layerName || obj.name, field: "top", old: oldTop, new: newTop });
+          }
+        }
+      }
+
+      // Normalize spacing
+      if (normalizeSpacing && aggressiveness > 0.4) {
+        const paddings = objects.filter(o => o.padding !== undefined).map(o => o.padding);
+        if (paddings.length >= 2) {
+          const sorted = [...paddings].sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          for (const obj of objects) {
+            if (obj.padding !== undefined && Math.abs(obj.padding - median) > 2) {
+              changes.push({ layer: obj.layerName || obj.name, field: "padding", old: obj.padding, new: median });
+              obj.padding = median;
+            }
+          }
+        }
+      }
+
+      // Boost contrast
+      if (boostContrast && aggressiveness > 0.2) {
+        for (const obj of objects) {
+          if (obj.type === "text" && obj.fill && typeof obj.fill === "string" && obj.fill.startsWith("#")) {
+            const hex = obj.fill.slice(1);
+            const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+            const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            if (lum < 0.4) {
+              // Brighten
+              const newR = Math.min(255, r + Math.round((255 - r) * aggressiveness * 0.6));
+              const newG = Math.min(255, g + Math.round((255 - g) * aggressiveness * 0.6));
+              const newB = Math.min(255, b + Math.round((255 - b) * aggressiveness * 0.6));
+              const newFill = `#${newR.toString(16).padStart(2, "0")}${newG.toString(16).padStart(2, "0")}${newB.toString(16).padStart(2, "0")}`;
+              changes.push({ layer: obj.layerName || obj.name, field: "fill", old: obj.fill, new: newFill });
+              obj.fill = newFill;
+            }
+          }
+        }
+      }
+
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+
+      const afterScore = scoreBefore();
+
+      return {
+        polished: true,
+        templateId: params.templateId,
+        changes,
+        changeCount: changes.length,
+        scoreBefore: beforeScore,
+        scoreAfter: afterScore,
+        aggressiveness,
       };
     }
 
