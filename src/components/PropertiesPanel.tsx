@@ -137,8 +137,14 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
   const isTextType = obj.type === "text" || obj.type === "i-text" || obj.type === "IText" || obj.type === "Textbox" || obj.type === "textbox";
   const isRectType = obj.type === "rect" || obj.type === "Rect" || (obj as any).isFrameVisual;
   const isFrameType = !!(obj as any).isFrameVisual;
+  const frameObjCount = isFrameType ? (((obj as any).children?.length) || ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0)) : 0;
+  const fieldLayoutMode = (obj as any).layoutMode ?? "NONE";
+  const fieldClipsContent = !!(obj as any).clipsContent;
+  const fieldFramePadT = String((obj as any).padding?.top ?? 0);
+  const fieldFramePadR = String((obj as any).padding?.right ?? 0);
+  const fieldFramePadB = String((obj as any).padding?.bottom ?? 0);
+  const fieldFramePadL = String((obj as any).padding?.left ?? 0);
   const isImageType = obj.type === "image" || obj.type === "Image" || obj.type === "FabricImage";
-  const frameObjCount = isFrameType ? ((obj as any).canvas?.getObjects().filter((o: any) => o.frameId === (obj as any).frameId && !o.isFrameVisual).length || 0) : 0;
 
   return (
     <div key={resetKey} className="glass-panel" style={panelStyle}>
@@ -214,6 +220,110 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
               resetKey={resetKey}
             />
             <Row label="Width" defaultValue={fieldStrokeW} onChange={v => commit("strokeWidth", Number(v))} />
+          </div>
+        </Section>
+      )}
+
+      {/* Layout Mode (Frame) */}
+      {isFrameType && (
+        <Section label="Layout Mode">
+          <div style={{ padding: "0 10px 6px" }}>
+            <select
+              aria-label="Layout mode"
+              key={`lm-${resetKey}`}
+              defaultValue={fieldLayoutMode}
+              onChange={e => commit("layoutMode", e.target.value)}
+              style={selectStyle}
+            >
+              <option value="NONE">None</option>
+              <option value="HORIZONTAL">Horizontal</option>
+              <option value="VERTICAL">Vertical</option>
+            </select>
+          </div>
+        </Section>
+      )}
+
+      {/* Clips Content (Frame) */}
+      {isFrameType && (
+        <Section label="Clips Content">
+          <div style={{ padding: "0 10px 6px" }}>
+            <button
+              type="button"
+              onClick={() => commit("clipsContent", !fieldClipsContent)}
+              style={{
+                ...inputStyle,
+                background: fieldClipsContent ? "#3B82F6" : "rgba(255,255,255,0.06)",
+                color: fieldClipsContent ? "#fff" : "#a3a3a3",
+                cursor: "pointer",
+                textAlign: "center" as const,
+              }}
+            >
+              {fieldClipsContent ? "Enabled" : "Disabled"}
+            </button>
+          </div>
+        </Section>
+      )}
+
+      {/* Padding (Frame with Auto Layout) */}
+      {isFrameType && fieldLayoutMode !== "NONE" && (
+        <Section label="Padding">
+          <div style={{ padding: "0 10px 6px", display: "flex", gap: 4 }}>
+            <input
+              aria-label="Padding top"
+              key={`pt-${resetKey}`}
+              defaultValue={fieldFramePadT}
+              onBlur={e => {
+                const v = Number(e.target.value);
+                if (!isNaN(v)) {
+                  const p = { ...((obj as any).padding || { top: 0, right: 0, bottom: 0, left: 0 }), top: v };
+                  commit("padding", p);
+                }
+              }}
+              style={{ ...inputStyle, width: "48%" }}
+              placeholder="Top"
+            />
+            <input
+              aria-label="Padding right"
+              key={`pr-${resetKey}`}
+              defaultValue={fieldFramePadR}
+              onBlur={e => {
+                const v = Number(e.target.value);
+                if (!isNaN(v)) {
+                  const p = { ...((obj as any).padding || { top: 0, right: 0, bottom: 0, left: 0 }), right: v };
+                  commit("padding", p);
+                }
+              }}
+              style={{ ...inputStyle, width: "48%" }}
+              placeholder="Right"
+            />
+            <input
+              aria-label="Padding bottom"
+              key={`pb-${resetKey}`}
+              defaultValue={fieldFramePadB}
+              onBlur={e => {
+                const v = Number(e.target.value);
+                if (!isNaN(v)) {
+                  const p = { ...((obj as any).padding || { top: 0, right: 0, bottom: 0, left: 0 }), bottom: v };
+                  commit("padding", p);
+                }
+              }}
+              style={{ ...inputStyle, width: "48%" }}
+              placeholder="Bottom"
+            />
+            <input
+              aria-label="Padding left"
+              key={`pl-${resetKey}`}
+              defaultValue={fieldFramePadL}
+              onBlur={e => {
+                const v = Number(e.target.value);
+                if (!isNaN(v)) {
+                  const p = { ...((obj as any).padding || { top: 0, right: 0, bottom: 0, left: 0 }), left: v };
+                  commit("padding", p);
+                }
+              }}
+              style={{ ...inputStyle, width: "48%" }}
+              placeholder="Left"
+            />
           </div>
         </Section>
       )}

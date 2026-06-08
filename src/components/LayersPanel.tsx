@@ -95,11 +95,22 @@ export function LayersPanel({
   for (const l of layers) {
     if (l.isFrame) {
       frameMap.set((l.ref as any).frameId, l);
+      // Get children from frame.children[] (new model) or scan for frameId (legacy)
+      const frameChildren = ((l.ref as any).children || []).map((child: any) => ({
+        name: (child as any).layerName || (child as any).name || `${child.type}_${Math.random().toString(36).slice(2, 6)}`,
+        type: (child as any).type || "unknown",
+        visible: child.visible !== false,
+        locked: !!(child as any).lockMovementX,
+        ref: child,
+        frameId: (l.ref as any).frameId || null,
+        isFrame: false,
+        objectId: (child as any).layerName || (child as any).name || `${child.type}_${Math.random().toString(36).slice(2, 6)}`,
+      }));
       frameGroups.push({
         frameId: (l.ref as any).frameId,
         frameName: l.name,
         ref: l.ref,
-        children: [],
+        children: frameChildren,
         collapsed: collapsedFrames.has((l.ref as any).frameId),
       });
     }
@@ -107,8 +118,11 @@ export function LayersPanel({
   for (const l of layers) {
     if (!l.isFrame) {
       if (l.frameId && frameMap.has(l.frameId)) {
+        // Only add to freeObjects if not already in a frame's children[] array
         const fg = frameGroups.find(f => f.frameId === l.frameId);
-        if (fg) fg.children.push(l);
+        if (fg && !fg.children.some(c => c.ref === l.ref)) {
+          fg.children.push(l);
+        }
       } else {
         freeObjects.push(l);
       }
@@ -334,7 +348,7 @@ export function LayersPanel({
                     const origFill = (frame as any).frameFill || "#ffffff";
                     const origStroke = (frame as any).frameStroke || "#c8b898";
                     const origName = (frame as any).frameName || "Frame";
-                    const json = (frame as any).toJSON(["isFrameVisual", "frameId", "frameName", "frameFill", "frameStroke", "layerId", "layerName", "styleId"]);
+                  const json = (frame as any).toJSON(["isFrameVisual", "frameId", "frameName", "frameFill", "frameStroke", "layerId", "layerName", "styleId", "layoutMode", "clipsContent", "constraints", "padding", "children"]);
                     // Duplicate frame
                     const newFrameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                     FabricObject.fromObject(json).then((clone: any) => {
@@ -354,7 +368,7 @@ export function LayersPanel({
                       (clone as any).layerName = (clone as any).frameName;
                       c.add(clone);
                       // Duplicate children
-                      const children = c.getObjects().filter((o: any) => o.frameId === origFid && !o.isFrameVisual);
+                      const children = (frame as any).children || c.getObjects().filter((o: any) => o.frameId === origFid && !o.isFrameVisual);
                       const childClones: Promise<void>[] = [];
                       for (const child of children) {
                         const cjson = (child as any).toJSON(["layerId", "layerName", "frameId", "styleId"]);

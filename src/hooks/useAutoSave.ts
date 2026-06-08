@@ -76,7 +76,7 @@ export function useAutoSave({
       "name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
       "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
       "componentId", "isComponentInstance", "constraints", "autoLayout",
-      "resizingMode", "overrides",
+      "resizingMode", "overrides", "layoutMode", "clipsContent", "padding", "children", "frameName", "frameFill", "frameStroke",
     ]);
     const viewport = {
       x: c.viewportTransform[4],
@@ -193,7 +193,7 @@ export function useAutoSave({
       "name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameBg",
       "isClosedPath", "isFrameLabel", "imageFilters", "styleId",
       "componentId", "isComponentInstance", "constraints", "autoLayout",
-      "resizingMode", "overrides",
+      "resizingMode", "overrides", "layoutMode", "clipsContent", "padding", "children", "frameName", "frameFill", "frameStroke",
     ]);
     const viewport = {
       x: c.viewportTransform[4],

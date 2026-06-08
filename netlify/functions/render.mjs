@@ -98,16 +98,25 @@ function prepareFrameRender(tpl, frameId) {
         width: visualFrame.width || 1080,
         height: visualFrame.height || 1080,
         fill: visualFrame.fill || "#ffffff",
+        objects: visualFrame.children || [],
+        layoutMode: visualFrame.layoutMode || "NONE",
+        clipsContent: visualFrame.clipsContent !== false,
+        constraints: visualFrame.constraints || {},
+        padding: visualFrame.padding || { top: 0, right: 0, bottom: 0, left: 0 },
       };
     }
   }
 
   if (!frame) return null;
 
+  // Use frame.objects (children[]) when available, otherwise fall back to scanning canvas.objects by frameId
+  const frameChildren = frame.objects && frame.objects.length > 0
+    ? frame.objects
+    : (tpl.canvas?.objects || []).filter(o => o.frameId === frameId && !o.isFrameVisual);
+
   const offsetObjs = (objs) => {
     const result = [];
     for (const o of objs || []) {
-      if (o.frameId !== frameId) continue;
       const clone = JSON.parse(JSON.stringify(o));
       clone.left = (clone.left || 0) - frame.x;
       clone.top = (clone.top || 0) - frame.y;
@@ -116,7 +125,7 @@ function prepareFrameRender(tpl, frameId) {
     return result;
   };
 
-  const frameObjects = offsetObjs(tpl.canvas?.objects || []);
+  const frameObjects = offsetObjs(frameChildren);
 
   return {
     ...tpl,

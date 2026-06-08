@@ -526,6 +526,12 @@ const MCP_TOOLS = [
         height: { type: "number", description: "Frame height (default 300)" },
         fill: { type: "string", description: "Background fill color" },
         parentFrameId: { type: "string", description: "Optional parent frame ID for nested frames" },
+        layoutMode: { type: "string", enum: ["NONE", "HORIZONTAL", "VERTICAL"], description: "Auto-layout mode (default NONE)" },
+        clipsContent: { type: "boolean", description: "Clip overflowing content (default true)" },
+        paddingTop: { type: "number", description: "Padding top (default 0)" },
+        paddingRight: { type: "number", description: "Padding right (default 0)" },
+        paddingBottom: { type: "number", description: "Padding bottom (default 0)" },
+        paddingLeft: { type: "number", description: "Padding left (default 0)" },
       },
       required: ["templateId", "name"],
     },
@@ -2870,6 +2876,10 @@ async function handleMethod(method, params, userId) {
         opacity: 1, order: (tpl.frames || []).length,
         objects: [],
         parentFrameId: params.parentFrameId || null,
+        layoutMode: params.layoutMode || "NONE",
+        clipsContent: params.clipsContent !== false,
+        constraints: {},
+        padding: { top: params.paddingTop || 0, right: params.paddingRight || 0, bottom: params.paddingBottom || 0, left: params.paddingLeft || 0 },
       };
       if (!tpl.frames) tpl.frames = [];
       tpl.frames.push(frame);
@@ -2887,6 +2897,11 @@ async function handleMethod(method, params, userId) {
         fill: frame.fill,
         stroke: "#6366f1", strokeWidth: 1,
         rx: 0, ry: 0, scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
+        layoutMode: frame.layoutMode,
+        clipsContent: frame.clipsContent,
+        constraints: frame.constraints,
+        padding: frame.padding,
+        children: [],
       };
       if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
       if (!tpl.canvas.objects) tpl.canvas.objects = [];

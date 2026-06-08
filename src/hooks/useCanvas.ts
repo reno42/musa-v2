@@ -19,7 +19,7 @@ export type ToolName =
 
 const SNAP_HISTORY_LIMIT = 50;
 const FRAME_MAX = 50;
-const EXTRA_PROPS = ["name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameLabel", "frameName", "frameFill", "frameStroke", "styleId", "isGridLine"];
+const EXTRA_PROPS = ["name", "layerId", "layerName", "frameId", "isFrameVisual", "isFrameLabel", "frameName", "frameFill", "frameStroke", "styleId", "isGridLine", "layoutMode", "clipsContent", "constraints", "padding", "children"];
 
 function canvasToJSON(c: Canvas): any {
   return (c as any).toJSON(EXTRA_PROPS);
@@ -236,6 +236,11 @@ export function useCanvas() {
         (obj as any).frameFill = "#ffffff";
         (obj as any).frameStroke = "#c8b898";
         (obj as any).layerName = (obj as any).frameName;
+        (obj as any).layoutMode = "NONE";
+        (obj as any).clipsContent = true;
+        (obj as any).constraints = {};
+        (obj as any).padding = { top: 0, right: 0, bottom: 0, left: 0 };
+        (obj as any).children = [];
         break;
       }
     }
@@ -449,7 +454,7 @@ export function useCanvas() {
         (obj as any)._prevTop = obj.top;
         if (dx === 0 && dy === 0) return;
         // Move all children
-        const children = c.getObjects().filter((o: any) => o.frameId === fid && !o.isFrameVisual);
+        const children = (obj as any).children || c.getObjects().filter((o: any) => o.frameId === fid && !o.isFrameVisual);
         for (const child of children) {
           child.set({ left: (child.left ?? 0) + dx, top: (child.top ?? 0) + dy });
           child.setCoords();
@@ -853,6 +858,9 @@ export function useCanvas() {
   const getFrameObjects = useCallback((frameId: string): FabricObject[] => {
     const c = canvasRef.current;
     if (!c) return [];
+    const frame = c.getObjects().find((o: any) => o.frameId === frameId && o.isFrameVisual);
+    if (frame && (frame as any).children && (frame as any).children.length > 0) return (frame as any).children;
+    // Fallback: scan objects with matching frameId (legacy support)
     return c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
   }, []);
 
@@ -878,6 +886,11 @@ export function useCanvas() {
     (frame as any).frameFill = "#ffffff";
     (frame as any).frameStroke = "#c8b898";
     (frame as any).layerName = (frame as any).frameName;
+    (frame as any).layoutMode = "NONE";
+    (frame as any).clipsContent = true;
+    (frame as any).constraints = {};
+    (frame as any).padding = { top: 0, right: 0, bottom: 0, left: 0 };
+    (frame as any).children = [];
     c.add(frame);
     c.setActiveObject(frame);
     c.requestRenderAll();
@@ -891,7 +904,7 @@ export function useCanvas() {
     const frame = c.getObjects().find((o: any) => o.frameId === frameId);
     if (!frame) return;
     // Remove frame and all its children
-    const children = c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
+    const children = (frame as any).children || c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
     c.remove(frame, ...children);
     c.discardActiveObject();
     c.requestRenderAll();
@@ -913,7 +926,23 @@ export function useCanvas() {
     if (!c) return;
     const obj = c.getObjects().find((o: any) => o.layerName === objectId || o.name === objectId);
     if (!obj || (obj as any).isFrameVisual) return;
+    // Remove from previous frame
+    const prevFrameId = (obj as any).frameId;
+    if (prevFrameId) {
+      const prevFrame = c.getObjects().find((o: any) => o.frameId === prevFrameId && o.isFrameVisual);
+      if (prevFrame && (prevFrame as any).children) {
+        (prevFrame as any).children = (prevFrame as any).children.filter((ch: any) => ch !== obj);
+      }
+    }
+    // Add to new frame
     (obj as any).frameId = frameId;
+    if (frameId) {
+      const newFrame = c.getObjects().find((o: any) => o.frameId === frameId && o.isFrameVisual);
+      if (newFrame) {
+        if (!(newFrame as any).children) (newFrame as any).children = [];
+        if (!(newFrame as any).children.includes(obj)) (newFrame as any).children.push(obj);
+      }
+    }
     c.requestRenderAll();
     pushHistory();
   }, [pushHistory]);
@@ -925,7 +954,7 @@ export function useCanvas() {
     if (!c) return null;
     const frame = c.getObjects().find((o: any) => o.frameId === frameId && o.isFrameVisual);
     if (!frame) return null;
-    const children = c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
+    const children = (frame as any).children || c.getObjects().filter((o: any) => o.frameId === frameId && !o.isFrameVisual);
     if (children.length === 0) return null;
 
     // Create temp canvas sized to frame

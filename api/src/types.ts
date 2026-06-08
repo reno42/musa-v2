@@ -23,6 +23,10 @@ export interface Frame {
   parentFrameId?: string | null;
   order: number;
   objects: FabricObject[];
+  layoutMode: "NONE" | "HORIZONTAL" | "VERTICAL";
+  clipsContent: boolean;
+  constraints: { left?: boolean; right?: boolean; top?: boolean; bottom?: boolean; centerX?: boolean; centerY?: boolean; scale?: boolean };
+  padding: { top: number; right: number; bottom: number; left: number };
 }
 
 export interface DesignTemplate {

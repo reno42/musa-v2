@@ -141,6 +141,10 @@ class Store {
       fill: data.fill || "#ffffff", opacity: 1,
       order: tpl.frames.length, objects: [],
       parentFrameId: data.parentFrameId || null,
+      layoutMode: (data as any).layoutMode || "NONE",
+      clipsContent: (data as any).clipsContent !== false,
+      constraints: (data as any).constraints || {},
+      padding: (data as any).padding || { top: 0, right: 0, bottom: 0, left: 0 },
     };
     tpl.frames.push(frame);
     tpl.metadata.updatedAt = new Date().toISOString();
