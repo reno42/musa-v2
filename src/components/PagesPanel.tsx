@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
 import { getTemplate } from "../lib/templateApi";
+import { IconX, IconCheck } from "../shared/icons";
 
 interface PageItem {
   id: string;
@@ -138,7 +139,7 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
                   background: "none", border: "none", color: "#4a4a60",
                   cursor: "pointer", fontSize: 10, padding: "1px 2px", lineHeight: 1,
                 }} title="Delete page">
-                ✕
+                <IconX size={12} />
               </button>
             )}
           </div>
@@ -167,7 +168,7 @@ export function PagesPanel({ templateId, onPageChange }: PagesPanelProps) {
             style={{
               padding: "2px 6px", borderRadius: 3, fontSize: 10, cursor: "pointer",
               background: "#1a2a1a", border: "1px solid #2a4a2a", color: "#4ade80",
-            }}>✓</button>
+            }}><IconCheck size={14} /></button>
         </div>
       ) : (
         <button type="button" onClick={() => { setShowAdd(true); setNewPageName(""); }}

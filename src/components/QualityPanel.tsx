@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconSparkle, IconX, IconBarChart, IconSearch, IconBulb, IconCheck, IconPalette, IconWarn, IconCircle } from "../shared/icons";
 
 interface QualityPanelProps {
   templateId: string | null;
@@ -161,7 +162,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
     return { bg: "rgba(248,113,113,0.1)", border: "#f87171", text: "#f87171" };
   };
 
-  const severityIcon = (s: string) => s === "error" ? "🔴" : s === "warning" ? "🟡" : "🔵";
+  const severityIcon = (s: string) => s === "error" ? <IconCircle size={10} color="#f87171" /> : s === "warning" ? <IconCircle size={10} color="#fbbf24" /> : <IconCircle size={10} color="#60a5fa" />;
   const severityColor = (s: string) => s === "error" ? "#f87171" : s === "warning" ? "#fbbf24" : "#60a5fa";
   const severityBg = (s: string) => s === "error" ? "rgba(248,113,113,0.1)" : s === "warning" ? "rgba(251,191,36,0.08)" : "rgba(96,165,250,0.08)";
 
@@ -217,10 +218,10 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
           padding: "12px 16px", borderBottom: "1px solid #1c1c26",
           display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>✨ Quality Tools</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}><IconSparkle size={16} style={{ marginRight: 6, verticalAlign: -3 }} />Quality Tools</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
-          }}>✕</button>
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer",
+          }}><IconX size={18} /></button>
         </div>
 
         {/* Tabs */}
@@ -252,7 +253,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
 
               <button type="button" onClick={handleScore} disabled={loading || !templateId}
                 style={{ ...btnPrimary, marginTop: 12, width: "100%", opacity: loading || !templateId ? 0.5 : 1 }}>
-                {loading ? "Analyzing..." : "📊 Analyze Design"}
+                {loading ? "Analyzing..." : <><IconBarChart size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Analyze Design</>}
               </button>
 
               {score !== null && (
@@ -338,7 +339,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
 
               <button type="button" onClick={handleLint} disabled={loading || !templateId}
                 style={{ ...btnPrimary, width: "100%", opacity: loading || !templateId ? 0.5 : 1 }}>
-                {loading ? "Linting..." : "🔍 Lint Design"}
+                {loading ? "Linting..." : <><IconSearch size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Lint Design</>}
               </button>
 
               {lintIssues.length > 0 && (
@@ -403,7 +404,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
                             </div>
                             {issue.fix && (
                               <div style={{ fontSize: 9, color: "#4ade80", marginTop: 3 }}>
-                                💡 Fix: {issue.fix}
+                                <IconBulb size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Fix: {issue.fix}
                               </div>
                             )}
                           </div>
@@ -470,7 +471,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
               <button type="button" onClick={handlePolish} disabled={loading || !templateId}
                 style={{ ...btnPrimary, width: "100%", fontSize: 13, padding: "10px",
                   opacity: loading || !templateId ? 0.5 : 1 }}>
-                {loading ? "Polishing..." : "✨ Polish Design"}
+                {loading ? "Polishing..." : <><IconSparkle size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Polish Design</>}
               </button>
 
               {(polishBefore !== null && polishAfter !== null) && (
@@ -487,7 +488,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
                     </div>
                   </div>
                   <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: "#4ade80" }}>
-                    +{Math.round(polishAfter - polishBefore)} 🎉
+                    +{Math.round(polishAfter - polishBefore)}
                   </div>
 
                   {polishChanges.length > 0 && (
@@ -501,7 +502,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
                             fontSize: 10, padding: "3px 0", color: "#4ade80",
                             borderBottom: "1px solid #1c1c26",
                           }}>
-                            ✓ {typeof c === "string" ? c : c.message || c.description || JSON.stringify(c)}
+                            <IconCheck size={14} style={{ marginRight: 2, color: "#4ade80" }} /> {typeof c === "string" ? c : c.message || c.description || JSON.stringify(c)}
                           </div>
                         ))}
                       </div>
@@ -569,7 +570,7 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
 
               <button type="button" onClick={handlePalette} disabled={loading}
                 style={{ ...btnPrimary, width: "100%", opacity: loading ? 0.5 : 1 }}>
-                {loading ? "Generating..." : "🎨 Generate Palette"}
+                {loading ? "Generating..." : <><IconPalette size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Generate Palette</>}
               </button>
 
               {swatches.length > 0 && (
@@ -620,11 +621,9 @@ export function QualityPanel({ templateId, onClose, onUpdate }: QualityPanelProp
             background: "#1a0a0a", color: "#f87171", fontSize: 11,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
-            <span>⚠ {error}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><IconWarn size={14} />{error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
-              ✕
-            </button>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={16} /></button>
           </div>
         )}
       </div>

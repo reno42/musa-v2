@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { FabricObject, Canvas } from "fabric";
 import { Gradient, Shadow, FabricImage } from "fabric";
+import { IconEye, IconLock, IconCheck, IconScissors } from "../shared/icons";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 
 interface PropertiesPanelProps {
@@ -151,7 +152,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
             onClick={() => { commit("visible", !fieldVisible); }}
             style={iconBtn()}
           >
-            👁
+            <IconEye size={16} />
           </button>
           <button
             type="button"
@@ -164,7 +165,7 @@ export function PropertiesPanel({ selectedObjects, onUpdate, canvasRef }: Proper
             }}
             style={iconBtn()}
           >
-            🔒
+            <IconLock size={16} />
           </button>
         </span>
       </div>
@@ -727,7 +728,7 @@ function ShadowEditor({ obj, commit, resetKey, hasShadow, fieldShadowColor, fiel
             color: hasShadow ? "#c8b898" : "#7a7668",
           }}
         >
-          {hasShadow ? "Enabled ✓" : "Disabled"}
+          {hasShadow ? <>Enabled <IconCheck size={12} color="#c8b898" /></> : "Disabled"}
         </button>
       </div>
       {hasShadow && (
@@ -1081,7 +1082,7 @@ function CropEditor({ obj, commit, resetKey, canvasRef }: {
             flex: 1, padding: "4px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
             background: "rgba(200, 184, 152, 0.1)", border: "1px solid rgba(200, 184, 152, 0.2)", color: "#c8b898",
           }}>
-          ✂ Crop Mode
+          <IconScissors size={14} style={{ marginRight: 4 }} />Crop Mode
         </button>
         {hasCrop && (
           <button type="button" onClick={resetCrop}

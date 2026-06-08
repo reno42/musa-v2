@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { mcpCall } from "../lib/mcpClient";
 import { GhostPanel } from "./GhostPanel";
+import { IconBot, IconUser, IconSettings, IconClock, IconX } from "../shared/icons";
 
 interface SnapshotMeta {
   id: string;
@@ -25,10 +26,10 @@ interface GovernancePanelProps {
   onRestore?: (snapId: string) => void;
 }
 
-const TYPE_ICON: Record<string, string> = {
-  ia: "\u{1F916}",     // 🤖
-  human: "\u{1F464}",  // 👤
-  system: "\u2699\uFE0F",  // ⚙️
+const TYPE_ICON: Record<string, React.ReactNode> = {
+  ia: <IconBot size={14} />,
+  human: <IconUser size={14} />,
+  system: <IconSettings size={14} />,
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -135,7 +136,7 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
         padding: "10px 12px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
       }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>🕐 Timeline</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}><IconClock size={14} style={{ marginRight: 4, verticalAlign: -3 }} />Timeline</span>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <button type="button" onClick={handleUndo} disabled={!canUndo}
             style={undoRedoBtn(!canUndo)} title="Undo (⌘Z)">
@@ -146,9 +147,9 @@ export function GovernancePanel({ templateId, onClose, onRestore }: GovernancePa
             ↪
           </button>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer",
             marginLeft: 4,
-          }}>✕</button>
+          }}><IconX size={16} /></button>
         </div>
       </div>
 

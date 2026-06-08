@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconBox, IconX, IconFolder, IconLink, IconEdit, IconZap, IconCheck, IconWarn } from "../shared/icons";
 
 interface BatchPanelProps {
   templateId: string | null;
@@ -240,10 +241,10 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
           padding: "12px 16px", borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
           display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>📦 Batch Design</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}><IconBox size={16} style={{ marginRight: 6, verticalAlign: -3 }} />Batch Design</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
-          }}>✕</button>
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer",
+          }}><IconX size={18} /></button>
         </div>
 
         {/* Step indicators */}
@@ -277,7 +278,7 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
                       color: sourceType === t ? "#c8b898" : "#7a7668", fontSize: 10,
                       textTransform: "uppercase",
                     }}>
-                    {t === "csv-file" ? "📁 CSV File" : t === "csv-url" ? "🔗 CSV URL" : "📝 JSON"}
+                    {t === "csv-file" ? <><IconFolder size={12} style={{ marginRight: 3 }} />CSV File</> : t === "csv-url" ? <><IconLink size={12} style={{ marginRight: 3 }} />CSV URL</> : <><IconEdit size={12} style={{ marginRight: 3 }} />JSON</>}
                   </button>
                 ))}
               </div>
@@ -289,7 +290,7 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
                 }} onClick={() => document.getElementById("csv-file-input")?.click()}>
                   <input id="csv-file-input" type="file" accept=".csv" style={{ display: "none" }}
                     onChange={handleCsvFile} />
-                  <div style={{ fontSize: 24, marginBottom: 4 }}>📁</div>
+                  <div style={{ fontSize: 24, marginBottom: 4 }}><IconFolder size={24} color="#7a7668" /></div>
                   <div style={{ fontSize: 12, color: "#c4c0b4", marginBottom: 2 }}>
                     {csvFileName || "Click to upload CSV file"}
                   </div>
@@ -399,7 +400,7 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
               <button type="button" onClick={handleGenerate} disabled={loading || !templateId}
                 style={{ ...btnPrimary, marginTop: 14, width: "100%", fontSize: 13, padding: "10px",
                   opacity: loading || !templateId ? 0.5 : 1 }}>
-                {loading ? "Generating..." : `⚡ Generate ${parsedRows.length} Templates`}
+                {loading ? "Generating..." : <><IconZap size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Generate {parsedRows.length} Templates</>}
               </button>
 
               {/* Results preview */}
@@ -424,7 +425,7 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
                             <td style={{ padding: "6px 8px", color: "#c4c0b4" }}>{r.name}</td>
                             <td style={{ padding: "6px 8px", textAlign: "center" }}>
                               <span style={{ color: r.status === "success" ? "#4ade80" : r.status === "warning" ? "#fbbf24" : "#f87171" }}>
-                                {r.status === "success" ? "✅" : r.status === "warning" ? "⚠️" : "❌"}
+                                {r.status === "success" ? <IconCheck size={14} color="#4ade80" /> : r.status === "warning" ? <IconWarn size={14} color="#fbbf24" /> : <IconX size={14} color="#f87171" />}
                               </span>
                               {r.message && (
                                 <div style={{ fontSize: 8, color: "#7a7668" }} title={r.message}>
@@ -455,11 +456,9 @@ export function BatchPanel({ templateId, onClose }: BatchPanelProps) {
             background: "rgba(239, 68, 68, 0.08)", color: "#f87171", fontSize: 11,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
-            <span>⚠ {error}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><IconWarn size={14} />{error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
-              ✕
-            </button>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={16} /></button>
           </div>
         )}
       </div>

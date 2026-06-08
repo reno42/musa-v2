@@ -7,11 +7,11 @@ interface EmbedsDropdownProps {
 }
 
 const embedOptions: { type: EmbedType; label: string; icon: string }[] = [
-  { type: "video", label: "🎬 Video (YouTube/Vimeo)", icon: "▶" },
-  { type: "audio", label: "🎵 Audio (SoundCloud)", icon: "♫" },
-  { type: "pdf", label: "📄 PDF Document", icon: "📄" },
-  { type: "figma", label: "⬡ Figma Frame", icon: "⬡" },
-  { type: "social", label: "🐦 Social (Twitter/GitHub)", icon: "@" },
+  { type: "video", label: "Video (YouTube/Vimeo)", icon: "▶" },
+  { type: "audio", label: "Audio (SoundCloud)", icon: "♫" },
+  { type: "pdf", label: "PDF Document", icon: "📄" },
+  { type: "figma", label: "Figma Frame", icon: "⬡" },
+  { type: "social", label: "Social (Twitter/GitHub)", icon: "@" },
 ];
 
 export function EmbedsDropdown({ onEmbed }: EmbedsDropdownProps) {

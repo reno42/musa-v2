@@ -7,15 +7,15 @@ interface BlocksDropdownProps {
 }
 
 const blockOptions: { type: BlockType; label: string; icon: string }[] = [
-  { type: "text", label: "📝 Text Block", icon: "¶" },
-  { type: "header", label: "📰 Header", icon: "H" },
-  { type: "code", label: "💻 Code Block", icon: "</>" },
-  { type: "table", label: "📊 Table", icon: "⊞" },
-  { type: "columns", label: "📑 Columns", icon: "|||" },
-  { type: "callout", label: "💬 Callout", icon: "!" },
-  { type: "toggle", label: "▸ Toggle", icon: "▶" },
-  { type: "quote", label: "❝ Quote", icon: "\"" },
-  { type: "markdown", label: "📋 Markdown Import", icon: "MD" },
+  { type: "text", label: "Text Block", icon: "¶" },
+  { type: "header", label: "Header", icon: "H" },
+  { type: "code", label: "Code Block", icon: "</>" },
+  { type: "table", label: "Table", icon: "⊞" },
+  { type: "columns", label: "Columns", icon: "|||" },
+  { type: "callout", label: "Callout", icon: "!" },
+  { type: "toggle", label: "Toggle", icon: "▶" },
+  { type: "quote", label: "Quote", icon: "\"" },
+  { type: "markdown", label: "Markdown Import", icon: "MD" },
 ];
 
 export function BlocksDropdown({ onBlockAction }: BlocksDropdownProps) {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useReducer } from "react";
+import { IconFolder, IconFile } from "../shared/icons";
 
 interface Template {
   id: string;
@@ -198,7 +199,7 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
             onChange={e => handleWsChange(e.target.value || null)}
             style={selectStyle}
           >
-            <option value="">📁 All Templates</option>
+            <option value=""><IconFolder size={14} style={{ marginRight: 4 }} />All Templates</option>
             {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
             {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
@@ -245,7 +246,7 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
           <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
           <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="#7a7668" /></div>
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"

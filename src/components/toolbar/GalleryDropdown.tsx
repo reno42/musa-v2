@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { IconImage, IconX } from "../../shared/icons";
 
 interface ImageEntry {
   url: string;
@@ -124,7 +125,7 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
               cursor: "pointer", fontSize: 12, textAlign: "left",
             }}
           >
-            🖼 Create Gallery...
+            <IconImage size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Create Gallery...
           </button>
         </div>
       )}
@@ -147,11 +148,9 @@ export function GalleryDropdown({ templateId, onGalleryCreate }: GalleryDropdown
               display: "flex", justifyContent: "space-between", alignItems: "center",
               marginBottom: 14,
             }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>🖼 Image Gallery</span>
+              <span style={{ fontWeight: 600, fontSize: 14 }}><IconImage size={16} style={{ marginRight: 6, verticalAlign: -3 }} />Image Gallery</span>
               <button type="button" onClick={() => setModalOpen(false)}
-                style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16 }}>
-                ✕
-              </button>
+                style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={16} /></button>
             </div>
 
             {/* URLs */}

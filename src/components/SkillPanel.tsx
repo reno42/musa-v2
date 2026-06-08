@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconDna, IconX, IconSearch, IconCheck, IconMicroscope, IconTarget, IconWarn, IconPlay } from "../shared/icons";
 
 interface SkillPanelProps {
   templateId: string | null;
@@ -214,10 +215,10 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
           padding: "12px 16px", borderBottom: "1px solid #1c1c26",
           display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>🧬 Clone Skills</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}><IconDna size={16} style={{ marginRight: 6, verticalAlign: -3 }} />Clone Skills</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
-          }}>✕</button>
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer",
+          }}><IconX size={18} /></button>
         </div>
 
         {/* Tabs */}
@@ -258,7 +259,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                 <button type="button" onClick={handleExtract} disabled={loading || !templateId}
                   style={{ ...btnPrimary, marginTop: 14, width: "100%", opacity: loading || !templateId ? 0.5 : 1 }}>
-                  {loading ? "Extracting..." : "🔍 Extract Patterns"}
+                  {loading ? "Extracting..." : <><IconSearch size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Extract Patterns</>}
                 </button>
 
                 {extracted && (
@@ -329,12 +330,12 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                 <button type="button" onClick={handleClone} disabled={loading || !cloneName.trim()}
                   style={{ ...btnPrimary, marginTop: 14, width: "100%", opacity: loading || !cloneName.trim() ? 0.5 : 1 }}>
-                  {loading ? "Cloning..." : "🧬 Clone Skill"}
+                  {loading ? "Cloning..." : <><IconDna size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Clone Skill</>}
                 </button>
 
                 {cloneResult && (
                   <div style={{ ...successBox, marginTop: 10 }}>
-                    ✓ Skill "{cloneResult.skillName}" cloned! ID: {cloneResult.skillId}
+                    <IconCheck size={12} style={{ marginRight: 2, color: "#4ade80" }} /> Skill "{cloneResult.skillName}" cloned! ID: {cloneResult.skillId}
                   </div>
                 )}
               </>
@@ -375,13 +376,13 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                 <button type="button" onClick={handleApply} disabled={loading || !templateId}
                   style={{ ...btnPrimary, marginTop: 14, width: "100%", opacity: loading || !templateId ? 0.5 : 1 }}>
-                  {loading ? "Applying..." : "▶ Apply Skill"}
+                  {loading ? "Applying..." : <><IconPlay size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Apply Skill</>}
                 </button>
 
                 {applyResult && (
                   <div style={{ marginTop: 12 }}>
                     <div style={{ ...successBox }}>
-                      ✓ Applied "{applyResult.skillName}" in {applyResult.mode} mode
+                      <IconCheck size={12} style={{ marginRight: 2, color: "#4ade80" }} /> Applied "{applyResult.skillName}" in {applyResult.mode} mode
                     </div>
                     {applyResult.changes?.length > 0 && (
                       <div style={{ ...codeBlock, marginTop: 8, maxHeight: 160, overflowY: "auto" }}>
@@ -415,7 +416,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                         color: brandTab === b ? "#c8b898" : "#7a7668", fontSize: 11,
                         textTransform: "capitalize",
                       }}>
-                      {b === "analyze" ? "🔬 Analyze" : "🎯 Apply"}
+                      {b === "analyze" ? <><IconMicroscope size={12} style={{ marginRight: 3 }} />Analyze</> : <><IconTarget size={12} style={{ marginRight: 3 }} />Apply</>}
                     </button>
                   ))}
                 </div>
@@ -438,7 +439,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                     <button type="button" onClick={handleBrandAnalyze} disabled={loading}
                       style={{ ...btnPrimary, marginTop: 14, width: "100%", opacity: loading ? 0.5 : 1 }}>
-                      {loading ? "Analyzing..." : "🔬 Analyze Brand"}
+                      {loading ? "Analyzing..." : <><IconMicroscope size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Analyze Brand</>}
                     </button>
 
                     {brandDNA && (
@@ -505,7 +506,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
 
                     <button type="button" onClick={handleBrandApply} disabled={loading || !templateId || !brandDNA}
                       style={{ ...btnPrimary, marginTop: 14, width: "100%", opacity: loading || !templateId || !brandDNA ? 0.5 : 1 }}>
-                      {loading ? "Applying..." : "🎯 Apply Brand"}
+                      {loading ? "Applying..." : <><IconTarget size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Apply Brand</>}
                     </button>
 
                     {brandApplyResult && (
@@ -565,7 +566,7 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
                     color: "#c8b898", borderRadius: 3, padding: "1px 6px",
                     cursor: "pointer", fontSize: 9, width: "100%",
                   }}>
-                  ▶ Apply
+                  <IconPlay size={10} style={{ marginRight: 2, verticalAlign: -2 }} />Apply
                 </button>
               </div>
             ))}
@@ -579,11 +580,9 @@ export function SkillPanel({ templateId, onClose, onUpdate }: SkillPanelProps) {
             background: "#1a0a0a", color: "#f87171", fontSize: 11,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
-            <span>⚠ {error}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><IconWarn size={14} />{error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
-              ✕
-            </button>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={16} /></button>
           </div>
         )}
       </div>

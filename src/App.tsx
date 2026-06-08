@@ -22,6 +22,7 @@ import { apiFetch } from "./lib/supabase";
 import type { Canvas as FabricCanvas } from "fabric";
 import type { FabricObject } from "fabric";
 import type { ToolName } from "./hooks/useCanvas";
+import { IconZap, IconBox, IconPlay, IconBot, IconClock, IconDna, IconSparkle, IconPalette, IconSliders, IconArrowLeft } from "./shared/icons";
 
 // Establish module dependency chain for dead-code analysis
 void (useAutoSave as unknown);
@@ -324,17 +325,17 @@ function App() {
 
         {/* Top bar: navigation */}
         <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10, display: "flex", gap: 4 }}>
-          <button type="button" onClick={() => dispatch({ type: "BACK_TO_DASHBOARD" })} style={topBtn}>← Home</button>
-          <button type="button" onClick={() => dispatch({ type: "SET_SHORTCUTS", open: true })} style={topBtn}>⌨ Shortcuts</button>
-          <button type="button" onClick={() => setBatchOpen(true)} style={topBtn}>⚡ Batch</button>
-          <button type="button" onClick={() => { componentsOpenRef.current = !componentsOpenRef.current; setCompKey(n => n + 1); }} style={topBtn}>📦 Components</button>
-          <button type="button" onClick={() => { prototypeOpenRef.current = !prototypeOpenRef.current; setProtoKey(n => n + 1); }} style={topBtn}>▶ Prototype</button>
-          <button type="button" onClick={() => { aiOpenRef.current = !aiOpenRef.current; setAiKey(n => n + 1); }} style={topBtn}>🤖 AI Tools</button>
-          <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}>🕐 Timeline</button>
-          <button type="button" onClick={() => { skillsOpenRef.current = !skillsOpenRef.current; setSkillsKey(n => n + 1); }} style={topBtn}>🧬 Skills</button>
-          <button type="button" onClick={() => { batchPanelOpenRef.current = !batchPanelOpenRef.current; setBatchPanelKey(n => n + 1); }} style={topBtn}>📦 Batch</button>
-          <button type="button" onClick={() => { qualityOpenRef.current = !qualityOpenRef.current; setQualityKey(n => n + 1); }} style={topBtn}>✨ Quality</button>
-          <button type="button" onClick={() => { creativeOpenRef.current = !creativeOpenRef.current; setCreativeKey(n => n + 1); }} style={topBtn}>🎨 Creative</button>
+          <button type="button" onClick={() => dispatch({ type: "BACK_TO_DASHBOARD" })} style={topBtn}><IconArrowLeft size={14} style={{ marginRight: 4 }} />Home</button>
+          <button type="button" onClick={() => dispatch({ type: "SET_SHORTCUTS", open: true })} style={topBtn}><IconSliders size={14} style={{ marginRight: 4 }} />Shortcuts</button>
+          <button type="button" onClick={() => setBatchOpen(true)} style={topBtn}><IconZap size={14} style={{ marginRight: 4 }} />Batch</button>
+          <button type="button" onClick={() => { componentsOpenRef.current = !componentsOpenRef.current; setCompKey(n => n + 1); }} style={topBtn}><IconBox size={14} style={{ marginRight: 4 }} />Components</button>
+          <button type="button" onClick={() => { prototypeOpenRef.current = !prototypeOpenRef.current; setProtoKey(n => n + 1); }} style={topBtn}><IconPlay size={14} style={{ marginRight: 4 }} />Prototype</button>
+          <button type="button" onClick={() => { aiOpenRef.current = !aiOpenRef.current; setAiKey(n => n + 1); }} style={topBtn}><IconBot size={14} style={{ marginRight: 4 }} />AI Tools</button>
+          <button type="button" onClick={() => { governanceOpenRef.current = !governanceOpenRef.current; setGovKey(n => n + 1); }} style={topBtn}><IconClock size={14} style={{ marginRight: 4 }} />Timeline</button>
+          <button type="button" onClick={() => { skillsOpenRef.current = !skillsOpenRef.current; setSkillsKey(n => n + 1); }} style={topBtn}><IconDna size={14} style={{ marginRight: 4 }} />Skills</button>
+          <button type="button" onClick={() => { batchPanelOpenRef.current = !batchPanelOpenRef.current; setBatchPanelKey(n => n + 1); }} style={topBtn}><IconBox size={14} style={{ marginRight: 4 }} />Batch</button>
+          <button type="button" onClick={() => { qualityOpenRef.current = !qualityOpenRef.current; setQualityKey(n => n + 1); }} style={topBtn}><IconSparkle size={14} style={{ marginRight: 4 }} />Quality</button>
+          <button type="button" onClick={() => { creativeOpenRef.current = !creativeOpenRef.current; setCreativeKey(n => n + 1); }} style={topBtn}><IconPalette size={14} style={{ marginRight: 4 }} />Creative</button>
         </div>
 
         {/* Pages bar */}

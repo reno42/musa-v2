@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconGrid, IconBricks, IconZap, IconRuler, IconPalette, IconX, IconTarget, IconMasks, IconSearch, IconBarChart, IconWarn, IconPlay } from "../shared/icons";
 
 interface CreativePanelProps {
   templateId: string | null;
@@ -228,13 +229,13 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
     );
   };
 
-  const layouts: { value: LayoutAlgo; label: string; icon: string }[] = [
-    { value: "grid", label: "Grid", icon: "📐" },
-    { value: "masonry", label: "Masonry", icon: "🧱" },
-    { value: "golden-ratio", label: "Golden Ratio", icon: "φ" },
-    { value: "circular", label: "Circular", icon: "⭕" },
-    { value: "zigzag", label: "Zigzag", icon: "⚡" },
-    { value: "flex-wrap", label: "Flex-Wrap", icon: "📏" },
+  const layouts: { value: LayoutAlgo; label: string; icon: React.ReactNode }[] = [
+    { value: "grid", label: "Grid", icon: <IconGrid size={16} /> },
+    { value: "masonry", label: "Masonry", icon: <IconBricks size={16} /> },
+    { value: "golden-ratio", label: "Golden Ratio", icon: <span style={{ fontSize: 14, fontWeight: 700 }}>φ</span> },
+    { value: "circular", label: "Circular", icon: <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="8" /></svg> },
+    { value: "zigzag", label: "Zigzag", icon: <IconZap size={16} /> },
+    { value: "flex-wrap", label: "Flex-Wrap", icon: <IconRuler size={16} /> },
   ];
 
   const remixStyles: { value: RemixStyle; label: string; desc: string; bg: string; accent: string }[] = [
@@ -271,10 +272,10 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
           padding: "12px 16px", borderBottom: "1px solid #1c1c26",
           display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>🎨 Creative Tools</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}><IconPalette size={16} style={{ marginRight: 6, verticalAlign: -3 }} />Creative Tools</span>
           <button onClick={onClose} style={{
-            background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 18,
-          }}>✕</button>
+            background: "none", border: "none", color: "#7a7668", cursor: "pointer",
+          }}><IconX size={18} /></button>
         </div>
 
         {/* Tabs */}
@@ -393,7 +394,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
               <button type="button" onClick={handleLayout} disabled={loading || !templateId}
                 style={{ ...btnPrimary, marginTop: 14, width: "100%", fontSize: 13,
                   opacity: loading || !templateId ? 0.5 : 1 }}>
-                {loading ? "Applying..." : "🎯 Apply Layout"}
+                {loading ? "Applying..." : <><IconTarget size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Apply Layout</>}
               </button>
             </>
           )}
@@ -438,7 +439,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                 <div style={{ display: "flex", alignItems: "flex-end" }}>
                   <button type="button" onClick={handleRemix} disabled={loading || !templateId}
                     style={{ ...btnPrimary, width: "100%", opacity: loading || !templateId ? 0.5 : 1 }}>
-                    {loading ? "Remixing..." : "🎭 Remix"}
+                    {loading ? "Remixing..." : <><IconMasks size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Remix</>}
                   </button>
                 </div>
               </div>
@@ -514,7 +515,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
 
               <button type="button" onClick={handleDiff} disabled={loading || !diffA || !diffB}
                 style={{ ...btnPrimary, width: "100%", opacity: loading || !diffA || !diffB ? 0.5 : 1 }}>
-                {loading ? "Comparing..." : "🔍 Compare"}
+                {loading ? "Comparing..." : <><IconSearch size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Compare</>}
               </button>
 
               {diffResult && (
@@ -614,7 +615,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                   animation: isRecording ? "pulse 1.5s infinite" : "none",
                 }} />
                 <span style={{ fontSize: 12, fontWeight: 600, color: isRecording ? "#f87171" : "#7a7668" }}>
-                  {isRecording ? "🔴 RECORDING" : "⚪ IDLE"}
+                  {isRecording ? "RECORDING" : "IDLE"}
                 </span>
                 {isRecording && (
                   <span style={{ fontSize: 10, color: "#7a7668", marginLeft: "auto" }}>
@@ -627,7 +628,7 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                 {!isRecording ? (
                   <button type="button" onClick={() => handleObserve("start")} disabled={loading}
                     style={{ ...btnPrimary, flex: 1, opacity: loading ? 0.5 : 1, fontSize: 13 }}>
-                    ▶ Start Recording
+                    <IconPlay size={12} style={{ marginRight: 4 }} />Start Recording
                   </button>
                 ) : (
                   <button type="button" onClick={() => handleObserve("stop")} disabled={loading}
@@ -635,12 +636,12 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
                       ...btnPrimary, flex: 1, opacity: loading ? 0.5 : 1, fontSize: 13,
                       background: "#4a1a1a", border: "1px solid #7a2a2a", color: "#f87171",
                     }}>
-                    ⏹ Stop Recording
+                    <IconX size={12} style={{ marginRight: 4 }} />Stop Recording
                   </button>
                 )}
                 <button type="button" onClick={() => handleObserve("analyze")} disabled={loading}
                   style={{ ...btnSecondary, flex: 1, opacity: loading ? 0.5 : 1 }}>
-                  📊 Analyze
+                  <IconBarChart size={14} style={{ marginRight: 4, verticalAlign: -2 }} />Analyze
                 </button>
               </div>
 
@@ -735,11 +736,9 @@ export function CreativePanel({ templateId, selectedObjects, onClose, onUpdate }
             background: "#1a0a0a", color: "#f87171", fontSize: 11,
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
-            <span>⚠ {error}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><IconWarn size={14} />{error}</span>
             <button type="button" onClick={() => setError(null)}
-              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 14 }}>
-              ✕
-            </button>
+              style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={16} /></button>
           </div>
         )}
       </div>

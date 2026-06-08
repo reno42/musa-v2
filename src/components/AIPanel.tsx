@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconBot, IconX, IconBulb, IconClipboard, IconCheck, IconWarn } from "../shared/icons";
 
 interface AIPanelProps {
   templateId: string | null;
@@ -149,10 +150,10 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
         padding: "10px 12px", borderBottom: "1px solid #1c1c26",
         display: "flex", justifyContent: "space-between", alignItems: "center",
       }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>🤖 AI Tools</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}><IconBot size={14} style={{ marginRight: 6, verticalAlign: -3 }} />AI Tools</span>
         <button onClick={onClose} style={{
-          background: "none", border: "none", color: "#7a7668", cursor: "pointer", fontSize: 16,
-        }}>✕</button>
+          background: "none", border: "none", color: "#7a7668", cursor: "pointer",
+        }}><IconX size={16} /></button>
       </div>
 
       {/* Tabs */}
@@ -322,7 +323,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                         </div>
                         {issue.suggestion && (
                           <div style={{ fontSize: 10, color: "#c8b898", marginTop: 2 }}>
-                            💡 {issue.suggestion}
+                            <IconBulb size={14} style={{ marginRight: 4, verticalAlign: -2 }} /> {issue.suggestion}
                           </div>
                         )}
                       </div>
@@ -392,7 +393,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                         color: "#7a7668", borderRadius: 3, padding: "2px 6px",
                         cursor: "pointer", fontSize: 10,
                       }} title="Copy hex">
-                      📋
+                      <IconClipboard size={14} />
                     </button>
                   </div>
                 ))}
@@ -436,7 +437,7 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
                 border: "1px solid #2a4a2a", borderRadius: 6, fontSize: 11,
                 color: "#4ade80",
               }}>
-                ✓ {transResult}
+                <IconCheck size={14} style={{ marginRight: 2, color: "#4ade80" }} /> {transResult}
               </div>
             )}
           </>
@@ -449,11 +450,9 @@ export function AIPanel({ templateId, selectedObjects, onUpdate, onClose }: AIPa
           padding: "8px 12px", borderTop: "1px solid #2a1a1a",
           background: "#1a0a0a", color: "#f87171", fontSize: 11,
         }}>
-          ⚠ {error}
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}><IconWarn size={14} />{error}</span>
           <button type="button" onClick={() => setError(null)}
-            style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", float: "right" }}>
-            ✕
-          </button>
+            style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer", float: "right" }}><IconX size={14} /></button>
         </div>
       )}
     </div>

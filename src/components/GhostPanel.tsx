@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { IconGhost, IconBot, IconUser, IconSettings, IconX } from "../shared/icons";
 
 interface GhostDiffResult {
   layerName?: string;
@@ -132,7 +133,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
         display: "flex", justifyContent: "space-between", alignItems: "center",
         marginBottom: 8,
       }}>
-        <span style={{ fontWeight: 600, fontSize: 12 }}>👻 Ghost Layer</span>
+        <span style={{ fontWeight: 600, fontSize: 12 }}><IconGhost size={14} style={{ marginRight: 4, verticalAlign: -3 }} />Ghost Layer</span>
         <span style={{
           fontSize: 10, padding: "2px 6px", borderRadius: 3,
           background: ghostActive ? "#1a2a2a" : "#1a1a1a",
@@ -159,7 +160,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
                 color: ghostType === t ? "#c4c0b4" : "#7a7668",
                 cursor: "pointer", fontSize: 10, textAlign: "center" as const,
               }}>
-              {t === "ia" ? "🤖 IA" : t === "human" ? "👤 Human" : "⚙️ Sys"}
+              {t === "ia" ? <><IconBot size={12} style={{ marginRight: 2 }} />IA</> : t === "human" ? <><IconUser size={12} style={{ marginRight: 2 }} />Human</> : <><IconSettings size={12} style={{ marginRight: 2 }} />Sys</>}
             </button>
           ))}
         </div>
@@ -207,7 +208,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
               color: showDiff ? "#fbbf24" : "#7a7668",
               cursor: "pointer", fontSize: 10,
             }}>
-            {showDiff ? "Diff ON 🟡" : "Diff OFF"}
+            {showDiff ? "Diff ON" : "Diff OFF"}
           </button>
         </div>
 
@@ -257,7 +258,7 @@ export function GhostPanel({ templateId }: GhostPanelProps) {
             <span>Diff Results ({diffData.length})</span>
             <span style={{
               color: "#fbbf24", cursor: "pointer",
-            }} onClick={() => setDiffData(null)}>✕</span>
+            }} onClick={() => setDiffData(null)}><IconX size={14} /></span>
           </div>
           {diffData.map((d, i) => (
             <div key={i} style={{

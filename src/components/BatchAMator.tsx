@@ -1,4 +1,5 @@
 import { useReducer, useRef } from "react";
+import { IconX, IconFolder } from "../shared/icons";
 
 interface BatchAMatorProps {
   templateId: string | null;
@@ -106,7 +107,7 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
         {/* Header */}
         <div style={batchHeaderStyle}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Batch-a-mator</h3>
-          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#7a7668", fontSize: 18, cursor: "pointer" }}>✕</button>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#7a7668", cursor: "pointer" }}><IconX size={18} /></button>
         </div>
 
         <div style={{ padding: 18 }}>
@@ -150,7 +151,7 @@ export function BatchAMator({ templateId, onClose }: BatchAMatorProps) {
               style={batchDropZoneStyle}
               onClick={() => fileRef.current?.click()}
             >
-              <div style={{ fontSize: 20, marginBottom: 4 }}>📁</div>
+              <div style={{ fontSize: 20, marginBottom: 4 }}><IconFolder size={24} color="#7a7668" /></div>
               <div style={{ fontSize: 12, color: "#7a7668" }}>Drop CSV file or click to browse</div>
               <input ref={fileRef} type="file" accept=".csv" aria-label="CSV file input" style={{ display: "none" }} onChange={handleFile} />
             </button>
