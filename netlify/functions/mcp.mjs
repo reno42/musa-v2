@@ -740,6 +740,126 @@ const MCP_TOOLS = [
       required: ["templateId", "targetLayerName"],
     },
   },
+  {
+    name: "add_block",
+    description: "Add a document block: header, paragraph, bullet list, toggle, callout, or quote. These render as styled text blocks on the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        blockType: { type: "string", enum: ["header", "subheader", "paragraph", "bullet_list", "toggle", "callout", "quote"], description: "Block type" },
+        text: { type: "string", description: "Text content (for bullet_list, separate with \n)" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Max width in px (default 600)" },
+        fontSize: { type: "number", description: "Font size override" },
+        color: { type: "string", description: "Text color (default #e4e4f0)" },
+        fontFamily: { type: "string", description: "Font family (default Inter)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "blockType", "text"],
+    },
+  },
+  {
+    name: "add_code_block",
+    description: "Add a code block with monospace font, dark background, and optional language label.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        code: { type: "string", description: "Code content" },
+        language: { type: "string", description: "Language label (e.g. 'javascript', 'python', 'css')" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 600)" },
+        fontSize: { type: "number", description: "Font size (default 14)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "code"],
+    },
+  },
+  {
+    name: "add_table",
+    description: "Add an editable table with headers and rows. Renders as styled rects + text objects.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        headers: { type: "array", items: { type: "string" }, description: "Column header names" },
+        rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Row data as array of string arrays" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        colWidths: { type: "array", items: { type: "number" }, description: "Column widths in px (default 120 each)" },
+        rowHeight: { type: "number", description: "Row height in px (default 36)" },
+        fontSize: { type: "number", description: "Font size (default 13)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "headers", "rows"],
+    },
+  },
+  {
+    name: "embed_video",
+    description: "Embed a YouTube or Vimeo video as a placeholder frame with URL metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        url: { type: "string", description: "YouTube or Vimeo video URL" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 640)" },
+        height: { type: "number", description: "Height in px (default 360)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "url"],
+    },
+  },
+  {
+    name: "embed_figma",
+    description: "Embed a Figma file or frame as a placeholder with link metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        figmaUrl: { type: "string", description: "Figma file or frame URL" },
+        x: { type: "number", description: "X position (default 0)" },
+        y: { type: "number", description: "Y position (default 0)" },
+        width: { type: "number", description: "Width in px (default 640)" },
+        height: { type: "number", description: "Height in px (default 480)" },
+        frameId: { type: "string", description: "Optional frame ID" },
+      },
+      required: ["templateId", "figmaUrl"],
+    },
+  },
+  {
+    name: "add_comment",
+    description: "Add a comment to a specific object or position on the canvas. Comments are stored in template metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        text: { type: "string", description: "Comment text" },
+        targetLayerName: { type: "string", description: "Layer name to attach comment to (optional)" },
+        x: { type: "number", description: "X position for canvas-level comment" },
+        y: { type: "number", description: "Y position for canvas-level comment" },
+        author: { type: "string", description: "Comment author name (default 'Anonymous')" },
+        resolved: { type: "boolean", description: "Mark as resolved (default false)" },
+      },
+      required: ["templateId", "text"],
+    },
+  },
+  {
+    name: "share_template",
+    description: "Generate a shareable link for a template with optional permissions (view, comment, edit).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to share" },
+        permission: { type: "string", enum: ["view", "comment", "edit"], description: "Access level (default view)" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2036,6 +2156,289 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
       autoSnapshot(params.templateId, method);
       return { cropped: true, targetLayerName: params.targetLayerName, cropX: obj.cropX, cropY: obj.cropY, width: obj.width, height: obj.height };
+    }
+
+    // ── F3: Document Blocks / Media / Collaboration ──
+    case "add_block": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const text = params.text || "";
+      const blockType = params.blockType || "paragraph";
+      const styleMap = {
+        header: { fontSize: 28, fontWeight: "bold", lineHeight: 1.2 },
+        subheader: { fontSize: 22, fontWeight: "600", lineHeight: 1.3 },
+        paragraph: { fontSize: 16, fontWeight: "normal", lineHeight: 1.5 },
+        bullet_list: { fontSize: 16, fontWeight: "normal", lineHeight: 1.5 },
+        toggle: { fontSize: 16, fontWeight: "600", lineHeight: 1.4 },
+        callout: { fontSize: 15, fontWeight: "normal", lineHeight: 1.5 },
+        quote: { fontSize: 18, fontWeight: "italic", lineHeight: 1.5 },
+      };
+      const s = styleMap[blockType] || styleMap.paragraph;
+      let displayText = text;
+      if (blockType === "bullet_list") {
+        displayText = text.split("\n").map(line => `• ${line}`).join("\n");
+      } else if (blockType === "toggle") {
+        displayText = `▸ ${text}`;
+      } else if (blockType === "quote") {
+        displayText = `| ${text}`;
+      } else if (blockType === "callout") {
+        displayText = `💡 ${text}`;
+      }
+      const obj = {
+        type: "text",
+        layerName: `${blockType}_${Date.now()}`,
+        text: displayText,
+        left: params.x ?? 0,
+        top: params.y ?? 0,
+        width: params.width ?? 600,
+        fontSize: params.fontSize ?? s.fontSize,
+        fontFamily: params.fontFamily ?? "Inter",
+        fill: params.color ?? "#e4e4f0",
+        fontWeight: s.fontWeight,
+        lineHeight: s.lineHeight,
+        frameId: params.frameId || undefined,
+        blockType,
+      };
+      if (blockType === "callout") {
+        obj.background = "rgba(99,130,255,0.12)";
+        obj.rx = 8; obj.ry = 8;
+        obj.padding = 12;
+      }
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      tpl.canvas.objects.push(obj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, layerName: obj.layerName, blockType, text: text.substring(0, 80) };
+    }
+
+    case "add_code_block": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const code = params.code || "";
+      const lang = params.language || "plain";
+      const lines = code.split("\n");
+      const fontSize = params.fontSize ?? 14;
+      const lineHeight = fontSize * 1.5;
+      const bgHeight = lines.length * lineHeight + 40;
+      const w = params.width ?? 600;
+      const bgObj = {
+        type: "rect",
+        layerName: `code_bg_${Date.now()}`,
+        left: params.x ?? 0,
+        top: params.y ?? 0,
+        width: w,
+        height: bgHeight,
+        fill: "#1e1e2e",
+        rx: 8, ry: 8,
+        frameId: params.frameId || undefined,
+      };
+      const labelObj = {
+        type: "text",
+        layerName: `code_label_${Date.now()}`,
+        text: lang.toUpperCase(),
+        left: (params.x ?? 0) + 12,
+        top: (params.y ?? 0) + 6,
+        fontSize: 11,
+        fontFamily: "JetBrains Mono, monospace",
+        fill: "#6c7086",
+        frameId: params.frameId || undefined,
+      };
+      const codeObj = {
+        type: "text",
+        layerName: `code_text_${Date.now()}`,
+        text: code,
+        left: (params.x ?? 0) + 12,
+        top: (params.y ?? 0) + 26,
+        fontSize,
+        fontFamily: "JetBrains Mono, monospace",
+        fill: "#cdd6f4",
+        lineHeight: 1.5,
+        frameId: params.frameId || undefined,
+      };
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      tpl.canvas.objects.push(bgObj, labelObj, codeObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, language: lang, lines: lines.length, layerName: codeObj.layerName };
+    }
+
+    case "add_table": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const headers = params.headers || [];
+      const rows = params.rows || [];
+      const colWidths = params.colWidths || headers.map(() => 120);
+      while (colWidths.length < headers.length) colWidths.push(120);
+      const rowH = params.rowHeight ?? 36;
+      const fontSize = params.fontSize ?? 13;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const objects = [];
+      // Header row
+      let cx = x;
+      for (let ci = 0; ci < headers.length; ci++) {
+        const cw = colWidths[ci] || 120;
+        objects.push({
+          type: "rect", layerName: `th_bg_${ci}_${Date.now()}`,
+          left: cx, top: y, width: cw, height: rowH,
+          fill: "#313244", stroke: "#45475a", strokeWidth: 1,
+          frameId: params.frameId || undefined,
+        });
+        objects.push({
+          type: "text", layerName: `th_txt_${ci}_${Date.now()}`,
+          text: String(headers[ci] || ""),
+          left: cx + 8, top: y + (rowH - fontSize) / 2,
+          fontSize, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4",
+          frameId: params.frameId || undefined,
+        });
+        cx += cw;
+      }
+      // Data rows
+      for (let ri = 0; ri < rows.length; ri++) {
+        cx = x;
+        const ry = y + (ri + 1) * rowH;
+        for (let ci = 0; ci < headers.length; ci++) {
+          const cw = colWidths[ci] || 120;
+          objects.push({
+            type: "rect", layerName: `td_bg_${ri}_${ci}_${Date.now()}`,
+            left: cx, top: ry, width: cw, height: rowH,
+            fill: ri % 2 === 0 ? "#1e1e2e" : "#181825", stroke: "#45475a", strokeWidth: 1,
+            frameId: params.frameId || undefined,
+          });
+          objects.push({
+            type: "text", layerName: `td_txt_${ri}_${ci}_${Date.now()}`,
+            text: String((rows[ri] && rows[ri][ci]) ?? ""),
+            left: cx + 8, top: ry + (rowH - fontSize) / 2,
+            fontSize, fontFamily: "Inter", fill: "#bac2de",
+            frameId: params.frameId || undefined,
+          });
+          cx += cw;
+        }
+      }
+      tpl.canvas.objects.push(...objects);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, headers: headers.length, rows: rows.length, totalObjects: objects.length };
+    }
+
+    case "embed_video": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const w = params.width ?? 640;
+      const h = params.height ?? 360;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      // YouTube thumbnail URL fallback
+      let thumbUrl = null;
+      const ytMatch = params.url.match(/(?:youtu\.be\/|watch\?v=)([\w-]{11})/);
+      const vimeoMatch = params.url.match(/vimeo\.com\/(\d+)/);
+      if (ytMatch) thumbUrl = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const bgObj = {
+        type: "rect", layerName: `video_bg_${Date.now()}`,
+        left: x, top: y, width: w, height: h,
+        fill: "#181825", stroke: "#45475a", strokeWidth: 2, rx: 12, ry: 12,
+        frameId: params.frameId || undefined,
+        embedType: "video", embedUrl: params.url,
+      };
+      const playObj = {
+        type: "text", layerName: `video_play_${Date.now()}`,
+        text: "▶",
+        left: x + w / 2 - 20, top: y + h / 2 - 20,
+        fontSize: 40, fontFamily: "Inter", fill: "#cdd6f4",
+        frameId: params.frameId || undefined,
+      };
+      const labelObj = {
+        type: "text", layerName: `video_label_${Date.now()}`,
+        text: params.url.substring(0, 60),
+        left: x + 12, top: y + h - 24,
+        fontSize: 11, fontFamily: "Inter", fill: "#6c7086",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(bgObj);
+      if (thumbUrl) {
+        const thumbObj = {
+          type: "image", layerName: `video_thumb_${Date.now()}`,
+          src: thumbUrl, left: x, top: y, width: w, height: h, opacity: 0.6,
+          frameId: params.frameId || undefined,
+        };
+        tpl.canvas.objects.push(thumbObj);
+      }
+      tpl.canvas.objects.push(playObj, labelObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, url: params.url, width: w, height: h, hasThumbnail: !!thumbUrl };
+    }
+
+    case "embed_figma": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const w = params.width ?? 640;
+      const h = params.height ?? 480;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const bgObj = {
+        type: "rect", layerName: `figma_bg_${Date.now()}`,
+        left: x, top: y, width: w, height: h,
+        fill: "#1e1e2e", stroke: "#a6e3a1", strokeWidth: 2, rx: 12, ry: 12,
+        frameId: params.frameId || undefined,
+        embedType: "figma", embedUrl: params.figmaUrl,
+      };
+      const iconObj = {
+        type: "text", layerName: `figma_icon_${Date.now()}`,
+        text: "⬡",
+        left: x + w / 2 - 18, top: y + h / 2 - 30,
+        fontSize: 36, fontFamily: "Inter", fill: "#a6e3a1",
+        frameId: params.frameId || undefined,
+      };
+      const labelObj = {
+        type: "text", layerName: `figma_label_${Date.now()}`,
+        text: params.figmaUrl.substring(0, 60),
+        left: x + 12, top: y + h - 24,
+        fontSize: 11, fontFamily: "Inter", fill: "#6c7086",
+        frameId: params.frameId || undefined,
+      };
+      tpl.canvas.objects.push(bgObj, iconObj, labelObj);
+      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      autoSnapshot(params.templateId, method);
+      return { created: true, figmaUrl: params.figmaUrl, width: w, height: h };
+    }
+
+    case "add_comment": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl.comments) tpl.comments = [];
+      const comment = {
+        id: `cmt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId: params.author || "anonymous",
+        text: params.text,
+        targetLayerName: params.targetLayerName || null,
+        x: params.x ?? 0,
+        y: params.y ?? 0,
+        resolved: params.resolved ?? false,
+        createdAt: new Date().toISOString(),
+      };
+      tpl.comments.push(comment);
+      await templates.updateTemplate(params.templateId, { comments: tpl.comments });
+      autoSnapshot(params.templateId, method);
+      return { created: true, commentId: comment.id, totalComments: tpl.comments.length };
+    }
+
+    case "share_template": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const permission = params.permission || "view";
+      const shareToken = `shr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const shareUrl = `https://futuraria.app/share/${shareToken}`;
+      if (!tpl.metadata) tpl.metadata = {};
+      tpl.metadata.shareToken = shareToken;
+      tpl.metadata.sharePermission = permission;
+      tpl.metadata.shareUrl = shareUrl;
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
+      autoSnapshot(params.templateId, method);
+      return { shared: true, shareUrl, permission, shareToken };
     }
 
     default:
