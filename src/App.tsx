@@ -23,13 +23,14 @@ import type { Canvas as FabricCanvas } from "fabric";
 import type { FabricObject } from "fabric";
 import type { ToolName } from "./hooks/useCanvas";
 import { IconZap, IconBox, IconPlay, IconBot, IconClock, IconDna, IconSparkle, IconPalette, IconSliders, IconArrowLeft } from "./shared/icons";
+import { EditorV2 } from "./pages/EditorV2";
 
 // Establish module dependency chain for dead-code analysis
 void (useAutoSave as unknown);
 void (getTemplate as unknown);
 void (apiFetch as unknown);
 
-type ViewMode = "dashboard" | "editor";
+type ViewMode = "dashboard" | "editor" | "editor-v2";
 
 type AppState = {
   view: ViewMode;
@@ -43,6 +44,7 @@ type AppState = {
 type AppAction =
   | { type: "SET_VIEW"; view: ViewMode }
   | { type: "OPEN_TEMPLATE"; id: string; json: any }
+  | { type: "OPEN_TEMPLATE_V2"; id: string }
   | { type: "BACK_TO_DASHBOARD" }
   | { type: "SET_CANVAS"; canvas: AppState["canvas"] }
   | { type: "SET_TOOL"; tool: ToolName }
@@ -54,6 +56,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "SET_VIEW": return { ...state, view: action.view };
     case "OPEN_TEMPLATE": return { ...state, view: "editor", templateId: action.id, templateJson: action.json };
+    case "OPEN_TEMPLATE_V2": return { ...state, view: "editor-v2", templateId: action.id, templateJson: null };
     case "BACK_TO_DASHBOARD": return { ...state, view: "dashboard", templateId: null, templateJson: null };
     case "SET_CANVAS": return { ...state, canvas: action.canvas };
     case "SET_TOOL": return { ...state, canvas: { ...state.canvas, tool: action.tool } };
@@ -235,6 +238,20 @@ function App() {
     dispatch({ type: "OPEN_TEMPLATE", id, json: { width: 1080, height: 1080 } });
   };
 
+  // Check URL params for direct template loading
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tplId = params.get("template");
+    const ver = params.get("v");
+    if (tplId) {
+      if (ver === "2") {
+        dispatch({ type: "OPEN_TEMPLATE_V2", id: tplId });
+      } else {
+        handleSelectTemplate(tplId);
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Dashboard view
   if (view === "dashboard") {
     return (
@@ -245,7 +262,17 @@ function App() {
     );
   }
 
-  // Editor view
+  // Editor V2 view (HTML/CSS)
+  if (view === "editor-v2") {
+    return (
+      <EditorV2
+        templateId={templateId!}
+        onBack={() => dispatch({ type: "BACK_TO_DASHBOARD" })}
+      />
+    );
+  }
+
+  // Editor view (Fabric.js)
   return (
     <ToastProvider>
       <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "#080808" }}>

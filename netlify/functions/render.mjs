@@ -448,6 +448,88 @@ ${fontsCss}
 </body></html>`;
 }
 
+// ─── HTML Render Page (no Fabric.js) ─────────────────────────
+
+function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
+  const safeName = (tpl.name || templateId || "template")
+    .replace(/[<>:"/\\|?*]/g, "_");
+  const htmlContent = tpl.html || "";
+  const cssContent = tpl.css || "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${safeName} — Futuraria HTML Render</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: ${width}px;
+    height: ${height}px;
+    overflow: hidden;
+  }
+  ${cssContent}
+</style>
+</head>
+<body>
+${htmlContent}
+<script>
+  // Auto-download PNG on load using canvas.toBlob
+  (function() {
+    var safeName = "${safeName}";
+    var format = "${format}";
+    var width = ${width};
+    var height = ${height};
+
+    // Create an offscreen canvas and draw the body using SVG foreignObject
+    var canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    var ctx = canvas.getContext('2d');
+
+    // Use SVG foreignObject to render HTML to canvas
+    var data = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
+      '<foreignObject width="100%" height="100%">' +
+      '<div xmlns="http://www.w3.org/1999/xhtml">' +
+      document.documentElement.outerHTML +
+      '</div>' +
+      '</foreignObject>' +
+      '</svg>';
+
+    var img = new Image();
+    var svg = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
+    var url = URL.createObjectURL(svg);
+
+    img.onload = function() {
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+
+      var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+      canvas.toBlob(function(blob) {
+        var downloadUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = safeName + '.' + format;
+        a.click();
+        URL.revokeObjectURL(downloadUrl);
+
+        // Show download buttons in document body
+        var div = document.createElement('div');
+        div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#fff;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:9999;display:flex;gap:10px;font-family:sans-serif;align-items:center;';
+        div.innerHTML = '<strong style="flex:1">' + safeName + ' — Rendered</strong>' +
+          '<button onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;font-size:18px">x</button>';
+        document.body.prepend(div);
+      }, mimeType);
+    };
+
+    img.src = url;
+  })();
+</script>
+</body></html>`;
+}
+
 // ─── Periodic cleanup ─────────────────────────────────────────
 
 const JOB_EVICT_MS = 10 * 60 * 1000;
@@ -497,7 +579,9 @@ export const handler = async (event) => {
       const format = "png";
       const width = Math.round(frameTpl.width * scale);
       const height = Math.round(frameTpl.height * scale);
-      const html = buildRenderPage(frameTpl, width, height, format, scale, templateId + "_" + frameId);
+      const html = tpl.engine === "html"
+        ? buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId)
+        : buildRenderPage(frameTpl, width, height, format, scale, templateId + "_" + frameId);
       return { statusCode: 200, headers: htmlHeaders, body: html };
     }
   }
@@ -543,7 +627,9 @@ export const handler = async (event) => {
       const baseH = tpl.height || 1080;
       const width = Math.round(baseW * scale);
       const height = Math.round(baseH * scale);
-      const html = buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
+      const html = tpl.engine === "html"
+        ? buildRenderPageHtml(tpl, width, height, format, scale, templateId)
+        : buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
       const job = store.createRenderJob(templateId, format, scale);
       job.status = "complete";
       job.url = html;
@@ -596,7 +682,9 @@ export const handler = async (event) => {
     const baseH = tpl.height || 1080;
     const width = Math.round(baseW * scale);
     const height = Math.round(baseH * scale);
-    const html = buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
+    const html = tpl.engine === "html"
+      ? buildRenderPageHtml(tpl, width, height, format, scale, templateId)
+      : buildRenderPage(tpl, width, height, format, scale, templateId, transparent);
     const job = store.createRenderJob(templateId, format, scale);
     job.status = "complete";
     job.url = html;

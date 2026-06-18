@@ -85,6 +85,7 @@ class Store {
       name: data.name || "Untitled",
       width: data.width || 1080,
       height: data.height || 1080,
+      engine: "fabric",
       canvas: data.canvas || { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
       frames: [],
       styles: [],

@@ -10,6 +10,9 @@
     "build:functions": "cd api && npm install && npx tsc"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.4.11",
     "fabric": "^6.9.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -23,7 +26,11 @@
   },
   "reactDoctor": {
     "ignore": {
-      "files": ["node_modules/**", "dist/**", ".vite/**"],
+      "files": [
+        "node_modules/**",
+        "dist/**",
+        ".vite/**"
+      ],
       "rules": [
         "deslop/unused-file",
         "react-doctor/exhaustive-deps",

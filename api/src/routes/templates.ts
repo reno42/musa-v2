@@ -49,8 +49,21 @@ export const templateRoutes = Router();
  */
 templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
   try {
-    const { name, width, height, canvas, workspaceId } = req.body;
-    const tpl = await templates.createTemplate(name, width || 1080, height || 1080, canvas, req.auth!.userId, workspaceId);
+    const { name, width, height, canvas, workspaceId, engine, html, css } = req.body;
+    const tpl = await templates.createTemplate(name || "Untitled", width || 1080, height || 1080, canvas, req.auth!.userId, workspaceId);
+    if (engine) tpl.engine = engine;
+    if (html !== undefined) tpl.html = html;
+    if (css !== undefined) tpl.css = css;
+    // Persist engine/html/css if set
+    if (engine || html !== undefined || css !== undefined) {
+      await templates.updateTemplate(tpl.id, {
+        engine: tpl.engine,
+        html: tpl.html,
+        css: tpl.css,
+        canvas: tpl.canvas,
+        frames: tpl.frames || [],
+      });
+    }
     res.status(201).json({ success: true, data: tpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

@@ -35,7 +35,10 @@ export interface DesignTemplate {
   name: string;
   width: number;
   height: number;
+  engine: "fabric" | "html";
   canvas: FabricCanvas;
+  html?: string;
+  css?: string;
   frames: Frame[];
   styles: Style[];
   comments: Comment[];

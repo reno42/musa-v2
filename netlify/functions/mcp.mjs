@@ -1,6 +1,7 @@
 import * as templates from "../../api/src/services/templates.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
+import DOMPurify from "dompurify";
 
 /** Utility: crypto-based UUID v4 (avoids uuid npm in Netlify edge) */
 function uuid() {
@@ -1859,6 +1860,46 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  {
+    name: "create_html_template",
+    description: "Create a new HTML/CSS design template with optional initial HTML and CSS",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Template name" },
+        workspaceId: { type: "string", description: "Workspace ID" },
+        width: { type: "number", description: "Template width in pixels (default 1080)" },
+        height: { type: "number", description: "Template height in pixels (default 1080)" },
+        initialHtml: { type: "string", description: "Optional initial HTML content" },
+        initialCss: { type: "string", description: "Optional initial CSS stylesheet" },
+      },
+      required: ["name", "workspaceId"],
+    },
+  },
+  {
+    name: "set_html",
+    description: "Replace the full HTML content of an HTML template (server-side sanitized with DOMPurify)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        html: { type: "string", description: "Full HTML content" },
+      },
+      required: ["templateId", "html"],
+    },
+  },
+  {
+    name: "set_css",
+    description: "Replace the full CSS stylesheet of an HTML template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        css: { type: "string", description: "Full CSS stylesheet" },
+      },
+      required: ["templateId", "css"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2923,6 +2964,86 @@ async function handleMethod(method, params, userId) {
         fill: frame.fill,
         parentFrameId: frame.parentFrameId,
       };
+    }
+
+    // ── create_html_template ──
+    case "create_html_template": {
+      const tpl = await templates.createTemplate(
+        params.name,
+        params.width || 1080,
+        params.height || 1080,
+        null, // no canvas for HTML templates
+        null, // userId (will be set by templates service)
+        params.workspaceId
+      );
+      if (!tpl) throw { code: -32000, message: "Failed to create HTML template" };
+
+      tpl.engine = "html";
+      tpl.html = params.initialHtml || "";
+      tpl.css = params.initialCss || "";
+      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
+
+      await templates.updateTemplate(tpl.id, {
+        engine: "html",
+        html: tpl.html,
+        css: tpl.css,
+        canvas: tpl.canvas,
+        frames: tpl.frames || [],
+      });
+
+      return {
+        id: tpl.id,
+        name: tpl.name,
+        workspaceId: params.workspaceId,
+        width: tpl.width,
+        height: tpl.height,
+        engine: "html",
+        html: tpl.html,
+        css: tpl.css,
+      };
+    }
+
+    // ── set_html ──
+    case "set_html": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+
+      // Sanitize HTML with DOMPurify on server-side
+      let sanitized = params.html;
+      try {
+        sanitized = DOMPurify.sanitize(params.html, {
+          ALLOWED_TAGS: ["div", "span", "h1", "h2", "h3", "h4", "h5", "h6", "p", "img", "a", "br", "svg", "path", "g", "circle", "rect", "line", "polygon", "polyline", "text", "tspan", "section", "article", "header", "footer", "nav", "main", "ul", "ol", "li", "table", "tr", "td", "th", "thead", "tbody", "button", "input", "textarea", "label", "form", "strong", "em", "b", "i", "u", "code", "pre", "blockquote", "hr"],
+          ALLOWED_ATTR: ["class", "id", "src", "alt", "href", "data-layer-id", "style", "width", "height", "viewBox", "fill", "stroke", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "transform", "type", "placeholder", "value", "for"],
+        });
+      } catch { /* use original if sanitization fails */ }
+
+      tpl.html = sanitized;
+      tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
+      await templates.updateTemplate(params.templateId, {
+        html: tpl.html,
+        canvas: tpl.canvas,
+        frames: tpl.frames || [],
+      });
+
+      return { success: true, templateId: params.templateId, htmlLength: tpl.html.length };
+    }
+
+    // ── set_css ──
+    case "set_css": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+
+      tpl.css = params.css;
+      tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
+      await templates.updateTemplate(params.templateId, {
+        css: tpl.css,
+        canvas: tpl.canvas,
+        frames: tpl.frames || [],
+      });
+
+      return { success: true, templateId: params.templateId, cssLength: tpl.css.length };
     }
 
     // ── list_frames ──
