@@ -1,11 +1,17 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import Editor, { OnMount } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
 
 interface CodePanelProps {
   html: string;
   css: string;
   onHtmlChange: (html: string) => void;
   onCssChange: (css: string) => void;
+}
+
+export interface CodePanelRef {
+  scrollToLine: (line: number) => void;
+  switchToTab: (tab: "html" | "css") => void;
 }
 
 type Tab = "html" | "css";
@@ -36,9 +42,32 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
   fontFamily: "inherit",
 });
 
-export function CodePanel({ html, css, onHtmlChange, onCssChange }: CodePanelProps) {
+export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodePanel(
+  { html, css, onHtmlChange, onCssChange }, ref
+) {
   const [tab, setTab] = useState<Tab>("html");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const htmlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const cssEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+
+  // Expose scrollToLine and switchToTab to parent via ref
+  useImperativeHandle(ref, () => ({
+    scrollToLine(line: number) {
+      setTab("css"); // switch to CSS tab since selectors are in CSS
+      // Use setTimeout to wait for tab switch + editor mount
+      setTimeout(() => {
+        const ed = cssEditorRef.current;
+        if (ed) {
+          ed.revealLineInCenter(line);
+          ed.setPosition({ lineNumber: line, column: 1 });
+          ed.focus();
+        }
+      }, 100);
+    },
+    switchToTab(t: "html" | "css") {
+      setTab(t);
+    },
+  }), []);
 
   // Debounced change handler (200ms)
   const handleHtmlChange = useCallback((value: string | undefined) => {
@@ -57,8 +86,20 @@ export function CodePanel({ html, css, onHtmlChange, onCssChange }: CodePanelPro
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, []);
 
-  const handleEditorMount: OnMount = (editor) => {
-    // Basic editor configuration
+  const handleHtmlEditorMount: OnMount = (editor) => {
+    htmlEditorRef.current = editor;
+    editor.updateOptions({
+      minimap: { enabled: false },
+      fontSize: 13,
+      lineNumbers: "on",
+      scrollBeyondLastLine: false,
+      wordWrap: "on",
+      automaticLayout: true,
+    });
+  };
+
+  const handleCssEditorMount: OnMount = (editor) => {
+    cssEditorRef.current = editor;
     editor.updateOptions({
       minimap: { enabled: false },
       fontSize: 13,
@@ -94,7 +135,7 @@ export function CodePanel({ html, css, onHtmlChange, onCssChange }: CodePanelPro
           theme="vs-dark"
           value={html}
           onChange={handleHtmlChange}
-          onMount={handleEditorMount}
+          onMount={handleHtmlEditorMount}
           loading={<div style={{ padding: 16, color: "#888" }}>Loading editor...</div>}
           options={{
             readOnly: false,
@@ -113,7 +154,7 @@ export function CodePanel({ html, css, onHtmlChange, onCssChange }: CodePanelPro
           theme="vs-dark"
           value={css}
           onChange={handleCssChange}
-          onMount={handleEditorMount}
+          onMount={handleCssEditorMount}
           loading={<div style={{ padding: 16, color: "#888" }}>Loading editor...</div>}
           options={{
             readOnly: false,
@@ -127,4 +168,4 @@ export function CodePanel({ html, css, onHtmlChange, onCssChange }: CodePanelPro
       </div>
     </div>
   );
-}
+});

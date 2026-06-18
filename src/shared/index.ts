@@ -5,6 +5,9 @@ export interface DesignTemplate {
   name: string;
   width: number;
   height: number;
+  engine?: "fabric" | "html";
+  html?: string;
+  css?: string;
   canvas?: any;
   pages?: any[];
   frames?: any[];

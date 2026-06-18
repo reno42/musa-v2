@@ -116,6 +116,8 @@ export interface Version {
   templateId: string;
   label: string;
   canvas: FabricCanvas;
+  html?: string;
+  css?: string;
   createdAt: string;
 }
 

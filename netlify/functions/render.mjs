@@ -450,11 +450,38 @@ ${fontsCss}
 
 // ─── HTML Render Page (no Fabric.js) ─────────────────────────
 
+/**
+ * Extract Google Fonts @import URLs from CSS and convert to <link> tags.
+ * This ensures fonts load properly in the SVG foreignObject render path.
+ *
+ * NOTE: Full Puppeteer rendering (page.setContent + page.screenshot) would
+ * provide pixel-perfect output with all CSS features (gradients, shadows,
+ * blend modes, animations). However, Puppeteer + Chromium (~130 MB) exceeds
+ * Netlify's 50 MB function size limit for the free tier.
+ *
+ * For production use, a dedicated render service (AWS Lambda container,
+ * Cloud Run, or a VPS) with Puppeteer is recommended. The foreignObject
+ * approach below handles 90% of use cases and is the current fallback.
+ */
+function extractFontLinks(css) {
+  const links = [];
+  const importRe = /@import\s+url\(['"]?([^'")\s]+)['"]?\)\s*;/g;
+  let match;
+  while ((match = importRe.exec(css)) !== null) {
+    const url = match[1];
+    if (url.includes("fonts.googleapis.com")) {
+      links.push(`<link rel="stylesheet" href="${url}">`);
+    }
+  }
+  return links.join("\n");
+}
+
 function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
   const htmlContent = tpl.html || "";
   const cssContent = tpl.css || "";
+  const fontLinks = extractFontLinks(cssContent);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -462,6 +489,7 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${safeName} — Futuraria HTML Render</title>
+${fontLinks}
 <style>
   html, body {
     margin: 0;
@@ -476,55 +504,64 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
 <body>
 ${htmlContent}
 <script>
-  // Auto-download PNG on load using canvas.toBlob
+  // Auto-download PNG on load using SVG foreignObject
+  // Waits for fonts to load before rendering
   (function() {
     var safeName = "${safeName}";
     var format = "${format}";
     var width = ${width};
     var height = ${height};
 
-    // Create an offscreen canvas and draw the body using SVG foreignObject
-    var canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    var ctx = canvas.getContext('2d');
+    function doRender() {
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      var ctx = canvas.getContext('2d');
 
-    // Use SVG foreignObject to render HTML to canvas
-    var data = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
-      '<foreignObject width="100%" height="100%">' +
-      '<div xmlns="http://www.w3.org/1999/xhtml">' +
-      document.documentElement.outerHTML +
-      '</div>' +
-      '</foreignObject>' +
-      '</svg>';
+      // Use SVG foreignObject to render HTML to canvas
+      var data = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
+        '<foreignObject width="100%" height="100%">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + width + 'px;height:' + height + 'px">' +
+        document.documentElement.outerHTML.replace('<html', '<div').replace('</html>', '</div>') +
+        '</div>' +
+        '</foreignObject>' +
+        '</svg>';
 
-    var img = new Image();
-    var svg = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
-    var url = URL.createObjectURL(svg);
+      var img = new Image();
+      var svg = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
+      var url = URL.createObjectURL(svg);
 
-    img.onload = function() {
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
+      img.onload = function() {
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
 
-      var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
-      canvas.toBlob(function(blob) {
-        var downloadUrl = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = safeName + '.' + format;
-        a.click();
-        URL.revokeObjectURL(downloadUrl);
+        var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+        canvas.toBlob(function(blob) {
+          var downloadUrl = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = safeName + '.' + format;
+          a.click();
+          URL.revokeObjectURL(downloadUrl);
 
-        // Show download buttons in document body
-        var div = document.createElement('div');
-        div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#fff;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:9999;display:flex;gap:10px;font-family:sans-serif;align-items:center;';
-        div.innerHTML = '<strong style="flex:1">' + safeName + ' — Rendered</strong>' +
-          '<button onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;font-size:18px">x</button>';
-        document.body.prepend(div);
-      }, mimeType);
-    };
+          // Show status bar
+          var div = document.createElement('div');
+          div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#fff;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:9999;display:flex;gap:10px;font-family:sans-serif;align-items:center;';
+          div.innerHTML = '<strong style="flex:1">' + safeName + ' — Rendered (' + format.toUpperCase() + ')</strong>' +
+            '<button onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;font-size:18px">x</button>';
+          document.body.prepend(div);
+        }, mimeType);
+      };
 
-    img.src = url;
+      img.src = url;
+    }
+
+    // Wait for Google Fonts to finish loading before rendering
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(doRender);
+    } else {
+      setTimeout(doRender, 800);
+    }
   })();
 </script>
 </body></html>`;

@@ -20,6 +20,8 @@ versionRoutes.post("/:id/versions", validate(createSchema), async (req, res) => 
       templateId: tpl.id,
       label: req.body.label || `Snapshot ${new Date().toLocaleString()}`,
       canvas: JSON.parse(JSON.stringify(tpl.canvas)),
+      html: tpl.html,
+      css: tpl.css,
       createdAt: new Date().toISOString(),
     };
     tpl.versions.push(version);

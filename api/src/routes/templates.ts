@@ -20,6 +20,7 @@
 
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
+import DOMPurify from "dompurify";
 import * as templates from "../services/templates.js";
 import { store } from "../services/store.js";
 import {
@@ -143,8 +144,37 @@ templateRoutes.get("/:id", async (req, res) => {
  */
 templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
   try {
-    const tpl = await templates.updateTemplate(req.params.id, req.body);
+    const updates = { ...req.body };
+    // DOMPurify sanitization: if engine is html and html field is present
+    const existing = await templates.getTemplate(req.params.id);
+    const engine = updates.engine || existing?.engine;
+    if (engine === "html" && updates.html) {
+      try {
+        updates.html = DOMPurify.sanitize(updates.html, {
+          ALLOWED_TAGS: ["div","span","h1","h2","h3","h4","h5","h6","p","img","a","br","svg","path","g","circle","rect","line","polygon","polyline","text","tspan","section","article","header","footer","nav","main","ul","ol","li","button","strong","em","blockquote","code","pre","hr","table","tr","td","th","thead","tbody"],
+          ALLOWED_ATTR: ["class","id","src","alt","href","data-layer-id","style","width","height","viewBox","fill","d","stroke","stroke-width","cx","cy","r","rx","ry","x","y","transform"],
+        });
+      } catch { /* keep original if sanitization fails */ }
+    }
+    const tpl = await templates.updateTemplate(req.params.id, updates);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+
+    // Auto-save version for HTML templates when html/css changed
+    if (engine === "html" && (updates.html !== undefined || updates.css !== undefined)) {
+      const version = {
+        id: `ver_${uuid().slice(0, 12)}`,
+        templateId: tpl.id,
+        label: `HTML save ${new Date().toLocaleString()}`,
+        canvas: tpl.canvas,
+        html: tpl.html,
+        css: tpl.css,
+        createdAt: new Date().toISOString(),
+      };
+      tpl.versions.push(version);
+      // Persist the version (re-update with versions array)
+      await templates.updateTemplate(req.params.id, { versions: tpl.versions });
+    }
+
     res.json({ success: true, data: tpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

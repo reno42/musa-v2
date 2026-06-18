@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { HtmlCanvas } from "../components/HtmlCanvas";
 import { CodePanel } from "../components/CodePanel";
+import type { CodePanelRef } from "../components/CodePanel";
+import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { IconArrowLeft } from "../shared/icons";
@@ -58,6 +60,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const codePanelRef = useRef<CodePanelRef>(null);
+  const [selectedFont, setSelectedFont] = useState("");
+  const [showFontPicker, setShowFontPicker] = useState(false);
 
   // Load template on mount
   useEffect(() => {
@@ -124,10 +129,70 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(html, newCss);
   }, [html, autoSave]);
 
+  const handleFontSelect = useCallback((fontFamily: string) => {
+    if (!fontFamily) return;
+    setSelectedFont(fontFamily);
+    setShowFontPicker(false);
+
+    // Build @import URL for the font
+    const fontUrl = fontFamily.replace(/ /g, "+");
+    const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:wght@400;700&display=swap');\n`;
+
+    // Prepend @import to CSS (if not already present)
+    let newCss = css;
+    if (!newCss.includes(fontUrl)) {
+      newCss = importLine + newCss;
+    }
+
+    // Append a commented suggestion snippet
+    const snippet = `\n/* Suggested: font-family: '${fontFamily}', sans-serif; */\n`;
+    if (!newCss.includes(`'${fontFamily}'`)) {
+      newCss += snippet;
+    }
+
+    setCss(newCss);
+    autoSave(html, newCss);
+  }, [css, html, autoSave]);
+
   const handleSelectElement = useCallback((layerId: string) => {
-    console.log("[EditorV2] Selected element:", layerId);
-    // Future: scroll to matching code in Monaco
-  }, []);
+    // Search HTML for the element with data-layer-id, extract class attribute
+    const classMatch = html.match(new RegExp(`data-layer-id="${layerId}"[^>]*class="([^"]*)"`));
+    const idMatch = html.match(new RegExp(`data-layer-id="${layerId}"[^>]*id="([^"]*)"`));
+    const tagMatch = html.match(new RegExp(`<([a-zA-Z0-9]+)[^>]*data-layer-id="${layerId}"`));
+
+    let selector: string | null = null;
+    if (classMatch) {
+      // Use the first class name as a CSS selector to search for
+      selector = classMatch[1].split(/\s+/)[0];
+    } else if (idMatch) {
+      selector = `#${idMatch[1]}`;
+    } else if (tagMatch) {
+      selector = tagMatch[1];
+    }
+
+    if (selector) {
+      // Find the line number in CSS where this selector is defined
+      const cssLines = css.split("\n");
+      let lineNumber = -1;
+      for (let i = 0; i < cssLines.length; i++) {
+        const line = cssLines[i].trim();
+        // Match CSS selectors: .classname, #id, or tag { ... }
+        if (line.startsWith(`.${selector}`) || line === selector || line.startsWith(`${selector} `) || line.startsWith(`${selector},`) || line.startsWith(`${selector}:`) || line.startsWith(`#${selector.replace("#", "")}`)) {
+          lineNumber = i + 1;
+          break;
+        }
+        // Also match when selector appears before {
+        if (line.includes(`.${selector}`) && line.includes("{")) {
+          lineNumber = i + 1;
+          break;
+        }
+      }
+
+      if (lineNumber > 0 && codePanelRef.current) {
+        codePanelRef.current.scrollToLine(lineNumber);
+      }
+    }
+  }, [html, css]);
 
   // ── Styles ──
   const containerStyle: React.CSSProperties = {
@@ -220,15 +285,30 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <span style={{ fontSize: 11, color: "#888", marginLeft: 8 }}>{width}x{height}</span>
         {saving && <span style={{ fontSize: 11, color: "#60a5fa", marginLeft: "auto" }}>Saving...</span>}
         <div style={{ flex: 1 }} />
+        <button type="button" onClick={() => setShowFontPicker(!showFontPicker)} style={{ ...btnStyle, background: showFontPicker ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Fonts</button>
         <button type="button" onClick={() => setZoom(z => Math.min(2, z + 0.1))} style={btnStyle}>Zoom +</button>
         <span style={{ fontSize: 11, color: "#888" }}>{Math.round(zoom * 100)}%</span>
         <button type="button" onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} style={btnStyle}>Zoom -</button>
       </div>
 
+      {/* Font Picker Dropdown */}
+      {showFontPicker && (
+        <div style={{
+          position: "absolute", top: 44, right: 8, zIndex: 50,
+          background: "rgba(18,18,36,0.95)", borderRadius: 8,
+          border: "1px solid rgba(255,255,255,0.1)", padding: 8,
+          maxHeight: 360, overflow: "auto", minWidth: 240,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        }}>
+          <GoogleFontPicker value={selectedFont} onChange={handleFontSelect} />
+        </div>
+      )}
+
       {/* Main: Code Panel + Canvas */}
       <div style={mainStyle}>
         <div style={codePanelStyle}>
           <CodePanel
+            ref={codePanelRef}
             html={html}
             css={css}
             onHtmlChange={handleHtmlChange}
