@@ -63,6 +63,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const codePanelRef = useRef<CodePanelRef>(null);
   const [selectedFont, setSelectedFont] = useState("");
   const [showFontPicker, setShowFontPicker] = useState(false);
+  const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string }[]>([]);
+  const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load template on mount
   useEffect(() => {
@@ -118,6 +121,29 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   useEffect(() => {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, []);
+
+  // Supabase Realtime polling: periodically check for external template changes
+  // (Full WebSocket-based Supabase Realtime requires project config; polling works immediately)
+  useEffect(() => {
+    pollingRef.current = setInterval(async () => {
+      try {
+        const tpl = await getTemplate(templateId);
+        if (!tpl) return;
+        const t = tpl as any;
+        const remoteUpdated = t.metadata?.updatedAt;
+        if (remoteUpdated && remoteUpdated !== lastRemoteUpdate) {
+          // Only update if the change came from outside (not our own saves)
+          if (lastRemoteUpdate !== null) {
+            setHtml(t.html || DEFAULT_HTML);
+            setCss(t.css || DEFAULT_CSS);
+            setTemplateName(t.name || "Untitled");
+          }
+          setLastRemoteUpdate(remoteUpdated);
+        }
+      } catch { /* silent - offline or API not available */ }
+    }, 5000); // poll every 5 seconds
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [templateId, lastRemoteUpdate]);
 
   const handleHtmlChange = useCallback((newHtml: string) => {
     setHtml(newHtml);
@@ -284,6 +310,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <span style={{ fontSize: 15, fontWeight: 600, color: "#e0e0e0" }}>{templateName}</span>
         <span style={{ fontSize: 11, color: "#888", marginLeft: 8 }}>{width}x{height}</span>
         {saving && <span style={{ fontSize: 11, color: "#60a5fa", marginLeft: "auto" }}>Saving...</span>}
+        {activeAgents.length > 0 && (
+          <span style={{ fontSize: 11, color: "#4ade80", marginLeft: 8, display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
+            {activeAgents.length} active
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <button type="button" onClick={() => setShowFontPicker(!showFontPicker)} style={{ ...btnStyle, background: showFontPicker ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Fonts</button>
         <button type="button" onClick={() => setZoom(z => Math.min(2, z + 0.1))} style={btnStyle}>Zoom +</button>
