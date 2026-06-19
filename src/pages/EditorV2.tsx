@@ -3,9 +3,13 @@ import { HtmlCanvas } from "../components/HtmlCanvas";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
+import { ElementProperties } from "../components/ElementProperties";
+import { InsertToolbar } from "../components/InsertToolbar";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
+import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import { IconArrowLeft } from "../shared/icons";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 interface EditorV2Props {
   templateId: string;
@@ -66,6 +70,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string }[]>([]);
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
+  const [selectedElement, setSelectedElement] = useState<any>(null);
+  const [showRightPanel, setShowRightPanel] = useState(false);
 
   // Load template on mount
   useEffect(() => {
@@ -110,6 +118,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           method: "PUT",
           body: JSON.stringify({ html: newHtml, css: newCss }),
         });
+        // Broadcast via Realtime
+        broadcastChange(realtimeChannelRef.current, templateId, newHtml, newCss);
       } catch (err) {
         console.warn("[EditorV2] Auto-save failed:", err);
       } finally {
@@ -122,28 +132,45 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, []);
 
-  // Supabase Realtime polling: periodically check for external template changes
-  // (Full WebSocket-based Supabase Realtime requires project config; polling works immediately)
+  // Supabase Realtime WebSocket (replaces polling)
   useEffect(() => {
-    pollingRef.current = setInterval(async () => {
-      try {
-        const tpl = await getTemplate(templateId);
-        if (!tpl) return;
-        const t = tpl as any;
-        const remoteUpdated = t.metadata?.updatedAt;
-        if (remoteUpdated && remoteUpdated !== lastRemoteUpdate) {
-          // Only update if the change came from outside (not our own saves)
-          if (lastRemoteUpdate !== null) {
-            setHtml(t.html || DEFAULT_HTML);
-            setCss(t.css || DEFAULT_CSS);
-            setTemplateName(t.name || "Untitled");
+    const channel = subscribeTemplate(templateId, (newHtml, newCss) => {
+      setHtml(newHtml || html);
+      setCss(newCss || css);
+    });
+    if (channel) {
+      realtimeChannelRef.current = channel;
+      // Fallback polling if Realtime is not configured
+    } else {
+      // Use polling as fallback when Supabase URL not configured
+      pollingRef.current = setInterval(async () => {
+        try {
+          const tpl = await getTemplate(templateId);
+          if (!tpl) return;
+          const t = tpl as any;
+          const remoteUpdated = t.metadata?.updatedAt;
+          if (remoteUpdated && remoteUpdated !== lastRemoteUpdate) {
+            if (lastRemoteUpdate !== null) {
+              setHtml(t.html || DEFAULT_HTML);
+              setCss(t.css || DEFAULT_CSS);
+            }
+            setLastRemoteUpdate(remoteUpdated);
           }
-          setLastRemoteUpdate(remoteUpdated);
-        }
-      } catch { /* silent - offline or API not available */ }
-    }, 5000); // poll every 5 seconds
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, [templateId, lastRemoteUpdate]);
+        } catch { /* silent */ }
+      }, 5000);
+    }
+    // Presence tracking
+    const pChannel = subscribePresence(templateId, (agents) => {
+      setActiveAgents(agents.map(a => ({ agentId: a.agentId, sectionId: a.sectionId })));
+    });
+    if (pChannel) presenceChannelRef.current = pChannel;
+
+    return () => {
+      if (realtimeChannelRef.current) { realtimeChannelRef.current.unsubscribe(); realtimeChannelRef.current = null; }
+      if (presenceChannelRef.current) { presenceChannelRef.current.unsubscribe(); presenceChannelRef.current = null; }
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [templateId]);
 
   const handleHtmlChange = useCallback((newHtml: string) => {
     setHtml(newHtml);
@@ -188,7 +215,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
     let selector: string | null = null;
     if (classMatch) {
-      // Use the first class name as a CSS selector to search for
       selector = classMatch[1].split(/\s+/)[0];
     } else if (idMatch) {
       selector = `#${idMatch[1]}`;
@@ -197,28 +223,65 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
 
     if (selector) {
-      // Find the line number in CSS where this selector is defined
       const cssLines = css.split("\n");
       let lineNumber = -1;
       for (let i = 0; i < cssLines.length; i++) {
         const line = cssLines[i].trim();
-        // Match CSS selectors: .classname, #id, or tag { ... }
         if (line.startsWith(`.${selector}`) || line === selector || line.startsWith(`${selector} `) || line.startsWith(`${selector},`) || line.startsWith(`${selector}:`) || line.startsWith(`#${selector.replace("#", "")}`)) {
-          lineNumber = i + 1;
-          break;
+          lineNumber = i + 1; break;
         }
-        // Also match when selector appears before {
-        if (line.includes(`.${selector}`) && line.includes("{")) {
-          lineNumber = i + 1;
-          break;
-        }
+        if (line.includes(`.${selector}`) && line.includes("{")) { lineNumber = i + 1; break; }
       }
-
       if (lineNumber > 0 && codePanelRef.current) {
         codePanelRef.current.scrollToLine(lineNumber);
       }
     }
+
+    // Populate selected element for properties panel
+    const classes = classMatch ? classMatch[1].split(/\s+/) : [];
+    const tag = tagMatch ? tagMatch[1] : "unknown";
+    // Find CSS properties for this element
+    const cssProperties: string[] = [];
+    const cssRuleRe = /([^{]+)\{([^}]+)\}/g;
+    let rm;
+    while ((rm = cssRuleRe.exec(css)) !== null) {
+      const sel = rm[1].trim();
+      if (classes.some(c => sel.includes(`.${c}`)) || sel === tag || sel.includes(`#${layerId}`)) {
+        cssProperties.push(...rm[2].split(";").filter(Boolean).map(s => s.trim()));
+      }
+    }
+    setSelectedElement({
+      elementId: layerId, tag, classes, cssProperties,
+      htmlSnippet: html.substring(html.indexOf(`data-layer-id="${layerId}"`) - 20, html.indexOf(`data-layer-id="${layerId}"`) + 200),
+    });
+    setShowRightPanel(true);
   }, [html, css]);
+
+  // Export handlers
+  const handleExportPNG = useCallback(() => {
+    window.open(`/api/templates/${templateId}/render`, "_blank");
+  }, [templateId]);
+
+  const handleExportJSON = useCallback(async () => {
+    const tpl = await getTemplate(templateId);
+    if (tpl) {
+      const blob = new Blob([JSON.stringify(tpl, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${templateName}.futuraria.json`;
+      a.click(); URL.revokeObjectURL(url);
+    }
+  }, [templateId, templateName]);
+
+  const handleZoomToFit = useCallback(() => {
+    const containerEl = document.getElementById("canvas-container");
+    if (containerEl) {
+      const cw = containerEl.clientWidth - 32;
+      const ch = containerEl.clientHeight - 32;
+      const fitScale = Math.min(cw / width, ch / height, 1);
+      setZoom(Math.round(fitScale * 10) / 10);
+    }
+  }, [width, height]);
 
   // ── Styles ──
   const containerStyle: React.CSSProperties = {
@@ -317,10 +380,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           </span>
         )}
         <div style={{ flex: 1 }} />
+        <button type="button" onClick={() => setShowRightPanel(!showRightPanel)} style={{ ...btnStyle, background: showRightPanel ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Props</button>
         <button type="button" onClick={() => setShowFontPicker(!showFontPicker)} style={{ ...btnStyle, background: showFontPicker ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Fonts</button>
-        <button type="button" onClick={() => setZoom(z => Math.min(2, z + 0.1))} style={btnStyle}>Zoom +</button>
-        <span style={{ fontSize: 11, color: "#888" }}>{Math.round(zoom * 100)}%</span>
-        <button type="button" onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} style={btnStyle}>Zoom -</button>
+        <button type="button" onClick={handleExportPNG} style={btnStyle}>PNG</button>
+        <button type="button" onClick={handleExportJSON} style={btnStyle}>JSON</button>
+        <button type="button" onClick={handleZoomToFit} style={btnStyle} title="Fit to screen">Fit</button>
+        <button type="button" onClick={() => setZoom(z => Math.min(2, z + 0.1))} style={btnStyle}>+</button>
+        <span style={{ fontSize: 11, color: "#888", minWidth: 36, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <button type="button" onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} style={btnStyle}>-</button>
       </div>
 
       {/* Font Picker Dropdown */}
@@ -336,7 +403,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         </div>
       )}
 
-      {/* Main: Code Panel + Canvas */}
+      {/* Insert Toolbar */}
+      <InsertToolbar templateId={templateId} onHtmlUpdated={(h, c) => { setHtml(h); setCss(c); }} />
+
+      {/* Main: Code Panel + Canvas + Properties */}
       <div style={mainStyle}>
         <div style={codePanelStyle}>
           <CodePanel
@@ -347,7 +417,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onCssChange={handleCssChange}
           />
         </div>
-        <div style={canvasContainerStyle}>
+        <div id="canvas-container" style={canvasContainerStyle}>
           <HtmlCanvas
             html={html}
             css={css}
@@ -357,6 +427,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onSelectElement={handleSelectElement}
           />
         </div>
+        {showRightPanel && (
+          <div style={{ width: 240, flexShrink: 0, height: "100%", padding: 8, overflow: "auto" }}>
+            <ElementProperties
+              element={selectedElement}
+              templateId={templateId}
+              onElementUpdated={(h, c) => { setHtml(h); setCss(c); }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

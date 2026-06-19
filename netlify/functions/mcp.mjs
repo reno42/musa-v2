@@ -7677,9 +7677,38 @@ async function handleMethod(method, params, userId) {
     }
 
     case "generate_from_prompt": {
-      const html = `<div><h1>Generated Design</h1><p>${params.prompt}</p></div>`;
-      const css = "body { font-family: sans-serif; padding: 40px; }";
-      const tpl = await templates.createTemplate(`AI: ${params.prompt.substring(0, 40)}`, params.width || 1080, params.height || 1080, null, null, "default");
+      let html = `<div><h1>Generated Design</h1><p>${params.prompt}</p></div>`;
+      let css = "body { font-family: sans-serif; padding: 40px; }";
+
+      // Try AI API (Gemini free tier or GPT) if configured
+      const aiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+      if (aiKey) {
+        try {
+          const isGemini = !!process.env.GEMINI_API_KEY;
+          const endpoint = isGemini
+            ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiKey}`
+            : "https://api.openai.com/v1/chat/completions";
+          const body = isGemini
+            ? { contents: [{ parts: [{ text: `Generate a complete, self-contained HTML document with embedded CSS for a design with these requirements: ${params.prompt}. Format: ${params.width || 1080}x${params.height || 1080}. Return ONLY the HTML code with inline <style> tag. No explanations.` }] }] }
+            : { model: "gpt-4o-mini", messages: [{ role: "user", content: `Generate a complete HTML document with embedded CSS: ${params.prompt}. Format: ${params.width || 1080}x${params.height || 1080}. Return ONLY HTML code.` }] };
+          const headers = { "Content-Type": "application/json", ...(isGemini ? {} : { Authorization: `Bearer ${aiKey}` }) };
+          const aiRes = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+          const aiJson = await aiRes.json();
+          const aiText = isGemini
+            ? aiJson?.candidates?.[0]?.content?.parts?.[0]?.text || ""
+            : aiJson?.choices?.[0]?.message?.content || "";
+          // Extract HTML and CSS from response
+          const htmlMatch = aiText.match(/```html\n?([\s\S]*?)```/) || aiText.match(/<html[\s\S]*<\/html>/i);
+          const cssMatch = aiText.match(/```css\n?([\s\S]*?)```/) || aiText.match(/<style>([\s\S]*?)<\/style>/i);
+          if (htmlMatch) {
+            html = htmlMatch[1] || htmlMatch[0];
+            html = html.replace(/<html[^>]*>/i, "").replace(/<\/html>/i, "").replace(/<head>[\s\S]*?<\/head>/i, "").replace(/<body[^>]*>/i, "").replace(/<\/body>/i, "").trim();
+          }
+          if (cssMatch) css = cssMatch[1] || cssMatch[0];
+        } catch { /* AI failed, use fallback */ }
+      }
+
+      const tpl = await templates.createTemplate(`AI: ${params.prompt.substring(0, 40)}`, params.width || 1080, params.height || 1080, undefined, "", "default");
       tpl.engine = "html"; tpl.html = html; tpl.css = css;
       await templates.updateTemplate(tpl.id, { engine: "html", html, css, canvas: tpl.canvas, frames: [] });
       return { templateId: tpl.id, previewUrl: "" };

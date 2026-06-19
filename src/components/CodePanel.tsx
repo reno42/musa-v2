@@ -12,6 +12,8 @@ interface CodePanelProps {
 export interface CodePanelRef {
   scrollToLine: (line: number) => void;
   switchToTab: (tab: "html" | "css") => void;
+  undo: () => void;
+  redo: () => void;
 }
 
 type Tab = "html" | "css";
@@ -53,8 +55,7 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
   // Expose scrollToLine and switchToTab to parent via ref
   useImperativeHandle(ref, () => ({
     scrollToLine(line: number) {
-      setTab("css"); // switch to CSS tab since selectors are in CSS
-      // Use setTimeout to wait for tab switch + editor mount
+      setTab("css");
       setTimeout(() => {
         const ed = cssEditorRef.current;
         if (ed) {
@@ -64,10 +65,16 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
         }
       }, 100);
     },
-    switchToTab(t: "html" | "css") {
-      setTab(t);
+    switchToTab(t: "html" | "css") { setTab(t); },
+    undo() {
+      const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current;
+      ed?.trigger("keyboard", "undo", null);
     },
-  }), []);
+    redo() {
+      const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current;
+      ed?.trigger("keyboard", "redo", null);
+    },
+  }), [tab]);
 
   // Debounced change handler (200ms)
   const handleHtmlChange = useCallback((value: string | undefined) => {
@@ -113,20 +120,11 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
   return (
     <div style={panelStyle}>
       <div style={tabsBarStyle}>
-        <button
-          type="button"
-          onClick={() => setTab("html")}
-          style={tabStyle(tab === "html")}
-        >
-          HTML
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("css")}
-          style={tabStyle(tab === "css")}
-        >
-          CSS
-        </button>
+        <button type="button" onClick={() => setTab("html")} style={tabStyle(tab === "html")}>HTML</button>
+        <button type="button" onClick={() => setTab("css")} style={tabStyle(tab === "css")}>CSS</button>
+        <div style={{ flex: 1 }} />
+        <button type="button" onClick={() => { const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current; ed?.trigger("keyboard", "undo", null); }} style={{ ...tabStyle(false), padding: "8px 10px", fontSize: 16, lineHeight: 1 }} title="Undo (Ctrl+Z)">&#x21A9;</button>
+        <button type="button" onClick={() => { const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current; ed?.trigger("keyboard", "redo", null); }} style={{ ...tabStyle(false), padding: "8px 10px", fontSize: 16, lineHeight: 1 }} title="Redo (Ctrl+Shift+Z)">&#x21AA;</button>
       </div>
       <div style={{ flex: 1, display: tab === "html" ? "block" : "none" }}>
         <Editor

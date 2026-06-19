@@ -290,7 +290,16 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemp
                 >
                   {/* Thumbnail placeholder */}
                   <div style={thumbnailStyle}>
-                    {t.width}x{t.height}
+                    {t.engine === "html" ? (
+                      <iframe
+                        srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.15);transform-origin:top left}${/* css is not available in the list, show placeholder */""}</style></head><body style="background:#1a1a2e;display:flex;align-items:center;justify-content:center;width:${t.width}px;height:${t.height}px"><span style="color:#888;font-family:sans-serif;font-size:48px">HTML</span></body></html>`}
+                        sandbox="allow-same-origin"
+                        style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+                        title={t.name}
+                      />
+                    ) : (
+                      <>{t.width}x{t.height}</>
+                    )}
                   </div>
                   <div style={{ padding: "8px 10px" }}>
                     {editingTplId === t.id ? (
