@@ -7648,15 +7648,35 @@ async function handleMethod(method, params, userId) {
     // ═══════════════════════════════════════════════════════════
 
     case "render_html_template": {
-      return { url: "", width: 1080, height: 1080, sizeBytes: 0, format: params.format || "png" };
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const scale = params.scale || 2;
+      const w = (tpl.width || 1080) * scale;
+      const h = (tpl.height || 1080) * scale;
+      const fmt = params.format || "png";
+      // Return render URL that opens the browser-based render page
+      const renderUrl = `/api/templates/${params.templateId}/render`;
+      return {
+        url: renderUrl,
+        width: w, height: h,
+        sizeBytes: 0,
+        format: fmt,
+        _note: "Open this URL in browser for PNG download. Full Puppeteer rendering requires external service ($5-7/mo).",
+      };
     }
 
     case "render_to_formats": {
-      return { formats: (params.formats || ["png"]).map(f => ({ format: f, url: "", sizeBytes: 0 })) };
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const formats = (params.formats || ["png"]).map(f => ({
+        format: f, url: `/api/templates/${params.templateId}/render`,
+        width: tpl.width || 1080, height: tpl.height || 1080, sizeBytes: 0,
+      }));
+      return { formats };
     }
 
     case "optimize_image": {
-      return { optimizedUrl: params.imageUrl, originalBytes: 0, optimizedBytes: 0, reduction: "0%" };
+      return { optimizedUrl: params.imageUrl, originalBytes: 0, optimizedBytes: 0, reduction: "0%", _note: "Optimization requires Sharp or external service" };
     }
 
     case "list_assets": {

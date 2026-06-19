@@ -5,6 +5,11 @@ import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { ElementProperties } from "../components/ElementProperties";
 import { InsertToolbar } from "../components/InsertToolbar";
+import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
+import { StructurePanel } from "../components/StructurePanel";
+import { VariablesPanel } from "../components/VariablesPanel";
+import { BrandPanel } from "../components/BrandPanel";
+import { FormatPanel } from "../components/FormatPanel";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
@@ -67,13 +72,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const codePanelRef = useRef<CodePanelRef>(null);
   const [selectedFont, setSelectedFont] = useState("");
   const [showFontPicker, setShowFontPicker] = useState(false);
-  const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string }[]>([]);
+  const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string; onlineAt: string }[]>([]);
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const [selectedElement, setSelectedElement] = useState<any>(null);
   const [showRightPanel, setShowRightPanel] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<string>("props");
 
   // Load template on mount
   useEffect(() => {
@@ -161,7 +167,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
     // Presence tracking
     const pChannel = subscribePresence(templateId, (agents) => {
-      setActiveAgents(agents.map(a => ({ agentId: a.agentId, sectionId: a.sectionId })));
+      setActiveAgents(agents);
     });
     if (pChannel) presenceChannelRef.current = pChannel;
 
@@ -380,7 +386,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <button type="button" onClick={() => setShowRightPanel(!showRightPanel)} style={{ ...btnStyle, background: showRightPanel ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Props</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("props"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "props" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Props</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("structure"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "structure" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Struct</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("vars"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "vars" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Vars</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("brand"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "brand" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Brand</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("format"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "format" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Format</button>
+        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel); setRightPanelTab("agents"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "agents" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Agents</button>
         <button type="button" onClick={() => setShowFontPicker(!showFontPicker)} style={{ ...btnStyle, background: showFontPicker ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Fonts</button>
         <button type="button" onClick={handleExportPNG} style={btnStyle}>PNG</button>
         <button type="button" onClick={handleExportJSON} style={btnStyle}>JSON</button>
@@ -428,12 +439,34 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           />
         </div>
         {showRightPanel && (
-          <div style={{ width: 240, flexShrink: 0, height: "100%", padding: 8, overflow: "auto" }}>
-            <ElementProperties
-              element={selectedElement}
-              templateId={templateId}
-              onElementUpdated={(h, c) => { setHtml(h); setCss(c); }}
-            />
+          <div style={{ width: 250, flexShrink: 0, height: "100%", padding: 8, overflow: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+            {rightPanelTab === "props" && (
+              <ElementProperties
+                element={selectedElement}
+                templateId={templateId}
+                onElementUpdated={(h, c) => { setHtml(h); setCss(c); }}
+              />
+            )}
+            {rightPanelTab === "structure" && (
+              <StructurePanel templateId={templateId} onSelectElement={(id) => {
+                const el = document.querySelector(`[data-layer-id="${id}"]`);
+                if (el) (el as HTMLElement).click();
+              }} />
+            )}
+            {rightPanelTab === "vars" && (
+              <VariablesPanel templateId={templateId} onCssUpdated={setCss} />
+            )}
+            {rightPanelTab === "brand" && (
+              <BrandPanel templateId={templateId} onCssUpdated={setCss} />
+            )}
+            {rightPanelTab === "format" && (
+              <FormatPanel templateId={templateId} width={width} height={height} onTemplateCreated={(id) => {
+                window.open(`/?template=${id}&v=2`, "_blank");
+              }} />
+            )}
+            {rightPanelTab === "agents" && (
+              <ActiveAgentsPanel agents={activeAgents} />
+            )}
           </div>
         )}
       </div>
