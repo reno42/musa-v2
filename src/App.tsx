@@ -231,11 +231,31 @@ function App() {
     try {
       const d = await getTemplate(id);
       if (d) {
-        dispatch({ type: "OPEN_TEMPLATE", id, json: { name: d.name, width: d.width, height: d.height, canvas: d.canvas, objects: d.canvas?.objects || [] } });
+        const t = d as any;
+        if (t.engine === "html") {
+          dispatch({ type: "OPEN_TEMPLATE_V2", id });
+        } else {
+          dispatch({ type: "OPEN_TEMPLATE", id, json: { name: t.name, width: t.width, height: t.height, canvas: t.canvas, objects: t.canvas?.objects || [] } });
+        }
         return;
       }
     } catch { /* ignore */ }
     dispatch({ type: "OPEN_TEMPLATE", id, json: { width: 1080, height: 1080 } });
+  };
+
+  // Create HTML template and open in EditorV2
+  const handleCreateHtmlTemplate = async (workspaceId: string, name: string) => {
+    try {
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        body: JSON.stringify({ workspaceId, name, width: 1080, height: 1080, engine: "html" }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        dispatch({ type: "OPEN_TEMPLATE_V2", id: json.data.id });
+      }
+    } catch { /* ignore */ }
   };
 
   // Check URL params for direct template loading
@@ -258,6 +278,7 @@ function App() {
       <Dashboard
         onSelectTemplate={handleSelectTemplate}
         onCreateTemplate={handleCreateTemplate}
+        onCreateHtmlTemplate={handleCreateHtmlTemplate}
       />
     );
   }

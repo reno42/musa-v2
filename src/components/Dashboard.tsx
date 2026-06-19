@@ -6,6 +6,7 @@ interface Template {
   name: string;
   width: number;
   height: number;
+  engine?: "fabric" | "html";
   workspaceId: string;
   metadata: { createdAt: string; updatedAt: string };
 }
@@ -18,6 +19,7 @@ interface Workspace {
 interface DashboardProps {
   onSelectTemplate: (id: string) => void;
   onCreateTemplate: (workspaceId: string) => void;
+  onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
 }
 
 const API_BASE = "/api";
@@ -31,7 +33,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
   return res.json();
 }
 
-export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps) {
+export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
@@ -229,14 +231,28 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
             autoFocus
           />
         ) : (
-          <button
-            type="button"
-            onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
-            style={btnPrimary}
-            disabled={!selectedWs}
-          >
-            + New Template
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
+              style={btnPrimary}
+              disabled={!selectedWs}
+            >
+              + Fabric
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!selectedWs) return;
+                const name = `HTML ${new Date().toLocaleDateString()}`;
+                onCreateHtmlTemplate(selectedWs, name);
+              }}
+              style={{ ...btnPrimary, background: "#3B82F6" }}
+              disabled={!selectedWs}
+            >
+              + HTML
+            </button>
+          </div>
         )}
       </div>
 
@@ -294,7 +310,12 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate }: DashboardProps
                         title="Double-click to rename"
                       >{t.name}</div>
                     )}
-                    <div style={{ fontSize: 12, color: "#7a7668" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ fontSize: 12, color: "#7a7668" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                      {t.engine === "html" && (
+                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#3B82F6", color: "#fff", fontWeight: 600 }}>HTML</span>
+                      )}
+                    </div>
                   </div>
                 </button>
                 <div style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.04)", fontSize: 12 }}>
