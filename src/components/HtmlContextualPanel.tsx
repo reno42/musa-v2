@@ -104,6 +104,16 @@ const SEMANTIC_TAGS = [
   "table", "thead", "tbody", "tr", "td", "th",
 ];
 
+/// Commit on Enter — applies the property immediately instead of waiting for blur
+function commitOnEnter(updater: (sel: string, prop: string, value: string) => void, selector: string, prop: string) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      updater(selector, prop, e.currentTarget.value);
+      e.currentTarget.blur();
+    }
+  };
+}
+
 export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: Props) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     typography: true, color: true, spacing: true, layout: true,
@@ -181,6 +191,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
                 <input
                   defaultValue={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""}
                   onBlur={e => updateProp(element.selector, "font-family", `'${e.target.value}'`)}
+                  onKeyDown={e => { if (e.key === "Enter") { updateProp(element.selector, "font-family", `'${e.currentTarget.value}'`); e.currentTarget.blur(); } }}
                   style={inp}
                 />
               </PropRow>
@@ -190,6 +201,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
                 <input
                   defaultValue={s["font-size"] || ""}
                   onBlur={e => updateProp(element.selector, "font-size", e.target.value)}
+                  onKeyDown={commitOnEnter(updateProp, element.selector, "font-size")}
                   style={{ ...inp, width: 60 }}
                 />
               </PropRow>
@@ -234,6 +246,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
                 <input
                   defaultValue={s["letter-spacing"] || "normal"}
                   onBlur={e => updateProp(element.selector, "letter-spacing", e.target.value)}
+                  onKeyDown={commitOnEnter(updateProp, element.selector, "letter-spacing")}
                   style={{ ...inp, width: 60 }}
                 />
               </PropRow>
@@ -243,6 +256,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
                 <input
                   defaultValue={s["line-height"] || ""}
                   onBlur={e => updateProp(element.selector, "line-height", e.target.value)}
+                  onKeyDown={commitOnEnter(updateProp, element.selector, "line-height")}
                   style={{ ...inp, width: 60 }}
                 />
               </PropRow>
@@ -293,6 +307,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
             <input
               defaultValue={s["color"] || ""}
               onBlur={e => updateProp(element.selector, "color", e.target.value)}
+              onKeyDown={commitOnEnter(updateProp, element.selector, "color")}
               style={inp}
             />
           </PropRow>
@@ -306,6 +321,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
             <input
               defaultValue={s["background-color"] || s["background"] || ""}
               onBlur={e => updateProp(element.selector, "background-color", e.target.value)}
+              onKeyDown={commitOnEnter(updateProp, element.selector, "background-color")}
               style={inp}
             />
           </PropRow>
@@ -330,16 +346,16 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
       {expandedSections.spacing && (
         <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 4, borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
           <PropRow label="Margin">
-            <input defaultValue={s["margin"] || ""} onBlur={e => updateProp(element.selector, "margin", e.target.value)} style={inp} />
+            <input defaultValue={s["margin"] || ""} onBlur={e => updateProp(element.selector, "margin", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "margin")} style={inp} />
           </PropRow>
           <PropRow label="Padding">
-            <input defaultValue={s["padding"] || ""} onBlur={e => updateProp(element.selector, "padding", e.target.value)} style={inp} />
+            <input defaultValue={s["padding"] || ""} onBlur={e => updateProp(element.selector, "padding", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "padding")} style={inp} />
           </PropRow>
           <PropRow label="Border">
-            <input defaultValue={s["border"] || ""} onBlur={e => updateProp(element.selector, "border", e.target.value)} style={inp} />
+            <input defaultValue={s["border"] || ""} onBlur={e => updateProp(element.selector, "border", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "border")} style={inp} />
           </PropRow>
           <PropRow label="Radius">
-            <input defaultValue={s["border-radius"] || ""} onBlur={e => updateProp(element.selector, "border-radius", e.target.value)} style={inp} />
+            <input defaultValue={s["border-radius"] || ""} onBlur={e => updateProp(element.selector, "border-radius", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "border-radius")} style={inp} />
           </PropRow>
         </div>
       )}
@@ -365,13 +381,13 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
             </select>
           </PropRow>
           <PropRow label="W">
-            <input defaultValue={s["width"] || ""} onBlur={e => updateProp(element.selector, "width", e.target.value)} style={{ ...inp, width: 60 }} />
+            <input defaultValue={s["width"] || ""} onBlur={e => updateProp(element.selector, "width", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "width")} style={{ ...inp, width: 60 }} />
           </PropRow>
           <PropRow label="H">
-            <input defaultValue={s["height"] || ""} onBlur={e => updateProp(element.selector, "height", e.target.value)} style={{ ...inp, width: 60 }} />
+            <input defaultValue={s["height"] || ""} onBlur={e => updateProp(element.selector, "height", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "height")} style={{ ...inp, width: 60 }} />
           </PropRow>
           <PropRow label="Gap">
-            <input defaultValue={s["gap"] || ""} onBlur={e => updateProp(element.selector, "gap", e.target.value)} style={{ ...inp, width: 60 }} />
+            <input defaultValue={s["gap"] || ""} onBlur={e => updateProp(element.selector, "gap", e.target.value)} onKeyDown={commitOnEnter(updateProp, element.selector, "gap")} style={{ ...inp, width: 60 }} />
           </PropRow>
         </div>
       )}
