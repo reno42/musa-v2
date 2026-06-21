@@ -2,21 +2,26 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
-import { ElementProperties } from "../components/ElementProperties";
-import { InsertToolbar } from "../components/InsertToolbar";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { StructurePanel } from "../components/StructurePanel";
 import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
 import { FormatPanel } from "../components/FormatPanel";
-import { HtmlToolbar } from "../components/HtmlToolbar";
+import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
-import { IconArrowLeft } from "../shared/icons";
+import {
+  IconArrowLeft, IconCode, IconSliders, IconLayout, IconDna, IconPalette,
+  IconFile, IconBot, IconType, IconImage, IconCopy, IconTrash,
+  IconDownload, IconChevronLeft, IconChevronRight, IconFrame, IconTag,
+  IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
+  IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
+  IconAlignLeft, IconAlignCenter, IconAlignRight,
+} from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 interface EditorV2Props {
@@ -399,6 +404,74 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     handleCssChange(newCss);
   }, [handleCssChange]);
 
+  // ── Add visual primitive to active frame ──
+  const handleAddPrimitive = useCallback((type: "rect" | "circle" | "text", x: number, y: number) => {
+    if (!selectedFrameId) return;
+    const layerId = `el_${Date.now().toString(36)}`;
+    let html: string;
+    let css: string;
+    if (type === "rect") {
+      html = `<div data-layer-id="${layerId}" style="width:200px;height:150px;background:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else if (type === "circle") {
+      html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else {
+      html = `<div data-layer-id="${layerId}" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
+      css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    }
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setActiveTool("select"); // Switch back to select after placing
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Change semantic tag of selected element ──
+  const handleChangeTag = useCallback((newTag: string) => {
+    if (!selectedElement || !selectedFrameId) return;
+    const frame = frames.find(f => f.id === selectedElement.frameId);
+    if (!frame) return;
+
+    const oldTag = selectedElement.tag;
+    const layerId = selectedElement.layerId;
+
+    // Replace the opening tag in HTML
+    const openTagRe = new RegExp(`<${oldTag}([^>]*data-layer-id="${layerId.replace(/[[\]"\\]/g, "\\$&")}"[^>]*)>`);
+    const closeTagRe = new RegExp(`</${oldTag}>`);
+    let newHtml = frame.html;
+    const openMatch = openTagRe.exec(newHtml);
+    if (openMatch) {
+      newHtml = newHtml.replace(openTagRe, `<${newTag}$1>`);
+      // Replace the corresponding closing tag
+      const openPos = newHtml.indexOf(openMatch[0]);
+      const afterOpen = newHtml.slice(openPos + openMatch[0].length);
+      const closeIdx = afterOpen.search(closeTagRe);
+      if (closeIdx >= 0) {
+        newHtml = newHtml.slice(0, openPos + openMatch[0].length + closeIdx) +
+          `</${newTag}>` +
+          newHtml.slice(openPos + openMatch[0].length + closeIdx + oldTag.length + 3);
+      }
+    }
+
+    // Update CSS selector
+    const oldSelector = `[data-layer-id="${layerId}"]`;
+    // CSS selectors don't change with tag (they use attribute selectors), so no CSS update needed
+
+    const updated = frames.map(f =>
+      f.id === selectedElement.frameId ? { ...f, html: newHtml } : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setSelectedElement(prev => prev ? { ...prev, tag: newTag } : null);
+  }, [selectedElement, selectedFrameId, frames, autoSave, pushUndo]);
+
+
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -406,16 +479,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
+      if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
+      if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateFrame(); return; }
       if (!isInput && !mod) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
           case "h": setActiveTool("hand"); break;
+          case "r": setActiveTool("rect"); break;
+          case "o": setActiveTool("circle"); break;
+          case "t": setActiveTool("text"); break;
+          case "p": setActiveTool("pen"); break;
           case "delete":
           case "backspace":
             if (selectedFrameId && frames.length > 1) deleteSelectedFrame();
-            break;
-          case "d":
-            if (mod) { e.preventDefault(); duplicateFrame(); }
             break;
         }
       }
@@ -440,42 +516,23 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
   }, [templateId, templateName, frames]);
 
-  // ── Styles ──
-  const containerStyle: React.CSSProperties = {
-    display: "flex", flexDirection: "column",
-    height: "100vh", width: "100vw",
-    background: "#0d0d1a", color: "#e0e0e0",
-    fontFamily: "'Inter', system-ui, sans-serif", overflow: "hidden",
-  };
-  const topBarStyle: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: 12,
-    padding: "8px 16px",
-    background: "rgba(18,18,36,0.9)",
-    borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0,
-  };
-  const btnStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.06)", color: "#e0e0e0",
-    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6,
-    padding: "6px 12px", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
-    display: "flex", alignItems: "center", gap: 4,
-  };
-  const mainStyle: React.CSSProperties = { display: "flex", flex: 1, overflow: "hidden" };
-  const codePanelStyle: React.CSSProperties = { width: 400, flexShrink: 0, height: "100%", padding: 8 };
+  // ── Code panel visibility ──
+  const [showCodePanel, setShowCodePanel] = useState(false);
 
   // ── Loading / Error ──
   if (loading) {
     return (
-      <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0d0d1a", alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: "#888", fontSize: 16 }}>Loading template...</div>
       </div>
     );
   }
   if (error) {
     return (
-      <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0d0d1a", alignItems: "center", justifyContent: "center" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ color: "#f87171", fontSize: 16, marginBottom: 12 }}>{error}</div>
-          <button type="button" onClick={onBack} style={btnStyle}>
+          <button type="button" onClick={onBack} className="glass-btn">
             <IconArrowLeft size={14} /> Back to Dashboard
           </button>
         </div>
@@ -483,95 +540,109 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     );
   }
 
+  const RIGHT_PANEL_TABS = [
+    { id: "contextual", icon: <IconSliders size={14} />, title: "Properties" },
+    { id: "structure", icon: <IconLayout size={14} />, title: "Structure" },
+    { id: "vars", icon: <IconDna size={14} />, title: "Variables" },
+    { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
+    { id: "format", icon: <IconFile size={14} />, title: "Format" },
+    { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
+  ];
+
   return (
-    <div style={containerStyle}>
-      {/* Top Bar */}
-      <div style={topBarStyle}>
-        <button type="button" onClick={onBack} style={btnStyle}>
-          <IconArrowLeft size={14} /> Dashboard
+    <div className="editor-v2-root">
+      {/* ═══ Top Bar ═══ */}
+      <div className="editor-v2-topbar">
+        <button type="button" onClick={onBack} className="editor-v2-topbar-btn" title="Back to Dashboard">
+          <IconArrowLeft size={14} />
         </button>
-        <span style={{ fontSize: 15, fontWeight: 600, color: "#e0e0e0" }}>{templateName}</span>
+        <span className="editor-v2-project-name">{templateName}</span>
         {selectedFrame && (
-          <span style={{ fontSize: 11, color: "#888", marginLeft: 8 }}>
-            {selectedFrame.name} &middot; {selectedFrame.width}x{selectedFrame.height}
+          <span className="editor-v2-frame-info">
+            {selectedFrame.name} · {selectedFrame.width}×{selectedFrame.height}
           </span>
         )}
-        {saving && <span style={{ fontSize: 11, color: "#60a5fa", marginLeft: 8 }}>Saving...</span>}
+        {saving && <span className="editor-v2-saving">Saving...</span>}
         {activeAgents.length > 0 && (
-          <span style={{ fontSize: 11, color: "#4ade80", marginLeft: 8, display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
-            {activeAgents.length} active
+          <span className="editor-v2-agents">
+            <span className="editor-v2-agents-dot" />
+            {activeAgents.length}
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {/* Right panel tabs */}
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "contextual"); setRightPanelTab("contextual"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "contextual" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Props</button>
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "structure"); setRightPanelTab("structure"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "structure" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Struct</button>
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "vars"); setRightPanelTab("vars"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "vars" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Vars</button>
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "brand"); setRightPanelTab("brand"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "brand" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Brand</button>
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "format"); setRightPanelTab("format"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "format" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Format</button>
-        <button type="button" onClick={() => { setShowRightPanel(!showRightPanel || rightPanelTab !== "agents"); setRightPanelTab("agents"); }} style={{ ...btnStyle, background: showRightPanel && rightPanelTab === "agents" ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Agents</button>
-        <button type="button" onClick={() => setShowFontPicker(!showFontPicker)} style={{ ...btnStyle, background: showFontPicker ? "#3B82F6" : "rgba(255,255,255,0.06)" }}>Fonts</button>
-        <button type="button" onClick={handleExportPNG} style={btnStyle}>PNG</button>
-        <button type="button" onClick={handleExportJSON} style={btnStyle}>JSON</button>
-        {/* Frame actions */}
-        <button type="button" onClick={duplicateFrame} style={{ ...btnStyle, fontSize: 10 }} title="Duplicate frame (Ctrl+D)">Dup</button>
-        <button type="button" onClick={deleteSelectedFrame} style={{ ...btnStyle, fontSize: 10, color: frames.length > 1 ? "#f87171" : "#666" }} disabled={frames.length <= 1} title="Delete frame (Del)">Del</button>
+
+        {/* Right panel tab icons */}
+        {RIGHT_PANEL_TABS.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === tab.id ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === tab.id) {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab(tab.id);
+                setShowRightPanel(true);
+              }
+            }}
+            title={tab.title}
+          >
+            {tab.icon}
+          </button>
+        ))}
+
+        <div className="editor-v2-topbar-sep" />
+
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowFontPicker(!showFontPicker)} title="Fonts">
+          <IconType size={14} />
+        </button>
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handleExportPNG} title="Export PNG">
+          <IconImage size={14} />
+        </button>
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handleExportJSON} title="Export JSON">
+          <IconDownload size={14} />
+        </button>
+
+        <div className="editor-v2-topbar-sep" />
+
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={duplicateFrame} title="Duplicate frame (Ctrl+D)">
+          <IconCopy size={14} />
+        </button>
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${frames.length <= 1 ? "disabled" : ""}`}
+          onClick={deleteSelectedFrame}
+          disabled={frames.length <= 1}
+          title="Delete frame (Del)"
+        >
+          <IconTrash size={14} />
+        </button>
       </div>
 
-      {/* Font Picker Dropdown */}
+      {/* ═══ Font Picker Dropdown ═══ */}
       {showFontPicker && (
-        <div style={{
-          position: "absolute", top: 44, right: 8, zIndex: 50,
-          background: "rgba(18,18,36,0.95)", borderRadius: 8,
-          border: "1px solid rgba(255,255,255,0.1)", padding: 8,
-          maxHeight: 360, overflow: "auto", minWidth: 240,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-        }}>
+        <div className="editor-v2-font-picker-dropdown">
           <GoogleFontPicker value={selectedFont} onChange={handleFontSelect} />
         </div>
       )}
 
-      {/* Toolbar (Select, Hand, Frame presets, Zoom) */}
-      <HtmlToolbar
-        tool={activeTool}
-        onToolChange={setActiveTool}
-        onAddFrame={addFrame}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomToFit={handleZoomToFit}
-        zoom={zoom}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        saving={saving}
-      />
+      {/* ═══ Main Area ═══ */}
+      <div className="editor-v2-main">
+        {/* ── Code Panel (slide-in from left) ── */}
+        {showCodePanel && (
+          <div className="editor-v2-code-panel">
+            <CodePanel
+              ref={codePanelRef}
+              html={activeHtml}
+              css={activeCss}
+              onHtmlChange={handleHtmlChange}
+              onCssChange={handleCssChange}
+            />
+          </div>
+        )}
 
-      {/* Insert Toolbar (HTML elements) */}
-      <InsertToolbar templateId={templateId} onHtmlUpdated={(h, c) => {
-        if (!selectedFrameId) return;
-        const updated = frames.map(f =>
-          f.id === selectedFrameId ? { ...f, html: h, css: c } : f
-        );
-        setFrames(updated);
-        autoSave(updated);
-      }} />
-
-      {/* Main: Code Panel + Infinite Canvas + Properties */}
-      <div style={mainStyle}>
-        <div style={codePanelStyle}>
-          <CodePanel
-            ref={codePanelRef}
-            html={activeHtml}
-            css={activeCss}
-            onHtmlChange={handleHtmlChange}
-            onCssChange={handleCssChange}
-          />
-        </div>
-
-        {/* Infinite Canvas (the desk) */}
-        <div id="canvas-container" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {/* ── Canvas (fills remaining space) ── */}
+        <div id="canvas-container" className="editor-v2-canvas-area">
           <InfiniteHtmlCanvas
             frames={frames}
             selectedFrameId={selectedFrameId}
@@ -583,42 +654,70 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onElementSelect={handleElementSelect}
             onFrameCssChange={handleFrameCssChange}
             onFrameHtmlChange={handleFrameHtmlChange}
+            onAddPrimitive={handleAddPrimitive}
           />
         </div>
-
-        {/* Right Panel */}
-        {showRightPanel && (
-          <div style={{ width: 270, flexShrink: 0, height: "100%", padding: 8, overflow: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-            {rightPanelTab === "contextual" && (
-              <HtmlContextualPanel
-                element={selectedElement}
-                css={activeCss}
-                onCssChange={handleContextualCssChange}
-              />
-            )}
-            {rightPanelTab === "structure" && (
-              <StructurePanel templateId={templateId} onSelectElement={(id) => {
-                const el = document.querySelector(`[data-layer-id="${id}"]`);
-                if (el) (el as HTMLElement).click();
-              }} />
-            )}
-            {rightPanelTab === "vars" && (
-              <VariablesPanel templateId={templateId} onCssUpdated={(c) => handleCssChange(c)} />
-            )}
-            {rightPanelTab === "brand" && (
-              <BrandPanel templateId={templateId} onCssUpdated={(c) => handleCssChange(c)} />
-            )}
-            {rightPanelTab === "format" && (
-              <FormatPanel templateId={templateId} width={selectedFrame?.width ?? 1080} height={selectedFrame?.height ?? 1080} onTemplateCreated={(id) => {
-                window.open(`/?template=${id}&v=2`, "_blank");
-              }} />
-            )}
-            {rightPanelTab === "agents" && (
-              <ActiveAgentsPanel agents={activeAgents} />
-            )}
-          </div>
-        )}
       </div>
+
+      {/* ═══ Code Panel Toggle ═══ */}
+      <button
+        type="button"
+        className="editor-v2-code-toggle"
+        onClick={() => setShowCodePanel(!showCodePanel)}
+        title={showCodePanel ? "Hide Code (Ctrl+/)" : "Show Code (Ctrl+/)"}
+      >
+        <IconCode size={14} />
+        {showCodePanel ? <IconChevronLeft size={10} /> : <IconChevronRight size={10} />}
+      </button>
+
+      {/* ═══ Floating Left Toolbar ═══ */}
+      <FloatingToolbar
+        tool={activeTool}
+        onToolChange={setActiveTool}
+        onAddFrame={addFrame}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomToFit={handleZoomToFit}
+        zoom={zoom}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+      />
+
+      {/* ═══ Floating Right Properties Panel ═══ */}
+      {showRightPanel && (
+        <div className="editor-v2-right-panel">
+          {rightPanelTab === "contextual" && (
+            <HtmlContextualPanel
+              element={selectedElement}
+              css={activeCss}
+              onCssChange={handleContextualCssChange}
+              onChangeTag={handleChangeTag}
+            />
+          )}
+          {rightPanelTab === "structure" && (
+            <StructurePanel templateId={templateId} onSelectElement={(id: string) => {
+              const el = document.querySelector(`[data-layer-id="${id}"]`);
+              if (el) (el as HTMLElement).click();
+            }} />
+          )}
+          {rightPanelTab === "vars" && (
+            <VariablesPanel templateId={templateId} onCssUpdated={(c: string) => handleCssChange(c)} />
+          )}
+          {rightPanelTab === "brand" && (
+            <BrandPanel templateId={templateId} onCssUpdated={(c: string) => handleCssChange(c)} />
+          )}
+          {rightPanelTab === "format" && (
+            <FormatPanel templateId={templateId} width={selectedFrame?.width ?? 1080} height={selectedFrame?.height ?? 1080} onTemplateCreated={(id: string) => {
+              window.open(`/?template=${id}&v=2`, "_blank");
+            }} />
+          )}
+          {rightPanelTab === "agents" && (
+            <ActiveAgentsPanel agents={activeAgents} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

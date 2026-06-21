@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from "react";
+import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -33,6 +34,8 @@ interface DesignFrameProps {
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   onCssChange?: (frameId: string, newCss: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
+  activeTool?: HtmlToolName;
+  onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
 }
 
 const SEL = "#3B82F6";
@@ -52,6 +55,7 @@ const TRACKED_PROPS = [
 
 export function DesignFrame({
   frame, isActive, onActivate, onElementSelect, onCssChange, onHtmlChange,
+  activeTool, onAddPrimitive,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -60,6 +64,10 @@ export function DesignFrame({
   const cssRef = useRef(frame.css);
   const htmlRef = useRef(frame.html);
   const syncLockRef = useRef(false);
+  const activeToolRef = useRef(activeTool);
+  activeToolRef.current = activeTool;
+  const onAddPrimitiveRef = useRef(onAddPrimitive);
+  onAddPrimitiveRef.current = onAddPrimitive;
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -195,6 +203,20 @@ export function DesignFrame({
   }
 
   function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
+    // Click to add primitive (when rect/circle/text tool is active)
+    content.addEventListener("click", (e: Event) => {
+      const me = e as MouseEvent;
+      const target = me.target as Element;
+      // Only trigger when clicking directly on the content area (not on existing elements)
+      if (target !== content) return;
+      if (!activeToolRef.current || !["rect", "circle", "text"].includes(activeToolRef.current)) return;
+      e.stopPropagation();
+      const rect = content.getBoundingClientRect();
+      const clickX = me.clientX - rect.left;
+      const clickY = me.clientY - rect.top;
+      onAddPrimitiveRef.current?.(activeToolRef.current as "rect" | "circle" | "text", Math.round(clickX), Math.round(clickY));
+    });
+
     // Click to select
     content.addEventListener("mousedown", (e: Event) => {
       const me = e as MouseEvent;
@@ -314,7 +336,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: "default",
+        cursor: activeTool && ["rect", "circle", "text"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Label above frame */}

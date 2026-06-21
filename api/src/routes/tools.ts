@@ -491,3 +491,87 @@ toolRoutes.post("/:id/tools/auto-layout", validate(autoLayoutSchema), async (req
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ── Phase B: HTML Visual Primitives & Semantic Tagging ──
+
+// POST /api/templates/:id/tools/add-primitive — add visual primitive to a frame
+toolRoutes.post("/:id/tools/add-primitive", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    if (tpl.engine !== "html") return res.status(400).json({ success: false, error: "Not an HTML template" });
+
+    const { frameId, type, x = 0, y = 0, width, height, color, content, fontSize, borderRadius } = req.body;
+    if (!frameId) return res.status(400).json({ success: false, error: "frameId required" });
+    if (!["rect", "circle", "text"].includes(type)) return res.status(400).json({ success: false, error: "type must be rect, circle, or text" });
+
+    const frames = tpl.frames || [];
+    const frame: any = frames.find((f: any) => f.id === frameId);
+    if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
+
+    const layerId = `el_${Date.now().toString(36)}`;
+    let elHtml: string, cssRule: string;
+
+    if (type === "rect") {
+      const w = width || 200, h = height || 150;
+      const bg = color || "#3B82F6", br = borderRadius || "8px";
+      elHtml = `<div data-layer-id="${layerId}"></div>`;
+      cssRule = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: ${bg};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+    } else if (type === "circle") {
+      const size = width || height || 150;
+      const bg = color || "#EF4444";
+      elHtml = `<div data-layer-id="${layerId}"></div>`;
+      cssRule = `[data-layer-id="${layerId}"] {\n  width: ${size}px;\n  height: ${size}px;\n  background: ${bg};\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+    } else {
+      const fs = fontSize || 24;
+      const clr = color || "#333333";
+      elHtml = `<div data-layer-id="${layerId}">${content || "Text"}</div>`;
+      cssRule = `[data-layer-id="${layerId}"] {\n  font-size: ${fs}px;\n  color: ${clr};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+    }
+
+    frame.html = (frame.html || "") + "\n" + elHtml;
+    frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.status(201).json({ success: true, data: { layerName: layerId, type, frameId } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/templates/:id/tools/change-tag — change semantic tag of an element
+toolRoutes.post("/:id/tools/change-tag", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    if (tpl.engine !== "html") return res.status(400).json({ success: false, error: "Not an HTML template" });
+
+    const { frameId, elementId, newTag } = req.body;
+    if (!elementId || !newTag) return res.status(400).json({ success: false, error: "elementId and newTag required" });
+
+    let targetHtml = "";
+    let targetObj: any = null;
+
+    if (frameId && tpl.frames) {
+      const frame: any = tpl.frames.find((f: any) => f.id === frameId);
+      if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
+      targetHtml = frame.html || "";
+      targetObj = frame;
+    } else {
+      targetHtml = tpl.html || "";
+      targetObj = tpl;
+    }
+
+    const escapedId = elementId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const tagRe = new RegExp(`<(\\w+)([^>]*data-layer-id="${escapedId}"[^>]*)>([\\s\\S]*?)<\\/\\1>`, "i");
+    const match = tagRe.exec(targetHtml);
+    if (!match) return res.status(404).json({ success: false, error: "Element not found" });
+
+    const oldTag = match[1];
+    const newElHtml = `<${newTag}${match[2]}>${match[3]}</${newTag}>`;
+    targetObj.html = targetHtml.replace(tagRe, newElHtml);
+    tpl.metadata.updatedAt = new Date().toISOString();
+    res.json({ success: true, data: { elementId, oldTag, newTag } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

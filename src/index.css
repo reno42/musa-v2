@@ -1709,3 +1709,225 @@ html, body, #root { height: 100%; width: 100%; }
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 10px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   EDITOR V2 — FLOATING PANELS LAYOUT
+   ═══════════════════════════════════════════════════════════ */
+
+.editor-v2-root {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background: #0d0d1a;
+  color: var(--text-main);
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* ── Top Bar ── */
+.editor-v2-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  background: rgba(8, 8, 8, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(200, 184, 152, 0.06);
+  flex-shrink: 0;
+  z-index: 30;
+}
+
+.editor-v2-topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.editor-v2-topbar-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editor-v2-topbar-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.editor-v2-topbar-icon-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.editor-v2-topbar-icon-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.editor-v2-topbar-icon-btn.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.editor-v2-topbar-icon-btn.disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.editor-v2-topbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+.editor-v2-project-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.editor-v2-frame-info {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', monospace;
+  margin-left: 4px;
+}
+
+.editor-v2-saving {
+  font-size: 10px;
+  color: #60a5fa;
+  margin-left: 4px;
+}
+
+.editor-v2-agents {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #4ade80;
+  margin-left: 4px;
+}
+.editor-v2-agents-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+/* ── Main Area ── */
+.editor-v2-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Code Panel (slide-in from left) ── */
+.editor-v2-code-panel {
+  width: 380px;
+  flex-shrink: 0;
+  height: 100%;
+  padding: 8px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  animation: slideInLeft 0.2s ease-out;
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* ── Canvas Area ── */
+.editor-v2-canvas-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Code Toggle Button ── */
+.editor-v2-code-toggle {
+  position: fixed;
+  left: 8px;
+  top: 48px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: all 0.15s;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.editor-v2-code-toggle:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Right Panel (floating) ── */
+.editor-v2-right-panel {
+  position: fixed;
+  right: 20px;
+  top: 56px;
+  bottom: 20px;
+  width: 270px;
+  z-index: 20;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+.editor-v2-right-panel::-webkit-scrollbar { display: none; }
+
+/* ── Font Picker Dropdown ── */
+.editor-v2-font-picker-dropdown {
+  position: fixed;
+  top: 48px;
+  right: 60px;
+  z-index: 50;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 8px;
+  max-height: 360px;
+  overflow: auto;
+  min-width: 240px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}

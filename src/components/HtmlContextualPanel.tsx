@@ -11,6 +11,7 @@ interface Props {
   element: SelectedElementInfo | null;
   css: string;
   onCssChange: (newCss: string) => void;
+  onChangeTag?: (newTag: string) => void;
 }
 
 const FONT_WEIGHTS = [
@@ -95,7 +96,15 @@ const sel: React.CSSProperties = {
   fontSize: 12,
 };
 
-export function HtmlContextualPanel({ element, css, onCssChange }: Props) {
+const SEMANTIC_TAGS = [
+  "div", "section", "article", "aside", "header", "footer", "nav", "main",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  "p", "span", "a", "button", "label", "input", "form",
+  "ul", "ol", "li", "img", "figure", "figcaption",
+  "table", "thead", "tbody", "tr", "td", "th",
+];
+
+export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: Props) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     typography: true, color: true, spacing: true, layout: true,
   });
@@ -123,13 +132,40 @@ export function HtmlContextualPanel({ element, css, onCssChange }: Props) {
   return (
     <div style={panelStyle}>
       {/* Header */}
-      <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "#c8b898" }}>
-          {element.tag.toUpperCase()}
-        </span>
-        <span style={{ fontSize: 10, color: "#666", fontFamily: "monospace" }}>
-          {element.selector}
-        </span>
+      <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#c8b898" }}>
+            {element.tag.toUpperCase()}
+          </span>
+          <span style={{ fontSize: 10, color: "#666", fontFamily: "monospace" }}>
+            {element.selector}
+          </span>
+        </div>
+        {/* Semantic Tag Selector */}
+        {onChangeTag && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 0.5 }}>Tag</span>
+            <select
+              value={element.tag}
+              onChange={e => onChangeTag(e.target.value)}
+              style={{
+                flex: 1,
+                background: "rgba(15,15,15,0.5)",
+                border: "1px solid rgba(200,184,152,0.2)",
+                color: "#c8b898",
+                borderRadius: 4,
+                padding: "3px 6px",
+                fontSize: 11,
+                fontFamily: "monospace",
+                cursor: "pointer",
+              }}
+            >
+              {SEMANTIC_TAGS.map(tag => (
+                <option key={tag} value={tag}>{`<${tag}>`}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Typography Section */}

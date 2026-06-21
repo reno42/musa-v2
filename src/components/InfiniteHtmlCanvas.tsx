@@ -11,7 +11,7 @@ import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignF
  *  - Middle-click: always pans regardless of active tool
  */
 
-export type HtmlToolName = "select" | "hand";
+export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "text" | "pen";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -24,6 +24,7 @@ interface InfiniteHtmlCanvasProps {
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   onFrameCssChange?: (frameId: string, newCss: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
+  onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
 }
 
 const CANVAS_BG = "#1a1a2e";
@@ -34,6 +35,7 @@ export function InfiniteHtmlCanvas({
   frames, selectedFrameId, activeTool, zoom,
   onSelectFrame, onZoomChange, onFrameMove,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
+  onAddPrimitive,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -79,6 +81,10 @@ export function InfiniteHtmlCanvas({
     if (activeTool === "select" && e.button === 0 && e.target === viewportRef.current) {
       onSelectFrame(null);
       onElementSelect?.(null);
+    }
+    // Primitive tools: don't deselect the frame when clicking canvas background
+    if (["rect", "circle", "text"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
+      // Keep frame selected so primitive can be added
     }
   }, [activeTool, onSelectFrame, onElementSelect]);
 
@@ -190,6 +196,8 @@ export function InfiniteHtmlCanvas({
               onElementSelect={onElementSelect}
               onCssChange={onFrameCssChange}
               onHtmlChange={onFrameHtmlChange}
+              activeTool={activeTool}
+              onAddPrimitive={onAddPrimitive}
             />
           </div>
         ))}

@@ -1959,8 +1959,44 @@ const MCP_TOOLS = [
         css: { type: "string", description: "Inline CSS styles for the element" },
         position: { type: "string", enum: ["prepend", "append", "before", "after"], description: "Insertion position relative to parent (default append)" },
         layerName: { type: "string", description: "Unique data-layer-id for the element" },
+        frameId: { type: "string", description: "Frame ID to add to (for multi-frame HTML templates). If omitted, adds to template-level html." },
       },
       required: ["templateId", "tag"],
+    },
+  },
+  {
+    name: "add_primitive",
+    description: "Add a visual primitive (rectangle, circle, or text block) to a specific frame in an HTML template. Creates the element with a data-layer-id and matching CSS rule using attribute selectors, following the visual-first design model.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to add the primitive to" },
+        type: { type: "string", enum: ["rect", "circle", "text"], description: "Primitive type: rect (rectangle), circle, or text block" },
+        x: { type: "number", description: "X position in pixels within the frame" },
+        y: { type: "number", description: "Y position in pixels within the frame" },
+        width: { type: "number", description: "Width in pixels (default 200 for rect, 150 for circle)" },
+        height: { type: "number", description: "Height in pixels (default 150 for rect, 150 for circle)" },
+        color: { type: "string", description: "Background color (default #3B82F6 for rect, #EF4444 for circle)" },
+        content: { type: "string", description: "Text content (only for text type, default 'Text')" },
+        fontSize: { type: "number", description: "Font size for text type (default 24)" },
+        borderRadius: { type: "string", description: "Custom border-radius (default 8px for rect, 50% for circle)" },
+      },
+      required: ["templateId", "frameId", "type"],
+    },
+  },
+  {
+    name: "change_element_tag",
+    description: "Change the HTML tag of an existing element (semantic tagging). The element keeps its data-layer-id, styles, and content. Use this to apply semantic meaning (e.g. change div to nav, h1, button, etc.) after creating visual primitives.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        elementId: { type: "string", description: "data-layer-id of the element" },
+        newTag: { type: "string", description: "New HTML tag (e.g. h1, button, nav, section, p, a, etc.)" },
+      },
+      required: ["templateId", "elementId", "newTag"],
     },
   },
   {
@@ -7328,13 +7364,39 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
-      let html = tpl.html || "";
       const layerId = params.layerName || `el_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const styleAttr = params.css ? ` style="${params.css}"` : "";
       const voidTags = ["img", "br", "hr", "input"];
       const elHtml = voidTags.includes(params.tag)
         ? `<${params.tag} data-layer-id="${layerId}"${styleAttr}>`
         : `<${params.tag} data-layer-id="${layerId}"${styleAttr}>${params.html || ""}</${params.tag}>`;
+
+      // Multi-frame support: if frameId provided, add to specific frame
+      if (params.frameId && tpl.frames && Array.isArray(tpl.frames)) {
+        const frame = tpl.frames.find(f => f.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        let frameHtml = frame.html || "";
+        const pos = params.position || "append";
+        if (params.parentSelector && params.parentSelector !== "body") {
+          const parentRe = new RegExp(`(<${params.parentSelector}[^>]*>)([\\s\\S]*?)(<\\/${params.parentSelector}>)`, "i");
+          if (parentRe.test(frameHtml)) {
+            if (pos === "append") frameHtml = frameHtml.replace(parentRe, `$1$2${elHtml}$3`);
+            else if (pos === "prepend") frameHtml = frameHtml.replace(parentRe, `$1${elHtml}$2$3`);
+            else if (pos === "before") frameHtml = frameHtml.replace(parentRe, `${elHtml}$1$2$3`);
+            else if (pos === "after") frameHtml = frameHtml.replace(parentRe, `$1$2$3${elHtml}`);
+          } else {
+            frameHtml += elHtml;
+          }
+        } else {
+          frameHtml += elHtml;
+        }
+        frame.html = frameHtml;
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+        return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId };
+      }
+
+      // Legacy single-frame mode
+      let html = tpl.html || "";
       const pos = params.position || "append";
       if (params.parentSelector && params.parentSelector !== "body") {
         const parentRe = new RegExp(`(<${params.parentSelector}[^>]*>)([\\s\\S]*?)(<\\/${params.parentSelector}>)`, "i");
@@ -7351,6 +7413,95 @@ async function handleMethod(method, params, userId) {
       }
       await templates.updateTemplate(params.templateId, { html, canvas: tpl.canvas, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, layerName: layerId };
+    }
+
+    // ── add_primitive (Phase B: visual-first primitives) ──
+    case "add_primitive": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerId = `el_${Date.now().toString(36)}`;
+      const x = params.x || 0;
+      const y = params.y || 0;
+      const type = params.type;
+
+      let elHtml, cssRule;
+      if (type === "rect") {
+        const w = params.width || 200;
+        const h = params.height || 150;
+        const bg = params.color || "#3B82F6";
+        const br = params.borderRadius || "8px";
+        elHtml = `<div data-layer-id="${layerId}"></div>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: ${bg};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      } else if (type === "circle") {
+        const size = params.width || params.height || 150;
+        const bg = params.color || "#EF4444";
+        elHtml = `<div data-layer-id="${layerId}"></div>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  width: ${size}px;\n  height: ${size}px;\n  background: ${bg};\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      } else if (type === "text") {
+        const fs = params.fontSize || 24;
+        const color = params.color || "#333333";
+        const content = params.content || "Text";
+        elHtml = `<div data-layer-id="${layerId}">${content}</div>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  font-size: ${fs}px;\n  color: ${color};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      } else {
+        throw { code: -32000, message: `Invalid primitive type: ${type}. Must be rect, circle, or text.` };
+      }
+
+      frame.html = (frame.html || "") + "\n" + elHtml;
+      frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type };
+    }
+
+    // ── change_element_tag (Phase B: semantic tagging) ──
+    case "change_element_tag": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+
+      // Find the element in the specified frame (or template-level html)
+      let targetHtml = "";
+      let targetObj = null;
+      if (params.frameId && tpl.frames && Array.isArray(tpl.frames)) {
+        const frame = tpl.frames.find(f => f.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        targetHtml = frame.html || "";
+        targetObj = frame;
+      } else {
+        targetHtml = tpl.html || "";
+        targetObj = tpl;
+      }
+
+      const oldTagRe = new RegExp(`<(\\w+)([^>]*data-layer-id="${params.elementId.replace(/[[\\]"\\\\]/g, "\\\\$&")}"[^>]*)>([\\s\\S]*?)<\\/\\1>`, "i");
+      const match = oldTagRe.exec(targetHtml);
+      if (!match) {
+        // Try void element (self-closing or void tags)
+        const voidRe = new RegExp(`<(\\w+)([^>]*data-layer-id="${params.elementId.replace(/[[\\]"\\\\]/g, "\\\\$&")}"[^>]*)\\/?>`, "i");
+        const voidMatch = voidRe.exec(targetHtml);
+        if (!voidMatch) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+        const newHtml = targetHtml.replace(voidRe, `<${params.newTag}$2>`);
+        if (params.frameId && targetObj) {
+          targetObj.html = newHtml;
+        } else {
+          tpl.html = newHtml;
+        }
+      } else {
+        const newElHtml = `<${params.newTag}${match[2]}>${match[3]}</${params.newTag}>`;
+        const newHtml = targetHtml.replace(oldTagRe, newElHtml);
+        if (params.frameId && targetObj) {
+          targetObj.html = newHtml;
+        } else {
+          tpl.html = newHtml;
+        }
+      }
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      return { success: true, templateId: params.templateId, elementId: params.elementId, oldTag: match ? match[1] : "unknown", newTag: params.newTag };
     }
 
     // ── remove_element ──
