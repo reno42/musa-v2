@@ -209,6 +209,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           }),
         });
         broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
+        lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
       } catch (err) {
         console.warn("[EditorV2] Auto-save failed:", err);
       } finally {
@@ -222,9 +223,24 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   // ── Realtime sync ──
+  const realtimeReadyRef = useRef(false);
+  const lastBroadcastRef = useRef<{ html: string; css: string } | null>(null);
+
   useEffect(() => {
+    realtimeReadyRef.current = false; // Reset on re-mount
     const channel = subscribeTemplate(templateId, (newHtml, newCss) => {
+      // Skip the initial callback fired when the channel is first joined
+      if (!realtimeReadyRef.current) {
+        realtimeReadyRef.current = true;
+        return;
+      }
       if (!selectedFrameId) return;
+      // Ignore our own broadcasts
+      if (lastBroadcastRef.current &&
+          lastBroadcastRef.current.html === newHtml &&
+          lastBroadcastRef.current.css === newCss) {
+        return;
+      }
       setFrames(prev => prev.map(f =>
         f.id === selectedFrameId
           ? { ...f, html: newHtml || f.html, css: newCss || f.css }
@@ -589,6 +605,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Escape closes dropdowns
+      if (e.key === "Escape") {
+        setShowFontPicker(false);
+        return;
+      }
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
