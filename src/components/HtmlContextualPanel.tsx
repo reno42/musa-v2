@@ -104,6 +104,24 @@ const SEMANTIC_TAGS = [
   "table", "thead", "tbody", "tr", "td", "th",
 ];
 
+/// CSS properties that require units (px when bare number)
+const DIMENSION_PROPS = new Set([
+  "font-size", "width", "height", "max-width", "max-height",
+  "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+  "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "border-radius", "gap", "top", "left", "right", "bottom",
+  "letter-spacing",
+]);
+
+function normalizeCssValue(value: string): string {
+  const trimmed = value.trim();
+  // Already has a unit or is a known keyword
+  if (!trimmed || /[a-zA-Z%]/.test(trimmed)) return trimmed;
+  // Bare number → add px
+  if (/^\d+\.?\d*$/.test(trimmed)) return trimmed + "px";
+  return trimmed;
+}
+
 /// Commit on Enter — applies the property immediately instead of waiting for blur
 function commitOnEnter(updater: (sel: string, prop: string, value: string) => void, selector: string, prop: string) {
   return (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -122,7 +140,8 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
   const toggle = (s: string) => setExpandedSections(prev => ({ ...prev, [s]: !prev[s] }));
 
   const updateProp = useCallback((selector: string, prop: string, value: string) => {
-    const updated = updateCssProperty(css, selector, prop, value);
+    const normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
+    const updated = updateCssProperty(css, selector, prop, normalized);
     onCssChange(updated);
   }, [css, onCssChange]);
 
