@@ -424,9 +424,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   // ── Layer selection from Layers Panel → click element in canvas ──
-  const handleSelectLayerElement = useCallback((layerId: string) => {
+  const handleSelectLayerElement = useCallback((layerId: string, path?: number[]) => {
     if (!selectedFrameId) return;
-    // Find the element in the active frame's Shadow DOM and dispatch mousedown
     const frameEl = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
     if (!frameEl) return;
     const allChildren = frameEl.querySelectorAll("*");
@@ -437,7 +436,28 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!shadow) return;
     const content = shadow.getElementById("__df_content");
     if (!content) return;
-    const el = content.querySelector(`[data-layer-id="${layerId}"]`);
+
+    let el: Element | null = null;
+
+    // Try data-layer-id lookup first
+    if (!layerId.startsWith("auto_")) {
+      el = content.querySelector(`[data-layer-id="${layerId}"]`);
+    }
+
+    // Fallback: walk DOM by path for auto-generated layers
+    if (!el && path && path.length > 0) {
+      el = content;
+      for (let i = 0; i < path.length; i++) {
+        const idx = path[i];
+        if (idx < el.children.length) {
+          el = el.children[idx];
+        } else {
+          el = null;
+          break;
+        }
+      }
+    }
+
     if (el) {
       const rect = el.getBoundingClientRect();
       el.dispatchEvent(new MouseEvent("mousedown", {

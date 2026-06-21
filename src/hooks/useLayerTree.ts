@@ -7,7 +7,12 @@ export interface LayerNode {
   depth: number;
   parentId: string | null;
   children: string[];
+  /** DOM child-index path from body to this element. Used to locate auto-generated layers. */
+  path: number[];
 }
+
+let _autoIdCounter = 0;
+function resetAutoIds() { _autoIdCounter = 0; }
 
 /**
  * Parses an HTML string and extracts all elements with data-layer-id into
@@ -20,58 +25,74 @@ export function useLayerTree(html: string): LayerNode[] {
 export function parseLayerTree(html: string): LayerNode[] {
   if (!html) return [];
 
+  resetAutoIds();
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
   if (!doc.body) return [];
 
   const nodes: LayerNode[] = [];
-  const stack: { layerId: string }[] = [];
+  const stack: string[] = [];
+  const path: number[] = [];
 
   function walk(el: Element) {
-    const lid = el.getAttribute("data-layer-id");
-    if (lid) {
-      const tag = el.tagName.toLowerCase();
-      const parentId = stack.length > 0 ? stack[stack.length - 1].layerId : null;
-      const depth = stack.length;
+    const lid = el.getAttribute("data-layer-id") || `auto_${_autoIdCounter++}`;
+    const tag = el.tagName.toLowerCase();
+    const parentId = stack.length > 0 ? stack[stack.length - 1] : null;
+    const depth = stack.length;
 
-      let text = "";
-      const textContent = (el.textContent || "").trim();
-      if (tag === "img") {
-        const src = el.getAttribute("src") || "";
-        text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
-      } else if (tag === "svg") {
-        text = "📐 SVG Path";
-      } else if (textContent) {
-        text = textContent.substring(0, 40) + (textContent.length > 40 ? "…" : "");
+    let text = "";
+    if (tag === "img") {
+      const src = el.getAttribute("src") || "";
+      text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
+    } else if (tag === "svg") {
+      text = "📐 SVG Path";
+    } else {
+      // Get direct text content only (not from children)
+      let directText = "";
+      for (let i = 0; i < el.childNodes.length; i++) {
+        if (el.childNodes[i].nodeType === 3) { // Text node
+          directText += el.childNodes[i].textContent || "";
+        }
       }
-
-      nodes.push({
-        layerId: lid,
-        tag,
-        text: text || tag,
-        depth,
-        parentId,
-        children: [],
-      });
-
-      if (parentId) {
-        const parent = nodes.find(n => n.layerId === parentId);
-        if (parent) parent.children.push(lid);
+      const t = directText.trim();
+      if (t) {
+        text = t.substring(0, 40) + (t.length > 40 ? "…" : "");
+      } else if (!el.children.length && el.textContent) {
+        const tc = el.textContent.trim();
+        text = tc.substring(0, 40) + (tc.length > 40 ? "…" : "");
       }
-
-      stack.push({ layerId: lid });
     }
 
+    nodes.push({
+      layerId: lid,
+      tag,
+      text: text || tag,
+      depth,
+      parentId,
+      children: [],
+      path: [...path],
+    });
+
+    if (parentId) {
+      const parent = nodes.find(n => n.layerId === parentId);
+      if (parent) parent.children.push(lid);
+    }
+
+    stack.push(lid);
     for (let i = 0; i < el.children.length; i++) {
+      path.push(i);
       walk(el.children[i]);
+      path.pop();
     }
-
-    if (lid) {
-      stack.pop();
-    }
+    stack.pop();
   }
 
-  walk(doc.body);
+  // Walk all children of body (skip body itself)
+  for (let i = 0; i < doc.body.children.length; i++) {
+    path[0] = i;
+    walk(doc.body.children[i]);
+  }
+
   return nodes;
 }
 
@@ -83,6 +104,7 @@ export function reorderLayerInHtml(
   layerId: string,
   direction: "up" | "down",
 ): string | null {
+  if (layerId.startsWith("auto_")) return null;
   const elRe = new RegExp(
     `(<[^>]*data-layer-id="${layerId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${layerId}"[^>]*\\s*\\/?>)`,
     "",

@@ -6,7 +6,7 @@ interface Props {
   html: string;
   frameId: string;
   selectedElementId: string | null;
-  onSelectElement: (layerId: string) => void;
+  onSelectElement: (layerId: string, path?: number[]) => void;
   onHtmlChange: (newHtml: string) => void;
   onLayerDelete?: (layerId: string) => void;
   onLayerDuplicate?: (layerId: string) => void;
@@ -58,18 +58,18 @@ export function HtmlLayersPanel({
   const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  const handleClick = useCallback((layerId: string, e: React.MouseEvent) => {
+  const handleClick = useCallback((layer: LayerNode, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
       setMultiSelect(prev => {
         const next = new Set(prev);
-        if (next.has(layerId)) next.delete(layerId);
-        else next.add(layerId);
+        if (next.has(layer.layerId)) next.delete(layer.layerId);
+        else next.add(layer.layerId);
         return next;
       });
     } else {
-      setMultiSelect(new Set([layerId]));
+      setMultiSelect(new Set([layer.layerId]));
     }
-    onSelectElement(layerId);
+    onSelectElement(layer.layerId, layer.path);
     setContextMenu(null);
   }, [onSelectElement]);
 
@@ -144,7 +144,7 @@ export function HtmlLayersPanel({
           return (
             <div key={layer.layerId}>
               <div
-                onClick={(e) => handleClick(layer.layerId, e)}
+                onClick={(e) => handleClick(layer, e)}
                 onContextMenu={(e) => handleContextMenu(layer.layerId, e)}
                 draggable
                 onDragStart={(e) => {
@@ -219,7 +219,8 @@ export function HtmlLayersPanel({
                   {layer.text || layer.tag}
                 </span>
 
-                {/* Action buttons (visible on hover or selection) */}
+                {/* Action buttons (visible on hover or selection, only for non-auto layers) */}
+                {!layer.layerId.startsWith("auto_") && (
                 <span style={{ display: "flex", gap: 2, opacity: isSelected ? 1 : 0, flexShrink: 0 }}>
                   {/* Move up */}
                   <button type="button" onClick={(e) => { e.stopPropagation(); handleReorder(layer.layerId, "up"); }}
@@ -234,6 +235,7 @@ export function HtmlLayersPanel({
                     ▼
                   </button>
                 </span>
+                )}
               </div>
 
               {/* Children (recursive nesting not needed for flat model — parent-child shown via indent) */}
