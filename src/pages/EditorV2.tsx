@@ -11,6 +11,7 @@ import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
+import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
@@ -422,6 +423,32 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (info) setShowRightPanel(true);
   }, []);
 
+  // ── Layer selection from Layers Panel → click element in canvas ──
+  const handleSelectLayerElement = useCallback((layerId: string) => {
+    if (!selectedFrameId) return;
+    // Find the element in the active frame's Shadow DOM and dispatch mousedown
+    const frameEl = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
+    if (!frameEl) return;
+    const allChildren = frameEl.querySelectorAll("*");
+    let shadow: ShadowRoot | null = null;
+    for (const child of allChildren) {
+      if (child.shadowRoot) { shadow = child.shadowRoot; break; }
+    }
+    if (!shadow) return;
+    const content = shadow.getElementById("__df_content");
+    if (!content) return;
+    const el = content.querySelector(`[data-layer-id="${layerId}"]`);
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true, composed: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        button: 0, view: window,
+      }));
+    }
+  }, [selectedFrameId]);
+
   // ── Contextual panel CSS change ──
   const handleContextualCssChange = useCallback((newCss: string) => {
     handleCssChange(newCss);
@@ -665,6 +692,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Code panel visibility ──
   const [showCodePanel, setShowCodePanel] = useState(false);
+  const [showLayersPanel, setShowLayersPanel] = useState(false);
 
   // ── Loading / Error ──
   if (loading) {
@@ -788,6 +816,21 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           </div>
         )}
 
+        {/* ── Layers Panel (slide-in from left, next to Code Panel) ── */}
+        {showLayersPanel && (
+          <div className="editor-v2-layers-panel">
+            <HtmlLayersPanel
+              html={activeHtml}
+              frameId={selectedFrameId || ""}
+              selectedElementId={selectedElement?.layerId || null}
+              onSelectElement={handleSelectLayerElement}
+              onHtmlChange={handleHtmlChange}
+              onLayerDelete={handleDeleteElement}
+              onLayerDuplicate={handleDuplicateElement}
+            />
+          </div>
+        )}
+
         {/* ── Canvas (fills remaining space) ── */}
         <div id="canvas-container" className="editor-v2-canvas-area">
           <InfiniteHtmlCanvas
@@ -820,6 +863,17 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       >
         <IconCode size={14} />
         {showCodePanel ? <IconChevronLeft size={10} /> : <IconChevronRight size={10} />}
+      </button>
+
+      {/* ═══ Layers Panel Toggle ═══ */}
+      <button
+        type="button"
+        className="editor-v2-layers-toggle"
+        onClick={() => setShowLayersPanel(!showLayersPanel)}
+        title={showLayersPanel ? "Hide Layers" : "Show Layers"}
+      >
+        <IconLayout size={14} />
+        {showLayersPanel ? <IconChevronLeft size={10} /> : <IconChevronRight size={10} />}
       </button>
 
       {/* ═══ Floating Left Toolbar ═══ */}
