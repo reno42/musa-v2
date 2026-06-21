@@ -20,65 +20,58 @@ export function useLayerTree(html: string): LayerNode[] {
 export function parseLayerTree(html: string): LayerNode[] {
   if (!html) return [];
 
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  if (!doc.body) return [];
+
   const nodes: LayerNode[] = [];
-  // Use a simple tag-based parser (regex) tuned for the subset of HTML we generate
-  const tagRe = /<(\w+)([^>]*)>(.*?)<\/\1>|<(\w+)([^>]*)\s*\/>/gs;
-  const stack: { layerId: string; tag: string }[] = [];
-  let match: RegExpExecArray | null;
+  const stack: { layerId: string }[] = [];
 
-  while ((match = tagRe.exec(html)) !== null) {
-    const isSelfClosing = !!match[4];
-    const tag = (match[1] || match[4] || "").toLowerCase();
-    const attrs = match[2] || match[5] || "";
-    const inner = match[3] || "";
+  function walk(el: Element) {
+    const lid = el.getAttribute("data-layer-id");
+    if (lid) {
+      const tag = el.tagName.toLowerCase();
+      const parentId = stack.length > 0 ? stack[stack.length - 1].layerId : null;
+      const depth = stack.length;
 
-    // Extract data-layer-id
-    const lidMatch = attrs.match(/data-layer-id="([^"]+)"/);
-    if (!lidMatch) continue;
-
-    const layerId = lidMatch[1];
-    const parentId = stack.length > 0 ? stack[stack.length - 1].layerId : null;
-
-    // Extract text preview
-    let text = "";
-    if (!isSelfClosing) {
-      const stripped = inner.replace(/<[^>]+>/g, "").trim();
-      text = stripped.substring(0, 40) + (stripped.length > 40 ? "…" : "");
-      if (!text && tag === "img") {
-        const srcMatch = attrs.match(/src="([^"]+)"/);
-        text = srcMatch ? `🖼 ${srcMatch[1].substring(0, 30)}` : "🖼 Image";
-      }
-      if (!text && tag === "svg") {
+      let text = "";
+      const textContent = (el.textContent || "").trim();
+      if (tag === "img") {
+        const src = el.getAttribute("src") || "";
+        text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
+      } else if (tag === "svg") {
         text = "📐 SVG Path";
+      } else if (textContent) {
+        text = textContent.substring(0, 40) + (textContent.length > 40 ? "…" : "");
       }
+
+      nodes.push({
+        layerId: lid,
+        tag,
+        text: text || tag,
+        depth,
+        parentId,
+        children: [],
+      });
+
+      if (parentId) {
+        const parent = nodes.find(n => n.layerId === parentId);
+        if (parent) parent.children.push(lid);
+      }
+
+      stack.push({ layerId: lid });
     }
 
-    nodes.push({
-      layerId,
-      tag,
-      text: text || tag,
-      depth: stack.length,
-      parentId,
-      children: [],
-    });
-
-    // Track parent-child relationships
-    if (parentId) {
-      const parent = nodes.find(n => n.layerId === parentId);
-      if (parent) parent.children.push(layerId);
+    for (let i = 0; i < el.children.length; i++) {
+      walk(el.children[i]);
     }
 
-    if (!isSelfClosing) {
-      stack.push({ layerId, tag });
+    if (lid) {
+      stack.pop();
     }
-
-    // Pop stack when closing tag is encountered in the raw HTML
-    // (the regex greedy match handles nesting for us, but we need to manage stack)
   }
 
-  // Realign stack by scanning for closing tags of elements we pushed
-  // This is an approximation — full HTML parser would be more accurate
-  // For our use case (design tool generated HTML), regex is sufficient
+  walk(doc.body);
   return nodes;
 }
 
