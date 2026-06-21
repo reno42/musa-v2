@@ -225,6 +225,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Realtime sync ──
   const realtimeReadyRef = useRef(false);
   const lastBroadcastRef = useRef<{ html: string; css: string } | null>(null);
+  const framesRef = useRef(frames);
+  framesRef.current = frames;
 
   useEffect(() => {
     realtimeReadyRef.current = false; // Reset on re-mount
@@ -258,9 +260,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           const remoteUpdated = t.metadata?.updatedAt;
           if (remoteUpdated && remoteUpdated !== lastRemoteUpdate) {
             if (lastRemoteUpdate !== null) {
-              if (t.frames) {
+              // Safety: never replace non-empty local frames with empty remote frames
+              if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
                 setFrames(t.frames);
-              } else {
+              } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
+                // Remote has no frames but we do → re-save our frames as recovery
+                console.warn("[EditorV2] Polling returned empty frames, re-saving local frames");
+                autoSave(framesRef.current);
+              } else if (t.html !== undefined || t.css !== undefined) {
                 setFrames(prev => prev.map(f =>
                   f.id === selectedFrameId
                     ? { ...f, html: t.html || f.html, css: t.css || f.css }
