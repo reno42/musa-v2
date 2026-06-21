@@ -302,7 +302,7 @@ All tool endpoints operate within a specific frame. Use `frameId` to target a fr
 
 ## MCP (Model Context Protocol) Server — AI Agent Integration
 
-The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same template/workspace services via JSON-RPC 2.0 for AI agents. **100% tested** — all 10 tools + error cases pass (43/43 assertions). Same auth, same dual-write, same rate limits.
+The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same template/workspace services via JSON-RPC 2.0 for AI agents. **100% tested** — all tools + error cases pass. Same auth, same dual-write, same rate limits.
 
 **Protocol:** MCP 2024-11-05 via SSE transport (GET) + JSON-RPC 2.0 calls (POST).
 **Implementation:** `netlify/functions/mcp.mjs` (346 lines) — standalone Netlify Function, no Express dependency.
@@ -355,12 +355,16 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 2 | `create_workspace` | `name` | `description` | store → Supabase upsert |
 | 3 | `list_templates` | — | `workspaceId`, `search`, `limit`, `offset` | Supabase + store merged |
 | 4 | `get_template` | `id` | — | Supabase → store fallback |
-| 5 | `create_template` | `name`, `workspaceId` ⚠️ | `width`, `height` | store → Supabase upsert |
-| 6 | `update_template` | `id` | `name`, `canvas`, `objects` | store → Supabase upsert |
+| 5 | `create_template` | `name`, `workspaceId` ⚠️ | `width`, `height`, `engine`, `html`, `css` | store → Supabase upsert |
+| 6 | `update_template` | `id` | `name`, `canvas`, `objects`, `engine`, `html`, `css`, `frames` | store → Supabase upsert |
 | 7 | `delete_template` | `id` | — | store + Supabase delete |
 | 8 | `duplicate_template` | `id` | `name` | store → Supabase upsert |
 | 9 | `export_template` | `id` | — | Supabase read |
 | 10 | `import_template` | `data`, `workspaceId` | — | store → Supabase upsert |
+| 11 | `create_html_frame` | `templateId`, `name` | `width`, `height`, `html`, `css`, `background`, `x`, `y` | Persist via updateTemplate |
+| 12 | `update_html_frame` | `templateId`, `frameId` | `name`, `html`, `css`, `width`, `height`, `x`, `y`, `background` | Persist via updateTemplate |
+| 13 | `delete_html_frame` | `templateId`, `frameId` | — | Persist via updateTemplate |
+| 14 | `get_html_frames` | `templateId` | — | Read-only |
 
 > ⚠️ `create_template` **validates** `workspaceId` — missing returns `-32602` (enforced in mcp.mjs).
 
@@ -679,6 +683,62 @@ All responses follow:
 - **layerName** is the unique identifier for finding/modifying objects
 - **Dual-write**: All CRUD on templates/workspaces writes to in-memory store AND Supabase (when configured)
 - **MCP**: Same service layer as REST API — AI agents use JSON-RPC, humans use REST, same persistence
+
+## HTML Engine — Code-Based Design
+
+The HTML engine (`engine: "html"`) lets AI agents create designs using HTML/CSS code instead of Fabric.js objects. Each template has multiple **frames** (like papers on a desk), each with its own HTML/CSS content.
+
+### Creating an HTML Template
+
+```bash
+# Via MCP: create an HTML engine template
+curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_template","arguments":{"name":"Instagram Carousel","workspaceId":"ws_abc","width":1080,"height":1080,"engine":"html","html":"<div class=\"card\"><h1>Slide 1</h1></div>","css":".card { font-family: Inter; text-align: center; padding: 40px; }"}}}'
+```
+
+### HTML Frame Tools
+
+| # | Tool | Required | Optional |
+|---|------|----------|----------|
+| 1 | `create_html_frame` | `templateId`, `name` | `width`, `height`, `html`, `css`, `background`, `x`, `y` |
+| 2 | `update_html_frame` | `templateId`, `frameId` | `name`, `html`, `css`, `width`, `height`, `x`, `y`, `background` |
+| 3 | `delete_html_frame` | `templateId`, `frameId` | — |
+| 4 | `get_html_frames` | `templateId` | — |
+
+### Agent Workflow: Instagram Carousel (5 slides)
+
+```
+1. create_workspace → wsId
+2. create_template (engine='html', name='Carousel', workspaceId=wsId, width=1080, height=1080) → tplId
+3. update_html_frame (templateId, frameId=defaultFrame, html='<slide 1>', css='...')
+4. create_html_frame × 4 more (name='Slide 2-5', width=1080, height=1080, html='...', css='...')
+5. get_html_frames → verify all 5 frames exist
+```
+
+### Frame Data Model
+
+Each HTML frame contains:
+```json
+{
+  "id": "frame_abc123",
+  "name": "IG Square",
+  "x": 0, "y": 0,
+  "width": 1080, "height": 1080,
+  "html": "<div class='card'><h1>Hello</h1></div>",
+  "css": "body { font-family: Inter; } .card { text-align: center; }",
+  "background": "#ffffff"
+}
+```
+
+### Frame Presets (common dimensions)
+
+| Name | Width | Height | Use Case |
+|------|-------|--------|----------|
+| IG Square | 1080 | 1080 | Instagram square post |
+| IG Story | 1080 | 1920 | Instagram/Reels story |
+| IG Feed | 1080 | 1350 | Instagram portrait post |
+| Banner | 1920 | 1080 | Web banner / hero |
+| Twitter | 1200 | 628 | Twitter/X card |
 
 ## API Codebase Structure
 

@@ -75,7 +75,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace",
+    description: "Create a new design template in a workspace. Supports both Fabric.js (default) and HTML engine templates. For HTML engine, pass engine='html' with optional html/css content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -83,19 +83,26 @@ const MCP_TOOLS = [
         workspaceId: { type: "string", description: "Workspace ID to create in" },
         width: { type: "number", description: "Canvas width in pixels (default 1080)" },
         height: { type: "number", description: "Canvas height in pixels (default 1080)" },
+        engine: { type: "string", enum: ["fabric", "html"], description: "Rendering engine (default 'fabric'). Use 'html' for code-based designs." },
+        html: { type: "string", description: "Initial HTML content (HTML engine only)" },
+        css: { type: "string", description: "Initial CSS styles (HTML engine only)" },
       },
       required: ["name", "workspaceId"],
     },
   },
   {
     name: "update_template",
-    description: "Update a template's name or canvas data",
+    description: "Update a template's name, canvas data, or HTML/CSS content. For HTML engine templates, pass html/css/frames. For Fabric.js, pass canvas/objects.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Template ID" },
         name: { type: "string", description: "New name" },
         canvas: { type: "object", description: "Full Fabric.js canvas JSON with objects and viewport" },
+        engine: { type: "string", enum: ["fabric", "html"], description: "Switch rendering engine" },
+        html: { type: "string", description: "HTML content for active frame (HTML engine)" },
+        css: { type: "string", description: "CSS styles for active frame (HTML engine)" },
+        frames: { type: "array", items: { type: "object" }, description: "Full frames array with html/css for each frame (HTML engine)" },
       },
       required: ["id"],
     },
@@ -2210,6 +2217,69 @@ const MCP_TOOLS = [
     description: "Get font metadata including variants, subsets, and CSS import URL",
     inputSchema: { type: "object", properties: { family: { type: "string" } }, required: ["family"] },
   },
+  // ── HTML Engine: Frame Management ──
+  {
+    name: "create_html_frame",
+    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. Use for multi-frame designs like Instagram carousels.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (must be engine='html')" },
+        name: { type: "string", description: "Frame name (e.g. 'Slide 1', 'IG Square')" },
+        width: { type: "number", description: "Frame width in px (default 1080). Common: 1080 (IG Square), 1920 (Banner)" },
+        height: { type: "number", description: "Frame height in px (default 1080). Common: 1080 (IG Square), 1920 (Story)" },
+        html: { type: "string", description: "HTML content inside the frame" },
+        css: { type: "string", description: "CSS styles for this frame" },
+        background: { type: "string", description: "Background color (default '#ffffff')" },
+        x: { type: "number", description: "X position on canvas (auto-placed if omitted)" },
+        y: { type: "number", description: "Y position on canvas (default 0)" },
+      },
+      required: ["templateId", "name"],
+    },
+  },
+  {
+    name: "update_html_frame",
+    description: "Update an HTML frame's content (HTML/CSS), dimensions, position, or background. Use to modify a specific frame in a multi-frame HTML template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to update" },
+        name: { type: "string", description: "New frame name" },
+        html: { type: "string", description: "New HTML content" },
+        css: { type: "string", description: "New CSS styles" },
+        width: { type: "number", description: "New width" },
+        height: { type: "number", description: "New height" },
+        x: { type: "number", description: "New X position" },
+        y: { type: "number", description: "New Y position" },
+        background: { type: "string", description: "New background color" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "delete_html_frame",
+    description: "Delete an HTML frame from a template. Cannot delete the last remaining frame.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to delete" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "get_html_frames",
+    description: "List all HTML frames in a template with their HTML/CSS content, dimensions, and positions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+      },
+      required: ["templateId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2410,6 +2480,23 @@ async function handleMethod(method, params, userId) {
         tplName, tplWidth, tplHeight,
         undefined, userId, params.workspaceId,
       );
+      // HTML engine support: set engine/html/css and create initial frame
+      if (params.engine === "html") {
+        tpl.engine = "html";
+        tpl.html = params.html || "";
+        tpl.css = params.css || "";
+        // Create a default frame with the template dimensions
+        const defaultFrame = {
+          id: `frame_${uuid().slice(0, 12)}`,
+          name: tplName,
+          x: 0, y: 0,
+          width: tplWidth, height: tplHeight,
+          html: params.html || "",
+          css: params.css || "",
+          background: "#ffffff",
+        };
+        tpl.frames = [defaultFrame];
+      }
       autoSnapshot(tpl.id, "create_template");
       return tpl;
     }
@@ -2417,6 +2504,14 @@ async function handleMethod(method, params, userId) {
       const updates = {};
       if (params.name !== undefined) updates.name = params.name;
       if (params.canvas !== undefined) updates.canvas = params.canvas;
+      // HTML engine support
+      if (params.engine !== undefined) updates.engine = params.engine;
+      if (params.html !== undefined) updates.html = params.html;
+      if (params.css !== undefined) updates.css = params.css;
+      if (params.frames !== undefined) {
+        const framesArr = typeof params.frames === "string" ? JSON.parse(params.frames) : params.frames;
+        updates.frames = framesArr;
+      }
       // Support raw objects array (simpler API for programmatic use)
       if (params.objects !== undefined) {
         const objects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
@@ -7761,6 +7856,109 @@ async function handleMethod(method, params, userId) {
         subsets: ["latin"],
         previewUrl: `https://fonts.google.com/specimen/${fontUrl}`,
         cssImport: `https://fonts.googleapis.com/css2?family=${fontUrl}:wght@400;700&display=swap`,
+      };
+    }
+
+    // ── HTML Engine: Frame Management ──
+    case "create_html_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") {
+        throw { code: -32602, message: "Template is not an HTML engine template. Use create_template with engine='html' first." };
+      }
+      // Ensure template is HTML engine
+      if (!tpl.engine) {
+        await templates.updateTemplate(params.templateId, { engine: "html", canvas: tpl.canvas, frames: tpl.frames || [] });
+        tpl.engine = "html";
+      }
+      const FRAME_GAP = 100;
+      const existingFrames = tpl.frames || [];
+      const lastFrame = existingFrames[existingFrames.length - 1];
+      const frameWidth = params.width || 1080;
+      const frameHeight = params.height || 1080;
+      const newX = params.x !== undefined ? params.x : (lastFrame ? lastFrame.x + lastFrame.width + FRAME_GAP : 0);
+      const newY = params.y !== undefined ? params.y : (lastFrame ? lastFrame.y : 0);
+      const frame = {
+        id: `frame_${uuid().slice(0, 12)}`,
+        name: params.name || `Frame ${existingFrames.length + 1}`,
+        x: newX, y: newY,
+        width: frameWidth, height: frameHeight,
+        html: params.html || "",
+        css: params.css || "",
+        background: params.background || "#ffffff",
+      };
+      if (!tpl.frames) tpl.frames = [];
+      tpl.frames.push(frame);
+      tpl.metadata.updatedAt = new Date().toISOString();
+      // Persist
+      await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames,
+        canvas: tpl.canvas,
+        html: tpl.html,
+        css: tpl.css,
+      });
+      autoSnapshot(params.templateId, "create_html_frame");
+      return frame;
+    }
+
+    case "update_html_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      // Apply updates
+      if (params.name !== undefined) frame.name = params.name;
+      if (params.html !== undefined) frame.html = params.html;
+      if (params.css !== undefined) frame.css = params.css;
+      if (params.width !== undefined) frame.width = params.width;
+      if (params.height !== undefined) frame.height = params.height;
+      if (params.x !== undefined) frame.x = params.x;
+      if (params.y !== undefined) frame.y = params.y;
+      if (params.background !== undefined) frame.background = params.background;
+      tpl.metadata.updatedAt = new Date().toISOString();
+      // Persist
+      await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames,
+        canvas: tpl.canvas,
+        html: tpl.html,
+        css: tpl.css,
+      });
+      autoSnapshot(params.templateId, "update_html_frame");
+      return frame;
+    }
+
+    case "delete_html_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frames = tpl.frames || [];
+      if (frames.length <= 1) {
+        throw { code: -32602, message: "Cannot delete the last frame. A template must have at least one frame." };
+      }
+      const idx = frames.findIndex(f => f.id === params.frameId);
+      if (idx === -1) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      frames.splice(idx, 1);
+      tpl.metadata.updatedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames,
+        canvas: tpl.canvas,
+        html: tpl.html,
+        css: tpl.css,
+      });
+      autoSnapshot(params.templateId, "delete_html_frame");
+      return { deleted: true, frameId: params.frameId, remainingFrames: frames.length };
+    }
+
+    case "get_html_frames": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frames = tpl.frames || [];
+      return {
+        frames: frames.map(f => ({
+          id: f.id, name: f.name,
+          x: f.x, y: f.y, width: f.width, height: f.height,
+          html: f.html, css: f.css, background: f.background,
+        })),
+        total: frames.length,
       };
     }
 
