@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixelForge UI - Glassmorphism</title>
+    <style>
+        :root {
+            --bg-color: #0d0d0d;
+            --topbar-bg: #1a1a1a;
+            --glass-bg: rgba(40, 40, 40, 0.3);
+            --glass-border: rgba(255, 255, 255, 0.12);
+            --glass-hover: rgba(255, 255, 255, 0.08);
+            --text-main: #ffffff;
+            --text-muted: #a0a0a0;
+            --accent: #18a0fb;
+            --grid-color: rgba(255, 255, 255, 0.04);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Top Bar (Fixed, Solid) --- */
+        .top-bar {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            height: 48px;
+            background-color: var(--topbar-bg);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 100;
+        }
+
+        .top-bar-left, .top-bar-center, .top-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .menu-items { display: flex; gap: 12px; }
+        .menu-item { 
+            font-size: 13px; 
+            color: var(--text-muted); 
+            cursor: pointer; 
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background 0.2s, color 0.2s;
+        }
+        .menu-item:hover { 
+            background: rgba(255,255,255,0.1); 
+            color: var(--text-main);
+        }
+
+        .logo { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px;}
+        .logo-icon { width: 16px; height: 16px; background: var(--accent); border-radius: 4px; }
+        
+        .project-title { font-size: 13px; color: var(--text-muted); }
+        .btn-share {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-share:hover { opacity: 0.8; }
+
+        /* --- Workspace & Grid --- */
+        .workspace {
+            position: absolute;
+            top: 48px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-size: 100px 100px;
+            background-image: 
+                linear-gradient(to right, var(--grid-color) 1px, transparent 1px), 
+                linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px);
+            background-position: center top;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1;
+        }
+
+        /* --- Mock Canvas Element --- */
+        .canvas-artboard {
+            width: 450px;
+            height: 600px;
+            background-color: #0f1115;
+            border: 1px solid rgba(255,255,255,0.1);
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .canvas-artboard h1 { font-size: 40px; text-align: center; line-height: 1.1; margin-bottom: 20px;}
+        .canvas-artboard .shapes { display: flex; gap: 10px; margin-top: 30px;}
+        .shape-1 { width: 50px; height: 50px; background: #00d2ff; border-radius: 50%; }
+        .shape-2 { width: 50px; height: 50px; background: #3a7bd5; clip-path: polygon(50% 0%, 0% 100%, 100% 100%); }
+
+        /* --- Glassmorphism Base Class --- */
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+            position: fixed;
+            z-index: 10;
+        }
+
+        /* --- Left Toolbar --- */
+        .toolbar-left {
+            top: 80px;
+            left: 20px;
+            width: 140px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .tool-btn {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tool-btn:hover { background: var(--glass-hover); color: var(--text-main); }
+        .tool-btn.active { background: rgba(255, 255, 255, 0.15); color: var(--text-main); font-weight: 500; }
+        .tool-shortcut { font-size: 11px; opacity: 0.5; }
+
+        /* --- Right Properties Panel --- */
+        .properties-right {
+            top: 80px;
+            right: 20px;
+            width: 260px;
+            bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        /* Hide scrollbar for right panel */
+        .properties-right::-webkit-scrollbar { display: none; }
+
+        .panel-section {
+            border-bottom: 1px solid var(--glass-border);
+            padding: 16px;
+        }
+        .panel-section:last-child { border-bottom: none; }
+
+        .section-header {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .input-box {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 6px 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .input-box:hover { border-color: rgba(255,255,255,0.2); }
+        .input-label { font-size: 11px; color: var(--text-muted); }
+        .input-value { font-size: 12px; color: var(--text-main); background: none; border: none; outline: none; width: 100%;}
+
+        /* --- Layers --- */
+        .layer-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+            cursor: pointer;
+            margin-bottom: 2px;
+        }
+        .layer-item:hover { background: var(--glass-hover); color: var(--text-main); }
+        .layer-item.selected { background: rgba(24, 160, 251, 0.2); color: var(--accent); }
+        .layer-left { display: flex; align-items: center; gap: 8px; }
+        .layer-visibility { cursor: pointer; opacity: 0.5; }
+        .layer-visibility:hover { opacity: 1; }
+
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <div class="logo">
+                <div class="logo-icon"></div> PixelForge
+            </div>
+            <div class="menu-items">
+                <div class="menu-item" onclick="alert('Menu File')">File</div>
+                <div class="menu-item">Edit</div>
+                <div class="menu-item">View</div>
+                <div class="menu-item">Object</div>
+                <div class="menu-item">Help</div>
+            </div>
+        </div>
+        <div class="top-bar-center">
+            <div class="project-title">Project: Brand Guidelines v3</div>
+        </div>
+        <div class="top-bar-right">
+            <button class="btn-share">Share</button>
+        </div>
+    </div>
+
+    <div class="workspace">
+        <div class="canvas-artboard">
+            <h1 style="color: white;">CREATIVE<br>WORKSHOP</h1>
+            <p style="color: #18a0fb; font-weight: bold;">OCT 26-28</p>
+            <div class="shapes">
+                <div class="shape-1"></div>
+                <div class="shape-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel toolbar-left">
+        <div class="tool-btn active" onclick="setActiveTool(this)">
+            <span>⬈ Selection</span> <span class="tool-shortcut">V</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>◰ Frame</span> <span class="tool-shortcut">F</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>◻ Shape</span> <span class="tool-shortcut">R</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>✒ Pen</span> <span class="tool-shortcut">P</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>T Text</span> <span class="tool-shortcut">T</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>🖌 Brush</span> <span class="tool-shortcut">B</span>
+        </div>
+        <div class="tool-btn" onclick="setActiveTool(this)">
+            <span>🔍 Zoom</span> <span class="tool-shortcut">Z</span>
+        </div>
+    </div>
+
+    <div class="glass-panel properties-right">
+        
+        <div class="panel-section">
+            <div class="section-header" onclick="toggleSection('props-content')">
+                <span>Properties</span> <span>⌄</span>
+            </div>
+            <div id="props-content">
+                <div class="input-box" style="margin-bottom: 12px;">
+                    <input type="text" class="input-value" value="Workshop Title">
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-header" onclick="toggleSection('dim-content')">
+                <span>Dimensions</span> <span>⌄</span>
+            </div>
+            <div id="dim-content">
+                <div class="input-group">
+                    <div class="input-box"><span class="input-label">W</span><input type="text" class="input-value" value="640"></div>
+                    <div class="input-box"><span class="input-label">H</span><input type="text" class="input-value" value="98"></div>
+                </div>
+                <div class="input-group">
+                    <div class="input-box"><span class="input-label">X</span><input type="text" class="input-value" value="450"></div>
+                    <div class="input-box"><span class="input-label">Y</span><input type="text" class="input-value" value="320"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-header" onclick="toggleSection('layers-content')">
+                <span>Layers</span> <span>⌄</span>
+            </div>
+            <div id="layers-content">
+                <div class="layer-item" onclick="selectLayer(this)">
+                    <div class="layer-left"><span>◰</span> Page 1</div>
+                </div>
+                <div class="layer-item selected" style="padding-left: 20px;" onclick="selectLayer(this)">
+                    <div class="layer-left"><span>T</span> Workshop Title</div>
+                    <div class="layer-visibility" onclick="toggleVisibility(event, this)">👁</div>
+                </div>
+                <div class="layer-item" style="padding-left: 20px;" onclick="selectLayer(this)">
+                    <div class="layer-left"><span>⊞</span> Graphic Elements</div>
+                    <div class="layer-visibility" onclick="toggleVisibility(event, this)">👁</div>
+                </div>
+                <div class="layer-item" style="padding-left: 20px;" onclick="selectLayer(this)">
+                    <div class="layer-left"><span>⊞</span> Background Group</div>
+                    <div class="layer-visibility" onclick="toggleVisibility(event, this)">👁</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Funcionalidad para activar herramientas a la izquierda
+        function setActiveTool(element) {
+            document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+            element.classList.add('active');
+        }
+
+        // Funcionalidad para contraer/expandir secciones a la derecha
+        function toggleSection(id) {
+            const el = document.getElementById(id);
+            if (el.style.display === 'none') {
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
+        // Funcionalidad para seleccionar capas
+        function selectLayer(element) {
+            document.querySelectorAll('.layer-item').forEach(item => item.classList.remove('selected'));
+            element.classList.add('selected');
+        }
+
+        // Funcionalidad para alternar el ojito de visibilidad
+        function toggleVisibility(event, element) {
+            event.stopPropagation(); // Evita que se seleccione la capa al clickear el ojito
+            if (element.innerText === '👁') {
+                element.innerText = '—';
+                element.style.opacity = '0.3';
+            } else {
+                element.innerText = '👁';
+                element.style.opacity = '0.5';
+            }
+        }
+    </script>
+</body>
+</html>

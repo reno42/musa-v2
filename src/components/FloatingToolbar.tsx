@@ -117,6 +117,7 @@ export function FloatingToolbar({
       {toolBtn("rect", <IconRectangle size={16} />, "R", "Rectangle — click-drag to draw")}
       {toolBtn("circle", <IconCircleOutline size={16} />, "O", "Circle — click-drag to draw")}
       {toolBtn("text", <IconType size={16} />, "T", "Text — click to place text block")}
+      {toolBtn("pen", <IconPen size={16} />, "P", "Pen — click to add points, Enter to finalize")}
 
       {divider}
 

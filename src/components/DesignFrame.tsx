@@ -36,6 +36,11 @@ interface DesignFrameProps {
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
   onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
+  onDrawShape?: (type: "rect" | "circle", x: number, y: number, w: number, h: number) => void;
+  onTextChange?: (layerId: string, newText: string) => void;
+  onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }) => void;
+  onElementDelete?: (layerId: string) => void;
+  onElementDuplicate?: (layerId: string) => void;
 }
 
 const SEL = "#3B82F6";
@@ -55,7 +60,7 @@ const TRACKED_PROPS = [
 
 export function DesignFrame({
   frame, isActive, onActivate, onElementSelect, onCssChange, onHtmlChange,
-  activeTool, onAddPrimitive,
+  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onElementDelete, onElementDuplicate,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -68,6 +73,17 @@ export function DesignFrame({
   activeToolRef.current = activeTool;
   const onAddPrimitiveRef = useRef(onAddPrimitive);
   onAddPrimitiveRef.current = onAddPrimitive;
+  const onDrawShapeRef = useRef(onDrawShape);
+  onDrawShapeRef.current = onDrawShape;
+  const onTextChangeRef = useRef(onTextChange);
+  onTextChangeRef.current = onTextChange;
+  const onAddPenPathRef = useRef(onAddPenPath);
+  onAddPenPathRef.current = onAddPenPath;
+  const onElementDeleteRef = useRef(onElementDelete);
+  onElementDeleteRef.current = onElementDelete;
+  const onElementDuplicateRef = useRef(onElementDuplicate);
+  onElementDuplicateRef.current = onElementDuplicate;
+  const editingTextRef = useRef<Element | null>(null);
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -178,12 +194,13 @@ export function DesignFrame({
     });
     overlay.appendChild(box);
 
-    // Corner handles
-    const corners: [number, number, string][] = [
-      [0, 0, "nwse-resize"], [1, 0, "nesw-resize"],
-      [0, 1, "nesw-resize"], [1, 1, "nwse-resize"],
+    // Corner + midpoint handles (8 total)
+    const handles: [number, number, string][] = [
+      [0, 0, "nwse-resize"], [0.5, 0, "ns-resize"], [1, 0, "nesw-resize"],
+      [0, 0.5, "ew-resize"], [1, 0.5, "ew-resize"],
+      [0, 1, "nesw-resize"], [0.5, 1, "ns-resize"], [1, 1, "nwse-resize"],
     ];
-    for (const [cx, cy, cursor] of corners) {
+    for (const [cx, cy, cursor] of handles) {
       const handle = document.createElement("div");
       Object.assign(handle.style, {
         position: "absolute",
@@ -202,35 +219,189 @@ export function DesignFrame({
     }
   }
 
-  function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
-    // Click to add primitive (when rect/circle/text tool is active)
-    content.addEventListener("click", (e: Event) => {
-      const me = e as MouseEvent;
-      const target = me.target as Element;
-      // Only trigger when clicking directly on the content area (not on existing elements)
-      if (target !== content) return;
-      if (!activeToolRef.current || !["rect", "circle", "text"].includes(activeToolRef.current)) return;
-      e.stopPropagation();
-      const rect = content.getBoundingClientRect();
-      const clickX = me.clientX - rect.left;
-      const clickY = me.clientY - rect.top;
-      onAddPrimitiveRef.current?.(activeToolRef.current as "rect" | "circle" | "text", Math.round(clickX), Math.round(clickY));
-    });
+  const penPointsRef = useRef<{x: number; y: number}[]>([]);
+  const penSvgRef = useRef<SVGElement | null>(null);
 
-    // Click to select
+  function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
+    const DRAG_THRESHOLD = 4;
+
+    // ── Unified mousedown handler ──
     content.addEventListener("mousedown", (e: Event) => {
       const me = e as MouseEvent;
-      const target = me.target as Element;
+      if (me.button !== 0) return;
+      const target = me.target as HTMLElement;
+      const tool = activeToolRef.current;
+      const rect = content.getBoundingClientRect();
+      const mx = me.clientX - rect.left;
+      const my = me.clientY - rect.top;
+
+      // ── Drawing tools: rect / circle → drag-to-draw ──
+      if (tool === "rect" || tool === "circle") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const startX = mx;
+        const startY = my;
+        let drawing = false;
+
+        // Create preview element
+        const preview = document.createElement("div");
+        Object.assign(preview.style, {
+          position: "absolute",
+          left: `${startX}px`, top: `${startY}px`,
+          width: "0px", height: "0px",
+          border: `2px dashed ${tool === "rect" ? "#3B82F6" : "#EF4444"}`,
+          background: tool === "rect" ? "rgba(59,130,246,0.1)" : "rgba(239,68,68,0.1)",
+          borderRadius: tool === "circle" ? "50%" : "4px",
+          pointerEvents: "none",
+          boxSizing: "border-box",
+          zIndex: "9998",
+        });
+        content.appendChild(preview);
+
+        const onMove = (ev: MouseEvent) => {
+          drawing = true;
+          const cx = ev.clientX - rect.left;
+          const cy = ev.clientY - rect.top;
+          let w = cx - startX;
+          let h = cy - startY;
+
+          // Shift constrains to square/circle
+          if (ev.shiftKey) {
+            const size = Math.max(Math.abs(w), Math.abs(h));
+            w = w < 0 ? -size : size;
+            h = h < 0 ? -size : size;
+          }
+
+          const x = w < 0 ? startX + w : startX;
+          const y = h < 0 ? startY + h : startY;
+          const absW = Math.abs(w);
+          const absH = Math.abs(h);
+
+          preview.style.left = `${x}px`;
+          preview.style.top = `${y}px`;
+          preview.style.width = `${absW}px`;
+          preview.style.height = `${absH}px`;
+        };
+
+        const onUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          preview.remove();
+
+          if (!drawing) {
+            // Short click → place default-sized primitive
+            onAddPrimitiveRef.current?.(tool, Math.round(startX), Math.round(startY));
+            return;
+          }
+
+          const cx = ev.clientX - rect.left;
+          const cy = ev.clientY - rect.top;
+          let w = cx - startX;
+          let h = cy - startY;
+          if (ev.shiftKey) {
+            const size = Math.max(Math.abs(w), Math.abs(h));
+            w = w < 0 ? -size : size;
+            h = h < 0 ? -size : size;
+          }
+          const finalX = Math.round(w < 0 ? startX + w : startX);
+          const finalY = Math.round(h < 0 ? startY + h : startY);
+          const finalW = Math.max(10, Math.round(Math.abs(w)));
+          const finalH = Math.max(10, Math.round(Math.abs(h)));
+
+          onDrawShapeRef.current?.(tool, finalX, finalY, finalW, finalH);
+        };
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+        return;
+      }
+
+      // ── Pen tool: click to add points ──
+      if (tool === "pen") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const point = { x: Math.round(mx), y: Math.round(my) };
+        penPointsRef.current.push(point);
+
+        // Draw/update SVG polyline in shadow DOM
+        if (!penSvgRef.current) {
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          Object.assign(svg.style, {
+            position: "absolute", top: "0", left: "0",
+            width: "100%", height: "100%",
+            pointerEvents: "none", zIndex: "9998",
+            overflow: "visible",
+          });
+          svg.setAttribute("width", "100%");
+          svg.setAttribute("height", "100%");
+          content.appendChild(svg);
+          penSvgRef.current = svg;
+        }
+        const svg = penSvgRef.current;
+        // Clear and redraw
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        const pts = penPointsRef.current;
+
+        // Draw polyline
+        if (pts.length > 1) {
+          const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+          polyline.setAttribute("points", pts.map(p => `${p.x},${p.y}`).join(" "));
+          polyline.setAttribute("fill", "none");
+          polyline.setAttribute("stroke", "#8B5CF6");
+          polyline.setAttribute("stroke-width", "2");
+          polyline.setAttribute("stroke-dasharray", "6,3");
+          svg.appendChild(polyline);
+        }
+
+        // Draw point dots
+        for (const p of pts) {
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", `${p.x}`);
+          circle.setAttribute("cy", `${p.y}`);
+          circle.setAttribute("r", "4");
+          circle.setAttribute("fill", "#8B5CF6");
+          circle.setAttribute("stroke", "#fff");
+          circle.setAttribute("stroke-width", "1.5");
+          svg.appendChild(circle);
+        }
+        return;
+      }
+
+      // ── Text tool: click to place text ──
+      if (tool === "text") {
+        if (target === content) {
+          e.stopPropagation();
+          onAddPrimitiveRef.current?.("text", Math.round(mx), Math.round(my));
+          return;
+        }
+      }
+
+      // ── Select tool (default) ──
       if (!target || target === content) {
+        // Click on empty area: if pen is active with points, finalize path
+        if (penPointsRef.current.length >= 2) {
+          finalizePenPath(content);
+        }
         selectedRef.current = null;
         clearOverlay();
         onElementSelect?.(null);
         return;
       }
+
       e.stopPropagation();
+      onActivate(frame.id);
+
+      // Finalize pen path if active
+      if (penPointsRef.current.length >= 2) {
+        finalizePenPath(content);
+      }
+
       selectedRef.current = target;
       refreshOverlay(target);
-      onActivate(frame.id);
 
       const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(target);
       const props: Record<string, string> = {};
@@ -243,38 +414,28 @@ export function DesignFrame({
         computedStyles: props,
         frameId: frame.id,
       });
-    });
 
-    // Drag to move
-    content.addEventListener("mousedown", (e: Event) => {
-      const me = e as MouseEvent;
-      const target = me.target as HTMLElement;
-      if (!target || target === content || !selectedRef.current) return;
-
-      const startX = me.clientX;
-      const startY = me.clientY;
-      const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(target);
+      // ── Drag to move ──
+      const startDragX = me.clientX;
+      const startDragY = me.clientY;
       const origLeft = parseInt(computed.left) || target.offsetLeft || 0;
       const origTop = parseInt(computed.top) || target.offsetTop || 0;
-      const origPos = computed.position;
-
       let moved = false;
 
-      const onMove = (ev: MouseEvent) => {
+      const onDragMove = (ev: MouseEvent) => {
         moved = true;
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
+        const dx = ev.clientX - startDragX;
+        const dy = ev.clientY - startDragY;
         target.style.position = "absolute";
         target.style.left = `${origLeft + dx}px`;
         target.style.top = `${origTop + dy}px`;
         refreshOverlay(target);
       };
 
-      const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+      const onDragUp = () => {
+        document.removeEventListener("mousemove", onDragMove);
+        document.removeEventListener("mouseup", onDragUp);
         if (!moved) return;
-        // DOM → Code sync
         syncLockRef.current = true;
         const sel = getSelector(target);
         const updated = updateCssRule(cssRef.current, sel, {
@@ -286,26 +447,150 @@ export function DesignFrame({
         onCssChange?.(frame.id, updated);
       };
 
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      document.addEventListener("mousemove", onDragMove);
+      document.addEventListener("mouseup", onDragUp);
+    });
+
+    // ── Double-click: inline text editing ──
+    content.addEventListener("dblclick", (e: Event) => {
+      const me = e as MouseEvent;
+      const target = me.target as HTMLElement;
+      if (!target || target === content) return;
+      if (editingTextRef.current) return; // already editing
+
+      // Only allow editing on text-like elements
+      const tag = target.tagName.toLowerCase();
+      const isTextLike = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "a", "li", "div", "label", "button", "em", "strong", "small", "b", "i"].includes(tag);
+      if (!isTextLike) return;
+
+      // Check if element has text content (not just child elements)
+      if (target.children.length > 2) return;
+
+      e.stopPropagation();
+      e.preventDefault();
+      editingTextRef.current = target;
+
+      target.setAttribute("contenteditable", "true");
+      target.style.outline = `2px solid ${SEL}`;
+      target.style.outlineOffset = "2px";
+      target.style.cursor = "text";
+      target.focus();
+
+      const onBlur = () => {
+        target.removeEventListener("blur", onBlur);
+        target.removeAttribute("contenteditable");
+        target.style.outline = "";
+        target.style.outlineOffset = "";
+        target.style.cursor = "";
+        editingTextRef.current = null;
+
+        const layerId = target.getAttribute("data-layer-id");
+        if (layerId) {
+          const newText = target.textContent || "";
+          onTextChangeRef.current?.(layerId, newText);
+        }
+      };
+
+      target.addEventListener("blur", onBlur);
+
+      // Prevent Enter from bubbling to keyboard shortcuts
+      target.addEventListener("keydown", (ke: Event) => {
+        const kbe = ke as KeyboardEvent;
+        if (kbe.key === "Escape") {
+          target.blur();
+        }
+        kbe.stopPropagation();
+      });
+    });
+
+    // ── Finalize pen path on Enter key (within shadow host context) ──
+    shadow.host.addEventListener("keydown", (e: Event) => {
+      const kbe = e as KeyboardEvent;
+      if (kbe.key === "Enter" && penPointsRef.current.length >= 2) {
+        finalizePenPath(content);
+      }
+      if (kbe.key === "Escape" && penPointsRef.current.length > 0) {
+        // Cancel pen path
+        penPointsRef.current = [];
+        if (penSvgRef.current) {
+          penSvgRef.current.remove();
+          penSvgRef.current = null;
+        }
+      }
     });
   }
 
-  function startResize(el: Element, startEvent: MouseEvent, _handle: string, ox: number, oy: number, ow: number, oh: number) {
+  function finalizePenPath(content: HTMLElement) {
+    const pts = penPointsRef.current;
+    if (pts.length < 2) return;
+
+    // Build SVG path data
+    let pathData = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      pathData += ` L ${pts[i].x} ${pts[i].y}`;
+    }
+
+    // Calculate bounding box
+    const xs = pts.map(p => p.x);
+    const ys = pts.map(p => p.y);
+    const bounds = {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+    };
+
+    onAddPenPathRef.current?.(pathData, bounds);
+
+    // Clean up SVG preview
+    penPointsRef.current = [];
+    if (penSvgRef.current) {
+      penSvgRef.current.remove();
+      penSvgRef.current = null;
+    }
+  }
+
+  function startResize(el: Element, startEvent: MouseEvent, handle: string, ox: number, oy: number, ow: number, oh: number) {
     const startX = startEvent.clientX;
     const startY = startEvent.clientY;
     const target = el as HTMLElement;
 
+    // Determine which edges this handle affects
+    const affectsLeft = handle.includes("w");
+    const affectsRight = handle.includes("e");
+    const affectsTop = handle.includes("n");
+    const affectsBottom = handle.includes("s");
+
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
-      let newW = ow, newH = oh;
-      if (_handle.includes("e") || _handle === "nwse-resize" && ox === 0) newW = Math.max(20, ow + dx);
-      if (_handle.includes("w")) newW = Math.max(20, ow - dx);
-      if (_handle.includes("s") || _handle === "nwse-resize") newH = Math.max(20, oh + dy);
-      if (_handle.includes("n") || _handle === "nesw-resize") newH = Math.max(20, oh - dy);
-      target.style.width = `${newW}px`;
-      target.style.height = `${newH}px`;
+
+      let newX = ox, newY = oy, newW = ow, newH = oh;
+
+      if (affectsLeft) {
+        newX = ox + dx;
+        newW = Math.max(10, ow - dx);
+        if (newW === 10) newX = ox + ow - 10;
+      }
+      if (affectsRight) {
+        newW = Math.max(10, ow + dx);
+      }
+      if (affectsTop) {
+        newY = oy + dy;
+        newH = Math.max(10, oh - dy);
+        if (newH === 10) newY = oy + oh - 10;
+      }
+      if (affectsBottom) {
+        newH = Math.max(10, oh + dy);
+      }
+
+      target.style.width = `${Math.round(newW)}px`;
+      target.style.height = `${Math.round(newH)}px`;
+      if (affectsLeft || affectsTop) {
+        target.style.position = "absolute";
+        if (affectsLeft) target.style.left = `${Math.round(newX)}px`;
+        if (affectsTop) target.style.top = `${Math.round(newY)}px`;
+      }
       refreshOverlay(el);
     };
 
@@ -314,10 +599,16 @@ export function DesignFrame({
       document.removeEventListener("mouseup", onUp);
       syncLockRef.current = true;
       const sel = getSelector(target);
-      const updated = updateCssRule(cssRef.current, sel, {
+      const props: Record<string, string> = {
         width: target.style.width,
         height: target.style.height,
-      });
+      };
+      if (affectsLeft || affectsTop) {
+        props.position = "absolute";
+        if (affectsLeft) props.left = target.style.left;
+        if (affectsTop) props.top = target.style.top;
+      }
+      const updated = updateCssRule(cssRef.current, sel, props);
       cssRef.current = updated;
       onCssChange?.(frame.id, updated);
     };
@@ -336,7 +627,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "text"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "text", "pen"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Label above frame */}

@@ -1,9 +1,10 @@
-# 🎯 Futuraria Design — MCP-First Roadmap
+# 🎯 Futuraria Design — Roadmap
 
-> **Versión:** 1.0 | **Fecha:** 2026-06-07  
+> **Versión:** 2.0 | **Fecha:** 2026-06-18  
 > **Preparado por:** Lara ✨ | Design Engineer, Futuraria  
 > **Investigación:** 292 funcionalidades documentadas (Figma 203 + Paper/Notion 89)  
 > **Principio:** Todo vía MCP tools, todo en free tiers (GitHub, Netlify, Supabase)  
+> **⚠️ ACTUALIZACIÓN 18 JUN:** Fase 0 activa — Migración HTML/CSS (ver `docs/HTML_CSS_MIGRATION_ANALYSIS.md`)  
 
 ---
 

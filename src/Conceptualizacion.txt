@@ -1,0 +1,42 @@
+Me gusta lo que has ido avanzando, pero ahorita parece más un "Visor de código a web" en lugar de un figma que acepta IAs y humanos diseñando
+
+Al entrar una de las cosas que más noté es que tu lienzo para mostrar el diseño, parece infinito osea responsive, y me gustó porque tiene sentido si lo vemos como que el frame es un corte de un lienzo infinito background con el color que pida el humano
+
+Ahora como humano, lo veo, lo entiendo, pero en verdad no es como trabajamos. Los humanos tenemos el lienzo infinito y dentro de eso ponemos los frames que queremos y empezamos a diseñar en base a esa medida.
+
+Lo digo porque algo que note es que tus textos boton y todo estaban ahí, pero su tamaño no encabaja con el frame, osea el frame tenía las proporciones que solicité y bacán yo puedo hacer zoom in o out, pero justamente el texto tenia un tamaño que no era proporcional a ese frame y tenia que yo hacer zoom in y out para ver maso por donde lo habias puesto.
+
+Ahora tenemos que pensar que estas herramientas vienen desde la lógica de un humanoo, así que su UI debe responder a eso porque en la práctica coordinarás con humanos siempre
+
+El humano cuando diseña, tiene su mesa, en su mesa coloca papeles o cartulinas y los diseños van en sus papeles o cartulinas.
+
+Cuando entra a un programa de diseño, crea un nuevo archivo, este archivo es como su mesa infinita.
+
+En una mesa real solo puedes poner una cantidad limitada de papeles o cartulinas, puedes elegir el tamaño ancho y alto que quieras pero siempre limitado a tu mesa.
+
+En algo digital tu mesa es infinita, asi que puedes crear todos los papeles o cartulinas que quieras y del tamaño que quieras.
+
+Lo que necesito es que este editor tenga esa lógica que estoy describiendo entonces, la IA diseña con código y si yo le pido un carrusel para instagram, entonces sabe que debe abrir su mesa infinita y crear las cartulinas o papeles que tengan tamaño 1080*1080 cada una y sabe que debe ponerlas una a la derecha de la otra.
+
+El diseño va dentro de cada hoja, y como solo puedo diseñar dentro de mi hoja, entonces ahí es donde la IA dice ok las medidas de la imagen son estas y la tipografia y todo lo que ponga tambien deben ser proporcionales y entrar en este formato
+
+
+Lo que corregiria a tu modelo mental de la arquitectura, es el tema del frame strip thumbnails.
+
+Continuemos con el modelo mental
+
+Sobre la mesa, yo suelo tener mis herramientas, lapiceros, estilografos, reglas, tijeras, pinceles, pinturas de colores.
+
+En digital las herramientas suelen venir como menus con botones, seleccionar es como yo coger el papel con la mano, que hago? muevo el papel, puedo hacer CRUD sobre el papel, puedo moverla en la mesa libremente para aislarla o ponerla al lado de otro papel y así ir armando mi carrusel
+
+En digital la mano se representa con la funcionalidad de la flecha para seleccionar
+
+Luego tengo la herramienta mano que me permite moverme a través de la mesa infinita sin mover ningun archivo.
+
+Entonces lo que necesitamos es poder tener en el editor, los botones con las herramientas.
+
+Las herramientas abren dos posibilidades, los menus de herramientas y los menus de herramientas contextuales
+
+Hay un detalle, es que tú pones agregar h1, h2, p, y para un humano es solo agregar un bloque de texto, ya si quiere le pone la etiqueta de h1 desde el menu contextual que aparece cuando seleccionas un bloque de texto. El +btn nisiquiera deberia existir, para un humano es agregar un bloque tipo figura de cuadrado, si quiere le redondea o no los bordes o le pone outline o cambia de color y luego decide si va a ser boton o solo una pastilla decorativa o que cosa, pero entiendo que el tag es importante cuando hablamos de web, entonces el problema no es que estes creando herramientas que no sirvan, ni que el humano no quiera, sino que debe haber una forma de que a ciertas cosas le podamos poner etiquetas, esas cosas pueden ser un objeto unico o una agrupacion de objetos y asi cada vez que algo tenga esa etiqueta automaticamente obtiene todas las caracteristicas de ese tag, como pasaria en webflow por ejemplo
+
+

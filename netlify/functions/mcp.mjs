@@ -2316,6 +2316,91 @@ const MCP_TOOLS = [
       required: ["templateId"],
     },
   },
+  // ── Phase C: Drawing Tools ──
+  {
+    name: "draw_shape",
+    description: "Draw a rectangle or circle shape with exact dimensions at a specific position. Creates a styled div element with the given dimensions, color and border-radius.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to draw in" },
+        type: { type: "string", enum: ["rect", "circle"], description: "Shape type" },
+        x: { type: "number", description: "X position" },
+        y: { type: "number", description: "Y position" },
+        width: { type: "number", description: "Shape width" },
+        height: { type: "number", description: "Shape height" },
+        color: { type: "string", description: "Background color (default #3B82F6 for rect, #EF4444 for circle)" },
+        borderRadius: { type: "string", description: "Border radius override (e.g. '12px')" },
+      },
+      required: ["templateId", "frameId", "type", "x", "y", "width", "height"],
+    },
+  },
+  {
+    name: "draw_path",
+    description: "Create an SVG path element (pen/line drawing). Accepts SVG path data string and bounding box dimensions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to draw in" },
+        pathData: { type: "string", description: "SVG path data (e.g. 'M 10 10 L 50 50 L 90 10')" },
+        x: { type: "number", description: "X position of bounding box" },
+        y: { type: "number", description: "Y position of bounding box" },
+        width: { type: "number", description: "Width of bounding box" },
+        height: { type: "number", description: "Height of bounding box" },
+        stroke: { type: "string", description: "Stroke color (default #8B5CF6)" },
+        strokeWidth: { type: "number", description: "Stroke width (default 2)" },
+      },
+      required: ["templateId", "frameId", "pathData", "x", "y", "width", "height"],
+    },
+  },
+  {
+    name: "transform_element",
+    description: "Transform (resize/reposition) an existing element by its data-layer-id. Updates CSS properties for position, width, height, and optionally rotation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        elementId: { type: "string", description: "Element data-layer-id" },
+        x: { type: "number", description: "New X position" },
+        y: { type: "number", description: "New Y position" },
+        width: { type: "number", description: "New width" },
+        height: { type: "number", description: "New height" },
+        rotation: { type: "number", description: "Rotation angle in degrees" },
+      },
+      required: ["templateId", "frameId", "elementId"],
+    },
+  },
+  {
+    name: "group_elements",
+    description: "Group multiple elements inside a wrapper div. The wrapper gets a new data-layer-id and the children keep their own ids.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        elementIds: { type: "array", items: { type: "string" }, description: "Array of element data-layer-ids to group" },
+        groupName: { type: "string", description: "Optional name/class for the group wrapper" },
+      },
+      required: ["templateId", "frameId", "elementIds"],
+    },
+  },
+  {
+    name: "align_elements",
+    description: "Align multiple elements along an axis. Supports left/center/right (horizontal) and top/middle/bottom (vertical) alignment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        elementIds: { type: "array", items: { type: "string" }, description: "Array of element data-layer-ids to align" },
+        align: { type: "string", enum: ["left", "center", "right", "top", "middle", "bottom"], description: "Alignment axis" },
+      },
+      required: ["templateId", "frameId", "elementIds", "align"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -8111,6 +8196,184 @@ async function handleMethod(method, params, userId) {
         })),
         total: frames.length,
       };
+    }
+
+    // ── Phase C: draw_shape ──
+    case "draw_shape": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerId = `el_${Date.now().toString(36)}`;
+      const { x, y, width, height, type } = params;
+      const color = params.color || (type === "rect" ? "#3B82F6" : "#EF4444");
+      const br = params.borderRadius || (type === "circle" ? "50%" : "8px");
+      const elHtml = `<div data-layer-id="${layerId}"></div>`;
+      const cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      frame.html = (frame.html || "") + "\n" + elHtml;
+      frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type, x, y, width, height };
+    }
+
+    // ── Phase C: draw_path ──
+    case "draw_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerId = `el_${Date.now().toString(36)}`;
+      const { x, y, width, height, pathData } = params;
+      const stroke = params.stroke || "#8B5CF6";
+      const strokeWidth = params.strokeWidth || 2;
+      const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(width, 1)} ${Math.max(height, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;overflow:visible;"><path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${Math.max(width, 1)}px;\n  height: ${Math.max(height, 1)}px;\n  overflow: visible;\n}`;
+      frame.html = (frame.html || "") + "\n" + svgHtml;
+      frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type: "path" };
+    }
+
+    // ── Phase C: transform_element ──
+    case "transform_element": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const selector = `[data-layer-id="${params.elementId}"]`;
+      const cssProps = {};
+      if (params.x !== undefined) cssProps.left = `${params.x}px`;
+      if (params.y !== undefined) cssProps.top = `${params.y}px`;
+      if (params.width !== undefined) cssProps.width = `${params.width}px`;
+      if (params.height !== undefined) cssProps.height = `${params.height}px`;
+      if (params.rotation !== undefined) cssProps.transform = `rotate(${params.rotation}deg)`;
+      cssProps.position = "absolute";
+
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+      const ruleMatch = ruleRe.exec(frame.css || "");
+      if (ruleMatch) {
+        let decl = ruleMatch[2];
+        for (const [prop, value] of Object.entries(cssProps)) {
+          const propRe = new RegExp(`${prop}\\s*:[^;]*;?`);
+          if (propRe.test(decl)) {
+            decl = decl.replace(propRe, `${prop}: ${value};`);
+          } else {
+            decl = decl.trimEnd() + `\n  ${prop}: ${value};\n`;
+          }
+        }
+        frame.css = frame.css.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
+      } else {
+        const rule = `\n${selector} {\n${Object.entries(cssProps).map(([k, v]) => `  ${k}: ${v};`).join("\n")}\n}`;
+        frame.css = (frame.css || "") + rule;
+      }
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, elementId: params.elementId, transforms: cssProps };
+    }
+
+    // ── Phase C: group_elements ──
+    case "group_elements": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const groupId = `el_${Date.now().toString(36)}`;
+      let html = frame.html || "";
+      const childHtmls = [];
+      for (const elId of params.elementIds) {
+        const elRe = new RegExp(`(<[^>]*data-layer-id="${elId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${elId}"[^>]*\\s*\\/?>)`, "");
+        const match = elRe.exec(html);
+        if (match) {
+          childHtmls.push(match[1]);
+          html = html.replace(match[1], "");
+        }
+      }
+      if (childHtmls.length === 0) throw { code: -32000, message: "No matching elements found" };
+      const wrapperHtml = `<div data-layer-id="${groupId}"${params.groupName ? ` class="${params.groupName}"` : ""}>${childHtmls.join("")}</div>`;
+      frame.html = html + "\n" + wrapperHtml;
+      frame.css = (frame.css || "") + `\n[data-layer-id="${groupId}"] {\n  position: relative;\n  display: flex;\n}\n`;
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, groupId, childrenCount: childHtmls.length };
+    }
+
+    // ── Phase C: align_elements ──
+    case "align_elements": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const { align, elementIds } = params;
+      const elementData = [];
+      for (const elId of elementIds) {
+        const selector = `[data-layer-id="${elId}"]`;
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const ruleRe = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`);
+        const match = ruleRe.exec(frame.css || "");
+        if (match) {
+          const decl = match[1];
+          const left = parseInt(/left:\s*(\d+)/.exec(decl)?.[1] || "0");
+          const top = parseInt(/top:\s*(\d+)/.exec(decl)?.[1] || "0");
+          const width = parseInt(/width:\s*(\d+)/.exec(decl)?.[1] || "0");
+          const height = parseInt(/height:\s*(\d+)/.exec(decl)?.[1] || "0");
+          elementData.push({ id: elId, left, top, width, height });
+        }
+      }
+      if (elementData.length < 2) throw { code: -32000, message: "Need at least 2 elements to align" };
+
+      let alignValue;
+      if (["left", "center", "right"].includes(align)) {
+        if (align === "left") alignValue = Math.min(...elementData.map(e => e.left));
+        else if (align === "right") alignValue = Math.max(...elementData.map(e => e.left + e.width));
+        else alignValue = elementData.reduce((sum, e) => sum + e.left + e.width / 2, 0) / elementData.length;
+      } else {
+        if (align === "top") alignValue = Math.min(...elementData.map(e => e.top));
+        else if (align === "bottom") alignValue = Math.max(...elementData.map(e => e.top + e.height));
+        else alignValue = elementData.reduce((sum, e) => sum + e.top + e.height / 2, 0) / elementData.length;
+      }
+
+      for (const el of elementData) {
+        const selector = `[data-layer-id="${el.id}"]`;
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+        const ruleMatch = ruleRe.exec(frame.css);
+        if (!ruleMatch) continue;
+        let decl = ruleMatch[2];
+        let prop, value;
+        if (["left", "center", "right"].includes(align)) {
+          prop = "left";
+          value = align === "left" ? alignValue : align === "right" ? alignValue - el.width : Math.round(alignValue - el.width / 2);
+        } else {
+          prop = "top";
+          value = align === "top" ? alignValue : align === "bottom" ? alignValue - el.height : Math.round(alignValue - el.height / 2);
+        }
+        const propRe = new RegExp(`${prop}\\s*:[^;]*;?`);
+        if (propRe.test(decl)) {
+          decl = decl.replace(propRe, `${prop}: ${value}px;`);
+        } else {
+          decl = decl.trimEnd() + `\n  ${prop}: ${value}px;\n`;
+        }
+        frame.css = frame.css.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
+      }
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, align, elementsAligned: elementData.length };
     }
 
     default:

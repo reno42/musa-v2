@@ -25,6 +25,11 @@ interface InfiniteHtmlCanvasProps {
   onFrameCssChange?: (frameId: string, newCss: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
   onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
+  onDrawShape?: (type: "rect" | "circle", x: number, y: number, w: number, h: number) => void;
+  onTextChange?: (layerId: string, newText: string) => void;
+  onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }) => void;
+  onElementDelete?: (layerId: string) => void;
+  onElementDuplicate?: (layerId: string) => void;
 }
 
 const CANVAS_BG = "#1a1a2e";
@@ -35,7 +40,7 @@ export function InfiniteHtmlCanvas({
   frames, selectedFrameId, activeTool, zoom,
   onSelectFrame, onZoomChange, onFrameMove,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
-  onAddPrimitive,
+  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onElementDelete, onElementDuplicate,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -83,7 +88,7 @@ export function InfiniteHtmlCanvas({
       onElementSelect?.(null);
     }
     // Primitive tools: don't deselect the frame when clicking canvas background
-    if (["rect", "circle", "text"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
+    if (["rect", "circle", "text", "pen"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
       // Keep frame selected so primitive can be added
     }
   }, [activeTool, onSelectFrame, onElementSelect]);
@@ -198,6 +203,11 @@ export function InfiniteHtmlCanvas({
               onHtmlChange={onFrameHtmlChange}
               activeTool={activeTool}
               onAddPrimitive={onAddPrimitive}
+              onDrawShape={onDrawShape}
+              onTextChange={onTextChange}
+              onAddPenPath={onAddPenPath}
+              onElementDelete={onElementDelete}
+              onElementDuplicate={onElementDuplicate}
             />
           </div>
         ))}

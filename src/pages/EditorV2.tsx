@@ -431,6 +431,120 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setActiveTool("select"); // Switch back to select after placing
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
+  // ── Phase C: Draw shape with exact dimensions (drag-to-draw) ──
+  const handleDrawShape = useCallback((type: "rect" | "circle", x: number, y: number, w: number, h: number) => {
+    if (!selectedFrameId) return;
+    const layerId = `el_${Date.now().toString(36)}`;
+    let html: string;
+    let css: string;
+    if (type === "rect") {
+      html = `<div data-layer-id="${layerId}"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else {
+      html = `<div data-layer-id="${layerId}"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    }
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setActiveTool("select");
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Phase C: Inline text editing ──
+  const handleTextChange = useCallback((layerId: string, newText: string) => {
+    if (!selectedFrameId) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    // Replace the text content of the element with the given layer-id
+    const elRe = new RegExp(`(<[^>]*data-layer-id="${layerId.replace(/[[\]"\\]/g, "\\$&")}"[^>]*>)([\\s\\S]*?)(<\\/[a-zA-Z0-9]+>)`, "i");
+    const match = elRe.exec(frame.html);
+    if (!match) return;
+    const newHtml = frame.html.replace(elRe, `${match[1]}${newText}${match[3]}`);
+    const updated = frames.map(f =>
+      f.id === selectedFrameId ? { ...f, html: newHtml } : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Phase C: Pen path creation ──
+  const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!selectedFrameId) return;
+    const layerId = `el_${Date.now().toString(36)}`;
+    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}" fill="none" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n`;
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + svgHtml, css: f.css + "\n" + css }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setActiveTool("select");
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Phase C: Delete element inside frame ──
+  const handleDeleteElement = useCallback((layerId: string) => {
+    if (!selectedFrameId) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    // Remove HTML element
+    const elRe = new RegExp(`<[^>]*data-layer-id="${layerId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${layerId}"[^>]*\\s*\\/?>`, "g");
+    const newHtml = frame.html.replace(elRe, "");
+    // Remove CSS rule
+    const cssRe = new RegExp(`\\[data-layer-id="${layerId}"\\]\\s*\\{[^}]*\\}\\s*`, "g");
+    const newCss = frame.css.replace(cssRe, "");
+    const updated = frames.map(f =>
+      f.id === selectedFrameId ? { ...f, html: newHtml, css: newCss } : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setSelectedElement(null);
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Phase C: Duplicate element inside frame ──
+  const handleDuplicateElement = useCallback((layerId: string) => {
+    if (!selectedFrameId) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    // Find the element HTML
+    const elRe = new RegExp(`(<[^>]*data-layer-id="${layerId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${layerId}"[^>]*\\s*\\/?>)`, "");
+    const match = elRe.exec(frame.html);
+    if (!match) return;
+    const newLayerId = `el_${Date.now().toString(36)}`;
+    // Clone HTML with new layer-id
+    const clonedHtml = match[1].replace(`data-layer-id="${layerId}"`, `data-layer-id="${newLayerId}"`);
+    // Clone CSS with new layer-id selector
+    const cssRe = new RegExp(`\\[data-layer-id="${layerId}"\\]\\s*\\{([^}]*)\\}`, "");
+    const cssMatch = cssRe.exec(frame.css);
+    let newCss = "";
+    if (cssMatch) {
+      // Offset position slightly
+      let decl = cssMatch[1];
+      const leftMatch = /left:\s*(\d+)px/.exec(decl);
+      const topMatch = /top:\s*(\d+)px/.exec(decl);
+      if (leftMatch) decl = decl.replace(/left:\s*\d+px/, `left: ${parseInt(leftMatch[1]) + 20}px`);
+      if (topMatch) decl = decl.replace(/top:\s*\d+px/, `top: ${parseInt(topMatch[1]) + 20}px`);
+      newCss = `\n[data-layer-id="${newLayerId}"] {${decl}}\n`;
+    }
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + clonedHtml, css: f.css + newCss }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
   // ── Change semantic tag of selected element ──
   const handleChangeTag = useCallback((newTag: string) => {
     if (!selectedElement || !selectedFrameId) return;
@@ -480,7 +594,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
-      if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateFrame(); return; }
+      if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
       if (!isInput && !mod) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
@@ -491,14 +606,18 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           case "p": setActiveTool("pen"); break;
           case "delete":
           case "backspace":
-            if (selectedFrameId && frames.length > 1) deleteSelectedFrame();
+            if (selectedElement) {
+              handleDeleteElement(selectedElement.layerId);
+            } else if (selectedFrameId && frames.length > 1) {
+              deleteSelectedFrame();
+            }
             break;
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, selectedFrameId, frames.length]);
+  }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
 
   // ── Export ──
   const handleExportPNG = useCallback(() => {
@@ -655,6 +774,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onFrameCssChange={handleFrameCssChange}
             onFrameHtmlChange={handleFrameHtmlChange}
             onAddPrimitive={handleAddPrimitive}
+            onDrawShape={handleDrawShape}
+            onTextChange={handleTextChange}
+            onAddPenPath={handleAddPenPath}
+            onElementDelete={handleDeleteElement}
+            onElementDuplicate={handleDuplicateElement}
           />
         </div>
       </div>
