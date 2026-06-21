@@ -127,13 +127,16 @@ export function InfiniteHtmlCanvas({
     }
   }, [zoom, onFrameMove]);
 
-  // Zoom with wheel
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const factor = 0.999 ** e.deltaY;
-    const newZoom = Math.min(Math.max(zoom * factor, MIN_ZOOM), MAX_ZOOM);
-    const rect = viewportRef.current?.getBoundingClientRect();
-    if (rect) {
+  // Zoom with wheel — must use native listener with { passive: false }
+  // because React attaches wheel as passive, making preventDefault() fail.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = 0.999 ** e.deltaY;
+      const newZoom = Math.min(Math.max(zoom * factor, MIN_ZOOM), MAX_ZOOM);
+      const rect = el.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
       const p = panRef.current;
@@ -141,8 +144,10 @@ export function InfiniteHtmlCanvas({
         x: cx - (cx - p.x) * (newZoom / zoom),
         y: cy - (cy - p.y) * (newZoom / zoom),
       });
-    }
-    onZoomChange(Math.round(newZoom * 1000) / 1000);
+      onZoomChange(Math.round(newZoom * 1000) / 1000);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
   }, [zoom, onZoomChange]);
 
   // Frame drag start (only in select mode)
@@ -179,7 +184,6 @@ export function InfiniteHtmlCanvas({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
     >
       {/* Transform layer */}
       <div style={{
