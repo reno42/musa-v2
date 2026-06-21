@@ -30,6 +30,7 @@ export interface SelectedElementInfo {
 interface DesignFrameProps {
   frame: FrameData;
   isActive: boolean;
+  zoom?: number;
   onActivate: (frameId: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   onCssChange?: (frameId: string, newCss: string) => void;
@@ -59,7 +60,7 @@ const TRACKED_PROPS = [
 ];
 
 export function DesignFrame({
-  frame, isActive, onActivate, onElementSelect, onCssChange, onHtmlChange,
+  frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onElementDelete, onElementDuplicate,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -84,6 +85,8 @@ export function DesignFrame({
   const onElementDuplicateRef = useRef(onElementDuplicate);
   onElementDuplicateRef.current = onElementDuplicate;
   const editingTextRef = useRef<Element | null>(null);
+  const zoomRef = useRef(zoom || 1);
+  zoomRef.current = zoom || 1;
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -180,10 +183,11 @@ export function DesignFrame({
     const content = shadow.getElementById("__df_content")!;
     const elRect = el.getBoundingClientRect();
     const cRect = content.getBoundingClientRect();
-    const x = elRect.left - cRect.left;
-    const y = elRect.top - cRect.top;
-    const w = elRect.width;
-    const h = elRect.height;
+    const z = zoomRef.current || 1;
+    const x = (elRect.left - cRect.left) / z;
+    const y = (elRect.top - cRect.top) / z;
+    const w = elRect.width / z;
+    const h = elRect.height / z;
 
     // Selection border
     const box = document.createElement("div");
@@ -427,8 +431,9 @@ export function DesignFrame({
 
       const onDragMove = (ev: MouseEvent) => {
         moved = true;
-        const dx = ev.clientX - startDragX;
-        const dy = ev.clientY - startDragY;
+        const z = zoomRef.current || 1;
+        const dx = (ev.clientX - startDragX) / z;
+        const dy = (ev.clientY - startDragY) / z;
         target.style.position = "absolute";
         target.style.left = `${origLeft + dx}px`;
         target.style.top = `${origTop + dy}px`;
@@ -565,8 +570,9 @@ export function DesignFrame({
     const affectsBottom = handle.includes("s");
 
     const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
+      const z = zoomRef.current || 1;
+      const dx = (ev.clientX - startX) / z;
+      const dy = (ev.clientY - startY) / z;
 
       let newX = ox, newY = oy, newW = ow, newH = oh;
 

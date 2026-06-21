@@ -201,6 +201,7 @@ export function InfiniteHtmlCanvas({
             <DesignFrame
               frame={frame}
               isActive={frame.id === selectedFrameId}
+              zoom={zoom}
               onActivate={onSelectFrame}
               onElementSelect={onElementSelect}
               onCssChange={onFrameCssChange}
