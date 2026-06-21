@@ -162,6 +162,9 @@ export function DesignFrame({
     if (content) content.innerHTML = frame.html;
     selectedRef.current = null;
     clearOverlay();
+    // Clear pen state on HTML update
+    penPointsRef.current = [];
+    penSvgRef.current = null;
   }, [frame.html]);
 
   function clearOverlay() {
