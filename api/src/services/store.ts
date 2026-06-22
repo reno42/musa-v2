@@ -211,6 +211,23 @@ class Store {
     return this.renderJobs.get(id);
   }
 
+  /** Mark a render job as complete with the resulting PNG base64 data URL. */
+  completeRenderJob(id: string, pngDataUrl: string): RenderJob | undefined {
+    const job = this.renderJobs.get(id);
+    if (!job) return undefined;
+    job.status = "complete";
+    job.url = pngDataUrl;
+    (job as any).completedAt = new Date().toISOString();
+    return job;
+  }
+
+  /** List all pending render jobs for a given template. */
+  listPendingJobs(templateId: string): RenderJob[] {
+    return [...this.renderJobs.values()].filter(
+      j => j.templateId === templateId && j.status === "pending"
+    );
+  }
+
   // ─── Snapshots ──────────────────────────────────
 
   /** Store a snapshot with type/tag. Enforces 50-per-template limit. */

@@ -617,6 +617,71 @@ export const handler = async (event) => {
 
   const rawPath = event.path || "";
 
+  // ── Render Queue: POST /api/render/queue ──
+  if (event.httpMethod === "POST" && rawPath === "/api/render/queue") {
+    let body = {};
+    try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
+    const templateId = body.templateId;
+    const frameIds = body.frameIds || [];
+    if (!templateId || frameIds.length === 0) {
+      return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "templateId and frameIds required" }) };
+    }
+    const jobs = [];
+    for (const fid of frameIds) {
+      const job = store.createRenderJob(templateId, body.format || "png", body.scale || 2);
+      (job).frameId = fid;
+      jobs.push({ jobId: job.id, frameId: fid, status: "pending", pollUrl: `${API_BASE}/api/render/job/${job.id}` });
+    }
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobs }) };
+  }
+
+  // ── List pending jobs: GET /api/render/queue/pending?templateId=X ──
+  if (event.httpMethod === "GET" && rawPath === "/api/render/queue/pending") {
+    const templateId = event.queryStringParameters?.templateId;
+    if (!templateId) {
+      return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "templateId query param required" }) };
+    }
+    const pending = store.listPendingJobs(templateId);
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ pending: pending.map(j => ({ jobId: j.id, templateId: j.templateId, frameId: j.frameId, status: j.status, format: j.format, scale: j.scale })) }) };
+  }
+
+  // ── Poll job: GET /api/render/job/:jobId ──
+  const jobMatch = rawPath.match(/^\/api\/render\/job\/(.+)$/);
+  if (event.httpMethod === "GET" && jobMatch) {
+    const job = store.getRenderJob(jobMatch[1]);
+    if (!job) return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Job not found" }) };
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobId: job.id, templateId: job.templateId, frameId: job.frameId, status: job.status, format: job.format, scale: job.scale, createdAt: job.createdAt, completedAt: job.completedAt, pngUrl: job.url || null }) };
+  }
+
+  // ── Complete job (upload PNG): POST /api/render/job/:jobId/complete ──
+  const completeMatch = rawPath.match(/^\/api\/render\/job\/(.+)\/complete$/);
+  if (event.httpMethod === "POST" && completeMatch) {
+    let body = {};
+    try { body = JSON.parse(event.body || "{}"); } catch { return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "Invalid JSON body" }) }; }
+    const pngBase64 = body.pngBase64 || body.pngDataUrl;
+    if (!pngBase64) return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "pngBase64 or pngDataUrl required" }) };
+    const job = store.completeRenderJob(completeMatch[1], pngBase64);
+    if (!job) return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Job not found" }) };
+    return { statusCode: 200, headers: jsonHeaders, body: JSON.stringify({ jobId: job.id, status: "complete" }) };
+  }
+
+  // ── Serve PNG: GET /api/render/job/:jobId/png ──
+  const pngMatch = rawPath.match(/^\/api\/render\/job\/(.+)\/png$/);
+  if (event.httpMethod === "GET" && pngMatch) {
+    const job = store.getRenderJob(pngMatch[1]);
+    if (!job || !job.url) return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "PNG not available" }) };
+    // job.url is the data URL (data:image/png;base64,...)
+    const dataUrl = job.url;
+    const base64 = dataUrl.includes("base64,") ? dataUrl.split("base64,")[1] : dataUrl;
+    const buf = Buffer.from(base64, "base64");
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" },
+      body: buf.toString("base64"),
+      isBase64Encoded: true,
+    };
+  }
+
   // ── Frame render: GET /api/render/:templateId/frame/:frameId ──
   if (event.httpMethod === "GET" && rawPath.includes("/frame/")) {
     const match = rawPath.match(/^\/api\/render\/(.+?)\/frame\/(.+)$/);

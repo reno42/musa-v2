@@ -3649,6 +3649,42 @@ async function handleMethod(method, params, userId) {
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
       const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
+      // HTML engine frames → use render queue for real PNG
+      if (isHtml || tpl.engine === "html") {
+        try {
+          const queueBody = JSON.stringify({
+            templateId: params.templateId,
+            frameIds: [frame.id],
+            format,
+            scale
+          });
+          const queueRes = await fetch(`${API_BASE}/api/render/queue`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: queueBody
+          });
+          const queueData = await queueRes.json();
+          const jobInfo = queueData.jobs?.[0] || {};
+          return {
+            frameId: frame.id,
+            frameName: frame.name,
+            width: frame.width,
+            height: frame.height,
+            format,
+            scale,
+            engine: "html",
+            jobId: jobInfo.jobId,
+            status: "pending",
+            pollUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}`,
+            pngUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}/png`,
+            _note: "PNG is rendered client-side. Open the editor in a browser tab for this template to auto-process the job."
+          };
+        } catch (e) {
+          throw { code: -32000, message: `Failed to create render job: ${e?.message || "unknown"}` };
+        }
+      }
+
+      // Fabric engine → return direct render URL
       return {
         frameId: frame.id,
         frameName: frame.name,
@@ -3656,9 +3692,8 @@ async function handleMethod(method, params, userId) {
         height: frame.height,
         format,
         scale,
-        engine: isHtml || tpl.engine === "html" ? "html" : "fabric",
+        engine: "fabric",
         viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
-        downloadUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
       };
     }
 
@@ -4826,21 +4861,47 @@ async function handleMethod(method, params, userId) {
       for (const fid of frameIds) {
         let frame = tpl.frames?.find(f => f.id === fid);
 
-        // HTML engine frames
+        // HTML engine frames → use render queue (browser renders offscreen, uploads real PNG)
         if (isHtml) {
           if (!frame) {
             frame = { id: fid, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html, css: tpl.css };
           }
-          results.push({
-            frameId: fid,
-            frameName: frame.name,
-            downloadUrl: `${API_BASE}/api/render/${params.templateId}/frame/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
-            viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
-            width: (frame.width || tpl.width || 1080) * scale,
-            height: (frame.height || tpl.height || 1080) * scale,
-            engine: "html",
-            format: isSvg ? "svg" : `png@${scale}x`,
-          });
+          // Create render job via queue endpoint
+          try {
+            const queueBody = JSON.stringify({
+              templateId: params.templateId,
+              frameIds: [fid],
+              format: isSvg ? "svg" : "png",
+              scale
+            });
+            const queueRes = await fetch(`${API_BASE}/api/render/queue`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: queueBody
+            });
+            const queueData = await queueRes.json();
+            const jobInfo = queueData.jobs?.[0] || {};
+            results.push({
+              frameId: fid,
+              frameName: frame.name,
+              jobId: jobInfo.jobId,
+              status: "pending",
+              pollUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}`,
+              pngUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}/png`,
+              width: (frame.width || tpl.width || 1080) * scale,
+              height: (frame.height || tpl.height || 1080) * scale,
+              engine: "html",
+              format: isSvg ? "svg" : `png@${scale}x`,
+              _note: "PNG is rendered client-side. Open the editor in a browser tab for this template to auto-process the job."
+            });
+          } catch (e) {
+            results.push({
+              frameId: fid,
+              frameName: frame.name,
+              error: "Failed to create render job: " + (e?.message || "unknown"),
+              engine: "html"
+            });
+          }
           continue;
         }
 

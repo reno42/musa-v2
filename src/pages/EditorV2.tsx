@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import html2canvas from "html2canvas";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -917,6 +918,118 @@ ${framesHtml}
   const codeDock = useDockablePanel(0, 56, null);
   const layersDock = useDockablePanel(0, 56, null);
   const toolbarDock = useDockablePanel(20, 80, "left");
+
+  // ── Background Render Worker ──
+  // Polls for pending render jobs created by MCP export_batch.
+  // When jobs are found, renders each frame offscreen via html2canvas
+  // and uploads the resulting PNG to the server for AI agent retrieval.
+  const renderWorkerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const renderingRef = useRef(false);
+
+  useEffect(() => {
+    const API_BASE = window.location.origin;
+    const POLL_INTERVAL = 10000; // 10 seconds
+
+    const processJob = async (job: any) => {
+      const frame = framesRef.current.find(f => f.id === job.frameId);
+      if (!frame) {
+        console.warn("[RenderWorker] Frame not found for job", job);
+        return;
+      }
+
+      // Create offscreen container
+      const container = document.createElement("div");
+      container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
+      document.body.appendChild(container);
+
+      // Build render target with exact frame dimensions
+      const target = document.createElement("div");
+      target.style.cssText = `width:${frame.width}px;height:${frame.height}px;overflow:hidden;position:relative;`;
+      const style = document.createElement("style");
+      style.textContent = frame.css;
+      target.appendChild(style);
+      const content = document.createElement("div");
+      content.innerHTML = frame.html;
+      target.appendChild(content);
+      container.appendChild(target);
+
+      try {
+        // Wait for fonts to load (extract @import from CSS)
+        const importRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+        let m;
+        const fontLinks: HTMLLinkElement[] = [];
+        while ((m = importRe.exec(frame.css)) !== null) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = m[1];
+          document.head.appendChild(link);
+          fontLinks.push(link);
+        }
+
+        // Wait for fonts
+        if (document.fonts?.ready) {
+          await document.fonts.ready;
+        } else {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // Capture
+        const canvas = await html2canvas(target, {
+          width: frame.width,
+          height: frame.height,
+          scale: job.scale || 2,
+          useCORS: true,
+          allowTaint: true,
+        });
+
+        const dataUrl = canvas.toDataURL("image/png");
+
+        // Upload to server
+        const res = await fetch(`${API_BASE}/api/render/job/${job.jobId}/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pngDataUrl: dataUrl }),
+        });
+        const json = await res.json();
+        console.warn("[RenderWorker] Job complete", { jobId: job.jobId, status: json.status });
+
+        // Cleanup font links
+        fontLinks.forEach(l => l.remove());
+      } catch (err) {
+        console.warn("[RenderWorker] Render failed", err);
+      } finally {
+        container.remove();
+      }
+    };
+
+    const poll = async () => {
+      if (renderingRef.current) return; // Don't stack polls
+      try {
+        const res = await fetch(`${API_BASE}/api/render/queue/pending?templateId=${encodeURIComponent(templateId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const pending: any[] = data.pending || [];
+        if (pending.length === 0) return;
+
+        renderingRef.current = true;
+        for (const job of pending) {
+          await processJob(job);
+        }
+        renderingRef.current = false;
+      } catch {
+        /* silent - will retry next poll */
+        renderingRef.current = false;
+      }
+    };
+
+    // Initial poll + interval
+    poll();
+    renderWorkerRef.current = setInterval(poll, POLL_INTERVAL);
+
+    return () => {
+      if (renderWorkerRef.current) clearInterval(renderWorkerRef.current);
+    };
+  }, [templateId]);
 
   // ── Loading / Error ──
   if (loading) {
