@@ -35,56 +35,69 @@ export function parseLayerTree(html: string): LayerNode[] {
   const path: number[] = [];
 
   function walk(el: Element) {
-    const lid = el.getAttribute("data-layer-id") || `auto_${_autoIdCounter++}`;
+    const hasLid = el.hasAttribute("data-layer-id");
     const tag = el.tagName.toLowerCase();
-    const parentId = stack.length > 0 ? stack[stack.length - 1] : null;
-    const depth = stack.length;
 
-    let text = "";
-    if (tag === "img") {
-      const src = el.getAttribute("src") || "";
-      text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
-    } else if (tag === "svg") {
-      text = "📐 SVG Path";
-    } else {
-      // Get direct text content only (not from children)
-      let directText = "";
-      for (let i = 0; i < el.childNodes.length; i++) {
-        if (el.childNodes[i].nodeType === 3) { // Text node
-          directText += el.childNodes[i].textContent || "";
-        }
+    // Get direct text (not from children) to detect if this is a structural wrapper
+    let directText = "";
+    for (let i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3) { // Text node
+        directText += el.childNodes[i].textContent || "";
       }
-      const t = directText.trim();
-      if (t) {
-        text = t.substring(0, 40) + (t.length > 40 ? "…" : "");
+    }
+    const trimmedDirect = directText.trim();
+
+    // Skip structural wrappers: div with no data-layer-id, no direct text, has children
+    const isWrapper = tag === "div" && !hasLid && el.children.length > 0 && !trimmedDirect;
+
+    if (!isWrapper) {
+      const lid = hasLid ? el.getAttribute("data-layer-id")! : `auto_${_autoIdCounter++}`;
+      const parentId = stack.length > 0 ? stack[stack.length - 1] : null;
+      const depth = stack.length;
+
+      let text = "";
+      if (lid.startsWith("grp_")) {
+        // Group name
+        text = `Grupo ${lid.replace("grp_", "").substring(0, 6)}`;
+      } else if (tag === "img") {
+        const src = el.getAttribute("src") || "";
+        text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
+      } else if (tag === "svg") {
+        text = "📐 SVG Path";
+      } else if (trimmedDirect) {
+        text = trimmedDirect.substring(0, 40) + (trimmedDirect.length > 40 ? "…" : "");
       } else if (!el.children.length && el.textContent) {
         const tc = el.textContent.trim();
         text = tc.substring(0, 40) + (tc.length > 40 ? "…" : "");
       }
+
+      nodes.push({
+        layerId: lid,
+        tag,
+        text: text || tag,
+        depth,
+        parentId,
+        children: [],
+        path: [...path],
+      });
+
+      if (parentId) {
+        const parent = nodes.find(n => n.layerId === parentId);
+        if (parent) parent.children.push(lid);
+      }
+
+      stack.push(lid);
     }
 
-    nodes.push({
-      layerId: lid,
-      tag,
-      text: text || tag,
-      depth,
-      parentId,
-      children: [],
-      path: [...path],
-    });
-
-    if (parentId) {
-      const parent = nodes.find(n => n.layerId === parentId);
-      if (parent) parent.children.push(lid);
-    }
-
-    stack.push(lid);
     for (let i = 0; i < el.children.length; i++) {
       path.push(i);
       walk(el.children[i]);
       path.pop();
     }
-    stack.pop();
+
+    if (!isWrapper) {
+      stack.pop();
+    }
   }
 
   // Walk all children of body (skip body itself)

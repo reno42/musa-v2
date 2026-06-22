@@ -1902,7 +1902,9 @@ html, body, #root { height: 100%; width: 100%; }
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-color);
   animation: slideInLeft 0.2s ease-out;
-  overflow: hidden;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── Layers Toggle Button ── */
