@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { SelectedElementInfo } from "./DesignFrame";
+import { GoogleFontPicker } from "./GoogleFontPicker";
 
 /**
  * HtmlContextualPanel — Contextual tools that appear when an element
@@ -222,11 +223,11 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
             <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 4, borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
               {/* Font Family */}
               <PropRow label="Font">
-                <input
-                  defaultValue={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""}
-                  onBlur={e => updateProp(element.selector, "font-family", `'${e.target.value}'`)}
-                  onKeyDown={e => { if (e.key === "Enter") { updateProp(element.selector, "font-family", `'${e.currentTarget.value}'`); e.currentTarget.blur(); } }}
-                  style={inp}
+                <GoogleFontPicker
+                  value={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""}
+                  onChange={(fontFamily) => {
+                    updateProp(element.selector, "font-family", `'${fontFamily}'`);
+                  }}
                 />
               </PropRow>
 
