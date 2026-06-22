@@ -410,13 +410,29 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setSelectedFont(fontFamily);
     setShowFontPicker(false);
     const fontUrl = fontFamily.replace(/ /g, "+");
-    const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:wght@400;700&display=swap');\n`;
+    // Use full weight range for all variants
+    const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
     let newCss = activeCss;
     if (!newCss.includes(fontUrl)) newCss = importLine + newCss;
-    const snippet = `\n/* Suggested: font-family: '${fontFamily}', sans-serif; */\n`;
-    if (!newCss.includes(`'${fontFamily}'`)) newCss += snippet;
+
+    // Apply font-family to selected element's CSS rule if one is selected
+    if (selectedElement) {
+      const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+      const ruleMatch = ruleRe.exec(newCss);
+      if (ruleMatch) {
+        let decl = ruleMatch[2];
+        const famRe = /font-family\s*:[^;]*;?/;
+        if (famRe.test(decl)) {
+          decl = decl.replace(famRe, `font-family: '${fontFamily}', sans-serif;`);
+        } else {
+          decl = decl.trimEnd() + `\n  font-family: '${fontFamily}', sans-serif;\n`;
+        }
+        newCss = newCss.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
+      }
+    }
     handleCssChange(newCss);
-  }, [activeCss, selectedFrameId, handleCssChange]);
+  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
 
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {

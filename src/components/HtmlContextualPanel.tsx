@@ -15,13 +15,15 @@ interface Props {
 }
 
 const FONT_WEIGHTS = [
-  { label: "Thin", value: 100 },
-  { label: "Light", value: 300 },
-  { label: "Regular", value: 400 },
-  { label: "Medium", value: 500 },
-  { label: "Semibold", value: 600 },
-  { label: "Bold", value: 700 },
-  { label: "Black", value: 900 },
+  { label: "Thin 100", value: "100" },
+  { label: "ExtraLight 200", value: "200" },
+  { label: "Light 300", value: "300" },
+  { label: "Regular 400", value: "400" },
+  { label: "Medium 500", value: "500" },
+  { label: "Semibold 600", value: "600" },
+  { label: "Bold 700", value: "700" },
+  { label: "ExtraBold 800", value: "800" },
+  { label: "Black 900", value: "900" },
 ];
 
 const TEXT_DECORATIONS = [
@@ -141,7 +143,20 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
 
   const updateProp = useCallback((selector: string, prop: string, value: string) => {
     const normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
-    const updated = updateCssProperty(css, selector, prop, normalized);
+    let updated = updateCssProperty(css, selector, prop, normalized);
+
+    // Auto-add Google Font @import when font-family is set
+    if (prop === "font-family") {
+      const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
+      if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {
+        const fontUrl = fontName.replace(/ /g, "+");
+        if (!updated.includes(fontUrl)) {
+          const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
+          updated = importLine + updated;
+        }
+      }
+    }
+
     onCssChange(updated);
   }, [css, onCssChange]);
 
