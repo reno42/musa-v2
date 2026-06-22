@@ -73,6 +73,28 @@ p {
   margin: 0;
 }`;
 
+/// Directly inject a Google Font <link> into every active Shadow DOM for immediate rendering.
+function injectFontIntoShadowDOMs(fontUrl: string) {
+  const href = `https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+  const frames = document.querySelectorAll("[data-frame-id]");
+  for (const frameEl of frames) {
+    for (const child of frameEl.querySelectorAll("*")) {
+      if ((child as HTMLElement).shadowRoot) {
+        const shadow = (child as HTMLElement).shadowRoot!;
+        const existing = shadow.querySelectorAll("link");
+        const already = [...existing].some(l => (l as HTMLLinkElement).href === href);
+        if (!already) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          shadow.insertBefore(link, shadow.firstChild);
+        }
+        break;
+      }
+    }
+  }
+}
+
 export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Multi-frame state ──
   const [frames, setFrames] = useState<FrameData[]>([]);
@@ -414,6 +436,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
     let newCss = activeCss;
     if (!newCss.includes(`family=${fontUrl}`)) newCss = importLine + newCss;
+
+    // Directly inject the font into every Shadow DOM for immediate effect
+    injectFontIntoShadowDOMs(fontUrl);
 
     // Apply font-family to selected element's CSS rule if one is selected
     if (selectedElement) {

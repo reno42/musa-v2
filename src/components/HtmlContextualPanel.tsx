@@ -125,6 +125,30 @@ function normalizeCssValue(value: string): string {
   return trimmed;
 }
 
+/// Directly inject a Google Font <link> into every active Shadow DOM for immediate rendering.
+/// Bypasses the React state → re-render → useEffect chain which is unreliable for @import.
+function injectFontIntoShadowDOMs(fontUrl: string) {
+  const href = `https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+  const frames = document.querySelectorAll("[data-frame-id]");
+  for (const frameEl of frames) {
+    for (const child of frameEl.querySelectorAll("*")) {
+      if ((child as HTMLElement).shadowRoot) {
+        const shadow = (child as HTMLElement).shadowRoot!;
+        const existing = shadow.querySelectorAll("link");
+        const already = [...existing].some(l => (l as HTMLLinkElement).href === href);
+        if (!already) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          shadow.insertBefore(link, shadow.firstChild);
+        }
+        break;
+      }
+    }
+  }
+  console.warn("[FONT] injectFontIntoShadowDOMs", { fontUrl, href, frameCount: frames.length });
+}
+
 /// Commit on Enter — applies the property immediately instead of waiting for blur
 function commitOnEnter(updater: (sel: string, prop: string, value: string) => void, selector: string, prop: string) {
   return (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -148,12 +172,18 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
 
     // Auto-add Google Font @import when font-family is set
     if (prop === "font-family") {
+      console.warn("[FONT] updateProp font-family called", { value, cssLen: css.length });
       const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
       if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {
         const fontUrl = fontName.replace(/ /g, "+");
         if (!updated.includes(`family=${fontUrl}`)) {
           const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
           updated = importLine + updated;
+          // Directly inject the font into every Shadow DOM for immediate effect
+          injectFontIntoShadowDOMs(fontUrl);
+        } else {
+          // Import already exists — still ensure the link is in Shadow DOM
+          injectFontIntoShadowDOMs(fontUrl);
         }
       }
     }
