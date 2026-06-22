@@ -234,8 +234,10 @@ function App() {
         const t = d as any;
         if (t.engine === "html") {
           dispatch({ type: "OPEN_TEMPLATE_V2", id });
+          window.history.replaceState(null, '', `/?template=${id}&v=2`);
         } else {
           dispatch({ type: "OPEN_TEMPLATE", id, json: { name: t.name, width: t.width, height: t.height, canvas: t.canvas, objects: t.canvas?.objects || [] } });
+          window.history.replaceState(null, '', `/?template=${id}`);
         }
         return;
       }
@@ -254,6 +256,7 @@ function App() {
       const json = await res.json();
       if (json.success && json.data) {
         dispatch({ type: "OPEN_TEMPLATE_V2", id: json.data.id });
+        window.history.replaceState(null, '', `/?template=${json.data.id}&v=2`);
       }
     } catch { /* ignore */ }
   };
@@ -288,7 +291,7 @@ function App() {
     return (
       <EditorV2
         templateId={templateId!}
-        onBack={() => dispatch({ type: "BACK_TO_DASHBOARD" })}
+        onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/'); }}
       />
     );
   }

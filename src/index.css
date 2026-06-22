@@ -1869,7 +1869,7 @@ html, body, #root { height: 100%; width: 100%; }
 /* ── Code Toggle Button ── */
 .editor-v2-code-toggle {
   position: fixed;
-  left: 8px;
+  left: 72px;
   top: 48px;
   z-index: 25;
   display: flex;
@@ -1908,7 +1908,7 @@ html, body, #root { height: 100%; width: 100%; }
 /* ── Layers Toggle Button ── */
 .editor-v2-layers-toggle {
   position: fixed;
-  left: 8px;
+  left: 72px;
   top: 84px;
   z-index: 25;
   display: flex;
