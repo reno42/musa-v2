@@ -98,7 +98,6 @@ export function FloatingToolbar({
 
   return (
     <div style={{
-      position: "fixed", left: 20, top: 80, zIndex: 20,
       background: "var(--glass-bg, rgba(12,12,12,0.65))",
       backdropFilter: "blur(20px) saturate(180%)",
       WebkitBackdropFilter: "blur(20px) saturate(180%)",

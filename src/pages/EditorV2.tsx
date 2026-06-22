@@ -719,6 +719,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
   const codeDock = useDockablePanel(0, 56, null);
   const layersDock = useDockablePanel(0, 56, null);
+  const toolbarDock = useDockablePanel(20, 80, "left");
 
   // ── Loading / Error ──
   if (loading) {
@@ -915,19 +916,24 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       </button>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <FloatingToolbar
-        tool={activeTool}
-        onToolChange={setActiveTool}
-        onAddFrame={addFrame}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomToFit={handleZoomToFit}
-        zoom={zoom}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-      />
+      <div style={toolbarDock.panelStyle(56)}>
+        <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
+          <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
+        </div>
+        <FloatingToolbar
+          tool={activeTool}
+          onToolChange={setActiveTool}
+          onAddFrame={addFrame}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomToFit={handleZoomToFit}
+          zoom={zoom}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+        />
+      </div>
 
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && (
