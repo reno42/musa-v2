@@ -739,162 +739,84 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
 
   // ── Export ──
-  /// Build a standalone HTML page that renders frame(s) via html2canvas for pixel-perfect PNG export.
-  const buildHtmlExportPage = useCallback((targetFrames: FrameData[]): string => {
-    const API_BASE = window.location.origin;
-    const allCss = targetFrames.map(f => f.css).join("\n");
-    const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
-    const fontLinks: string[] = [];
+  /// Capture a single frame to PNG blob via offscreen html2canvas (no page, no toolbars).
+  const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2): Promise<Blob | null> => {
+    const container = document.createElement("div");
+    container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
+    document.body.appendChild(container);
+
+    const target = document.createElement("div");
+    target.style.cssText = `width:${frame.width}px;height:${frame.height}px;overflow:hidden;position:relative;`;
+    const style = document.createElement("style");
+    style.textContent = frame.css;
+    target.appendChild(style);
+    const content = document.createElement("div");
+    content.innerHTML = frame.html;
+    target.appendChild(content);
+    container.appendChild(target);
+
+    const importRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
     let m;
-    while ((m = fontImportRe.exec(allCss)) !== null) {
-      fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
+    const fontLinks: HTMLLinkElement[] = [];
+    while ((m = importRe.exec(frame.css)) !== null) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = m[1];
+      document.head.appendChild(link);
+      fontLinks.push(link);
     }
 
-    const framesHtml = targetFrames.map((f, i) => {
-      const safeName = f.name.replace(/[<>:"/\\|?*]/g, "_");
-      return `
-<div class="frame-section" id="frame-${i}">
-  <div class="frame-toolbar">
-    <strong>${f.name}</strong>
-    <span class="frame-dims">${f.width}×${f.height}</span>
-    <button class="btn-dl" onclick="captureFrame('frame-${i}',${f.width},${f.height},'${safeName}')">⬇ Download PNG</button>
-  </div>
-  <div class="frame-render" id="render-${i}" style="width:${f.width}px;height:${f.height}px">
-    <style scoped>${f.css}</style>
-    ${f.html}
-  </div>
-</div>`;
-    }).join("\n");
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      else await new Promise(r => setTimeout(r, 2000));
 
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${targetFrames[0]?.name || "Export"} — Futuraria Render</title>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
-${fontLinks.join("\n")}
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #e5e7eb;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-    padding: 16px;
-  }
-  .frame-section {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-    margin-bottom: 24px;
-    overflow: hidden;
-  }
-  .frame-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .frame-toolbar strong { font-size:14px; color:#333; }
-  .frame-dims { font-size:11px; color:#888; flex:1; }
-  .btn-dl {
-    padding: 6px 14px;
-    border: none;
-    border-radius: 6px;
-    background: #3B82F6;
-    color: #fff;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .btn-dl:hover { background: #2563EB; }
-  .btn-dl-all {
-    padding: 10px 24px;
-    border: none;
-    border-radius: 8px;
-    background: #059669;
-    color: #fff;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 16px;
-  }
-  .frame-render { overflow: hidden; position: relative; }
-</style>
-</head>
-<body>
-${targetFrames.length > 1 ? `<button class="btn-dl-all" onclick="captureAll()">⬇ Download All ${targetFrames.length} Frames</button>` : ""}
-${framesHtml}
-<script>
-  (function() {
-    var captureQueue = [];
-    var capturingAll = false;
-
-    window.captureFrame = function(renderId, w, h, name) {
-      var el = document.getElementById(renderId);
-      if (!el) return;
-      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
-        canvas.toBlob(function(blob) {
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = name + '.png';
-          a.click();
-          URL.revokeObjectURL(url);
-          if (capturingAll && captureQueue.length > 0) {
-            var next = captureQueue.shift();
-            window.captureFrame(next.renderId, next.w, next.h, next.name);
-          }
-        });
+      const canvas = await html2canvas(target, {
+        width: frame.width,
+        height: frame.height,
+        scale,
+        useCORS: true,
+        allowTaint: true,
       });
-    };
 
-    window.captureAll = function() {
-      capturingAll = true;
-      captureQueue = [];
-      var sections = document.querySelectorAll('.frame-section');
-      var first = true;
-      sections.forEach(function(section, i) {
-        var renderEl = section.querySelector('.frame-render');
-        if (renderEl) {
-          var name = (section.querySelector('strong')?.textContent || 'frame_' + i).replace(/[<>:"/\\\\|?*]/g, '_');
-          var entry = { renderId: renderEl.id, w: parseInt(renderEl.style.width), h: parseInt(renderEl.style.height), name: name };
-          if (first) {
-            first = false;
-            window.captureFrame(entry.renderId, entry.w, entry.h, entry.name);
-          } else {
-            captureQueue.push(entry);
-          }
-        }
+      return new Promise(resolve => {
+        canvas.toBlob(blob => resolve(blob), "image/png");
       });
-    };
-  })();
-</script>
-</body></html>`;
+    } catch (err) {
+      console.warn("[Export] Capture failed", err);
+      return null;
+    } finally {
+      fontLinks.forEach(l => l.remove());
+      container.remove();
+    }
   }, []);
 
-  const handleExportFramePNG = useCallback(() => {
+  const handleExportFramePNG = useCallback(async () => {
     if (!selectedFrame) return;
-    const page = buildHtmlExportPage([selectedFrame]);
-    const blob = new Blob([page], { type: "text/html" });
+    setShowExportMenu(false);
+    const blob = await captureFrameToPng(selectedFrame);
+    if (!blob) return;
     const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  }, [selectedFrame, buildHtmlExportPage]);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [selectedFrame, captureFrameToPng]);
 
-  const handleExportAllFramesPNG = useCallback(() => {
-    if (frames.length === 0) return;
-    const page = buildHtmlExportPage(frames);
-    const blob = new Blob([page], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  }, [frames, buildHtmlExportPage]);
+  const handleExportAllFramesPNG = useCallback(async () => {
+    setShowExportMenu(false);
+    for (const frame of frames) {
+      const blob = await captureFrameToPng(frame);
+      if (!blob) continue;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }, [frames, captureFrameToPng]);
 
   const [showExportMenu, setShowExportMenu] = useState(false);
 

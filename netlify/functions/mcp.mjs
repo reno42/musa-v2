@@ -31,12 +31,9 @@ function checkRateLimit(ip) {
 }
 
 /**
- * Build a self-contained HTML page that renders frame(s) via html2canvas CDN.
- * When opened in any browser, auto-downloads each frame as a real PNG.
- * Returns the complete HTML string that the AI agent saves as .html file.
- *
- * @param {Array} frames - [{html, css, name, width, height}]
- * @returns {string} Complete standalone HTML page
+ * Build a self-contained HTML page that auto-renders each frame via html2canvas
+ * and immediately downloads the real PNG. No toolbars, no buttons — pure design.
+ * When opened in any browser, each frame auto-downloads as a .png file.
  */
 function buildHtmlExportPage(frames) {
   const allCss = frames.map(f => f.css || "").join("\n");
@@ -47,136 +44,86 @@ function buildHtmlExportPage(frames) {
     fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
   }
 
-  const framesHtml = frames.map((f, i) => {
-    const safeName = (f.name || `frame_${i}`).replace(/[<>:"/\\|?*]/g, "_");
-    const encodedCss = (f.css || "").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-    const encodedHtml = (f.html || "").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-    return `
-<div class="frame-section" id="frame-${i}">
-  <div class="frame-toolbar">
-    <strong>${safeName}</strong>
-    <span class="frame-dims">${f.width}×${f.height}</span>
-    <button class="btn-dl" onclick="captureFrame('frame-${i}',${f.width || 1080},${f.height || 1080},'${safeName}')">⬇ Download PNG</button>
-  </div>
-  <div class="frame-render" id="render-${i}" style="width:${f.width || 1080}px;height:${f.height || 1080}px">
-    <style>${f.css || ""}</style>
-    ${f.html || ""}
-  </div>
-</div>`;
-  }).join("\n");
-
-  const allBtn = frames.length > 1
-    ? `<button class="btn-dl-all" onclick="captureAll()">⬇ Download All ${frames.length} Frames</button>`
-    : "";
+  const framesJson = JSON.stringify(frames.map(f => ({
+    name: (f.name || "frame").replace(/[<>:"/\\|?*]/g, "_"),
+    width: f.width || 1080,
+    height: f.height || 1080,
+    html: f.html || "",
+    css: f.css || "",
+  })));
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${frames[0]?.name || "Export"} — Futuraria Render</title>
+<title>Futuraria Render</title>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
 ${fontLinks.join("\n")}
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #e5e7eb;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-    padding: 16px;
-  }
-  .frame-section {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-    margin-bottom: 24px;
-    overflow: hidden;
-  }
-  .frame-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .frame-toolbar strong { font-size:14px; color:#333; }
-  .frame-dims { font-size:11px; color:#888; flex:1; }
-  .btn-dl {
-    padding: 6px 14px;
-    border: none;
-    border-radius: 6px;
-    background: #3B82F6;
-    color: #fff;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .btn-dl:hover { background: #2563EB; }
-  .btn-dl-all {
-    padding: 10px 24px;
-    border: none;
-    border-radius: 8px;
-    background: #059669;
-    color: #fff;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 16px;
-  }
-  .frame-render { overflow: hidden; position: relative; }
+  body { margin:0; padding:16px; background:#e5e7eb; font-family:-apple-system,sans-serif; }
+  #status { padding: 8px 16px; background:#fff; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); font-size:13px; color:#333; display:inline-block; }
+  #status.done { color:#059669; }
 </style>
 </head>
 <body>
-${allBtn}
-${framesHtml}
+<div id="status">Rendering ${frames.length} frame(s)…</div>
 <script>
   (function() {
-    var captureQueue = [];
-    var capturingAll = false;
+    var frames = ${framesJson};
+    var total = frames.length;
+    var done = 0;
 
-    window.captureFrame = function(renderId, w, h, name) {
-      var el = document.getElementById(renderId);
-      if (!el) return;
-      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
+    function renderNext(i) {
+      if (i >= total) {
+        document.getElementById('status').textContent = 'Done — ' + done + '/' + total + ' downloaded';
+        document.getElementById('status').className = 'done';
+        return;
+      }
+      var f = frames[i];
+      document.getElementById('status').textContent = 'Rendering ' + (i+1) + '/' + total + ': ' + f.name + '…';
+
+      var container = document.createElement('div');
+      container.style.cssText = 'position:fixed;left:-9999px;top:0;width:'+f.width+'px;height:'+f.height+'px;overflow:hidden;';
+      document.body.appendChild(container);
+
+      var target = document.createElement('div');
+      target.style.cssText = 'width:'+f.width+'px;height:'+f.height+'px;overflow:hidden;position:relative;';
+      var style = document.createElement('style');
+      style.textContent = f.css;
+      target.appendChild(style);
+      var content = document.createElement('div');
+      content.innerHTML = f.html;
+      target.appendChild(content);
+      container.appendChild(target);
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function() { doCapture(target, f, container, i); });
+      } else {
+        setTimeout(function() { doCapture(target, f, container, i); }, 2000);
+      }
+    }
+
+    function doCapture(target, f, container, i) {
+      html2canvas(target, { width: f.width, height: f.height, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
         canvas.toBlob(function(blob) {
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url;
-          a.download = name + '.png';
+          a.download = f.name + '.png';
           a.click();
           URL.revokeObjectURL(url);
-          if (capturingAll && captureQueue.length > 0) {
-            var next = captureQueue.shift();
-            window.captureFrame(next.renderId, next.w, next.h, next.name);
-          }
-        });
+          done++;
+          container.remove();
+          renderNext(i + 1);
+        }, 'image/png');
+      }).catch(function() {
+        container.remove();
+        renderNext(i + 1);
       });
-    };
+    }
 
-    window.captureAll = function() {
-      capturingAll = true;
-      captureQueue = [];
-      var sections = document.querySelectorAll('.frame-section');
-      var first = true;
-      sections.forEach(function(section, i) {
-        var renderEl = section.querySelector('.frame-render');
-        if (renderEl) {
-          var strongEl = section.querySelector('strong');
-          var name = (strongEl ? strongEl.textContent : 'frame_' + i).replace(/[<>:"/\\\\|?*]/g, '_');
-          var entry = { renderId: renderEl.id, w: parseInt(renderEl.style.width), h: parseInt(renderEl.style.height), name: name };
-          if (first) {
-            first = false;
-            window.captureFrame(entry.renderId, entry.w, entry.h, entry.name);
-          } else {
-            captureQueue.push(entry);
-          }
-        }
-      });
-    };
+    renderNext(0);
   })();
 </script>
 </body></html>`;
