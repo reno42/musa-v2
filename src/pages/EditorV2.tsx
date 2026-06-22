@@ -413,7 +413,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     // Use full weight range for all variants
     const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
     let newCss = activeCss;
-    if (!newCss.includes(fontUrl)) newCss = importLine + newCss;
+    if (!newCss.includes(`family=${fontUrl}`)) newCss = importLine + newCss;
 
     // Apply font-family to selected element's CSS rule if one is selected
     if (selectedElement) {

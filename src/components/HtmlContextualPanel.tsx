@@ -151,7 +151,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
       const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
       if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {
         const fontUrl = fontName.replace(/ /g, "+");
-        if (!updated.includes(fontUrl)) {
+        if (!updated.includes(`family=${fontUrl}`)) {
           const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
           updated = importLine + updated;
         }
