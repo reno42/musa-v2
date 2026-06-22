@@ -12,6 +12,7 @@ import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtm
 import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
+import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
@@ -714,6 +715,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [showCodePanel, setShowCodePanel] = useState(false);
   const [showLayersPanel, setShowLayersPanel] = useState(false);
 
+  // ── Dockable panels ──
+  const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
+  const codeDock = useDockablePanel(0, 56, null);
+  const layersDock = useDockablePanel(0, 56, null);
+
   // ── Loading / Error ──
   if (loading) {
     return (
@@ -825,7 +831,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       <div className="editor-v2-main">
         {/* ── Code Panel (slide-in from left) ── */}
         {showCodePanel && (
-          <div className="editor-v2-code-panel">
+          <div className="editor-v2-code-panel" style={codeDock.panelStyle(380)}>
+            <div className="dock-handle" {...codeDock.handleProps}>
+              <span>Code</span>
+              <button type="button" onClick={() => codeDock.toggleDock("left")} className="dock-pin-btn" title={codeDock.state.isDocked ? "Undock" : "Dock left"}>
+                {codeDock.state.isDocked ? "📌" : "📍"}
+              </button>
+            </div>
             <CodePanel
               ref={codePanelRef}
               html={activeHtml}
@@ -838,7 +850,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
         {/* ── Layers Panel (slide-in from left, next to Code Panel) ── */}
         {showLayersPanel && (
-          <div className="editor-v2-layers-panel">
+          <div className="editor-v2-layers-panel" style={layersDock.panelStyle(260)}>
+            <div className="dock-handle" {...layersDock.handleProps}>
+              <span>Layers</span>
+              <button type="button" onClick={() => layersDock.toggleDock("left")} className="dock-pin-btn" title={layersDock.state.isDocked ? "Undock" : "Dock left"}>
+                {layersDock.state.isDocked ? "📌" : "📍"}
+              </button>
+            </div>
             <HtmlLayersPanel
               html={activeHtml}
               frameId={selectedFrameId || ""}
@@ -913,7 +931,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && (
-        <div className="editor-v2-right-panel">
+        <div className="editor-v2-right-panel" style={rightDock.panelStyle(260)}>
+          <div className="dock-handle" {...rightDock.handleProps}>
+            <span>Properties</span>
+            <button type="button" onClick={() => rightDock.toggleDock("right")} className="dock-pin-btn" title={rightDock.state.isDocked ? "Undock" : "Dock right"}>
+              {rightDock.state.isDocked ? "📌" : "📍"}
+            </button>
+          </div>
           {rightPanelTab === "contextual" && (
             <HtmlContextualPanel
               element={selectedElement}
