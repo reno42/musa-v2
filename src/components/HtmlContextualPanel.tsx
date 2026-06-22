@@ -167,7 +167,8 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
   const toggle = (s: string) => setExpandedSections(prev => ({ ...prev, [s]: !prev[s] }));
 
   const updateProp = useCallback((selector: string, prop: string, value: string) => {
-    const normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
+    let normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
+    if (prop === "font-family") normalized = normalized.replace(/['"]*$/g, "").replace(/;?\s*$/, "") + " !important";
     let updated = updateCssProperty(css, selector, prop, normalized);
     const matched = new RegExp(`(${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{)([^}]*)(\\})`).test(css);
     console.warn("[CSS PROP] updateCssProperty result", { prop, value: normalized, matched, updatedLen: updated.length, cssLen: css.length });

@@ -140,7 +140,7 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!shadow) return;
     const style = shadow.querySelector("style");
-    if (style) style.textContent = frame.css;
+    if (style) { style.textContent = frame.css; console.warn("[SHADOW CSS] POST set textContent", { styleLen: style.textContent.length, hasMontserrat: style.textContent.includes("Montserrat"), linkCount: shadow.querySelectorAll("link").length }); }
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
     const newHrefs = extractFontImports(frame.css);
