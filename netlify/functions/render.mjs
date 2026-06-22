@@ -479,8 +479,9 @@ function extractFontLinks(css) {
 function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
-  const htmlContent = tpl.html || "";
-  const cssContent = tpl.css || "";
+  // Support both single-template html/css and per-frame html/css
+  const htmlContent = tpl._frameHtml || tpl.html || "";
+  const cssContent = tpl._frameCss || tpl.css || "";
   const fontLinks = extractFontLinks(cssContent);
 
   return `<!DOCTYPE html>
@@ -489,78 +490,95 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${safeName} — Futuraria HTML Render</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
 ${fontLinks}
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    width: ${width}px;
-    height: ${height}px;
-    overflow: hidden;
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
   }
-  ${cssContent}
+  .toolbar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 800px;
+    width: 100%;
+  }
+  .toolbar h2 { font-size:15px; color:#333; margin-right:auto; }
+  .btn-download { background:#3B82F6; color:#fff; }
+  .btn-download:hover { background:#2563EB; }
+  .toolbar button {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+     }
+  #render-target {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    overflow: hidden;
+    position: relative;
+  }
+  .info { margin-top:10px; font-size:11px; color:#888; }
 </style>
 </head>
 <body>
-${htmlContent}
+<div class="toolbar">
+  <h2>${safeName}</h2>
+  <button class="btn-download" onclick="doCapture()">⬇ Download PNG</button>
+  <span id="status" style="font-size:12px;color:#666">Loading fonts…</span>
+</div>
+<div id="render-target" style="width:${width}px;height:${height}px">
+  <style>${cssContent}</style>
+  ${htmlContent}
+</div>
+<div class="info">${width}×${height}px · ${format.toUpperCase()}</div>
 <script>
-  // Auto-download PNG on load using SVG foreignObject
-  // Waits for fonts to load before rendering
   (function() {
     var safeName = "${safeName}";
     var format = "${format}";
-    var width = ${width};
-    var height = ${height};
+    var w = ${width};
+    var h = ${height};
 
-    function doRender() {
-      var canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      var ctx = canvas.getContext('2d');
-
-      // Use SVG foreignObject to render HTML to canvas
-      var data = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
-        '<foreignObject width="100%" height="100%">' +
-        '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + width + 'px;height:' + height + 'px">' +
-        document.documentElement.outerHTML.replace('<html', '<div').replace('</html>', '</div>') +
-        '</div>' +
-        '</foreignObject>' +
-        '</svg>';
-
-      var img = new Image();
-      var svg = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
-      var url = URL.createObjectURL(svg);
-
-      img.onload = function() {
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
-
-        var mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+    window.doCapture = function() {
+      var el = document.getElementById('render-target');
+      document.getElementById('status').textContent = 'Capturing…';
+      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
         canvas.toBlob(function(blob) {
-          var downloadUrl = URL.createObjectURL(blob);
+          var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
-          a.href = downloadUrl;
+          a.href = url;
           a.download = safeName + '.' + format;
           a.click();
-          URL.revokeObjectURL(downloadUrl);
+          URL.revokeObjectURL(url);
+          document.getElementById('status').textContent = 'Downloaded ✓';
+          document.getElementById('status').style.color = '#059669';
+        }, format === 'jpg' ? 'image/jpeg' : 'image/png');
+      });
+    };
 
-          // Show status bar
-          var div = document.createElement('div');
-          div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#fff;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:9999;display:flex;gap:10px;font-family:sans-serif;align-items:center;';
-          div.innerHTML = '<strong style="flex:1">' + safeName + ' — Rendered (' + format.toUpperCase() + ')</strong>' +
-            '<button onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;font-size:18px">x</button>';
-          document.body.prepend(div);
-        }, mimeType);
-      };
-
-      img.src = url;
-    }
-
-    // Wait for Google Fonts to finish loading before rendering
+    // Auto-capture when fonts are ready
     if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(doRender);
+      document.fonts.ready.then(function() {
+        document.getElementById('status').textContent = 'Rendered ✓';
+      });
     } else {
-      setTimeout(doRender, 800);
+      document.getElementById('status').textContent = 'Rendered ✓';
     }
   })();
 </script>
@@ -608,6 +626,28 @@ export const handler = async (event) => {
       if (!tpl) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
       }
+
+      // ── HTML engine frames: use html/css directly ──
+      if (tpl.engine === "html" || tpl.frames?.some(f => f.html)) {
+        let frame = tpl.frames?.find(f => f.id === frameId);
+        if (!frame) {
+          // Fallback: if only one frame exists or it's a single-template, use template-level html/css
+          frame = { id: frameId, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" };
+        }
+        if (!frame) {
+          return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId }) };
+        }
+        const scale = parseInt(String(event.queryStringParameters?.scale || "1"), 10) || 1;
+        const format = event.queryStringParameters?.format || "png";
+        const width = Math.round((frame.width || 1080) * scale);
+        const height = Math.round((frame.height || 1080) * scale);
+        // Pass frame-level html/css via _frameHtml/_frameCss
+        const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+        const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId);
+        return { statusCode: 200, headers: htmlHeaders, body: html };
+      }
+
+      // ── Fabric engine frames ──
       const frameTpl = prepareFrameRender(tpl, frameId);
       if (!frameTpl) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId }) };
@@ -653,11 +693,24 @@ export const handler = async (event) => {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
       }
       if (body.frameId) {
-        const frameTpl = prepareFrameRender(tpl, body.frameId);
-        if (!frameTpl) {
-          return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
+        // ── HTML engine frame ──
+        if (tpl.engine === "html" || tpl.frames?.some(f => f.html)) {
+          let frame = tpl.frames?.find(f => f.id === body.frameId);
+          if (!frame) {
+            frame = { id: body.frameId, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" };
+          }
+          if (!frame) {
+            return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
+          }
+          tpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+        } else {
+          // ── Fabric engine frame ──
+          const frameTpl = prepareFrameRender(tpl, body.frameId);
+          if (!frameTpl) {
+            return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
+          }
+          tpl = frameTpl;
         }
-        tpl = frameTpl;
       }
       const transparent = body.transparent === true;
       const baseW = tpl.width || 1080;

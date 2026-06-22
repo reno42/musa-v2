@@ -738,9 +738,164 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
 
   // ── Export ──
-  const handleExportPNG = useCallback(() => {
-    window.open(`/api/templates/${templateId}/render`, "_blank");
-  }, [templateId]);
+  /// Build a standalone HTML page that renders frame(s) via html2canvas for pixel-perfect PNG export.
+  const buildHtmlExportPage = useCallback((targetFrames: FrameData[]): string => {
+    const API_BASE = window.location.origin;
+    const allCss = targetFrames.map(f => f.css).join("\n");
+    const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+    const fontLinks: string[] = [];
+    let m;
+    while ((m = fontImportRe.exec(allCss)) !== null) {
+      fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
+    }
+
+    const framesHtml = targetFrames.map((f, i) => {
+      const safeName = f.name.replace(/[<>:"/\\|?*]/g, "_");
+      return `
+<div class="frame-section" id="frame-${i}">
+  <div class="frame-toolbar">
+    <strong>${f.name}</strong>
+    <span class="frame-dims">${f.width}×${f.height}</span>
+    <button class="btn-dl" onclick="captureFrame('frame-${i}',${f.width},${f.height},'${safeName}')">⬇ Download PNG</button>
+  </div>
+  <div class="frame-render" id="render-${i}" style="width:${f.width}px;height:${f.height}px">
+    <style scoped>${f.css}</style>
+    ${f.html}
+  </div>
+</div>`;
+    }).join("\n");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${targetFrames[0]?.name || "Export"} — Futuraria Render</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
+${fontLinks.join("\n")}
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .frame-section {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .frame-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .frame-toolbar strong { font-size:14px; color:#333; }
+  .frame-dims { font-size:11px; color:#888; flex:1; }
+  .btn-dl {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #3B82F6;
+    color: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .btn-dl:hover { background: #2563EB; }
+  .btn-dl-all {
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    background: #059669;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .frame-render { overflow: hidden; position: relative; }
+</style>
+</head>
+<body>
+${targetFrames.length > 1 ? `<button class="btn-dl-all" onclick="captureAll()">⬇ Download All ${targetFrames.length} Frames</button>` : ""}
+${framesHtml}
+<script>
+  (function() {
+    var captureQueue = [];
+    var capturingAll = false;
+
+    window.captureFrame = function(renderId, w, h, name) {
+      var el = document.getElementById(renderId);
+      if (!el) return;
+      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
+        canvas.toBlob(function(blob) {
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name + '.png';
+          a.click();
+          URL.revokeObjectURL(url);
+          if (capturingAll && captureQueue.length > 0) {
+            var next = captureQueue.shift();
+            window.captureFrame(next.renderId, next.w, next.h, next.name);
+          }
+        });
+      });
+    };
+
+    window.captureAll = function() {
+      capturingAll = true;
+      captureQueue = [];
+      var sections = document.querySelectorAll('.frame-section');
+      var first = true;
+      sections.forEach(function(section, i) {
+        var renderEl = section.querySelector('.frame-render');
+        if (renderEl) {
+          var name = (section.querySelector('strong')?.textContent || 'frame_' + i).replace(/[<>:"/\\\\|?*]/g, '_');
+          var entry = { renderId: renderEl.id, w: parseInt(renderEl.style.width), h: parseInt(renderEl.style.height), name: name };
+          if (first) {
+            first = false;
+            window.captureFrame(entry.renderId, entry.w, entry.h, entry.name);
+          } else {
+            captureQueue.push(entry);
+          }
+        }
+      });
+    };
+  })();
+</script>
+</body></html>`;
+  }, []);
+
+  const handleExportFramePNG = useCallback(() => {
+    if (!selectedFrame) return;
+    const page = buildHtmlExportPage([selectedFrame]);
+    const blob = new Blob([page], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }, [selectedFrame, buildHtmlExportPage]);
+
+  const handleExportAllFramesPNG = useCallback(() => {
+    if (frames.length === 0) return;
+    const page = buildHtmlExportPage(frames);
+    const blob = new Blob([page], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }, [frames, buildHtmlExportPage]);
+
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
@@ -840,12 +995,30 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowFontPicker(!showFontPicker)} title="Fonts">
           <IconType size={14} />
         </button>
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handleExportPNG} title="Export PNG">
-          <IconImage size={14} />
-        </button>
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handleExportJSON} title="Export JSON">
-          <IconDownload size={14} />
-        </button>
+        {/* Export Dropdown */}
+        <div style={{ position: "relative" }}>
+          <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowExportMenu(!showExportMenu)} title="Export">
+            <IconDownload size={14} />
+            <IconChevronDown size={8} style={{ marginLeft: 2 }} />
+          </button>
+          {showExportMenu && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 98 }} onClick={() => setShowExportMenu(false)} />
+              <div className="editor-v2-dropdown-menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 99, marginTop: 4 }}>
+                <button type="button" onClick={() => { handleExportFramePNG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export Current Frame as PNG
+                </button>
+                <button type="button" onClick={() => { handleExportAllFramesPNG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export All Frames as PNG
+                </button>
+                <div className="editor-v2-dropdown-sep" />
+                <button type="button" onClick={() => { handleExportJSON(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconDownload size={14} /> Export as JSON
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="editor-v2-topbar-sep" />
 

@@ -3617,9 +3617,13 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
       let frame = tpl.frames?.find(f => f.id === params.frameId);
+      let isHtml = false;
 
-      // Fallback: canvas.objects with isFrameVisual + frameId
-      if (!frame) {
+      // Detect HTML engine frames (have html/css directly)
+      if (frame && (frame.html || frame.css)) {
+        isHtml = true;
+      } else if (!frame) {
+        // Fallback: canvas.objects with isFrameVisual + frameId
         const visualFrame = (tpl.canvas?.objects || []).find(
           o => o.isFrameVisual && o.frameId === params.frameId
         );
@@ -3631,6 +3635,12 @@ async function handleMethod(method, params, userId) {
             height: visualFrame.height || 1080,
           };
         }
+      }
+
+      // Fallback for single-template HTML engine (no frames array)
+      if (!frame && tpl.engine === "html") {
+        frame = { id: params.frameId || "frame_0", name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html, css: tpl.css };
+        isHtml = true;
       }
 
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
@@ -3646,7 +3656,9 @@ async function handleMethod(method, params, userId) {
         height: frame.height,
         format,
         scale,
-        viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}`,
+        engine: isHtml || tpl.engine === "html" ? "html" : "fabric",
+        viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
+        downloadUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
       };
     }
 
@@ -4804,15 +4816,39 @@ async function handleMethod(method, params, userId) {
       if (fmt === "png@2x") scale = 2;
       else if (fmt === "png@3x") scale = 3;
       const isSvg = fmt === "svg";
-      const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || []).map(f => f.id);
+      const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || [{}]).map(f => f.id || "frame_0").filter(Boolean);
+      const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
+
+      // Detect HTML engine
+      const isHtml = tpl.engine === "html" || tpl.frames?.some(f => f.html || f.css);
+
       const results = [];
       for (const fid of frameIds) {
-        const frame = tpl.frames?.find(f => f.id === fid);
+        let frame = tpl.frames?.find(f => f.id === fid);
+
+        // HTML engine frames
+        if (isHtml) {
+          if (!frame) {
+            frame = { id: fid, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html, css: tpl.css };
+          }
+          results.push({
+            frameId: fid,
+            frameName: frame.name,
+            downloadUrl: `${API_BASE}/api/render/${params.templateId}/frame/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+            viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+            width: (frame.width || tpl.width || 1080) * scale,
+            height: (frame.height || tpl.height || 1080) * scale,
+            engine: "html",
+            format: isSvg ? "svg" : `png@${scale}x`,
+          });
+          continue;
+        }
+
+        // Fabric engine frames
         if (!frame && frameIds.length === 1 && !params.frameIds?.length) {
-          // Export whole canvas when no frames specified and no frames exist
           results.push({
             frameId: "canvas",
-            url: `https://futuraria.app/render/${params.templateId}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+            url: `${API_BASE}/render/${params.templateId}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
             width: (tpl.width || 1080) * scale,
             height: (tpl.height || 1080) * scale,
             format: isSvg ? "svg" : `png@${scale}x`,
@@ -4823,13 +4859,13 @@ async function handleMethod(method, params, userId) {
         results.push({
           frameId: fid,
           frameName: frame.name,
-          url: `https://futuraria.app/render/${params.templateId}/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
+          url: `${API_BASE}/render/${params.templateId}/${fid}?format=${isSvg ? "svg" : "png"}&scale=${scale}`,
           width: (frame.width || tpl.width) * scale,
           height: (frame.height || tpl.height) * scale,
           format: isSvg ? "svg" : `png@${scale}x`,
         });
       }
-      return { exported: results.length, results, format: isSvg ? "svg" : `png@${scale}x` };
+      return { exported: results.length, engine: isHtml ? "html" : "fabric", results, format: isSvg ? "svg" : `png@${scale}x` };
     }
 
     case "copy_as": {

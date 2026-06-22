@@ -1801,6 +1801,38 @@ html, body, #root { height: 100%; width: 100%; }
   margin: 0 4px;
 }
 
+.editor-v2-dropdown-menu {
+  background: #1e1e2e;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  min-width: 200px;
+  padding: 4px;
+  overflow: hidden;
+}
+.editor-v2-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-bright);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+}
+.editor-v2-dropdown-item:hover {
+  background: rgba(59,130,246,0.15);
+}
+.editor-v2-dropdown-sep {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 8px;
+}
+
 .editor-v2-project-name {
   font-size: 13px;
   font-weight: 600;
