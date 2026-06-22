@@ -169,6 +169,8 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
   const updateProp = useCallback((selector: string, prop: string, value: string) => {
     const normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
     let updated = updateCssProperty(css, selector, prop, normalized);
+    const matched = new RegExp(`(${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{)([^}]*)(\\})`).test(css);
+    console.warn("[CSS PROP] updateCssProperty result", { prop, value: normalized, matched, updatedLen: updated.length, cssLen: css.length });
 
     // Auto-add Google Font @import when font-family is set
     if (prop === "font-family") {
@@ -256,6 +258,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag }: 
                 <GoogleFontPicker
                   value={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""}
                   onChange={(fontFamily) => {
+                    console.warn("[PICKER→UPROP] onChange fired", { fontFamily, selector: element.selector, cssLen: css.length });
                     updateProp(element.selector, "font-family", `'${fontFamily}'`);
                   }}
                 />

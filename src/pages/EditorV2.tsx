@@ -325,7 +325,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   const handleCssChange = useCallback((newCss: string) => {
-    if (!selectedFrameId) return;
+    console.warn("[CSS STATE] handleCssChange entry", { selectedFrameId, newCssLen: newCss.length, frameCount: frames.length, hasImport: newCss.startsWith("@import") });
+    if (!selectedFrameId) { console.warn("[CSS STATE] ABORTED — no selectedFrameId"); return; }
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, css: newCss } : f
     );

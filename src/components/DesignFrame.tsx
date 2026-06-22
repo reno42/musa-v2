@@ -134,7 +134,8 @@ export function DesignFrame({
 
   // ── Code → DOM: CSS update ──
   useEffect(() => {
-    if (syncLockRef.current) { syncLockRef.current = false; return; }
+    console.warn("[SHADOW CSS] useEffect firing", { frameId: frame.id, cssLen: frame.css.length, syncLock: syncLockRef.current, hasImport: frame.css.startsWith("@import") });
+    if (syncLockRef.current) { console.warn("[SHADOW CSS] BLOCKED by syncLock"); syncLockRef.current = false; return; }
     cssRef.current = frame.css;
     const shadow = shadowRef.current;
     if (!shadow) return;
