@@ -30,6 +30,158 @@ function checkRateLimit(ip) {
   return true;
 }
 
+/**
+ * Build a self-contained HTML page that renders frame(s) via html2canvas CDN.
+ * When opened in any browser, auto-downloads each frame as a real PNG.
+ * Returns the complete HTML string that the AI agent saves as .html file.
+ *
+ * @param {Array} frames - [{html, css, name, width, height}]
+ * @returns {string} Complete standalone HTML page
+ */
+function buildHtmlExportPage(frames) {
+  const allCss = frames.map(f => f.css || "").join("\n");
+  const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+  const fontLinks = [];
+  let m;
+  while ((m = fontImportRe.exec(allCss)) !== null) {
+    fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
+  }
+
+  const framesHtml = frames.map((f, i) => {
+    const safeName = (f.name || `frame_${i}`).replace(/[<>:"/\\|?*]/g, "_");
+    const encodedCss = (f.css || "").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+    const encodedHtml = (f.html || "").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+    return `
+<div class="frame-section" id="frame-${i}">
+  <div class="frame-toolbar">
+    <strong>${safeName}</strong>
+    <span class="frame-dims">${f.width}×${f.height}</span>
+    <button class="btn-dl" onclick="captureFrame('frame-${i}',${f.width || 1080},${f.height || 1080},'${safeName}')">⬇ Download PNG</button>
+  </div>
+  <div class="frame-render" id="render-${i}" style="width:${f.width || 1080}px;height:${f.height || 1080}px">
+    <style>${f.css || ""}</style>
+    ${f.html || ""}
+  </div>
+</div>`;
+  }).join("\n");
+
+  const allBtn = frames.length > 1
+    ? `<button class="btn-dl-all" onclick="captureAll()">⬇ Download All ${frames.length} Frames</button>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${frames[0]?.name || "Export"} — Futuraria Render</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
+${fontLinks.join("\n")}
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .frame-section {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .frame-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .frame-toolbar strong { font-size:14px; color:#333; }
+  .frame-dims { font-size:11px; color:#888; flex:1; }
+  .btn-dl {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #3B82F6;
+    color: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .btn-dl:hover { background: #2563EB; }
+  .btn-dl-all {
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    background: #059669;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .frame-render { overflow: hidden; position: relative; }
+</style>
+</head>
+<body>
+${allBtn}
+${framesHtml}
+<script>
+  (function() {
+    var captureQueue = [];
+    var capturingAll = false;
+
+    window.captureFrame = function(renderId, w, h, name) {
+      var el = document.getElementById(renderId);
+      if (!el) return;
+      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
+        canvas.toBlob(function(blob) {
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name + '.png';
+          a.click();
+          URL.revokeObjectURL(url);
+          if (capturingAll && captureQueue.length > 0) {
+            var next = captureQueue.shift();
+            window.captureFrame(next.renderId, next.w, next.h, next.name);
+          }
+        });
+      });
+    };
+
+    window.captureAll = function() {
+      capturingAll = true;
+      captureQueue = [];
+      var sections = document.querySelectorAll('.frame-section');
+      var first = true;
+      sections.forEach(function(section, i) {
+        var renderEl = section.querySelector('.frame-render');
+        if (renderEl) {
+          var strongEl = section.querySelector('strong');
+          var name = (strongEl ? strongEl.textContent : 'frame_' + i).replace(/[<>:"/\\\\|?*]/g, '_');
+          var entry = { renderId: renderEl.id, w: parseInt(renderEl.style.width), h: parseInt(renderEl.style.height), name: name };
+          if (first) {
+            first = false;
+            window.captureFrame(entry.renderId, entry.w, entry.h, entry.name);
+          } else {
+            captureQueue.push(entry);
+          }
+        }
+      });
+    };
+  })();
+</script>
+</body></html>`;
+}
+
 const MCP_TOOLS = [
   {
     name: "list_workspaces",
@@ -3649,39 +3801,21 @@ async function handleMethod(method, params, userId) {
       const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
       const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
-      // HTML engine frames → use render queue for real PNG
+      // HTML engine frames → return self-contained HTML page (real PNG when opened in browser)
       if (isHtml || tpl.engine === "html") {
-        try {
-          const queueBody = JSON.stringify({
-            templateId: params.templateId,
-            frameIds: [frame.id],
-            format,
-            scale
-          });
-          const queueRes = await fetch(`${API_BASE}/api/render/queue`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: queueBody
-          });
-          const queueData = await queueRes.json();
-          const jobInfo = queueData.jobs?.[0] || {};
-          return {
-            frameId: frame.id,
-            frameName: frame.name,
-            width: frame.width,
-            height: frame.height,
-            format,
-            scale,
-            engine: "html",
-            jobId: jobInfo.jobId,
-            status: "pending",
-            pollUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}`,
-            pngUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}/png`,
-            _note: "PNG is rendered client-side. Open the editor in a browser tab for this template to auto-process the job."
-          };
-        } catch (e) {
-          throw { code: -32000, message: `Failed to create render job: ${e?.message || "unknown"}` };
-        }
+        const frameObj = { name: frame.name, width: frame.width || 1080, height: frame.height || 1080, html: frame.html || "", css: frame.css || "" };
+        const html = buildHtmlExportPage([frameObj]);
+        return {
+          frameId: frame.id,
+          frameName: frame.name,
+          width: frame.width,
+          height: frame.height,
+          format,
+          scale,
+          engine: "html",
+          html,
+          _note: "Save html as .html file, open in browser → auto-downloads real PNG."
+        };
       }
 
       // Fabric engine → return direct render URL
@@ -4861,47 +4995,22 @@ async function handleMethod(method, params, userId) {
       for (const fid of frameIds) {
         let frame = tpl.frames?.find(f => f.id === fid);
 
-        // HTML engine frames → use render queue (browser renders offscreen, uploads real PNG)
+        // HTML engine frames → return self-contained HTML page (real PNG when opened in browser)
         if (isHtml) {
           if (!frame) {
             frame = { id: fid, name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html, css: tpl.css };
           }
-          // Create render job via queue endpoint
-          try {
-            const queueBody = JSON.stringify({
-              templateId: params.templateId,
-              frameIds: [fid],
-              format: isSvg ? "svg" : "png",
-              scale
-            });
-            const queueRes = await fetch(`${API_BASE}/api/render/queue`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: queueBody
-            });
-            const queueData = await queueRes.json();
-            const jobInfo = queueData.jobs?.[0] || {};
-            results.push({
-              frameId: fid,
-              frameName: frame.name,
-              jobId: jobInfo.jobId,
-              status: "pending",
-              pollUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}`,
-              pngUrl: `${API_BASE}/api/render/job/${jobInfo.jobId}/png`,
-              width: (frame.width || tpl.width || 1080) * scale,
-              height: (frame.height || tpl.height || 1080) * scale,
-              engine: "html",
-              format: isSvg ? "svg" : `png@${scale}x`,
-              _note: "PNG is rendered client-side. Open the editor in a browser tab for this template to auto-process the job."
-            });
-          } catch (e) {
-            results.push({
-              frameId: fid,
-              frameName: frame.name,
-              error: "Failed to create render job: " + (e?.message || "unknown"),
-              engine: "html"
-            });
-          }
+          const frameHtml = buildHtmlExportPage([frame]);
+          results.push({
+            frameId: fid,
+            frameName: frame.name,
+            html: frameHtml,
+            width: (frame.width || tpl.width || 1080) * scale,
+            height: (frame.height || tpl.height || 1080) * scale,
+            engine: "html",
+            format: isSvg ? "svg" : `png@${scale}x`,
+            _note: "Save html as .html file, open in browser → auto-downloads real PNG."
+          });
           continue;
         }
 
@@ -4926,7 +5035,7 @@ async function handleMethod(method, params, userId) {
           format: isSvg ? "svg" : `png@${scale}x`,
         });
       }
-      return { exported: results.length, engine: isHtml ? "html" : "fabric", results, format: isSvg ? "svg" : `png@${scale}x` };
+      return { exported: results.length, engine: isHtml ? "html" : "fabric", results, format: isSvg ? "svg" : `png@${scale}x`, totalFrames: isHtml ? results.length : (tpl.frames?.length || 0), html: isHtml ? buildHtmlExportPage(results.map(r => ({ name: r.frameName, width: r.width / scale, height: r.height / scale, html: tpl.frames?.find(f => f.id === r.frameId)?.html || tpl.html || "", css: tpl.frames?.find(f => f.id === r.frameId)?.css || tpl.css || "" }))) : null };
     }
 
     case "copy_as": {
@@ -7916,10 +8025,32 @@ async function handleMethod(method, params, userId) {
     }
 
     case "batch_render_html": {
-      const supabase = getSupabase();
-      const jobId = `job_${Date.now()}`;
-      await supabase.from("batch_jobs").upsert({ id: jobId, status: "running", created_at: new Date().toISOString() });
-      return { jobId, status: "queued", estimatedTime: "30s" };
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      // Collect HTML-engine frames
+      const frames = (tpl.frames || []).filter(f => f.html || f.css);
+      if (frames.length === 0) {
+        // Single-template fallback
+        frames.push({ id: "frame_0", name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" });
+      }
+
+      const html = buildHtmlExportPage(frames);
+
+      return {
+        jobId: `job_${Date.now()}`,
+        status: "ready",
+        html,
+        totalFrames: frames.length,
+        frames: frames.map((f, i) => ({
+          frameId: f.id,
+          frameName: f.name || `Frame ${i + 1}`,
+          width: f.width,
+          height: f.height,
+          format: params.format || "png@2x",
+        })),
+        _note: "Save html as .html file, open in browser → wait for fonts → click Download → real PNG.",
+      };
     }
 
     case "batch_status": {
@@ -8082,25 +8213,35 @@ async function handleMethod(method, params, userId) {
       const w = (tpl.width || 1080) * scale;
       const h = (tpl.height || 1080) * scale;
       const fmt = params.format || "png";
-      // Return render URL that opens the browser-based render page
-      const renderUrl = `/api/templates/${params.templateId}/render`;
+
+      // Build self-contained HTML that auto-downloads real PNG when opened in browser
+      const frames = tpl.frames?.length
+        ? tpl.frames.filter(f => f.html || f.css)
+        : [{ name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" }];
+      const html = buildHtmlExportPage(frames.length > 0 ? frames : [{ name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" }]);
+
       return {
-        url: renderUrl,
+        url: `/api/templates/${params.templateId}/render`,
         width: w, height: h,
-        sizeBytes: 0,
         format: fmt,
-        _note: "Open this URL in browser for PNG download. Full Puppeteer rendering requires external service ($5-7/mo).",
+        html,
+        totalFrames: frames.length,
+        _note: "Save this html string as .html file, open in browser → auto-downloads real PNG.",
       };
     }
 
     case "render_to_formats": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found" };
+      const frames = tpl.frames?.filter(f => f.html || f.css) || [{ name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "" }];
+      const html = buildHtmlExportPage(frames);
       const formats = (params.formats || ["png"]).map(f => ({
         format: f, url: `/api/templates/${params.templateId}/render`,
-        width: tpl.width || 1080, height: tpl.height || 1080, sizeBytes: 0,
+        width: tpl.width || 1080, height: tpl.height || 1080,
+        html,
+        totalFrames: frames.length,
       }));
-      return { formats };
+      return { formats, html, totalFrames: frames.length };
     }
 
     case "optimize_image": {
