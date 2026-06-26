@@ -109,9 +109,9 @@ async function deleteFromSupabase(id: string) {
 
 export async function createTemplate(
   name: string, width: number, height: number,
-  canvas: CanvasData | undefined, userId: string, workspaceId: string
+  _canvas: CanvasData | undefined, userId: string, workspaceId: string
 ): Promise<DesignTemplate> {
-  const tpl = store.createTemplate({ workspaceId, name, width, height, canvas, userId });
+  const tpl = store.createTemplate({ workspaceId, name, width, height, userId });
   await upsertSupabase(tpl, userId);
   return tpl;
 }
@@ -192,7 +192,6 @@ export async function duplicateTemplate(
     name: newName || `${source.name} (copy)`,
     width: source.width,
     height: source.height,
-    canvas: JSON.parse(JSON.stringify(source.canvas)),
     userId: uid,
   });
 

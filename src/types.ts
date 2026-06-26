@@ -17,7 +17,7 @@ export interface HtmlTemplate {
   engine: "html";
   html?: string;
   css?: string;
-  canvas?: any;
+  frames?: any[];
   metadata: TemplateMetadata;
 }
 

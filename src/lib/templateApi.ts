@@ -37,7 +37,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
         return {
           ...apiData,
           ...localData,
-          canvas: localData.canvas,
           html: localData.html || apiData.html,
           css: localData.css || apiData.css,
           pages: localData.pages || (apiData as any).pages,
@@ -55,7 +54,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
       return {
         ...apiData,
         ...localData,
-        canvas: localData.canvas,
         html: localData.html || apiData.html,
         css: localData.css || apiData.css,
         pages: localData.pages || (apiData as any).pages,
@@ -86,12 +84,11 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
 export async function createTemplate(
   name: string,
   width = 1080,
-  height = 1080,
-  canvasJson?: any
+  height = 1080
 ): Promise<DesignTemplate> {
   const res = await apiFetch<{ data: DesignTemplate }>("/api/templates", {
     method: "POST",
-    body: JSON.stringify({ name, width, height, canvas: canvasJson }),
+    body: JSON.stringify({ name, width, height }),
   });
   return res.data;
 }
@@ -157,7 +154,6 @@ export async function listTemplates(
           name: local.name || "Untitled",
           width: local.width || 1080,
           height: local.height || 1080,
-          canvas: local.canvas,
           pages: local.pages,
           frames: local.frames,
           styles: local.styles,

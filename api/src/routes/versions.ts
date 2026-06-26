@@ -19,7 +19,7 @@ versionRoutes.post("/:id/versions", validate(createSchema), async (req, res) => 
       id: `ver_${uuid().slice(0, 12)}`,
       templateId: tpl.id,
       label: req.body.label || `Snapshot ${new Date().toLocaleString()}`,
-      canvas: null, // V2 templates use html/css/frames, not canvas.objects
+      canvas: null,
       html: tpl.html,
       css: tpl.css,
       createdAt: new Date().toISOString(),

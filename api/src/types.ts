@@ -36,7 +36,7 @@ export interface DesignTemplate {
   width: number;
   height: number;
   engine: "html";
-  canvas: CanvasData;
+  canvas: CanvasData | null;
   html?: string;
   css?: string;
   frames: Frame[];

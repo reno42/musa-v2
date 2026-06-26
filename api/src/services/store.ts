@@ -86,7 +86,7 @@ class Store {
       width: data.width || 1080,
       height: data.height || 1080,
       engine: "html",
-      canvas: data.canvas || { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
+      canvas: data.canvas || null,
       frames: [],
       styles: [],
       comments: [],

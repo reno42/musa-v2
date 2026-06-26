@@ -846,67 +846,18 @@ const MCP_TOOLS = [
       required: ["userId", "name"],
     },
   },
-  // ══════════════════════════════════════════════════
-  // Sprint 2: Ghost System — snapshot overlays & diffs
-  // ══════════════════════════════════════════════════
-  {
-    name: "ghost_show",
-    description: "Overlay a snapshot as a translucent ghost layer on the canvas. Clones snapshot objects with configurable opacity (0.1-0.5) and tint color, storing them as a ghostLayer group in template metadata. Use to visually compare current state against a past snapshot.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to apply ghost to" },
-        snapId: { type: "string", description: "Specific snapshot ID to show as ghost. Omit to use the last snapshot of the requested type." },
-        type: { type: "string", enum: ["ia", "human", "system"], description: "Snapshot type filter (default 'ia'). Used when snapId is not provided." },
-        opacity: { type: "number", description: "Ghost opacity 0.10-0.50 (default 0.25)" },
-        tint: { type: "string", description: "Tint color as hex (e.g. '#ff6600'). Applied as overlayFill on ghost objects." },
-        showDiff: { type: "boolean", description: "If true, color-code objects: green=added, red=deleted, yellow=modified (default false)" },
-      },
       required: ["templateId"],
     },
   },
-  {
-    name: "ghost_diff",
-    description: "Compare current canvas against a baseline snapshot and return a structured diff with color coding. Green=added since snapshot, red=deleted since snapshot, yellow=modified. Useful before a ghost_merge to understand what changed.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        baselineSnapId: { type: "string", description: "Baseline snapshot ID. Omit to use the last human snapshot." },
-      },
       required: ["templateId"],
     },
   },
-  {
-    name: "ghost_timeline",
-    description: "Return the full snapshot timeline with mini-thumbnail data for visual Time Machine navigation. Each entry includes object count, frame count, dominant colors, and a compact representation for timeline rendering.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        limit: { type: "number", description: "Max entries (default 20)" },
-        typeFilter: { type: "string", enum: ["ia", "human", "system"], description: "Filter by snapshot type (optional)" },
-      },
       required: ["templateId"],
     },
   },
-  {
-    name: "ghost_compare",
-    description: "Side-by-side comparison of two snapshots. Returns structural diff between them plus a similarity score (0-100) based on matching objects, positions, and types.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        snapIdA: { type: "string", description: "First snapshot ID (baseline / older)" },
-        snapIdB: { type: "string", description: "Second snapshot ID (comparison / newer). Omit to compare snapIdA against current state." },
-      },
       required: ["templateId", "snapIdA"],
     },
   },
-  // ══════════════════════════════════════════════════
-  // Sprint 3: Clone Skills — V1 canvas.objects-based tools removed
-  // V2 equivalents use frame.html/css. See create_html_frame + add_element.
-  // ══════════════════════════════════════════════════
   {
     name: "skill_clone",
     description: "Create a reusable clone skill from extracted or manually-defined patterns. Stored in tpl.metadata.clonedSkills[] array. Skills can be applied later via skill_apply.",
@@ -923,9 +874,6 @@ const MCP_TOOLS = [
       required: ["templateId", "skillName", "patterns"],
     },
   },
-  // skill_apply and brand_analyze removed — V1 canvas.objects-based, use V2 equivalents
-  // Skill and brand tools (V1 canvas.objects-based) removed — V2 equivalents use frame.html/css
-  // batch_design_from_csv and design_lint removed — V1 canvas.objects-based, use V2 equivalents
   {
     name: "observe_session",
     description: "Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.",
@@ -960,16 +908,6 @@ const MCP_TOOLS = [
       required: ["templateId", "layout"],
     },
   },
-  // remix_template removed — V1 canvas.objects-based, use create_html_frame for style variations
-  {
-    name: "design_diff",
-    description: "Compare two templates structurally and visually. Shows layer-by-layer differences and calculates a similarity score (0-100) based on matching objects, positions, and types. Uses the existing compareTemplates engine.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateIdA: { type: "string", description: "First template ID (baseline)" },
-        templateIdB: { type: "string", description: "Second template ID (comparison)" },
-      },
       required: ["templateIdA", "templateIdB"],
     },
   },
@@ -987,19 +925,6 @@ const MCP_TOOLS = [
       required: ["baseColor"],
     },
   },
-  {
-    name: "auto_polish",
-    description: "Automatically apply design corrections: snap-align objects to nearest grid, distribute objects evenly, normalize spacing between groups, boost low-contrast text fills. Configurable aggressiveness (0-1). Returns before/after aesthetic scores.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to polish" },
-        aggressiveness: { type: "number", description: "Polish intensity 0-1 (default 0.7). Higher = more aggressive corrections." },
-        alignToGrid: { type: "boolean", description: "Snap objects to nearest grid line (default true)" },
-        gridSize: { type: "number", description: "Grid size in px for alignment (default 8)" },
-        boostContrast: { type: "boolean", description: "Boost low-contrast text to meet WCAG AA (default true)" },
-        normalizeSpacing: { type: "boolean", description: "Normalize gaps and padding (default true)" },
-      },
       required: ["templateId"],
     },
   },
@@ -1579,24 +1504,6 @@ function compareValues(a, b, path = "") {
 }
 
 /** Compare snapshot vs current template, returning per-object changes */
-function compareTemplates(snap, current) {
-  const diffs = [], snapById = new Map(), currById = new Map();
-  for (const o of snap.canvas?.objects || []) { const id = o.layerName || o.name || o.id; if (id) snapById.set(id, o); }
-  for (const o of current.canvas?.objects || []) { const id = o.layerName || o.name || o.id; if (id) currById.set(id, o); }
-  const allIds = new Set([...snapById.keys(), ...currById.keys()]);
-  for (const id of allIds) {
-    const s = snapById.get(id), c = currById.get(id);
-    if (s && !c) {
-      diffs.push({ layerName: id, action: "deleted", old: { type: s.type, left: s.left, top: s.top } });
-    } else if (!s && c) {
-      diffs.push({ layerName: id, action: "added", new: { type: c.type, left: c.left, top: c.top } });
-    } else {
-      const changes = compareValues(s, c);
-      if (changes.length > 0) diffs.push({ layerName: id, action: "modified", changes });
-    }
-  }
-  return diffs;
-}
 
 /** RGB → HSL conversion (used by color_picker) */
 function rgbToHsl(r, g, b) {
@@ -3032,503 +2939,9 @@ async function handleMethod(method, params, userId) {
       return { created: true, tokenId, token: tokenRaw, name: params.name, scopes, expiresAt, note: "Store this token securely. It will not be shown again." };
     }
 
-    // ══════════════════════════════════════════════════
     // Sprint 2: Ghost System handlers
-    // ══════════════════════════════════════════════════
 
     // ── ghost_show ──
-    case "ghost_show": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      // Find target snapshot
-      let snapData = null;
-      if (params.snapId) {
-        const snap = store.getSnapshot(params.templateId, params.snapId);
-        snapData = snap?.data || snap;
-      } else {
-        // Find last snapshot of requested type
-        const all = store.listSnapshots(params.templateId);
-        const typedSnaps = params.type ? all.filter(e => e.type === params.type) : all;
-        if (typedSnaps.length > 0) snapData = typedSnaps[0].data;
-      }
-      if (!snapData) throw { code: -32000, message: "No snapshot found for the requested criteria" };
-
-      const opacity = Math.max(0.1, Math.min(0.5, params.opacity ?? 0.25));
-      const tint = params.tint || null;
-      const showDiff = params.showDiff || false;
-
-      // Build ghost objects from snapshot canvas
-      const ghostObjects = (snapData.canvas?.objects || []).map(o => {
-        const clone = JSON.parse(JSON.stringify(o));
-        clone.ghostOriginal = true;
-        clone.opacity = opacity;
-        clone.selectable = false;
-        clone.evented = false;
-        if (tint) clone.overlayFill = tint;
-        return clone;
-      });
-
-      // If diff mode, compare current vs snapshot and color-code
-      let diffData = null;
-      if (showDiff) {
-        diffData = compareTemplates(snapData, tpl);
-        for (const d of diffData) {
-          const ghostObj = ghostObjects.find(o => (o.layerName || o.name) === d.layerName);
-          if (ghostObj && d.action === "modified") ghostObj.ghostStatus = "modified";
-          else if (ghostObj && d.action === "added") ghostObj.ghostStatus = "added";
-          else if (d.action === "deleted" && !ghostObj) {
-            // Object exists in snapshot but not current — mark it as "deleted"
-            ghostObjects.push({
-              ...d.old, layerName: d.layerName, type: d.old?.type || "rect",
-              ghostOriginal: true, ghostStatus: "deleted",
-              opacity: opacity, selectable: false, evented: false,
-            });
-          }
-        }
-      }
-
-      // Store ghost metadata on template (non-destructive, only in metadata)
-      const ghostMeta = {
-        ghostLayer: {
-          active: true,
-          snapId: params.snapId || (snapData.metadata?.snapId || "last"),
-          type: params.type || "ia",
-          opacity,
-          tint,
-          showDiff,
-          objectCount: ghostObjects.length,
-          appliedAt: new Date().toISOString(),
-          objects: ghostObjects,
-        },
-      };
-
-      // Update template metadata only (not canvas)
-      const existingMeta = tpl.metadata || {};
-      const updatedMeta = { ...existingMeta, ...ghostMeta };
-      await templates.updateTemplate(params.templateId, { metadata: updatedMeta });
-      autoSnapshot(params.templateId, method);
-
-      return {
-        ghostApplied: true,
-        templateId: params.templateId,
-        objectCount: ghostObjects.length,
-        opacity,
-        tint,
-        showDiff,
-        diff: diffData ? { added: diffData.filter(d => d.action === "added").length, deleted: diffData.filter(d => d.action === "deleted").length, modified: diffData.filter(d => d.action === "modified").length, total: diffData.length } : null,
-      };
-    }
-
-    // ── ghost_diff ──
-    case "ghost_diff": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      let snapData = null;
-      if (params.baselineSnapId) {
-        const snap = store.getSnapshot(params.templateId, params.baselineSnapId);
-        snapData = snap?.data || snap;
-      } else {
-        // Default: last human snapshot
-        const all = store.listSnapshots(params.templateId);
-        const humanSnaps = all.filter(e => e.type === "human");
-        if (humanSnaps.length > 0) snapData = humanSnaps[0].data;
-        else if (all.length > 0) snapData = all[0].data;
-      }
-      if (!snapData || !snapData.canvas) throw { code: -32000, message: "No baseline snapshot found" };
-
-      const diffs = compareTemplates(snapData, tpl);
-
-      // Color-code the diff entries
-      const colored = diffs.map(d => ({
-        ...d,
-        color: d.action === "added" ? "#4ade80" : d.action === "deleted" ? "#f87171" : "#fbbf24",
-      }));
-
-      const added = colored.filter(d => d.action === "added");
-      const deleted = colored.filter(d => d.action === "deleted");
-      const modified = colored.filter(d => d.action === "modified");
-
-      return {
-        templateId: params.templateId,
-        baselineType: params.baselineSnapId ? "specific" : "last_human",
-        changes: colored,
-        summary: { added: added.length, deleted: deleted.length, modified: modified.length, total: diffs.length },
-        added,
-        deleted,
-        modified,
-      };
-    }
-
-    // ── ghost_merge ──
-    case "ghost_merge": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const snap = store.getSnapshot(params.templateId, params.sourceSnapId);
-      const snapData = snap?.data || snap;
-      if (!snapData || !snapData.canvas) throw { code: -32000, message: `Source snapshot not found: ${params.sourceSnapId}` };
-
-      const keepSet = new Set(params.keepLayerNames || []);
-      const discardSet = new Set(params.discardLayerNames || []);
-      const mode = params.mode || "prefer_snapshot";
-
-      const currentObjects = tpl.canvas?.objects || [];
-      const snapshotObjects = snapData.canvas?.objects || [];
-
-      const currentById = new Map();
-      for (const o of currentObjects) {
-        const id = o.layerName || o.name || o.id;
-        if (id) currentById.set(id, o);
-      }
-
-      const snapById = new Map();
-      for (const o of snapshotObjects) {
-        const id = o.layerName || o.name || o.id;
-        if (id) snapById.set(id, o);
-      }
-
-      let merged = 0, kept = 0, discarded = 0, conflicts = [];
-      const resultObjects = [];
-      const allIds = new Set([...currentById.keys(), ...snapById.keys()]);
-
-      for (const id of allIds) {
-        const cur = currentById.get(id);
-        const src = snapById.get(id);
-
-        // Keep: always preserve current version
-        if (keepSet.has(id)) {
-          if (cur) { resultObjects.push(cur); kept++; }
-          continue;
-        }
-
-        // Discard: skip snapshot additions
-        if (discardSet.has(id)) {
-          if (cur && mode !== "prefer_snapshot") { resultObjects.push(cur); kept++; }
-          else discarded++;
-          continue;
-        }
-
-        if (cur && src) {
-          // Both exist — conflict resolution
-          const changes = compareValues(src, cur);
-          if (changes.length === 0) {
-            resultObjects.push(cur);
-          } else {
-            if (mode === "prefer_snapshot") {
-              resultObjects.push(JSON.parse(JSON.stringify(src)));
-              merged++;
-            } else if (mode === "prefer_current") {
-              resultObjects.push(cur);
-              kept++;
-            } else {
-              // "ask" mode — don't apply, record conflict
-              resultObjects.push(cur);
-              conflicts.push({ layerName: id, changes });
-            }
-          }
-        } else if (!cur && src) {
-          // Only in snapshot — add it
-          resultObjects.push(JSON.parse(JSON.stringify(src)));
-          merged++;
-        } else if (cur && !src) {
-          // Only in current — keep it
-          resultObjects.push(cur);
-          kept++;
-        }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-
-      return {
-        merged: true,
-        templateId: params.templateId,
-        mode,
-        counts: { merged, kept, discarded, conflicts: conflicts.length },
-        conflicts: conflicts.length > 0 ? conflicts : undefined,
-        totalObjects: resultObjects.length,
-      };
-    }
-
-    // ── ghost_timeline ──
-    case "ghost_timeline": {
-      const limit = Math.max(1, Math.min(100, params.limit || 20));
-      let timeline = store.listSnapshots(params.templateId);
-
-      if (params.typeFilter) {
-        timeline = timeline.filter(e => e.type === params.typeFilter);
-      }
-
-      const entries = timeline.slice(0, limit).map(e => {
-        // Extract dominant colors from snapshot data
-        const objects = e.data?.canvas?.objects || [];
-        const colorCounts = new Map();
-        for (const o of objects) {
-          const fill = o.fill;
-          if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
-            colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
-          }
-        }
-        const sortedColors = [...colorCounts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([hex, count]) => ({ hex, count }));
-
-        // Count by type
-        const typeCounts = {};
-        for (const o of objects) {
-          const t = o.type || "unknown";
-          typeCounts[t] = (typeCounts[t] || 0) + 1;
-        }
-
-        return {
-          snapshotId: e.id,
-          type: e.type,
-          trigger: e.trigger,
-          timestamp: e.timestamp,
-          objectCount: e.objectCount,
-          frameCount: e.frameCount,
-          thumbnailData: {
-            dominantColors: sortedColors,
-            typeBreakdown: typeCounts,
-            canvasWidth: e.data?.width || 1080,
-            canvasHeight: e.data?.height || 1080,
-          },
-        };
-      });
-
-      return {
-        templateId: params.templateId,
-        timeline: entries,
-        total: timeline.length,
-        filtered: !!params.typeFilter,
-      };
-    }
-
-    // ── ghost_compare ──
-    case "ghost_compare": {
-      const snapA = store.getSnapshot(params.templateId, params.snapIdA);
-      if (!snapA || !snapA.data) throw { code: -32000, message: `Snapshot A not found: ${params.snapIdA}` };
-      const dataA = snapA.data;
-
-      let dataB, snapIdB;
-      if (params.snapIdB) {
-        const snapB = store.getSnapshot(params.templateId, params.snapIdB);
-        if (!snapB || !snapB.data) throw { code: -32000, message: `Snapshot B not found: ${params.snapIdB}` };
-        dataB = snapB.data;
-        snapIdB = params.snapIdB;
-      } else {
-        dataB = await templates.getTemplate(params.templateId);
-        if (!dataB) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-        snapIdB = "current";
-      }
-
-      const diffs = compareTemplates(dataA, dataB);
-
-      // Calculate similarity score
-      const objsA = dataA.canvas?.objects || [];
-      const objsB = dataB.canvas?.objects || [];
-      const totalObjects = Math.max(objsA.length, objsB.length);
-      const unchanged = totalObjects - diffs.filter(d => d.action !== "modified" || (d.changes?.length || 0) === 0).length;
-      // More nuanced: count matching positions and types
-      let matchScore = 0;
-      const idsA = new Map();
-      for (const o of objsA) { const id = o.layerName || o.name; if (id) idsA.set(id, o); }
-      for (const o of objsB) {
-        const id = o.layerName || o.name;
-        const match = idsA.get(id);
-        if (match) {
-          matchScore += 0.5; // Same name = 50%
-          if (match.type === o.type) matchScore += 0.3; // Same type = 30%
-          if (Math.abs((match.left || 0) - (o.left || 0)) < 5 && Math.abs((match.top || 0) - (o.top || 0)) < 5) matchScore += 0.2; // Same position ±5px = 20%
-        }
-      }
-      const similarityScore = totalObjects > 0 ? Math.round((matchScore / totalObjects) * 100) : 100;
-
-      // Summary stats for each side
-      const summarize = (data) => ({
-        objectCount: data.canvas?.objects?.length || 0,
-        frameCount: data.frames?.length || 0,
-        width: data.width,
-        height: data.height,
-        typeBreakdown: (data.canvas?.objects || []).reduce((acc, o) => {
-          acc[o.type || "unknown"] = (acc[o.type || "unknown"] || 0) + 1;
-          return acc;
-        }, {}),
-      });
-
-      return {
-        templateId: params.templateId,
-        comparisonData: {
-          a: { snapId: params.snapIdA, ...summarize(dataA), timestamp: snapA.timestamp },
-          b: { snapId: snapIdB, ...summarize(dataB), timestamp: snapB?.timestamp || new Date().toISOString() },
-        },
-        differences: diffs,
-        similarityScore: Math.min(100, similarityScore),
-        totalChanges: diffs.length,
-      };
-    }
-
-    // ══════════════════════════════════════════════════
-    // Sprint 3: Clone Skills handlers
-    // ══════════════════════════════════════════════════
-
-    // ── skill_extract ──
-    case "skill_extract": {
-      const idsToAnalyze = params.templateIds || (params.templateId ? [params.templateId] : []);
-      if (idsToAnalyze.length === 0) throw { code: -32602, message: "templateId or templateIds required" };
-
-      // Load all templates
-      const templatesList = [];
-      for (const id of idsToAnalyze) {
-        const tpl = await templates.getTemplate(id);
-        if (tpl) templatesList.push(tpl);
-      }
-      if (templatesList.length === 0) throw { code: -32000, message: "No valid templates found" };
-
-      // Aggregate all canvas objects
-      const allObjects = [];
-      for (const tpl of templatesList) {
-        for (const o of tpl.canvas?.objects || []) {
-          allObjects.push({ ...o, _sourceTemplateId: tpl.id });
-        }
-      }
-
-      // ── Color Palette Analysis ──
-      const colorCounts = new Map();
-      for (const o of allObjects) {
-        const fill = o.fill;
-        if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
-          colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
-        }
-      }
-      const palette = [...colorCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 8)
-        .map(([hex, count]) => ({ hex, usage: count }));
-
-      // ── Typography Analysis ──
-      const fontCounts = new Map();
-      const fontSizeValues = [];
-      for (const o of allObjects) {
-        if (o.type === "text") {
-          const font = o.fontFamily || "Inter";
-          fontCounts.set(font, (fontCounts.get(font) || 0) + 1);
-          if (o.fontSize) fontSizeValues.push(o.fontSize);
-        }
-      }
-      const fonts = [...fontCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([family, count]) => ({ family, usage: count }));
-
-      const sortedSizes = fontSizeValues.sort((a, b) => a - b);
-      const typography = {
-        fonts,
-        sizeRange: sortedSizes.length > 0
-          ? { min: sortedSizes[0], max: sortedSizes[sortedSizes.length - 1], median: sortedSizes[Math.floor(sortedSizes.length / 2)] }
-          : null,
-      };
-
-      // ── Spacing Analysis ──
-      const spacings = [];
-      for (const o of allObjects) {
-        if (o.padding !== undefined) spacings.push(o.padding);
-        if (o.gap !== undefined) spacings.push(o.gap);
-      }
-      spacings.sort((a, b) => a - b);
-      const spacing = spacings.length > 0
-        ? {
-            values: [...new Set(spacings)].slice(0, 10),
-            median: spacings[Math.floor(spacings.length / 2)],
-            common: spacings.reduce((acc, v) => { acc[v] = (acc[v] || 0) + 1; return acc; }, {}),
-          }
-        : null;
-
-      // ── Layout Analysis ──
-      const positions = allObjects.map(o => ({ left: o.left || 0, top: o.top || 0, width: o.width || 0, height: o.height || 0 }));
-      const avgLeft = positions.reduce((s, p) => s + p.left, 0) / (positions.length || 1);
-      const layout = {
-        objectCount: allObjects.length,
-        avgPosition: { left: Math.round(avgLeft) },
-        typeBreakdown: allObjects.reduce((acc, o) => {
-          acc[o.type || "unknown"] = (acc[o.type || "unknown"] || 0) + 1;
-          return acc;
-        }, {}),
-        canvasSizes: templatesList.map(t => ({ id: t.id, width: t.width, height: t.height })),
-      };
-
-      // ── Effects Analysis ──
-      const hasShadows = allObjects.filter(o => o.shadow).length;
-      const hasBlendModes = allObjects.filter(o => o.globalCompositeOperation || o.blendMode).length;
-      const effects = { shadowUsage: hasShadows, blendModeUsage: hasBlendModes, total: allObjects.length };
-
-      // ── Ratios Analysis ──
-      const ratios = templatesList.map(t => ({
-        templateId: t.id,
-        aspectRatio: t.width && t.height ? Math.round((t.width / t.height) * 100) / 100 : 1,
-      }));
-
-      // Build patterns result
-      const patterns = { palette, typography, spacing, layout, effects, ratios };
-
-      // ── AI semantic analysis (optional) ──
-      let aiAnalysis = null;
-      const useAi = params.useAi !== false;
-      if (useAi) {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (apiKey) {
-          try {
-            const prompt = `Analyze these design patterns and describe the overall design style in 2-3 sentences. Also suggest 3-5 design rules that capture the essence. Patterns: ${JSON.stringify(patterns)}`;
-            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 400, response_format: { type: "json_object" } }),
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              try { aiAnalysis = JSON.parse(data.choices?.[0]?.message?.content || "{}"); } catch { /* ignore */ }
-            }
-          } catch { /* AI analysis is optional */ }
-        }
-      }
-
-      // Build rules from analysis
-      const rules = [];
-      if (palette.length > 0) rules.push(`Primary palette: ${palette.slice(0, 3).map(c => c.hex).join(", ")}`);
-      if (fonts.length > 0) rules.push(`Typography: ${fonts[0].family} (primary), ${fonts.length > 1 ? fonts[1].family + " (secondary)" : ""}`.trim());
-      if (spacing?.median) rules.push(`Spacing scale: based on ${spacing.median}px`);
-      if (aiAnalysis?.style) rules.push(`Style: ${aiAnalysis.style}`);
-      if (aiAnalysis?.rules) rules.push(...aiAnalysis.rules);
-
-      const skillId = `skill_${Date.now().toString(36)}`;
-
-      // Store on first template if single templateId provided
-      if (params.templateId) {
-        const tpl = templatesList.find(t => t.id === params.templateId);
-        if (tpl) {
-          const existing = tpl.metadata || {};
-          await templates.updateTemplate(params.templateId, {
-            metadata: { ...existing, extractedPatterns: { skillId, name: params.name || "Extracted Skill", patterns, rules, extractedAt: new Date().toISOString(), sourceCount: idsToAnalyze.length } },
-          });
-        }
-      }
-
-      return {
-        skillId,
-        name: params.name || "Extracted Skill",
-        patterns,
-        rules,
-        sourceCount: idsToAnalyze.length,
-        aiAnalysis,
-      };
-    }
-
-    // ── skill_clone ──
     case "skill_clone": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -3562,636 +2975,6 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── skill_apply ──
-    case "skill_apply": {
-      const targetId = params.templateId;
-      const sourceId = params.sourceTemplateId || targetId;
-      const tpl = await templates.getTemplate(targetId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${targetId}` };
-      autoSnapshot(targetId, method, tpl);
-
-      // Find skill
-      let skill = null;
-      const sourceTpl = sourceId === targetId ? tpl : await templates.getTemplate(sourceId);
-      if (!sourceTpl) throw { code: -32000, message: `Source template not found: ${sourceId}` };
-
-      const skills = sourceTpl.metadata?.clonedSkills || [];
-      if (params.skillId) {
-        skill = skills.find(s => s.id === params.skillId);
-      } else if (params.skillName) {
-        skill = skills.find(s => s.name === params.skillName);
-      }
-      if (!skill) {
-        // Also check extractedPatterns
-        const ep = sourceTpl.metadata?.extractedPatterns;
-        if (ep && (params.skillId === ep.skillId || params.skillName === ep.name)) {
-          skill = { id: ep.skillId, name: ep.name, patterns: ep.patterns, rules: ep.rules };
-        }
-      }
-      if (!skill) throw { code: -32000, message: "Skill not found. Use skill_clone first or provide valid skillId/skillName." };
-
-      const mode = params.mode || "adaptive";
-      const patterns = skill.patterns;
-      const changes = [];
-
-      // Helper: find nearest color in palette
-      const nearestColor = (hex) => {
-        if (!patterns?.palette?.length) return null;
-        const toRgb = (h) => {
-          const r = parseInt(h.slice(1, 3), 16);
-          const g = parseInt(h.slice(3, 5), 16);
-          const b = parseInt(h.slice(5, 7), 16);
-          return { r, g, b };
-        };
-        const dist = (a, b) => Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
-        const target = toRgb(hex);
-        let best = patterns.palette[0];
-        let bestDist = Infinity;
-        for (const c of patterns.palette) {
-          const d = dist(target, toRgb(c.hex));
-          if (d < bestDist) { bestDist = d; best = c; }
-        }
-        return best.hex;
-      };
-
-      const objects = tpl.canvas?.objects || [];
-      for (const obj of objects) {
-        // Apply palette
-        if (patterns?.palette?.length > 0) {
-          if (obj.fill && typeof obj.fill === "string" && obj.fill !== "transparent" && obj.fill.startsWith("#")) {
-            const nearest = nearestColor(obj.fill);
-            if (nearest && nearest !== obj.fill) {
-              if (mode === "adaptive" && obj.type === "text") {
-                // Adaptive: only shift text colors slightly toward palette
-              } else {
-                const oldFill = obj.fill;
-                obj.fill = nearest;
-                changes.push({ layer: obj.layerName || obj.name, field: "fill", old: oldFill, new: nearest });
-              }
-            }
-          }
-          if (obj.stroke && typeof obj.stroke === "string" && obj.stroke !== "transparent" && obj.stroke.startsWith("#")) {
-            const nearest = nearestColor(obj.stroke);
-            if (nearest && nearest !== obj.stroke) {
-              obj.stroke = nearest;
-              changes.push({ layer: obj.layerName || obj.name, field: "stroke", old: obj.stroke, new: nearest });
-            }
-          }
-        }
-
-        // Apply typography
-        if (patterns?.typography?.fonts?.length > 0) {
-          if (obj.type === "text") {
-            const primaryFont = patterns.typography.fonts[0].family;
-            const objFont = obj.fontFamily || "Inter";
-            // If heading (fontSize >= 24) and has multiple fonts, use primary; else use secondary if available
-            const targetFont = (obj.fontSize >= 24 && patterns.typography.fonts.length > 1)
-              ? patterns.typography.fonts[0].family
-              : (patterns.typography.fonts.length > 1 ? patterns.typography.fonts[1].family : primaryFont);
-            if (targetFont && targetFont !== objFont && mode === "strict") {
-              obj.fontFamily = targetFont;
-              changes.push({ layer: obj.layerName || obj.name, field: "fontFamily", old: objFont, new: targetFont });
-            }
-          }
-        }
-
-        // Apply spacing (normalize padding if in strict mode)
-        if (patterns?.spacing?.median && mode === "strict") {
-          if (obj.padding !== undefined && Math.abs(obj.padding - patterns.spacing.median) > 4) {
-            const oldPad = obj.padding;
-            obj.padding = patterns.spacing.median;
-            changes.push({ layer: obj.layerName || obj.name, field: "padding", old: oldPad, new: patterns.spacing.median });
-          }
-        }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(targetId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(targetId, method);
-
-      return {
-        applied: true,
-        templateId: targetId,
-        skillId: skill.id,
-        skillName: skill.name,
-        mode,
-        changes,
-        changeCount: changes.length,
-        warnings: changes.length === 0 ? ["No changes were needed — template may already match the skill"] : [],
-      };
-    }
-
-    // ── brand_analyze ──
-    case "brand_analyze": {
-      let idsToAnalyze = params.templateIds || [];
-
-      // If workspaceId provided, get all templates from workspace
-      if (params.workspaceId && idsToAnalyze.length === 0) {
-        const result = await templates.listTemplatesPaginated(200, 0, params.workspaceId);
-        idsToAnalyze = (result?.data || []).map(t => t.id);
-      }
-
-      if (idsToAnalyze.length === 0) throw { code: -32602, message: "templateIds or workspaceId required" };
-
-      // Load all templates
-      const templatesList = [];
-      for (const id of idsToAnalyze) {
-        const tpl = await templates.getTemplate(id);
-        if (tpl) templatesList.push(tpl);
-      }
-
-      // Aggregate colors (frequency-weighted across all templates)
-      const colorCounts = new Map();
-      const fontCounts = new Map();
-      const allSpacings = [];
-      for (const tpl of templatesList) {
-        for (const o of tpl.canvas?.objects || []) {
-          const fill = o.fill;
-          if (fill && typeof fill === "string" && fill !== "transparent" && fill.startsWith("#")) {
-            colorCounts.set(fill, (colorCounts.get(fill) || 0) + 1);
-          }
-          if (o.type === "text" && o.fontFamily) {
-            fontCounts.set(o.fontFamily, (fontCounts.get(o.fontFamily) || 0) + 1);
-          }
-          if (o.padding !== undefined) allSpacings.push(o.padding);
-          if (o.gap !== undefined) allSpacings.push(o.gap);
-        }
-      }
-
-      const colors = [...colorCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 6)
-        .map(([hex, count]) => ({ hex, frequency: count }));
-
-      const fonts = [...fontCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([family, count]) => ({ family, frequency: count }));
-
-      allSpacings.sort((a, b) => a - b);
-      const spacingMedian = allSpacings.length > 0 ? allSpacings[Math.floor(allSpacings.length / 2)] : 16;
-
-      // Logo detection: look for image objects with names containing "logo"
-      const logoObjects = [];
-      for (const tpl of templatesList) {
-        for (const o of tpl.canvas?.objects || []) {
-          const name = (o.layerName || o.name || "").toLowerCase();
-          if ((o.type === "image" || o.type === "group") && name.includes("logo")) {
-            logoObjects.push({ templateId: tpl.id, layerName: o.layerName || o.name });
-          }
-        }
-      }
-
-      const brandDNA = {
-        colors,
-        typography: { fonts, primaryFont: fonts.length > 0 ? fonts[0].family : "Inter" },
-        spacing: { median: spacingMedian },
-        logo: logoObjects.length > 0 ? { detected: true, occurrences: logoObjects } : { detected: false },
-        templateCount: templatesList.length,
-        totalObjects: templatesList.reduce((s, t) => s + (t.canvas?.objects?.length || 0), 0),
-      };
-
-      // AI analysis (optional)
-      let aiTone = null;
-      const useAi = params.useAi !== false;
-      if (useAi) {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (apiKey) {
-          try {
-            const prompt = `Analyze this brand DNA and describe the brand personality/tone in 2-3 sentences. Brand: ${params.brandName || "Unnamed"}, Colors: ${colors.map(c => c.hex).join(", ")}, Fonts: ${fonts.map(f => f.family).join(", ")}`;
-            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 200 }),
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              aiTone = data.choices?.[0]?.message?.content || null;
-            }
-          } catch { /* optional */ }
-        }
-      }
-
-      const brandId = `brand_${Date.now().toString(36)}`;
-
-      // Store brand in global registry
-      if (!globalThis.__brand_profiles) globalThis.__brand_profiles = new Map();
-      globalThis.__brand_profiles.set(brandId, {
-        id: brandId,
-        name: params.brandName || "Unnamed Brand",
-        dna: brandDNA,
-        tone: aiTone,
-        created: new Date().toISOString(),
-        sourceTemplates: idsToAnalyze,
-      });
-
-      return {
-        brandId,
-        brandName: params.brandName || "Unnamed Brand",
-        brandDNA,
-        tone: aiTone,
-        confidence: Math.min(100, Math.round((templatesList.length / Math.max(idsToAnalyze.length, 1)) * 100)),
-        sourceCount: templatesList.length,
-      };
-    }
-
-    // ── brand_apply ──
-    case "brand_apply": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      // Get brand DNA
-      let brandDNA = params.brandDNA || null;
-      if (params.brandId && !brandDNA) {
-        const stored = globalThis.__brand_profiles?.get(params.brandId);
-        if (stored) brandDNA = stored.dna;
-      }
-      if (!brandDNA) throw { code: -32602, message: "brandDNA or brandId required" };
-
-      const aggressiveness = Math.max(0, Math.min(1, params.aggressiveness ?? 0.8));
-
-      // Calculate before score (how close template already matches brand)
-      const scoreCompliance = (dna) => {
-        let score = 0, total = 0;
-        const objects = tpl.canvas?.objects || [];
-        // Color compliance
-        if (dna.colors?.length > 0) {
-          const brandHexes = new Set(dna.colors.map(c => c.hex));
-          let colorMatch = 0, colorTotal = 0;
-          for (const o of objects) {
-            if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
-              colorTotal++;
-              if (brandHexes.has(o.fill)) colorMatch++;
-            }
-          }
-          if (colorTotal > 0) { score += (colorMatch / colorTotal) * 40; total += 40; }
-        }
-        // Font compliance
-        if (dna.typography?.primaryFont) {
-          let fontMatch = 0, fontTotal = 0;
-          for (const o of objects) {
-            if (o.type === "text") {
-              fontTotal++;
-              if (o.fontFamily === dna.typography.primaryFont) fontMatch++;
-            }
-          }
-          if (fontTotal > 0) { score += (fontMatch / fontTotal) * 30; total += 30; }
-        }
-        // Spacing compliance
-        if (dna.spacing?.median) {
-          const target = dna.spacing.median;
-          let spaceScore = 0, spaceTotal = 0;
-          for (const o of objects) {
-            if (o.padding !== undefined) { spaceTotal++; if (Math.abs(o.padding - target) <= 4) spaceScore++; }
-          }
-          if (spaceTotal > 0) { score += (spaceScore / spaceTotal) * 30; total += 30; }
-        }
-        return total > 0 ? Math.round((score / total) * 100) : 50;
-      };
-
-      const scoreBefore = scoreCompliance(brandDNA);
-      const changes = [];
-      const objects = tpl.canvas?.objects || [];
-
-      // Apply colors
-      if (brandDNA.colors?.length > 0 && aggressiveness > 0.3) {
-        const brandColors = brandDNA.colors;
-        const nearestBrandColor = (hex) => {
-          const toRgb = (h) => ({ r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) });
-          const dist = (a, b) => Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
-          const target = toRgb(hex);
-          let best = brandColors[0];
-          let bestDist = Infinity;
-          for (const c of brandColors) {
-            const d = dist(target, toRgb(c.hex));
-            if (d < bestDist) { bestDist = d; best = c; }
-          }
-          return best.hex;
-        };
-        for (const obj of objects) {
-          if (obj.fill && typeof obj.fill === "string" && obj.fill !== "transparent" && obj.fill.startsWith("#")) {
-            const nearest = nearestBrandColor(obj.fill);
-            if (nearest !== obj.fill) {
-              changes.push({ layer: obj.layerName || obj.name, field: "fill", old: obj.fill, new: nearest });
-              obj.fill = nearest;
-            }
-          }
-        }
-      }
-
-      // Apply typography
-      if (brandDNA.typography?.primaryFont && aggressiveness > 0.2) {
-        for (const obj of objects) {
-          if (obj.type === "text" && obj.fontFamily !== brandDNA.typography.primaryFont) {
-            changes.push({ layer: obj.layerName || obj.name, field: "fontFamily", old: obj.fontFamily || "Inter", new: brandDNA.typography.primaryFont });
-            obj.fontFamily = brandDNA.typography.primaryFont;
-          }
-        }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-
-      const scoreAfter = scoreCompliance(brandDNA);
-
-      return {
-        applied: true,
-        templateId: params.templateId,
-        brandName: params.brandName || "Brand",
-        scoreBefore,
-        scoreAfter,
-        aggressiveness,
-        changeCount: changes.length,
-        changes: changes.slice(0, 20),
-      };
-    }
-
-    // ══════════════════════════════════════════════════
-    // Sprint 4: New Tools handlers
-    // ══════════════════════════════════════════════════
-
-    // ── batch_design_from_csv ──
-    case "batch_design_from_csv": {
-      const baseTpl = await templates.getTemplate(params.baseTemplateId);
-      if (!baseTpl) throw { code: -32000, message: `Base template not found: ${params.baseTemplateId}` };
-
-      // Parse data
-      let rows = params.data || [];
-      if (params.csvUrl && rows.length === 0) {
-        try {
-          const resp = await fetch(params.csvUrl);
-          if (!resp.ok) throw { code: -32000, message: `Failed to fetch CSV: ${resp.status}` };
-          const text = await resp.text();
-          // Simple CSV parser
-          const lines = text.split("\n").filter(l => l.trim());
-          const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
-          for (let i = 1; i < lines.length; i++) {
-            const values = lines[i].split(",").map(v => v.trim().replace(/^["']|["']$/g, ""));
-            const row = {};
-            headers.forEach((h, j) => { row[h] = values[j] || ""; });
-            rows.push(row);
-          }
-        } catch (e) {
-          if (e.code) throw e;
-          throw { code: -32000, message: `CSV parse error: ${e.message}` };
-        }
-      }
-
-      if (rows.length === 0) throw { code: -32602, message: "No data rows provided" };
-
-      const fieldMapping = params.fieldMapping || {};
-      const outputWsId = params.outputWorkspaceId || baseTpl.workspaceId;
-      const nameTemplate = params.nameTemplate || "Generated {index}";
-      const generated = [];
-      const errors = [];
-
-      for (let i = 0; i < rows.length; i++) {
-        try {
-          const row = rows[i];
-          // Clone canvas
-          const newCanvas = JSON.parse(JSON.stringify(baseTpl.canvas));
-          // Substitute text fields
-          let name = nameTemplate.replace(/\{index\}/g, String(i + 1));
-          for (const obj of newCanvas.objects || []) {
-            if (obj.type === "text") {
-              const layerName = obj.layerName || obj.name;
-              for (const [col, layer] of Object.entries(fieldMapping)) {
-                if (layer === layerName && row[col] !== undefined) {
-                  obj.text = String(row[col]);
-                  name = name.replace(`{${col}}`, String(row[col]));
-                }
-              }
-            }
-          }
-
-          const newTpl = await templates.createTemplate(
-            name.substring(0, 200),
-            baseTpl.width, baseTpl.height,
-            newCanvas, baseTpl.metadata?.createdBy || "system", outputWsId
-          );
-          generated.push({ templateId: newTpl.id, name: newTpl.name, row: i + 1 });
-        } catch (e) {
-          errors.push({ row: i + 1, error: e.message });
-        }
-      }
-
-      return {
-        generated: generated.length,
-        templateIds: generated.map(g => g.templateId),
-        templates: generated,
-        errors: errors.length > 0 ? errors : undefined,
-        total: rows.length,
-      };
-    }
-
-    // ── aesthetic_score ──
-    case "aesthetic_score": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      const objects = tpl.canvas?.objects || [];
-      const w = tpl.width || 1080;
-      const h = tpl.height || 1080;
-
-      // Balance: check visual weight distribution
-      let leftWeight = 0, rightWeight = 0, topWeight = 0, bottomWeight = 0;
-      for (const o of objects) {
-        const area = (o.width || 0) * (o.height || 0) * (o.scaleX || 1) * (o.scaleY || 1);
-        const cx = (o.left || 0) + (o.width || 0) / 2;
-        const cy = (o.top || 0) + (o.height || 0) / 2;
-        if (cx < w / 2) leftWeight += area; else rightWeight += area;
-        if (cy < h / 2) topWeight += area; else bottomWeight += area;
-      }
-      const totalWeight = leftWeight + rightWeight + 1;
-      const balanceScore = Math.round(100 - Math.abs(leftWeight - rightWeight) / totalWeight * 100);
-
-      // Contrast: check text fills against white/black backgrounds
-      let contrastIssues = 0, textCount = 0;
-      for (const o of objects) {
-        if (o.type === "text" && o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
-          textCount++;
-          const hex = o.fill.slice(1);
-          const r = parseInt(hex.slice(0, 2), 16);
-          const g = parseInt(hex.slice(2, 4), 16);
-          const b = parseInt(hex.slice(4, 6), 16);
-          const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-          // Against white bg (on dark canvas, text should be light)
-          if (luminance > 0.5 && luminance < 0.85) contrastIssues++;
-        }
-      }
-      const contrastScore = textCount > 0 ? Math.round(100 - (contrastIssues / textCount) * 50) : 80;
-
-      // Alignment: check proximity to grid
-      const grid = 8;
-      let aligned = 0, total = objects.length;
-      for (const o of objects) {
-        const l = o.left || 0, t = o.top || 0;
-        if ((l % grid < 2 || l % grid > grid - 2) && (t % grid < 2 || t % grid > grid - 2)) aligned++;
-      }
-      const alignmentScore = total > 0 ? Math.round((aligned / total) * 100) : 80;
-
-      // Hierarchy: check size distribution
-      const sizes = objects.map(o => Math.max(o.width || 0, o.height || 0)).filter(s => s > 0).sort((a, b) => b - a);
-      let hierarchyScore = 70;
-      if (sizes.length >= 3) {
-        const ratio = sizes[0] / (sizes[sizes.length - 1] || 1);
-        hierarchyScore = ratio > 3 ? 90 : ratio > 1.5 ? 70 : 50;
-      }
-
-      // Consistency: font/color repetition
-      const fonts = new Set(), fills = new Set();
-      for (const o of objects) {
-        if (o.type === "text" && o.fontFamily) fonts.add(o.fontFamily);
-        if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) fills.add(o.fill);
-      }
-      const consistencyScore = Math.round(100 - (fonts.size - 1) * 15 - (fills.size > 5 ? (fills.size - 5) * 5 : 0));
-
-      // Spacing: check uniformity
-      const spacings = [];
-      for (const o of objects) {
-        if (o.padding !== undefined) spacings.push(o.padding);
-      }
-      let spacingScore = 70;
-      if (spacings.length >= 3) {
-        const unique = new Set(spacings);
-        spacingScore = Math.round(100 - (unique.size - 1) * 10);
-      }
-
-      const breakdown = {
-        balance: Math.max(0, Math.min(100, balanceScore)),
-        contrast: Math.max(0, Math.min(100, contrastScore)),
-        alignment: Math.max(0, Math.min(100, alignmentScore)),
-        hierarchy: Math.max(0, Math.min(100, hierarchyScore)),
-        consistency: Math.max(0, Math.min(100, consistencyScore)),
-        spacing: Math.max(0, Math.min(100, spacingScore)),
-      };
-
-      const overall = Math.round(Object.values(breakdown).reduce((a, b) => a + b, 0) / 6);
-
-      // AI assessment (optional)
-      let aiSuggestion = null;
-      const useAi = params.useAi !== false;
-      if (useAi) {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (apiKey) {
-          try {
-            const prompt = `Design score: ${overall}/100. Breakdown: ${JSON.stringify(breakdown)}. Canvas: ${w}x${h}, ${objects.length} objects. Suggest 3 specific improvements in one sentence each. Return JSON: { "suggestions": ["..."] }`;
-            const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 300, response_format: { type: "json_object" } }),
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              try { aiSuggestion = JSON.parse(data.choices?.[0]?.message?.content || "{}"); } catch { /* ignore */ }
-            }
-          } catch { /* optional */ }
-        }
-      }
-
-      const suggestions = aiSuggestion?.suggestions || [];
-      if (overall < 60) suggestions.push("Consider using design_lint to find and fix specific issues.");
-
-      return {
-        templateId: params.templateId,
-        score: overall,
-        breakdown,
-        suggestions,
-        canvasInfo: { width: w, height: h, objectCount: objects.length },
-      };
-    }
-
-    // ── design_lint ──
-    case "design_lint": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      const objects = tpl.canvas?.objects || [];
-      const w = tpl.width || 1080;
-      const strictness = params.strictness || "normal";
-      const tolerance = strictness === "strict" ? 1 : strictness === "relaxed" ? 4 : 2;
-      const issues = [];
-
-      // Collect fonts and colors for consistency checks
-      const fonts = new Map();
-      const colors = new Map();
-      for (const o of objects) {
-        if (o.type === "text" && o.fontFamily) fonts.set(o.fontFamily, (fonts.get(o.fontFamily) || 0) + 1);
-        if (o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) colors.set(o.fill, (colors.get(o.fill) || 0) + 1);
-      }
-      const dominantFont = [...fonts.entries()].sort((a, b) => b[1] - a[1])[0];
-
-      for (const o of objects) {
-        const name = o.layerName || o.name || "?";
-        const l = o.left || 0, t = o.top || 0;
-        const ow = (o.width || 0) * (o.scaleX || 1), oh = (o.height || 0) * (o.scaleY || 1);
-
-        // Alignment check
-        const grid = 8;
-        if (l % grid > tolerance && l % grid < grid - tolerance) {
-          const nearestX = Math.round(l / grid) * grid;
-          issues.push({ severity: "warning", layer: name, message: `X position ${l} not aligned to ${grid}px grid`, fix: `Snap left to ${nearestX}px` });
-        }
-
-        // Out of bounds
-        if (l < 0) issues.push({ severity: "error", layer: name, message: `Left edge (${l}) is outside canvas`, fix: `Set left >= 0` });
-        if (t < 0) issues.push({ severity: "error", layer: name, message: `Top edge (${t}) is outside canvas`, fix: `Set top >= 0` });
-        if (l + ow > w) issues.push({ severity: "warning", layer: name, message: `Right edge (${l + ow}) exceeds canvas width (${w})`, fix: `Reduce width or adjust position` });
-
-        // Font consistency
-        if (o.type === "text" && dominantFont && o.fontFamily !== dominantFont[0]) {
-          const isHeading = (o.fontSize || 16) >= 24;
-          if (fonts.get(o.fontFamily) <= 2 || strictness === "strict") {
-            issues.push({ severity: "info", layer: name, message: `Font "${o.fontFamily}" differs from dominant font "${dominantFont[0]}"`, fix: isHeading ? "May be intentional for headings" : `Consider using "${dominantFont[0]}"` });
-          }
-        }
-
-        // Contrast check for text
-        if (o.type === "text" && o.fill && typeof o.fill === "string" && o.fill.startsWith("#")) {
-          const hex = o.fill.slice(1);
-          const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-          const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-          // Assuming dark canvas background
-          if (luminance < 0.3) {
-            issues.push({ severity: "error", layer: name, message: `Text fill (${o.fill}) too dark for dark backgrounds`, fix: "Use lighter text color for readability" });
-          }
-        }
-
-        // Size hierarchy
-        if (o.type === "text" && (o.fontSize || 16) < 10) {
-          issues.push({ severity: "warning", layer: name, message: `Font size ${o.fontSize}px too small`, fix: "Increase to at least 12px for readability" });
-        }
-      }
-
-      // Spacing consistency across groups
-      const paddings = objects.filter(o => o.padding !== undefined).map(o => o.padding);
-      if (paddings.length >= 3) {
-        const uniquePads = new Set(paddings);
-        if (uniquePads.size > 3) {
-          issues.push({ severity: "info", layer: "*", message: `${uniquePads.size} unique padding values — consider standardizing`, fix: "Use consistent padding values (e.g. all 16px)" });
-        }
-      }
-
-      const totalChecks = objects.length * 5;
-      const passCount = Math.max(0, totalChecks - issues.length);
-      const passRate = totalChecks > 0 ? Math.round((passCount / totalChecks) * 100) : 100;
-
-      return {
-        templateId: params.templateId,
-        issues,
-        issueCount: issues.length,
-        severity: {
-          errors: issues.filter(i => i.severity === "error").length,
-          warnings: issues.filter(i => i.severity === "warning").length,
-          info: issues.filter(i => i.severity === "info").length,
-        },
-        passRate,
-        strictness,
-      };
-    }
-
-    // ── observe_session ──
     case "observe_session": {
       if (!globalThis.__observe_sessions) globalThis.__observe_sessions = new Map();
       if (!globalThis.__observe_events) globalThis.__observe_events = new Map();
@@ -4363,115 +3146,6 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── remix_template ──
-    case "remix_template": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      const style = params.style;
-      const count = Math.max(1, Math.min(5, params.count || 1));
-      const outputWsId = params.outputWorkspaceId || tpl.workspaceId;
-
-      // Style definitions (rule-based transformations)
-      const STYLES = {
-        brutalist: { palette: ["#ff4500", "#000000", "#ffffff", "#8b0000"], font: "Impact", gap: 4, effects: "raw" },
-        glassmorphism: { palette: ["#ffffff", "#e0e7ff", "#c7d2fe", "#818cf8"], font: "Inter", gap: 24, effects: "blur" },
-        swiss: { palette: ["#ff0000", "#000000", "#ffffff", "#cccccc"], font: "Helvetica", gap: 16, effects: "clean" },
-        cyberpunk: { palette: ["#ff00ff", "#00ffff", "#0a0a0a", "#ff6600"], font: "Share Tech Mono", gap: 8, effects: "neon" },
-        minimalist: { palette: ["#000000", "#ffffff", "#f5f5f5", "#999999"], font: "Inter", gap: 32, effects: "sparse" },
-        art_deco: { palette: ["#d4af37", "#1a1a2e", "#c0c0c0", "#8b7355"], font: "Playfair Display", gap: 20, effects: "ornate" },
-        bauhaus: { palette: ["#e63946", "#1d3557", "#f1faee", "#a8dadc"], font: "Futura", gap: 12, effects: "geometric" },
-      };
-
-      const styleDef = STYLES[style] || STYLES.minimalist;
-      const remixed = [];
-
-      // AI description (optional)
-      let aiDescription = null;
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (apiKey) {
-        try {
-          const prompt = `Describe the key characteristics of the "${style}" design style in 2 sentences. Be specific about colors, typography, and spacing.`;
-          const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: prompt }], max_tokens: 150 }),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            aiDescription = data.choices?.[0]?.message?.content || null;
-          }
-        } catch { /* optional */ }
-      }
-
-      for (let v = 0; v < count; v++) {
-        const remixCanvas = JSON.parse(JSON.stringify(tpl.canvas));
-        for (const obj of remixCanvas.objects || []) {
-          // Apply palette (rotate by variation index)
-          if (obj.fill && typeof obj.fill === "string" && obj.fill.startsWith("#")) {
-            const idx = (v + (obj.left || 0)) % styleDef.palette.length;
-            obj.fill = styleDef.palette[idx];
-          }
-          if (obj.type === "text") {
-            obj.fontFamily = styleDef.font;
-            if (obj.fontSize) obj.fontSize = Math.round(obj.fontSize * (1 + v * 0.05));
-          }
-        }
-
-        const remix = await templates.createTemplate(
-          `${tpl.name} (${style} v${v + 1})`.substring(0, 200),
-          tpl.width, tpl.height, remixCanvas, tpl.metadata?.createdBy || "system", outputWsId
-        );
-        remixed.push({ templateId: remix.id, name: remix.name, variation: v + 1 });
-      }
-
-      return {
-        remixed: remixed.length,
-        style,
-        variationCount: count,
-        templateIds: remixed.map(r => r.templateId),
-        templates: remixed,
-        styleDefinition: styleDef,
-        aiDescription,
-      };
-    }
-
-    // ── design_diff ──
-    case "design_diff": {
-      const tplA = await templates.getTemplate(params.templateIdA);
-      if (!tplA) throw { code: -32000, message: `Template A not found: ${params.templateIdA}` };
-      const tplB = await templates.getTemplate(params.templateIdB);
-      if (!tplB) throw { code: -32000, message: `Template B not found: ${params.templateIdB}` };
-
-      const diffs = compareTemplates(tplA, tplB);
-
-      // Similarity score
-      const objsA = tplA.canvas?.objects || [];
-      const objsB = tplB.canvas?.objects || [];
-      const totalObjects = Math.max(objsA.length, objsB.length);
-      let matchScore = 0;
-      const idsA = new Map();
-      for (const o of objsA) { const id = o.layerName || o.name; if (id) idsA.set(id, o); }
-      for (const o of objsB) {
-        const id = o.layerName || o.name;
-        const match = idsA.get(id);
-        if (match) {
-          matchScore += 0.5;
-          if (match.type === o.type) matchScore += 0.3;
-          if (Math.abs((match.left || 0) - (o.left || 0)) < 5 && Math.abs((match.top || 0) - (o.top || 0)) < 5) matchScore += 0.2;
-        }
-      }
-      const similarityScore = totalObjects > 0 ? Math.round((matchScore / totalObjects) * 100) : 100;
-
-      return {
-        templateA: { id: params.templateIdA, name: tplA.name, objectCount: objsA.length },
-        templateB: { id: params.templateIdB, name: tplB.name, objectCount: objsB.length },
-        differences: diffs,
-        similarityScore: Math.min(100, similarityScore),
-        totalChanges: diffs.length,
-      };
-    }
-
-    // ── suggest_color_palette ──
     case "suggest_color_palette": {
       const baseColor = params.baseColor;
       if (!baseColor || !baseColor.startsWith("#") || baseColor.length < 7) {
@@ -4558,105 +3232,6 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── auto_polish ──
-    case "auto_polish": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const aggressiveness = Math.max(0, Math.min(1, params.aggressiveness ?? 0.7));
-      const alignToGrid = params.alignToGrid !== false;
-      const gridSize = params.gridSize || 8;
-      const boostContrast = params.boostContrast !== false;
-      const normalizeSpacing = params.normalizeSpacing !== false;
-
-      const objects = tpl.canvas?.objects || [];
-      const changes = [];
-
-      // Calculate before score (simple heuristic)
-      const scoreBefore = () => {
-        let s = 50;
-        const aligned = objects.filter(o => (o.left || 0) % gridSize < 2 || (o.left || 0) % gridSize > gridSize - 2).length;
-        if (objects.length > 0) s += Math.round((aligned / objects.length) * 30);
-        return Math.min(100, s);
-      };
-
-      const beforeScore = scoreBefore();
-
-      // Align to grid
-      if (alignToGrid) {
-        for (const obj of objects) {
-          const oldLeft = obj.left || 0;
-          const oldTop = obj.top || 0;
-          const newLeft = Math.round(oldLeft / gridSize) * gridSize;
-          const newTop = Math.round(oldTop / gridSize) * gridSize;
-          if (Math.abs(newLeft - oldLeft) > 1 && aggressiveness > 0.3) {
-            obj.left = newLeft;
-            changes.push({ layer: obj.layerName || obj.name, field: "left", old: oldLeft, new: newLeft });
-          }
-          if (Math.abs(newTop - oldTop) > 1 && aggressiveness > 0.3) {
-            obj.top = newTop;
-            changes.push({ layer: obj.layerName || obj.name, field: "top", old: oldTop, new: newTop });
-          }
-        }
-      }
-
-      // Normalize spacing
-      if (normalizeSpacing && aggressiveness > 0.4) {
-        const paddings = objects.filter(o => o.padding !== undefined).map(o => o.padding);
-        if (paddings.length >= 2) {
-          const sorted = [...paddings].sort((a, b) => a - b);
-          const median = sorted[Math.floor(sorted.length / 2)];
-          for (const obj of objects) {
-            if (obj.padding !== undefined && Math.abs(obj.padding - median) > 2) {
-              changes.push({ layer: obj.layerName || obj.name, field: "padding", old: obj.padding, new: median });
-              obj.padding = median;
-            }
-          }
-        }
-      }
-
-      // Boost contrast
-      if (boostContrast && aggressiveness > 0.2) {
-        for (const obj of objects) {
-          if (obj.type === "text" && obj.fill && typeof obj.fill === "string" && obj.fill.startsWith("#")) {
-            const hex = obj.fill.slice(1);
-            const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-            const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-            if (lum < 0.4) {
-              // Brighten
-              const newR = Math.min(255, r + Math.round((255 - r) * aggressiveness * 0.6));
-              const newG = Math.min(255, g + Math.round((255 - g) * aggressiveness * 0.6));
-              const newB = Math.min(255, b + Math.round((255 - b) * aggressiveness * 0.6));
-              const newFill = `#${newR.toString(16).padStart(2, "0")}${newG.toString(16).padStart(2, "0")}${newB.toString(16).padStart(2, "0")}`;
-              changes.push({ layer: obj.layerName || obj.name, field: "fill", old: obj.fill, new: newFill });
-              obj.fill = newFill;
-            }
-          }
-        }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-
-      const afterScore = scoreBefore();
-
-      return {
-        polished: true,
-        templateId: params.templateId,
-        changes,
-        changeCount: changes.length,
-        scoreBefore: beforeScore,
-        scoreAfter: afterScore,
-        aggressiveness,
-      };
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // FASE 1: HTML Engine Structure Tools
-    // ═══════════════════════════════════════════════════════════
-
-    // ── get_template_structure ──
     case "get_template_structure": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -4753,7 +3328,7 @@ async function handleMethod(method, params, userId) {
           html = html.replace(attrRe, `$1 ${k}="${v}"$3`);
         }
       }
-      await templates.updateTemplate(params.templateId, { html, css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, css, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId };
     }
 
@@ -4789,7 +3364,7 @@ async function handleMethod(method, params, userId) {
           frameHtml += elHtml;
         }
         frame.html = frameHtml;
-        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
         return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId };
       }
 
@@ -4809,7 +3384,7 @@ async function handleMethod(method, params, userId) {
       } else {
         html += elHtml;
       }
-      await templates.updateTemplate(params.templateId, { html, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, layerName: layerId };
     }
 
@@ -4852,7 +3427,7 @@ async function handleMethod(method, params, userId) {
 
       frame.html = (frame.html || "") + "\n" + elHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type };
     }
 
@@ -4898,7 +3473,7 @@ async function handleMethod(method, params, userId) {
         }
       }
 
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, elementId: params.elementId, oldTag: match ? match[1] : "unknown", newTag: params.newTag };
     }
 
@@ -4910,7 +3485,7 @@ async function handleMethod(method, params, userId) {
       let html = tpl.html || "";
       const elRe = new RegExp(`<[^>]*data-layer-id="${params.elementId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${params.elementId}"[^>]*\\s*\\/>`, "g");
       html = html.replace(elRe, "");
-      await templates.updateTemplate(params.templateId, { html, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, removed: params.elementId };
     }
 
@@ -4933,7 +3508,7 @@ async function handleMethod(method, params, userId) {
       } else {
         html += match[0];
       }
-      await templates.updateTemplate(params.templateId, { html, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, reordered: params.elementId, newIndex: params.newIndex };
     }
 
@@ -4969,7 +3544,7 @@ async function handleMethod(method, params, userId) {
           css = `:root {\n  ${varName}: ${params.value};\n}\n` + css;
         }
       }
-      await templates.updateTemplate(params.templateId, { css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { css, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, variable: varName, value: params.value };
     }
 
@@ -5084,7 +3659,7 @@ async function handleMethod(method, params, userId) {
       if (params.variables?.texts) for (const [k, v] of Object.entries(params.variables.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }
       if (params.variables?.images) for (const [k, v] of Object.entries(params.variables.images)) { html = html.replace(new RegExp(k, "g"), String(v)); }
       if (params.variables?.colors) for (const [k, v] of Object.entries(params.variables.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
-      await templates.updateTemplate(params.templateId, { html, css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, css, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId };
     }
 
@@ -5364,7 +3939,7 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: "Template not found" };
       let html = tpl.html || "";
       html = html.replace(new RegExp(`(<img[^>]*src=")([^"]+)("[^>]*>)`, "g"), `$1${params.newUrl}$3`);
-      await templates.updateTemplate(params.templateId, { html, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { html, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId };
     }
 
@@ -5406,7 +3981,7 @@ async function handleMethod(method, params, userId) {
 
       const tpl = await templates.createTemplate(`AI: ${params.prompt.substring(0, 40)}`, params.width || 1080, params.height || 1080, undefined, "", "default");
       tpl.engine = "html"; tpl.html = html; tpl.css = css;
-      await templates.updateTemplate(tpl.id, { engine: "html", html, css, canvas: tpl.canvas, frames: [] });
+      await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: [] });
       return { templateId: tpl.id, previewUrl: "" };
     }
 
@@ -5424,7 +3999,7 @@ async function handleMethod(method, params, userId) {
       const fontUrl = (params.family || "Inter").replace(/ /g, "+");
       const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:wght@${(params.weights || [400, 700]).join(";")}&display=swap');\n`;
       if (!css.includes(fontUrl)) css = importLine + css;
-      await templates.updateTemplate(params.templateId, { css, canvas: tpl.canvas, frames: tpl.frames || [] });
+      await templates.updateTemplate(params.templateId, { css, frames: tpl.frames || [] });
       return { success: true, templateId: params.templateId, fontFamily: params.family };
     }
 
@@ -5449,7 +4024,7 @@ async function handleMethod(method, params, userId) {
       }
       // Ensure template is HTML engine
       if (!tpl.engine) {
-        await templates.updateTemplate(params.templateId, { engine: "html", canvas: tpl.canvas, frames: tpl.frames || [] });
+        await templates.updateTemplate(params.templateId, { engine: "html", frames: tpl.frames || [] });
         tpl.engine = "html";
       }
       const FRAME_GAP = 100;
@@ -5474,7 +4049,6 @@ async function handleMethod(method, params, userId) {
       // Persist
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
-        canvas: tpl.canvas,
         html: tpl.html,
         css: tpl.css,
       });
@@ -5500,7 +4074,6 @@ async function handleMethod(method, params, userId) {
       // Persist
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
-        canvas: tpl.canvas,
         html: tpl.html,
         css: tpl.css,
       });
@@ -5521,7 +4094,6 @@ async function handleMethod(method, params, userId) {
       tpl.metadata.updatedAt = new Date().toISOString();
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
-        canvas: tpl.canvas,
         html: tpl.html,
         css: tpl.css,
       });
@@ -5560,7 +4132,7 @@ async function handleMethod(method, params, userId) {
       const cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
       frame.html = (frame.html || "") + "\n" + elHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type, x, y, width, height };
     }
 
@@ -5581,7 +4153,7 @@ async function handleMethod(method, params, userId) {
       const cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${Math.max(width, 1)}px;\n  height: ${Math.max(height, 1)}px;\n  overflow: visible;\n}`;
       frame.html = (frame.html || "") + "\n" + svgHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type: "path" };
     }
 
@@ -5622,7 +4194,7 @@ async function handleMethod(method, params, userId) {
         frame.css = (frame.css || "") + rule;
       }
 
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, elementId: params.elementId, transforms: cssProps };
     }
 
@@ -5651,7 +4223,7 @@ async function handleMethod(method, params, userId) {
       frame.html = html + "\n" + wrapperHtml;
       frame.css = (frame.css || "") + `\n[data-layer-id="${groupId}"] {\n  position: relative;\n  display: flex;\n}\n`;
 
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, groupId, childrenCount: childHtmls.length };
     }
 
@@ -5717,7 +4289,7 @@ async function handleMethod(method, params, userId) {
         frame.css = frame.css.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
       }
 
-      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, align, elementsAligned: elementData.length };
     }
 

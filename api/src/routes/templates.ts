@@ -313,7 +313,6 @@ templateRoutes.post("/import", async (req, res) => {
       name: tplData.name,
       width: tplData.width || 1080,
       height: tplData.height || 1080,
-      canvas: tplData.canvas || { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
       userId: req.auth!.userId,
     });
 

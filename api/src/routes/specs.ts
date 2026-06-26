@@ -166,7 +166,7 @@ specRoutes.get("/:id/specs", async (req, res) => {
         if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
         walk(frame.objects, frame.x || 0, frame.y || 0);
       } else {
-        // Walk only frame objects (canvas.objects is V1 legacy, removed)
+        // Walk frame objects
         for (const frame of tpl.frames) walk(frame.objects, frame.x || 0, frame.y || 0);
       }
       specs.layers = layers;

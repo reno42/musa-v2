@@ -8,8 +8,6 @@ export interface DesignTemplate {
   engine?: "html";
   html?: string;
   css?: string;
-  canvas?: any;
-  pages?: any[];
   frames?: any[];
   styles?: any[];
   comments?: any[];

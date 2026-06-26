@@ -14,7 +14,7 @@ import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
-import { getTemplate } from "../lib/templateApi";
+import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
@@ -115,6 +115,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const lastPushTimeRef = useRef(0);
   const codePanelRef = useRef<CodePanelRef>(null);
   const [selectedFont, setSelectedFont] = useState("");
   const [showFontPicker, setShowFontPicker] = useState(false);
@@ -222,26 +224,43 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       setSaving(true);
-      try {
-        // Save frames array + backward-compat single html/css
-        const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
-        await apiFetch(`/api/templates/${templateId}`, {
-          method: "PUT",
-          body: JSON.stringify({
-            frames: updatedFrames,
-            html: active?.html || "",
-            css: active?.css || "",
-          }),
-        });
-        broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
-        lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
-      } catch (err) {
-        console.warn("[EditorV2] Auto-save failed:", err);
-      } finally {
-        setSaving(false);
+      const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
+      const payload = {
+        frames: updatedFrames,
+        html: active?.html || "",
+        css: active?.css || "",
+        name: templateName,
+      };
+
+      // ✅ Dual-write: localStorage first (freemium resilience, instant persistence)
+      saveLocal(templateId, payload);
+
+      // Sync to API + Supabase with exponential-backoff retry (max 3 attempts)
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          await apiFetch(`/api/templates/${templateId}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+          broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
+          lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
+          retryCountRef.current = 0;
+          break; // success
+        } catch (err) {
+          retryCountRef.current = attempt + 1;
+          if (attempt < MAX_RETRIES) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            console.warn(`[EditorV2] Auto-save retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
+            await new Promise(r => setTimeout(r, delay));
+          } else {
+            console.warn("[EditorV2] Auto-save exhausted retries (cached in localStorage):", err);
+          }
+        }
       }
+      setSaving(false);
     }, 2000);
-  }, [templateId, selectedFrameId]);
+  }, [templateId, selectedFrameId, templateName]);
 
   useEffect(() => {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
@@ -320,7 +339,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml } : f
     );
-    pushUndo(frames);
+    // Coalesce: only push undo if >800ms since last push (avoids one-undo-per-keystroke)
+    const now = Date.now();
+    if (now - lastPushTimeRef.current > 800) {
+      pushUndo(frames);
+      lastPushTimeRef.current = now;
+    }
     setFrames(updated);
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
@@ -331,7 +355,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, css: newCss } : f
     );
-    pushUndo(frames);
+    const now = Date.now();
+    if (now - lastPushTimeRef.current > 800) {
+      pushUndo(frames);
+      lastPushTimeRef.current = now;
+    }
     setFrames(updated);
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
@@ -341,17 +369,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, css: newCss } : f
     );
+    pushUndo(frames);
     setFrames(updated);
     autoSave(updated);
-  }, [frames, autoSave]);
+  }, [frames, autoSave, pushUndo]);
 
   const handleFrameHtmlChange = useCallback((frameId: string, newHtml: string) => {
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, html: newHtml } : f
     );
+    pushUndo(frames);
     setFrames(updated);
     autoSave(updated);
-  }, [frames, autoSave]);
+  }, [frames, autoSave, pushUndo]);
 
   // ── Frame operations ──
   const addFrame = useCallback((preset: { name: string; width: number; height: number }) => {
@@ -710,8 +740,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       }
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
-      if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
+      if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
+      if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
@@ -734,8 +764,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         }
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
 
   // ── Export ──

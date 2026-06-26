@@ -44,13 +44,13 @@ export const createTemplateSchema = z.object({
 
 export const updateTemplateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  canvas: z.any().optional(),
   width: z.number().int().min(1).max(10000).optional(),
   height: z.number().int().min(1).max(10000).optional(),
   metadata: z.object({ updatedAt: z.string().optional() }).optional(),
   engine: z.enum(["html"]).optional(),
   html: z.string().optional(),
   css: z.string().optional(),
+  frames: z.array(z.any()).optional(),
 });
 
 export const duplicateTemplateSchema = z.object({

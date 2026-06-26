@@ -1,6 +1,355 @@
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
+**Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Netlify with serverless functions.
+**Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
+
+---
+
+## Overview
+
+You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application providing a WYSIWYG HTML/CSS design experience. The editor is deployed on **Netlify** with serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write model: Supabase when configured, in-memory fallback when not).
+
+**Production URL:** `https://futuraria.netlify.app`
+**Dev URL:** `http://localhost:5173` (Vite dev server)
+**API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
+**MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
+**Start command:** `npm run dev` (from project root)
+
+## Project Structure
+
+```
+design-main/
+├── src/                          — React frontend (Vite)
+│   ├── App.tsx                   — Root, routing (dashboard vs editor)
+│   ├── main.tsx                  — Vite entry point
+│   ├── pages/
+│   │   └── EditorV2.tsx          — Main V2 editor: iframe canvas + dockable panels
+│   ├── components/
+│   │   ├── Dashboard.tsx         — Template gallery, workspace selector
+│   │   ├── InfiniteHtmlCanvas.tsx— Infinite canvas with per-frame HTML/CSS iframe rendering
+│   │   ├── DesignFrame.tsx       — Single frame renderer with selection overlay
+│   │   ├── HtmlCanvas.tsx        — HTML/CSS iframe sandbox with CSP + postMessage bridge
+│   │   ├── CodePanel.tsx         — Monaco editor for HTML + CSS (split view)
+│   │   ├── FloatingToolbar.tsx   — Floating tool palette (select, hand, rect, circle, pen, text, image, frame)
+│   │   ├── StructurePanel.tsx    — HTML element tree with drag-and-drop hierarchy
+│   │   ├── HtmlLayersPanel.tsx   — Layer list for frame objects
+│   │   ├── HtmlContextualPanel.tsx— Contextual properties (position, size, style)
+│   │   ├── GoogleFontPicker.tsx  — Google Fonts browser with all weights/italics
+│   │   ├── VariablesPanel.tsx    — Design token and CSS variable editor
+│   │   ├── FormatPanel.tsx       — Multi-format adaptation panel
+│   │   ├── BrandPanel.tsx        — Brand DNA profile management
+│   │   ├── ActiveAgentsPanel.tsx — Real-time collaborative agent presence
+│   │   └── Toast.tsx             — Toast notifications
+│   ├── hooks/
+│   │   └── useDockablePanel.ts   — Draggable/dockable floating panel hook
+│   ├── lib/
+│   │   ├── templateApi.ts        — API client + localStorage fallback
+│   │   ├── supabase.ts           — Fetch wrapper
+│   │   └── supabaseRealtime.ts   — Supabase realtime subscriptions + broadcast
+│   └── shared/
+│       └── icons.tsx             — SVG icon library
+├── api/                          — Express API (serverless via Netlify Functions)
+│   ├── src/
+│   │   ├── index.ts              — Express app factory
+│   │   ├── server.ts             — Local dev server entry
+│   │   ├── types.ts              — Shared TypeScript types (DesignTemplate, Frame, etc.)
+│   │   ├── routes/               — REST API routes (templates, frames, versions, etc.)
+│   │   ├── services/
+│   │   │   ├── templates.ts      — Template service (Supabase dual-write)
+│   │   │   ├── store.ts          — In-memory store (fallback)
+│   │   │   └── supabase.ts       — Supabase admin client (service_role)
+│   │   └── middleware/
+│   │       ├── auth.ts           — API key / Bearer token auth
+│   │       └── rateLimit.ts      — Rate limiting
+│   └── package.json
+├── netlify/
+│   └── functions/
+│       ├── api.mjs               — Express → Netlify Function bridge
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 114 tools)
+├── netlify.toml                  — Netlify build + redirects
+├── package.json                  — Root: Vite + React deps
+├── vite.config.ts
+└── tsconfig.json
+```
+
+## Deployment Architecture
+
+```
+Browser / AI Agent
+  │
+  ▼
+Netlify CDN (futuraria.netlify.app)
+  ├── /*               → dist/index.html (SPA)
+  ├── /api/*           → /.netlify/functions/api  (Express → JSON)
+  └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
+         │
+         ▼
+Supabase (PostgreSQL)
+  ├── workspaces table  (id, name, owner_id, data JSONB, timestamps)
+  └── templates table   (id, name, workspace_id, data JSONB, user_id, timestamps)
+```
+
+### Dual-Write Persistence
+
+```
+Try Supabase first → ✓ Return result
+                   → ✗ Fall through to in-memory store
+Write operations:  in-memory store first → then Supabase.upsert() (non-blocking)
+```
+
+- **Supabase configured** (env vars in Netlify): Full cloud persistence across cold starts
+- **No Supabase**: In-memory only — survives container lifetime, resets on cold start
+- **MCP calls same services** — identical dual-write behavior, no separate code path
+
+## Architecture
+
+```
+App (React state)
+├── Dashboard            — template gallery, search, workspace selector
+├── EditorV2 (main view)
+│   ├── CodePanel        — Monaco code editor (HTML + CSS split view)
+│   ├── StructurePanel   — HTML element tree (drag-and-drop reorder)
+│   ├── HtmlLayersPanel  — frame object layer management
+│   ├── InfiniteHtmlCanvas — per-frame HTML/CSS iframe rendering
+│   │   └── DesignFrame  — single frame: iframe + selection overlay
+│   ├── FloatingToolbar  — tool palette (select, hand, shapes, text, image, frame)
+│   ├── HtmlContextualPanel — selected element properties
+│   ├── GoogleFontPicker — font family browser with weights/italics
+│   ├── VariablesPanel   — CSS custom properties editor
+│   ├── FormatPanel      — multi-format adaptation
+│   ├── BrandPanel       — brand DNA management
+│   └── ActiveAgentsPanel — collaborative agent presence (Supabase Realtime)
+└── ToastProvider        — toast notification system
+```
+
+### Data Model (V2 HTML/CSS)
+
+The editor operates on frame-based HTML/CSS templates:
+
+```typescript
+interface DesignTemplate {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  engine: "html";
+  html?: string;        // Global HTML (applied across all frames)
+  css?: string;         // Global CSS
+  frames: Frame[];      // Frame array — each frame has its own html/css
+  styles: Style[];
+  variables: { collections, variables, bindings };
+  metadata: { createdAt, updatedAt, ... };
+}
+
+interface Frame {
+  id: string;
+  templateId: string;
+  name: string;
+  x: number; y: number;
+  width: number; height: number;
+  html?: string;
+  css?: string;
+  objects?: any[];      // Frame-level objects (shapes, text, images)
+}
+```
+
+### Data Flow
+
+```
+User action → iframe click (postMessage bridge) or code edit (Monaco)
+  → EditorV2 state update
+    → localStorage (instant save)
+    → API PUT /api/templates/:id (best-effort cloud sync)
+    
+Template load:
+  → API GET /api/templates/:id
+    → If localStorage is newer → prefer localStorage
+    → If API has no html/css → fall back to localStorage
+```
+
+### Rendering
+
+Each frame renders inside a sandboxed iframe with:
+- **CSP meta tag**: blocks scripts, allows inline styles + Google Fonts
+- **postMessage bridge**: click on `data-layer-id` elements sends selection events to parent
+- **html2canvas**: client-side PNG export at up to 4x scale
+
+## MCP (Model Context Protocol) — AI Agent Connection Guide
+
+AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **114 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, and collaborative design operations.
+
+### Protocol Flow
+
+```
+Agent (Claude / Cursor / Custom)
+  │
+  ├─ GET  /mcp                          → SSE init (event: endpoint)
+  ├─ POST /mcp  { method: "initialize" } → capabilities + server info
+  ├─ POST /mcp  { method: "tools/list" } → discover 114 tools
+  └─ POST /mcp  { method: "tools/call" } → invoke any tool
+```
+
+**Auth:** Pass `x-api-key: your-key` or `Authorization: Bearer your-token` header on POST requests.
+
+### Key MCP Tool Categories
+
+| Category | Example Tools | Count |
+|----------|--------------|-------|
+| Workspace | `list_workspaces`, `create_workspace` | 2 |
+| Templates | `create_template`, `get_template`, `update_template`, `export_template` | 8 |
+| Frames | `create_frame`, `update_frame`, `create_html_frame` | 8 |
+| HTML/CSS | `set_html`, `set_css`, `add_element`, `update_element`, `remove_element` | 12 |
+| Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
+| Drawing | `draw_shape`, `draw_path`, `transform_element`, `group_elements`, `align_elements` | 5 |
+| Fonts | `list_fonts`, `search_google_fonts`, `add_font_to_template` | 4 |
+| AI | `ai_generate_text`, `ai_generate_image`, `ai_palette`, `ai_suggest_layout` | 5 |
+| Brand | `register_brand`, `validate_brand`, `check_contrast`, `auto_fix_brand` | 6 |
+| Batch | `batch_update`, `render_batch`, `batch_create_variants`, `batch_render_html` | 7 |
+| Variables | `create_variable`, `create_collection`, `link_variable`, `apply_variables` | 6 |
+| Version | `list_versions`, `restore_version` | 2 |
+| Collaboration | `share_template`, `claim_section`, `get_active_agents`, `broadcast_section_change` | 8 |
+| Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
+| Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
+| Render | `render_html_template`, `render_to_formats` | 2 |
+
+### Agent Workflow Patterns (via MCP)
+
+**Pattern 1: Create an HTML design from scratch**
+```
+tools/call: create_workspace({ name: "Client Project" })              → wsId
+tools/call: create_template({ name: "Hero", workspaceId: wsId })      → tplId
+tools/call: create_html_frame({ templateId: tplId, name: "Main" })    → frameId
+tools/call: set_html({ templateId: tplId, frameId, html: "<div>..." })
+tools/call: set_css({ templateId: tplId, frameId, css: "div { ... }" })
+```
+
+**Pattern 2: Add visual elements to a frame**
+```
+tools/call: add_element({ templateId: tplId, frameId, tag: "h1", content: "Hello", ... })
+tools/call: draw_shape({ templateId: tplId, frameId, shape: "rect", x: 100, y: 50, ... })
+tools/call: transform_element({ templateId: tplId, frameId, layerName: "h1-0", x: 200, y: 100 })
+```
+
+**Pattern 3: Batch generation**
+```
+tools/call: batch_create_variants({ templateId: tplId, variations: [...] })
+tools/call: batch_render_html({ templateId: tplId })
+tools/call: batch_export({ batchId: "..." })
+```
+
+### Error Reference
+
+| Code | Meaning | When |
+|------|---------|------|
+| `-32700` | Parse error | Invalid JSON body |
+| `-32600` | Invalid Request | Not valid JSON-RPC 2.0 |
+| `-32601` | Method not found | Unknown tool name |
+| `-32602` | Invalid params | Missing required parameter, bad format |
+| `-32000` | Server error | Template/workspace not found |
+
+## Components Reference
+
+### EditorV2
+- **File:** `src/pages/EditorV2.tsx`
+- **Role:** Main V2 editor orchestrating all panels, canvas, toolbar, and state
+- **Features:** Infinite canvas with per-frame HTML/CSS iframes, zoom/pan, dockable floating panels, PNG export via html2canvas, Supabase realtime collaboration
+
+### InfiniteHtmlCanvas
+- **File:** `src/components/InfiniteHtmlCanvas.tsx`
+- **Role:** Infinite canvas container managing multiple DesignFrame instances with zoom, pan, selection, and frame CRUD
+
+### DesignFrame
+- **File:** `src/components/DesignFrame.tsx`
+- **Role:** Single frame: sandboxed iframe rendering HTML/CSS + overlay for selection/resize handles
+
+### HtmlCanvas
+- **File:** `src/components/HtmlCanvas.tsx`
+- **Role:** HTML/CSS iframe sandbox with CSP, postMessage bridge for element selection (`data-layer-id`), supports Google Fonts via CDN
+
+### CodePanel
+- **File:** `src/components/CodePanel.tsx`
+- **Role:** Monaco editor with HTML + CSS split view, real-time sync with iframe rendering
+
+### StructurePanel
+- **File:** `src/components/StructurePanel.tsx`
+- **Role:** HTML element tree parsed via DOMParser, drag-and-drop reorder, auto-ID assignment
+
+### FloatingToolbar
+- **File:** `src/components/FloatingToolbar.tsx`
+- **Role:** Floating tool palette: Select (V), Hand (H), Rectangle, Circle, Pen, Text (T), Image (I), Frame (F), Zoom controls
+
+### GoogleFontPicker
+- **File:** `src/components/GoogleFontPicker.tsx`
+- **Role:** Browse and apply Google Fonts with all weight variants (100–900) and italic forms
+
+### Dashboard
+- **File:** `src/components/Dashboard.tsx`
+- **Role:** Template gallery with workspace selector, search, create/duplicate/delete, localStorage-API merge
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `⌘K` / `Ctrl+K` | Toggle shortcuts dialog |
+| `⌘Z` / `Ctrl+Z` | Undo |
+| `⌘⇧Z` / `Ctrl+Shift+Z` | Redo |
+| `⌘1` / `Ctrl+1` | Zoom to fit |
+| `Delete` / `Backspace` | Delete selected element |
+| `⌘D` / `Ctrl+D` | Duplicate selection |
+| `⌘G` / `Ctrl+G` | Group selection |
+| `⌘⇧G` / `Ctrl+Shift+G` | Ungroup |
+| `V` | Select tool |
+| `H` | Hand/pan tool |
+| `R` | Rectangle |
+| `T` | Text |
+| `F` | Frame |
+| `I` | Image |
+
+## Coding Standards
+
+When modifying editor files, follow these rules:
+
+1. **Panels use `useDockablePanel`** for drag-and-dock floating behavior
+2. **Dialogs must use native `<dialog>`** with `onCancel`, backdrop click on `role="presentation"` inner div
+3. **Interactive elements must be `<button>`**, not `role="button"` divs
+4. **All buttons need `type="button"`** and `aria-label`
+5. **API calls use relative URLs** (`/api/...`) — works on any domain (Netlify redirects to function)
+6. **Dual-write pattern**: localStorage first, API second — never lose user data to network errors
+7. **MCP tools must follow dual-write** — always upsert to Supabase after store writes (non-blocking catch)
+8. **Frames use sandboxed iframes** with CSP for secure HTML/CSS preview
+
+## Dependencies
+
+```json
+{
+  "react": "^18.3.1",
+  "react-dom": "^18.3.1",
+  "html2canvas": "^1.4.1",
+  "monaco-editor": "^0.50.0"
+}
+```
+
+Dev: `vite@5`, `typescript@5`, `@vitejs/plugin-react@4`
+
+## Start Commands
+
+```bash
+# Development (frontend only — Vite dev server)
+npm run dev                              # → http://localhost:5173
+
+# Local API (optional — for testing without Netlify)
+cd api && npm run dev                    # → http://localhost:3001
+
+# Build (Vite)
+npm run build                            # tsc + vite build → dist/
+
+# Preview production build
+npm run preview
+```
+# Futuraria Design Editor — AI Agent Skill
+
+**Skill Name:** `futuraria-editor`
 **Description:** React + Fabric.js canvas editor for the Futuraria Design platform. Full WYSIWYG design tool with 14 drawing tools, boolean operations, alignment/distribution, auto-layout, frame management, layers panel, properties inspector, batch generation (3 modes), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Scores 100/100 on react-doctor health audit. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
