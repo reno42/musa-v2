@@ -23,6 +23,15 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const res = await apiFetch<{ data: TemplateFull }>(`/api/templates/${id}`);
     const apiData = res.data;
     const localData = getLocalTemplate(id);
+    console.error("[getTemplate] ═══ DECISION ═══", {
+      id,
+      apiHasFrames: !!(apiData as any)?.frames?.length,
+      apiUpdated: (apiData as any)?.metadata?.updatedAt,
+      localExists: !!localData,
+      localHasFrames: localData?.frames?.length,
+      localUpdated: localData?.updatedAt,
+      localNewer: localData?.updatedAt > ((apiData as any)?.metadata?.updatedAt || ""),
+    });
 
     // Helper: check if data has meaningful content (V2: html/css/frames)
     const hasContent = (d: any) =>
@@ -33,7 +42,7 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
       const apiUpdated = (apiData as any).metadata?.updatedAt || "";
       const localUpdated = localData.updatedAt || "";
       if (localUpdated > apiUpdated && hasContent(localData)) {
-        console.log("[getTemplate] Local version is newer, using localStorage");
+        console.error("[getTemplate] ✓ Using LOCAL (newer)");
         return {
           ...apiData,
           ...localData,
@@ -50,7 +59,7 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
 
     // If API returned empty data but localStorage has content
     if (apiData && !hasContent(apiData) && hasContent(localData)) {
-      console.log("[getTemplate] API has empty content, using localStorage");
+      console.error("[getTemplate] ✓ Using LOCAL (API empty)");
       return {
         ...apiData,
         ...localData,
@@ -66,6 +75,7 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
 
     return apiData;
   } catch (err: any) {
+    console.error("[getTemplate] ✗ API fetch FAILED:", err.message);
     const msg = err.message || "";
     // Always try localStorage first for any error (freemium resilience)
     const local = getLocalTemplate(id);

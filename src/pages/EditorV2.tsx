@@ -138,6 +138,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Undo/Redo helpers ──
   const pushUndo = useCallback((current: FrameData[]) => {
+    console.error("[UNDO] pushUndo called", { stackSize: undoStack.current.length, frameCount: current.length });
     undoStack.current.push(JSON.parse(JSON.stringify(current)));
     if (undoStack.current.length > 50) undoStack.current.shift();
     redoStack.current = [];
@@ -146,7 +147,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   const handleUndo = useCallback(() => {
-    if (undoStack.current.length === 0) return;
+    console.error("[UNDO] ═══ Ctrl+Z FIRED ═══", { stackSize: undoStack.current.length, frameCount: frames.length });
+    if (undoStack.current.length === 0) { console.error("[UNDO] ✗ Undo stack EMPTY — nothing to undo"); return; }
     const prev = undoStack.current.pop()!;
     redoStack.current.push(JSON.parse(JSON.stringify(frames)));
     setFrames(prev);
@@ -168,9 +170,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     let cancelled = false;
     async function load() {
       try {
+        console.error("[LOAD] ═══ FETCHING TEMPLATE ═══", { templateId });
         const tpl = await getTemplate(templateId);
+        console.error("[LOAD] getTemplate returned:", { hasTpl: !!tpl, framesLen: (tpl as any)?.frames?.length, hasHtml: !!(tpl as any)?.html, hasCss: !!(tpl as any)?.css, metadata: (tpl as any)?.metadata });
         if (cancelled) return;
-        if (!tpl) { setError("Template not found"); setLoading(false); return; }
+        if (!tpl) { setError("Template not found"); setLoading(false); console.error("[LOAD] ✗ Template not found"); return; }
         const t = tpl as any;
         if (t.engine && t.engine !== "html") {
           setError("This template uses an unsupported engine. Only HTML templates are supported.");
@@ -194,6 +198,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           }));
           setFrames(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
+          console.error("[LOAD] ✓ Parsed frames:", { count: loaded.length, ids: loaded.map(f => f.id), firstHtmlLen: loaded[0]?.html?.length, firstCssLen: loaded[0]?.css?.length });
         } else {
           // Legacy: single template → one frame
           const single: FrameData = {
@@ -231,23 +236,34 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         css: active?.css || "",
         name: templateName,
       };
+      console.error("[SAVE] ═══ AUTO-SAVE FIRED ═══", { templateId, frameCount: updatedFrames.length, hasHtml: !!active?.html, hasCss: !!active?.css, activeId: active?.id });
 
       // ✅ Dual-write: localStorage first (freemium resilience, instant persistence)
-      saveLocal(templateId, payload);
+      try {
+        saveLocal(templateId, payload);
+        console.error("[SAVE] ✓ localStorage saved OK", { templateId, framesLen: updatedFrames.length });
+        // Verify it was stored
+        const verify = (() => { try { const d = JSON.parse(localStorage.getItem("futuraria_local_templates") || "{}"); const entry = d[templateId]; return entry ? { hasFrames: !!entry.frames, framesLen: entry.frames?.length, updatedAt: entry.updatedAt } : null; } catch { return null; } })();
+        console.error("[SAVE] localStorage verify:", verify);
+      } catch (localErr) {
+        console.error("[SAVE] ✗ localStorage FAILED:", localErr);
+      }
 
       // Sync to API + Supabase with exponential-backoff retry (max 3 attempts)
       const MAX_RETRIES = 3;
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          await apiFetch(`/api/templates/${templateId}`, {
+          const putRes = await apiFetch(`/api/templates/${templateId}`, {
             method: "PUT",
             body: JSON.stringify(payload),
           });
+          console.error("[SAVE] ✓ API PUT OK", { attempt, status: 200, responseHasFrames: !!(putRes as any)?.data?.frames });
           broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
           break; // success
         } catch (err) {
+          console.error(`[SAVE] ✗ API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
           retryCountRef.current = attempt + 1;
           if (attempt < MAX_RETRIES) {
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
@@ -259,6 +275,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         }
       }
       setSaving(false);
+      console.error("[SAVE] ═══ AUTO-SAVE COMPLETE ═══");
     }, 2000);
   }, [templateId, selectedFrameId, templateName]);
 
@@ -740,7 +757,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       }
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
+      if (mod && e.key === "z" && !e.shiftKey) { console.error("[KEY] Ctrl+Z captured (target:", (e.target as HTMLElement).tagName, ")"); e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
