@@ -84,6 +84,10 @@ export function DesignFrame({
   onElementDeleteRef.current = onElementDelete;
   const onElementDuplicateRef = useRef(onElementDuplicate);
   onElementDuplicateRef.current = onElementDuplicate;
+  const onCssChangeRef = useRef(onCssChange);
+  onCssChangeRef.current = onCssChange;
+  const onHtmlChangeRef = useRef(onHtmlChange);
+  onHtmlChangeRef.current = onHtmlChange;
   const editingTextRef = useRef<Element | null>(null);
   const zoomRef = useRef(zoom || 1);
   zoomRef.current = zoom || 1;
@@ -453,7 +457,7 @@ export function DesignFrame({
           top: target.style.top,
         });
         cssRef.current = updated;
-        onCssChange?.(frame.id, updated);
+        onCssChangeRef.current?.(frame.id, updated);
       };
 
       document.addEventListener("mousemove", onDragMove);
@@ -620,7 +624,7 @@ export function DesignFrame({
       }
       const updated = updateCssRule(cssRef.current, sel, props);
       cssRef.current = updated;
-      onCssChange?.(frame.id, updated);
+      onCssChangeRef.current?.(frame.id, updated);
     };
 
     document.addEventListener("mousemove", onMove);
