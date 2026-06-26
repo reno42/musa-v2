@@ -35,7 +35,6 @@ colorRoutes.get("/:id/colors", async (req, res) => {
       }
     }
 
-    for (const obj of tpl.canvas.objects) scan(obj);
     for (const frame of tpl.frames) {
       for (const obj of frame.objects) scan(obj);
     }

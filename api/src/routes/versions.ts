@@ -19,7 +19,7 @@ versionRoutes.post("/:id/versions", validate(createSchema), async (req, res) => 
       id: `ver_${uuid().slice(0, 12)}`,
       templateId: tpl.id,
       label: req.body.label || `Snapshot ${new Date().toLocaleString()}`,
-      canvas: JSON.parse(JSON.stringify(tpl.canvas)),
+      canvas: null, // V2 templates use html/css/frames, not canvas.objects
       html: tpl.html,
       css: tpl.css,
       createdAt: new Date().toISOString(),
@@ -63,7 +63,9 @@ versionRoutes.post("/:id/versions/:versionId/restore", async (req, res) => {
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
     const v = tpl.versions.find(ver => ver.id === req.params.versionId);
     if (!v) return res.status(404).json({ success: false, error: "Version not found" });
-    tpl.canvas = JSON.parse(JSON.stringify(v.canvas));
+    // V2 restore: html/css/frames are restored from version
+    if (v.html !== undefined) tpl.html = v.html;
+    if (v.css !== undefined) tpl.css = v.css;
     tpl.metadata.updatedAt = new Date().toISOString();
     res.json({ success: true, data: { message: "Version restored" } });
   } catch (err: any) {

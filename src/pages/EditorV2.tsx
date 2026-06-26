@@ -171,7 +171,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         if (!tpl) { setError("Template not found"); setLoading(false); return; }
         const t = tpl as any;
         if (t.engine && t.engine !== "html") {
-          setError("This template uses the Fabric.js engine. Open it in the Fabric editor.");
+          setError("This template uses an unsupported engine. Only HTML templates are supported.");
           setLoading(false);
           return;
         }

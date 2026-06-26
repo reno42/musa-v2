@@ -22,7 +22,7 @@ export interface Frame {
   opacity?: number;
   parentFrameId?: string | null;
   order: number;
-  objects: FabricObject[];
+  objects: CanvasObject[];
   layoutMode: "NONE" | "HORIZONTAL" | "VERTICAL";
   clipsContent: boolean;
   constraints: { left?: boolean; right?: boolean; top?: boolean; bottom?: boolean; centerX?: boolean; centerY?: boolean; scale?: boolean };
@@ -36,7 +36,7 @@ export interface DesignTemplate {
   width: number;
   height: number;
   engine: "html";
-  canvas: FabricCanvas;
+  canvas: CanvasData;
   html?: string;
   css?: string;
   frames: Frame[];
@@ -57,14 +57,14 @@ export interface Component {
   createdAt: string;
 }
 
-export interface FabricCanvas {
+export interface CanvasData {
   version?: string;
-  objects: FabricObject[];
+  objects: CanvasObject[];
   background?: string;
   viewport: { x: number; y: number; zoom: number };
 }
 
-export type FabricObject = {
+export type CanvasObject = {
   type: string;
   layerName?: string;
   layerId?: string;
@@ -90,7 +90,7 @@ export type FabricObject = {
   fontFamily?: string;
   src?: string;
   path?: any[];
-  objects?: FabricObject[];
+  objects?: CanvasObject[];
   [key: string]: any;
 };
 
@@ -115,7 +115,7 @@ export interface Version {
   id: string;
   templateId: string;
   label: string;
-  canvas: FabricCanvas;
+  canvas: CanvasData | null;  // null for V2 HTML templates (use html/css/frames instead)
   html?: string;
   css?: string;
   createdAt: string;

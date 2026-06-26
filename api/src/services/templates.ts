@@ -1,7 +1,7 @@
 import { store } from "./store.js";
 import { getSupabase } from "./supabase.js";
 import { v4 as uuid } from "uuid";
-import type { DesignTemplate, FabricCanvas, LayerOverride } from "../types.js";
+import type { DesignTemplate, CanvasData, LayerOverride } from "../types.js";
 
 /** UUID v4 format (used to validate user_id before Supabase upsert) */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,7 +109,7 @@ async function deleteFromSupabase(id: string) {
 
 export async function createTemplate(
   name: string, width: number, height: number,
-  canvas: FabricCanvas | undefined, userId: string, workspaceId: string
+  canvas: CanvasData | undefined, userId: string, workspaceId: string
 ): Promise<DesignTemplate> {
   const tpl = store.createTemplate({ workspaceId, name, width, height, canvas, userId });
   await upsertSupabase(tpl, userId);
@@ -225,7 +225,6 @@ export async function applyLayerOverrides(
     }
   };
 
-  applyToObjects(tpl.canvas.objects);
   for (const frame of tpl.frames) {
     applyToObjects(frame.objects);
   }

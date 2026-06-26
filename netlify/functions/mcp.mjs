@@ -174,7 +174,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace. Supports both Fabric.js (default) and HTML engine templates. For HTML engine, pass engine='html' with optional html/css content.",
+    description: "Create a new design template in a workspace (HTML engine). Pass engine='html' with optional html/css content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -191,13 +191,13 @@ const MCP_TOOLS = [
   },
   {
     name: "update_template",
-    description: "Update a template's name, canvas data, or HTML/CSS content. For HTML engine templates, pass html/css/frames. For Fabric.js, pass canvas/objects.",
+    description: "Update a template's name, canvas data, or HTML/CSS content. Pass html/css/frames for HTML templates.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Template ID" },
         name: { type: "string", description: "New name" },
-        canvas: { type: "object", description: "Full Fabric.js canvas JSON with objects and viewport" },
+        canvas: { type: "object", description: "Canvas JSON with objects and viewport (legacy)" },
         engine: { type: "string", enum: ["html"], description: "Switch rendering engine" },
         html: { type: "string", description: "HTML content for active frame (HTML engine)" },
         css: { type: "string", description: "CSS styles for active frame (HTML engine)" },
@@ -269,7 +269,7 @@ const MCP_TOOLS = [
         objects: {
           type: "array",
           items: { type: "object" },
-          description: "Raw Fabric.js objects to merge (simpler than full canvas JSON)",
+          description: "Objects to merge into each template",
         },
         name: { type: "string", description: "New name(s) — appended suffix like ' - Updated'" },
       },
@@ -325,287 +325,6 @@ const MCP_TOOLS = [
         versionId: { type: "string", description: "Version ID to restore (from list_versions)" },
       },
       required: ["id", "versionId"],
-    },
-  },
-  {
-    name: "transform_object",
-    description: "Transform any object property: position, size, rotation, opacity, fill color, stroke, font family/size/weight/style, letter spacing, line height, text content, border radius (rx/ry), shadow, visibility. Also accepts fillGradient: { type: 'linear'|'radial', angle: 135, colorStops: [{offset:0, color:'#hex'}] } for gradient fills.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Layer name to transform" },
-        frameId: { type: "string", description: "Optional frame ID" },
-        left: { type: "number", description: "X position" },
-        top: { type: "number", description: "Y position" },
-        width: { type: "number", description: "Width in px" },
-        height: { type: "number", description: "Height in px" },
-        scaleX: { type: "number", description: "Horizontal scale" },
-        scaleY: { type: "number", description: "Vertical scale" },
-        angle: { type: "number", description: "Rotation degrees" },
-        opacity: { type: "number", description: "Opacity 0-1" },
-        visible: { type: "boolean", description: "Visibility" },
-        fill: { type: "string", description: "Fill color (hex)" },
-        fillGradient: { type: "object", description: "Gradient: { type:'linear'|'radial', angle:135, colorStops:[{offset:0,color:'#hex'}] }" },
-        stroke: { type: "string", description: "Stroke color" },
-        strokeWidth: { type: "number", description: "Stroke width" },
-        text: { type: "string", description: "Text content" },
-        fontFamily: { type: "string", description: "Font family (Syne, Inter, etc.)" },
-        fontSize: { type: "number", description: "Font size px" },
-        fontWeight: { type: "number", description: "Font weight 100-900" },
-        fontStyle: { type: "string", enum: ["normal", "italic"] },
-        charSpacing: { type: "number", description: "Letter spacing px" },
-        lineHeight: { type: "number", description: "Line height multiplier" },
-        underline: { type: "boolean" },
-        rx: { type: "number", description: "Corner radius horizontal" },
-        ry: { type: "number", description: "Corner radius vertical" },
-        shadow: { type: "object", description: "Shadow: { color, blur, offsetX, offsetY }" },
-        textAlign: { type: "string", enum: ["left", "center", "right"], description: "Text alignment" },
-        lockMovementX: { type: "boolean", description: "Lock horizontal movement" },
-        lockMovementY: { type: "boolean", description: "Lock vertical movement" },
-        blendMode: { type: "string", enum: ["source-over", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "difference", "exclusion"], description: "CSS globalCompositeOperation blend mode" },
-      },
-      required: ["templateId", "targetLayerName"],
-    },
-  },
-  {
-    name: "draw_shape",
-    description: "Draw a shape on a template: rect, ellipse, line, triangle, star, polygon",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        tool: { type: "string", enum: ["rect", "ellipse", "line", "triangle", "star", "polygon"], description: "Shape type" },
-        x: { type: "number", description: "X position" },
-        y: { type: "number", description: "Y position" },
-        width: { type: "number", description: "Width" },
-        height: { type: "number", description: "Height" },
-        fill: { type: "string", description: "Fill color hex" },
-        stroke: { type: "string", description: "Stroke color" },
-        strokeWidth: { type: "number", description: "Stroke width" },
-        layerName: { type: "string", description: "Custom layer name" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "tool", "x", "y", "width", "height"],
-    },
-  },
-  {
-    name: "add_text",
-    description: "Add a text layer to a template",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        text: { type: "string", description: "Text content" },
-        x: { type: "number", description: "X position" },
-        y: { type: "number", description: "Y position" },
-        fontSize: { type: "number", description: "Font size (default 24)" },
-        fontFamily: { type: "string", description: "Font family (default Inter)" },
-        fill: { type: "string", description: "Text color hex" },
-        layerName: { type: "string", description: "Custom layer name" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "text", "x", "y"],
-    },
-  },
-  {
-    name: "add_image",
-    description: "Add an image layer by URL",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        src: { type: "string", description: "Image URL" },
-        x: { type: "number", description: "X position" },
-        y: { type: "number", description: "Y position" },
-        width: { type: "number", description: "Display width" },
-        height: { type: "number", description: "Display height" },
-        layerName: { type: "string", description: "Custom layer name" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "src", "x", "y"],
-    },
-  },
-  {
-    name: "upload_image",
-    description: "Upload a base64-encoded image to a template",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        base64: { type: "string", description: "Base64 image data (with or without data: prefix)" },
-        name: { type: "string", description: "Image file name" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Display width" },
-        height: { type: "number", description: "Display height" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "base64"],
-    },
-  },
-  {
-    name: "delete_objects",
-    description: "Delete objects by layer name(s)",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        layerNames: { type: "array", items: { type: "string" }, description: "Layer names to delete" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "layerNames"],
-    },
-  },
-  {
-    name: "reorder_object",
-    description: "Change z-index of a layer: bring to top, send to bottom, move up/down one level",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        layerName: { type: "string", description: "Layer name" },
-        position: { type: "string", enum: ["top", "bottom", "up", "down"], description: "New z-index position" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "layerName", "position"],
-    },
-  },
-  {
-    name: "align_objects",
-    description: "Align objects left, center-h, right, top, center-v, bottom",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        direction: { type: "string", enum: ["left", "center-h", "right", "top", "center-v", "bottom"] },
-        targetLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to align (omit to align all)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "direction"],
-    },
-  },
-  {
-    name: "distribute_objects",
-    description: "Distribute objects evenly horizontally or vertically",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        direction: { type: "string", enum: ["horizontal", "vertical"] },
-        targetLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to distribute (omit for all)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "direction"],
-    },
-  },
-  {
-    name: "group_objects",
-    description: "Group multiple layers together",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        layerNames: { type: "array", items: { type: "string" }, description: "Layer names to group (min 2)" },
-        groupName: { type: "string", description: "Custom group name" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "layerNames"],
-    },
-  },
-  {
-    name: "ungroup_objects",
-    description: "Ungroup a group back into individual layers",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        layerName: { type: "string", description: "Group layer name to ungroup" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "layerName"],
-    },
-  },
-  {
-    name: "copy_object",
-    description: "Copy a layer to another template or duplicate within the same template",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Source template ID" },
-        layerName: { type: "string", description: "Layer name to copy" },
-        frameId: { type: "string", description: "Optional source frame ID" },
-        targetTemplateId: { type: "string", description: "Target template ID (if different from source)" },
-        targetFrameId: { type: "string", description: "Optional target frame ID" },
-        targetLayerName: { type: "string", description: "Optional new layer name (default: original_copy)" },
-        offsetX: { type: "number", description: "Horizontal offset for the copy (default 20)" },
-        offsetY: { type: "number", description: "Vertical offset for the copy (default 20)" },
-      },
-      required: ["templateId", "layerName"],
-    },
-  },
-  {
-    name: "duplicate_object",
-    description: "Duplicate a layer with optional offset",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        layerName: { type: "string", description: "Layer name to duplicate" },
-        offsetX: { type: "number", description: "Horizontal offset (default 20)" },
-        offsetY: { type: "number", description: "Vertical offset (default 20)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "layerName"],
-    },
-  },
-  {
-    name: "add_svg_path",
-    description: "Add a custom SVG path shape",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        path: { type: "string", description: "SVG path 'd' attribute string" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        fill: { type: "string", description: "Fill color (default #cccccc)" },
-        stroke: { type: "string", description: "Stroke color" },
-        strokeWidth: { type: "number", description: "Stroke width" },
-        layerName: { type: "string", description: "Custom layer name" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "path"],
-    },
-  },
-  {
-    name: "boolean_operation",
-    description: "Apply boolean operation (union, subtract, intersect, exclude) between 2+ layers",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        operation: { type: "string", enum: ["union", "subtract", "intersect", "exclude"] },
-        targetLayerNames: { type: "array", items: { type: "string" }, description: "Layer names (min 2)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "operation", "targetLayerNames"],
-    },
-  },
-  {
-    name: "auto_layout",
-    description: "Auto-layout objects in a row or column with configurable gap",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to arrange" },
-        direction: { type: "string", enum: ["horizontal", "vertical"], description: "Layout direction (default horizontal)" },
-        gap: { type: "number", description: "Gap between items px (default 16)" },
-        padding: { type: "number", description: "Padding px (default 16)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "targetLayerNames"],
     },
   },
   {
@@ -697,66 +416,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "render_frame",
-    description: "Render a single frame to a viewable image URL (PNG/JPG/SVG). Returns the render URL that can be opened in a browser.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID to render" },
-        format: { type: "string", enum: ["png", "jpg", "svg"], description: "Output format (default png)" },
-        scale: { type: "number", description: "Render scale 1-4 (default 1)" },
-      },
-      required: ["templateId", "frameId"],
-    },
-  },
-  {
-    name: "snapshot_template",
-    description: "Save the current state of a template as a reference point. Used with diff_template to detect changes made by another user or agent.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to snapshot" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "diff_template",
-    description: "Compare current template state against the last snapshot. Returns object-by-object changes (added, deleted, modified with before/after values). Call snapshot_template first to set the reference point.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to diff against snapshot" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "list_snapshots",
-    description: "List all snapshots for a template as a timeline (newest first). Each entry has id, type, trigger, timestamp, objectCount, frameCount.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "diff_snapshots",
-    description: "Compare two specific snapshots by ID. Returns object-by-object changes between them. Use list_snapshots first to find snapshot IDs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        snapIdA: { type: "string", description: "First snapshot ID (older)" },
-        snapIdB: { type: "string", description: "Second snapshot ID (newer, or omit for current state)" },
-      },
-      required: ["templateId", "snapIdA"],
-    },
-  },
-  {
     name: "search_google_fonts",
     description: "Search and browse 94 Google Fonts by name or category (sans-serif, serif, display, handwriting, monospace). Returns family name, category, available weight variants, and the Google Fonts CSS URL. Use this to discover fonts for your designs before applying via add_text fontFamily or transform_object fontFamily.",
     inputSchema: {
@@ -767,134 +426,6 @@ const MCP_TOOLS = [
         limit: { type: "number", description: "Max results (default 20, max 100)" },
       },
       required: [],
-    },
-  },
-  {
-    name: "set_gradient",
-    description: "Apply a linear, radial, or angular gradient fill to an object. Specify type, angle (for linear), and multiple color stops with offsets.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Layer name to apply gradient to" },
-        frameId: { type: "string", description: "Optional frame ID" },
-        type: { type: "string", enum: ["linear", "radial"], description: "Gradient type" },
-        angle: { type: "number", description: "Angle in degrees for linear gradients (default 135)" },
-        colorStops: { type: "array", items: { type: "object", properties: { offset: { type: "number" }, color: { type: "string" } } }, description: "Array of {offset: 0-1, color: '#hex'} stops" },
-      },
-      required: ["templateId", "targetLayerName", "type", "colorStops"],
-    },
-  },
-  {
-    name: "set_shadow",
-    description: "Apply drop shadow or inner shadow to an object with color, blur, offset, and spread.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Layer name to apply shadow to" },
-        frameId: { type: "string", description: "Optional frame ID" },
-        color: { type: "string", description: "Shadow color hex (default #000000)" },
-        blur: { type: "number", description: "Blur radius in px (default 4)" },
-        offsetX: { type: "number", description: "Horizontal offset in px (default 2)" },
-        offsetY: { type: "number", description: "Vertical offset in px (default 2)" },
-      },
-      required: ["templateId", "targetLayerName"],
-    },
-  },
-  {
-    name: "image_filter",
-    description: "Apply CSS-like filters to an image layer: brightness, contrast, saturation, blur, grayscale, sepia, hue-rotate, invert.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Image layer name to filter" },
-        frameId: { type: "string", description: "Optional frame ID" },
-        brightness: { type: "number", description: "Brightness multiplier (1 = normal, 0 = black, 2 = double)" },
-        contrast: { type: "number", description: "Contrast multiplier (1 = normal)" },
-        saturation: { type: "number", description: "Saturation multiplier (1 = normal, 0 = grayscale)" },
-        blur: { type: "number", description: "Blur radius in px (0 = none)" },
-        grayscale: { type: "number", description: "Grayscale amount 0-1" },
-        sepia: { type: "number", description: "Sepia amount 0-1" },
-        hueRotate: { type: "number", description: "Hue rotation in degrees" },
-        invert: { type: "number", description: "Invert amount 0-1" },
-      },
-      required: ["templateId", "targetLayerName"],
-    },
-  },
-  {
-    name: "image_crop",
-    description: "Crop an image layer by setting cropX, cropY, width, and height properties.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Image layer name to crop" },
-        frameId: { type: "string", description: "Optional frame ID" },
-        cropX: { type: "number", description: "Crop origin X (default 0)" },
-        cropY: { type: "number", description: "Crop origin Y (default 0)" },
-        width: { type: "number", description: "Crop width in px" },
-        height: { type: "number", description: "Crop height in px" },
-      },
-      required: ["templateId", "targetLayerName"],
-    },
-  },
-  {
-    name: "add_block",
-    description: "Add a document block: header, paragraph, bullet list, toggle, callout, or quote. These render as styled text blocks on the canvas.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        blockType: { type: "string", enum: ["header", "subheader", "paragraph", "bullet_list", "toggle", "callout", "quote"], description: "Block type" },
-        text: { type: "string", description: "Text content (for bullet_list, separate with \n)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Max width in px (default 600)" },
-        fontSize: { type: "number", description: "Font size override" },
-        color: { type: "string", description: "Text color (default #e4e4f0)" },
-        fontFamily: { type: "string", description: "Font family (default Inter)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "blockType", "text"],
-    },
-  },
-  {
-    name: "add_code_block",
-    description: "Add a code block with monospace font, dark background, and optional language label.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        code: { type: "string", description: "Code content" },
-        language: { type: "string", description: "Language label (e.g. 'javascript', 'python', 'css')" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 600)" },
-        fontSize: { type: "number", description: "Font size (default 14)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "code"],
-    },
-  },
-  {
-    name: "add_table",
-    description: "Add an editable table with headers and rows. Renders as styled rects + text objects.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        headers: { type: "array", items: { type: "string" }, description: "Column header names" },
-        rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Row data as array of string arrays" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        colWidths: { type: "array", items: { type: "number" }, description: "Column widths in px (default 120 each)" },
-        rowHeight: { type: "number", description: "Row height in px (default 36)" },
-        fontSize: { type: "number", description: "Font size (default 13)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "headers", "rows"],
     },
   },
   {
@@ -927,20 +458,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "set_blur",
-    description: "Apply a gaussian blur effect to a layer. For background blur (frosted glass), use image_filter with blur on a background object.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        targetLayerName: { type: "string", description: "Layer name to apply blur to" },
-        blur: { type: "number", description: "Blur radius in pixels (0-50, default 8)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "targetLayerName"],
-    },
-  },
-  {
     name: "preview_font",
     description: "Render a font preview on the canvas showing the font family name at large size and a sample pangram in that typeface.",
     inputSchema: {
@@ -954,26 +471,6 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Optional frame ID" },
       },
       required: ["templateId", "fontFamily"],
-    },
-  },
-  {
-    name: "add_columns",
-    description: "Add a multi-column layout with equal-width columns. Each column gets styled text objects with optional headers.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        columns: { type: "number", description: "Number of columns (2-6, default 2)" },
-        columnTexts: { type: "array", items: { type: "string" }, description: "Text content for each column" },
-        headers: { type: "array", items: { type: "string" }, description: "Optional header text for each column" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Total width in px (default 720)" },
-        gap: { type: "number", description: "Gap between columns in px (default 16)" },
-        fontSize: { type: "number", description: "Body font size (default 14)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "columnTexts"],
     },
   },
   {
@@ -1179,71 +676,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "canvas_grid",
-    description: "Configure canvas grid settings: cell size, visibility, snap-to-grid, and color. Stored in template metadata.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        gridSize: { type: "number", description: "Grid cell size in px (default 8)" },
-        visible: { type: "boolean", description: "Show/hide grid overlay" },
-        snapToGrid: { type: "boolean", description: "Enable snap-to-grid" },
-        color: { type: "string", description: "Grid line color hex (default #333344)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "canvas_rulers",
-    description: "Configure ruler visibility, measurement units, and guide lines on the canvas.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        visible: { type: "boolean", description: "Show/hide rulers" },
-        units: { type: "string", enum: ["px", "pt", "in", "mm", "cm"], description: "Ruler measurement units (default px)" },
-        guides: { type: "array", items: { type: "object", properties: { axis: { type: "string", enum: ["x", "y"] }, position: { type: "number" } } }, description: "Guide lines [{ axis: 'x'|'y', position: px }]" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "canvas_snap",
-    description: "Configure snap behavior: snap-to-object, snap-to-grid, and snap threshold distance.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        snapToObject: { type: "boolean", description: "Enable snap to other objects (edges/centers)" },
-        snapToGrid: { type: "boolean", description: "Enable snap to grid" },
-        snapThreshold: { type: "number", description: "Snap distance threshold in px (default 5)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "history_undo",
-    description: "Undo the last canvas mutation by restoring the most recent snapshot before the current state. Uses the snapshot store.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "history_redo",
-    description: "Redo a previously undone mutation by restoring forward in the snapshot history.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
     name: "color_picker",
     description: "Color utilities: parse hex/rgba/hsl, generate complementary/analogous/triadic palettes, create light-dark shade gradients. Pure computation, no canvas required.",
     inputSchema: {
@@ -1254,41 +686,6 @@ const MCP_TOOLS = [
         steps: { type: "number", description: "Number of steps for shades/gradient (default 5, max 20)" },
       },
       required: ["color"],
-    },
-  },
-  {
-    name: "frame_auto_layout",
-    description: "Enable auto-layout on a frame: direction, gap, padding, resizing behavior (hug/fill/fixed), alignment per axis, and absolute positioning support.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID to apply auto-layout to" },
-        direction: { type: "string", enum: ["horizontal", "vertical"], description: "Layout direction (default horizontal)" },
-        gap: { type: "number", description: "Gap between children in px (default 16)" },
-        padding: { type: "number", description: "Inner padding in px (default 0)" },
-        resize: { type: "string", enum: ["hug", "fill", "fixed"], description: "Resizing strategy for children (default fixed)" },
-        alignPrimary: { type: "string", enum: ["start", "center", "end", "space-between"], description: "Primary axis alignment (default start)" },
-        alignCounter: { type: "string", enum: ["start", "center", "end", "stretch"], description: "Counter axis alignment (default start)" },
-      },
-      required: ["templateId", "frameId"],
-    },
-  },
-  {
-    name: "render_markdown",
-    description: "Parse markdown text and render it as styled canvas objects: headings, paragraphs, bold/italic, lists, code blocks, quotes, and dividers.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        markdown: { type: "string", description: "Markdown content to render" },
-        x: { type: "number", description: "Start X position (default 0)" },
-        y: { type: "number", description: "Start Y position (default 0)" },
-        width: { type: "number", description: "Max content width in px (default 640)" },
-        fontSize: { type: "number", description: "Base font size for body text (default 14)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "markdown"],
     },
   },
   {
@@ -1333,22 +730,6 @@ const MCP_TOOLS = [
         overrides: { type: "object", description: "Key-value overrides for object properties (e.g. { \"fill\": \"#45475a\", \"opacity\": 0.5 })" },
       },
       required: ["templateId", "componentId", "name"],
-    },
-  },
-  {
-    name: "set_component_prop",
-    description: "Define or override a component property on an instance. Properties can be boolean (visible/hidden), text (label override), or instance swap (swap one nested instance for another).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        componentId: { type: "string", description: "Component ID (master definition)" },
-        instanceId: { type: "string", description: "Instance ID to override (if omitted, defines on master)" },
-        propName: { type: "string", description: "Property name (e.g. visible, label, iconSwap)" },
-        propType: { type: "string", enum: ["boolean", "text", "instanceSwap"], description: "Property type" },
-        value: { type: ["string", "boolean", "number"], description: "Property value — boolean for boolean type, string for text/instanceSwap" },
-      },
-      required: ["templateId", "componentId", "propName", "propType", "value"],
     },
   },
   {
@@ -1419,92 +800,6 @@ const MCP_TOOLS = [
         overflow: { type: "string", enum: ["visible", "hidden", "scroll", "auto"], description: "Overflow behavior for the container (default visible)" },
       },
       required: ["templateId", "objectId", "behavior"],
-    },
-  },
-  {
-    name: "canvas_pan",
-    description: "Pan the canvas viewport by delta X/Y or to an absolute position. Supports both relative and absolute panning.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        deltaX: { type: "number", description: "Horizontal pan delta in px (relative mode)" },
-        deltaY: { type: "number", description: "Vertical pan delta in px (relative mode)" },
-        x: { type: "number", description: "Absolute viewport X position" },
-        y: { type: "number", description: "Absolute viewport Y position" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "canvas_zoom",
-    description: "Zoom the canvas viewport to a specific level, by delta, or fit-to-selection. Zoom is centered on the cursor or a specific point.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        zoom: { type: "number", description: "Absolute zoom level (1 = 100%, 0.5 = 50%, 2 = 200%)" },
-        delta: { type: "number", description: "Zoom delta (e.g. 0.1 = zoom in 10%, -0.1 = zoom out 10%)" },
-        centerX: { type: "number", description: "Zoom center X coordinate (optional, for zoom-to-point)" },
-        centerY: { type: "number", description: "Zoom center Y coordinate (optional, for zoom-to-point)" },
-        fitSelection: { type: "boolean", description: "Zoom to fit all objects within viewport" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "add_toggle",
-    description: "Add a toggle/accordion block with a title and collapsible content. The toggle can be expanded or collapsed by default.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        title: { type: "string", description: "Toggle title text" },
-        content: { type: "string", description: "Toggle body content (supports markdown)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Toggle width (default 400)" },
-        expanded: { type: "boolean", description: "Start expanded (default false)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "title", "content"],
-    },
-  },
-  {
-    name: "add_callout",
-    description: "Add a callout block with icon, background color, and text. Used for tips, warnings, info boxes, and notes — similar to Notion callouts.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        type: { type: "string", enum: ["info", "warning", "tip", "note", "success", "error"], description: "Callout type (default info)" },
-        text: { type: "string", description: "Callout body text" },
-        title: { type: "string", description: "Optional callout title" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Callout width (default 400)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "text"],
-    },
-  },
-  {
-    name: "add_quote",
-    description: "Add a styled quote block with attribution. Renders a vertical accent bar with italic quote text and optional author caption.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        text: { type: "string", description: "Quote text" },
-        author: { type: "string", description: "Optional attribution author" },
-        source: { type: "string", description: "Optional source/title" },
-        color: { type: "string", description: "Accent bar color (default #cba6f7)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Quote width (default 500)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "text"],
     },
   },
   {
@@ -1583,21 +878,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "ghost_merge",
-    description: "Merge snapshot changes into current state with selective keep/discard. 'I want what the AI did but keeping my header and footer.' Returns merged, kept, discarded, and conflict counts.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to merge into" },
-        sourceSnapId: { type: "string", description: "Source snapshot ID whose changes to merge" },
-        keepLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to KEEP from current state (not overwritten by snapshot)" },
-        discardLayerNames: { type: "array", items: { type: "string" }, description: "Layer names to DISCARD from the snapshot (don't apply these)" },
-        mode: { type: "string", enum: ["prefer_snapshot", "prefer_current", "ask"], description: "Merge mode: prefer_snapshot (default, snapshot wins), prefer_current (current wins on conflict), ask (return conflicts without applying)" },
-      },
-      required: ["templateId", "sourceSnapId"],
-    },
-  },
-  {
     name: "ghost_timeline",
     description: "Return the full snapshot timeline with mini-thumbnail data for visual Time Machine navigation. Each entry includes object count, frame count, dominant colors, and a compact representation for timeline rendering.",
     inputSchema: {
@@ -1624,22 +904,9 @@ const MCP_TOOLS = [
     },
   },
   // ══════════════════════════════════════════════════
-  // Sprint 3: Clone Skills — design pattern extraction & application
+  // Sprint 3: Clone Skills — V1 canvas.objects-based tools removed
+  // V2 equivalents use frame.html/css. See create_html_frame + add_element.
   // ══════════════════════════════════════════════════
-  {
-    name: "skill_extract",
-    description: "Analyze template(s) and extract design patterns: color palette, typography, spacing scale, layout preferences, effects, and ratios. Stores result in tpl.metadata.extractedPatterns. Optionally uses AI for semantic analysis if OPENROUTER_API_KEY is set.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to analyze" },
-        templateIds: { type: "array", items: { type: "string" }, description: "Multiple template IDs for aggregate analysis (overrides templateId)" },
-        useAi: { type: "boolean", description: "Also call OpenRouter AI for semantic pattern analysis (default true if API key available)" },
-        name: { type: "string", description: "Optional skill name for the extracted patterns" },
-      },
-      required: [],
-    },
-  },
   {
     name: "skill_clone",
     description: "Create a reusable clone skill from extracted or manually-defined patterns. Stored in tpl.metadata.clonedSkills[] array. Skills can be applied later via skill_apply.",
@@ -1656,92 +923,9 @@ const MCP_TOOLS = [
       required: ["templateId", "skillName", "patterns"],
     },
   },
-  {
-    name: "skill_apply",
-    description: "Apply a cloned design skill to a template. Transforms colors (nearest match substitution), typography (headings/body font swap), spacing (normalize gaps/padding). Supports 'strict' (full compliance) and 'adaptive' (respect content, adapt style) modes.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Target template ID to transform" },
-        skillId: { type: "string", description: "Skill ID from clonedSkills array" },
-        skillName: { type: "string", description: "Skill name to look up (alternative to skillId)" },
-        mode: { type: "string", enum: ["strict", "adaptive"], description: "strict = full compliance, adaptive = respect content & adapt style (default)" },
-        sourceTemplateId: { type: "string", description: "Template where the skill is stored (if different from target)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "brand_analyze",
-    description: "Analyze multiple templates to extract global brand DNA: dominant colors (frequency-weighted), typography (most-used fonts), spacing (median values), logo detection, and tone. The resulting brand profile can be applied to any template via brand_apply.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateIds: { type: "array", items: { type: "string" }, description: "Template IDs to analyze for brand DNA (min 2 recommended)" },
-        workspaceId: { type: "string", description: "Workspace ID — analyzes all templates in workspace" },
-        brandName: { type: "string", description: "Name for the extracted brand (e.g. 'Acme Corp')" },
-        useAi: { type: "boolean", description: "Use AI for semantic brand analysis (default true)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "brand_apply",
-    description: "Apply a brand DNA profile to a target template. Replaces color palette, typography, and spacing per brand rules. Returns before/after compliance scores.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Target template ID to transform" },
-        brandDNA: { type: "object", description: "Brand DNA object from brand_analyze (or a stored brand profile)" },
-        brandId: { type: "string", description: "Brand ID from stored brands (alternative to brandDNA)" },
-        aggressiveness: { type: "number", description: "How aggressively to apply brand rules 0-1 (default 0.8)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  // ══════════════════════════════════════════════════
-  // Sprint 4: New Tools — batch, scoring, linting, layout, remix
-  // ══════════════════════════════════════════════════
-  {
-    name: "batch_design_from_csv",
-    description: "Bulk-generate templates from CSV/JSON data using a base template with field mapping. Each row becomes a new template with substituted text fields. Perfect for generating social media posts, certificates, cards, or any data-driven designs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        baseTemplateId: { type: "string", description: "Base template ID to clone for each row" },
-        csvUrl: { type: "string", description: "URL to CSV file (online). Mutually exclusive with data." },
-        data: { type: "array", items: { type: "object" }, description: "Inline JSON array of row objects. Mutually exclusive with csvUrl." },
-        fieldMapping: { type: "object", description: "Map of { columnName: layerName } — which data fields map to which canvas text layers by layerName" },
-        outputWorkspaceId: { type: "string", description: "Workspace ID to create generated templates in (default: same as base template)" },
-        nameTemplate: { type: "string", description: "Template for naming generated templates. Use {fieldName} placeholders (e.g. 'Post - {title}')" },
-      },
-      required: ["baseTemplateId", "fieldMapping"],
-    },
-  },
-  {
-    name: "aesthetic_score",
-    description: "Evaluate design quality on a 0-100 scale with per-category breakdown: balance (visual weight distribution), contrast (WCAG ratios), alignment (edge/grid proximity), hierarchy (size ratios), consistency (repeated patterns), and spacing (uniformity). Uses AI for semantic quality assessment when API key available.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to score" },
-        useAi: { type: "boolean", description: "Use AI for semantic quality assessment (default true)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
-    name: "design_lint",
-    description: "Lint a design for quality issues: misalignments (±2px tolerance), inconsistent spacing, low contrast text, font inconsistencies, poor size hierarchy, out-of-bounds objects. Pure rule-based, no AI needed. Returns issues with severity (error/warning/info), affected layer, message, and suggested fix.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to lint" },
-        strictness: { type: "string", enum: ["relaxed", "normal", "strict"], description: "Lint strictness (default: normal)" },
-      },
-      required: ["templateId"],
-    },
-  },
+  // skill_apply and brand_analyze removed — V1 canvas.objects-based, use V2 equivalents
+  // Skill and brand tools (V1 canvas.objects-based) removed — V2 equivalents use frame.html/css
+  // batch_design_from_csv and design_lint removed — V1 canvas.objects-based, use V2 equivalents
   {
     name: "observe_session",
     description: "Record and analyze human design sessions to extract workflow patterns. Actions: 'start' begins recording, 'stop' finalizes and saves, 'analyze' extracts patterns (most-used tools, typical workflow, common adjustments). Stored in global in-memory session store.",
@@ -1776,20 +960,7 @@ const MCP_TOOLS = [
       required: ["templateId", "layout"],
     },
   },
-  {
-    name: "remix_template",
-    description: "Generate stylistic variations of a template using AI-assisted transformations. Styles: brutalist, glassmorphism, swiss, cyberpunk, minimalist, art_deco, bauhaus. Each remix creates a new template with adjusted palette, typography, spacing, and effects.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Source template ID to remix" },
-        style: { type: "string", enum: ["brutalist", "glassmorphism", "swiss", "cyberpunk", "minimalist", "art_deco", "bauhaus"], description: "Target design style" },
-        count: { type: "number", description: "Number of variations to generate (1-5, default 1)" },
-        outputWorkspaceId: { type: "string", description: "Workspace to create remixed templates in (default: same as source)" },
-      },
-      required: ["templateId", "style"],
-    },
-  },
+  // remix_template removed — V1 canvas.objects-based, use create_html_frame for style variations
   {
     name: "design_diff",
     description: "Compare two templates structurally and visually. Shows layer-by-layer differences and calculates a similarity score (0-100) based on matching objects, positions, and types. Uses the existing compareTemplates engine.",
@@ -2470,22 +1641,6 @@ function hslToRgb(h, s, l) {
 
 /** Route JSON-RPC method calls to template/workspace services */
 async function handleMethod(method, params, userId) {
-  // Helper: safely get objects array for a frame, merging frame.objects + canvas.objects
-  const getFrameObjects = (tpl, frameId) => {
-    if (!frameId) return tpl.canvas.objects;
-    // Merge: frame.objects (explicit) + canvas.objects with matching frameId
-    const frame = tpl.frames?.find(f => f.id === frameId);
-    const fromFrame = frame?.objects || [];
-    const fromCanvas = (tpl.canvas?.objects || []).filter(o => o.frameId === frameId && !o.isFrameVisual);
-    // Deduplicate by layerName
-    const seen = new Set(fromFrame.map(o => o.layerName || o.name));
-    const merged = [...fromFrame];
-    for (const o of fromCanvas) {
-      if (!seen.has(o.layerName || o.name)) merged.push(o);
-    }
-    return merged;
-  };
-
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
   const autoSnapshot = (templateId, trigger, tplData) => {
     try {
@@ -2545,8 +1700,8 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
       return {
         ...tpl,
-        _objectCount: tpl.canvas?.objects?.length || 0,
         _frameCount: tpl.frames?.length || 0,
+        _htmlLength: tpl.html?.length || 0,
       };
     }
     case "create_template": {
@@ -2629,7 +1784,7 @@ async function handleMethod(method, params, userId) {
         exportedAt: new Date().toISOString(),
         template: {
           name: tpl.name, width: tpl.width, height: tpl.height,
-          canvas: tpl.canvas, frames: tpl.frames, styles: tpl.styles,
+          frames: tpl.frames, styles: tpl.styles,
           variables: tpl.variables, metadata: tpl.metadata,
         },
       };
@@ -2676,17 +1831,9 @@ async function handleMethod(method, params, userId) {
       }
       if (!ids.length) throw { code: -32602, message: "No templateIds or matching search results" };
 
-      // Build base updates (non-objects fields)
+      // Build base updates
       const baseUpdates = {};
       if (params.name !== undefined) baseUpdates.name = params.name;
-      if (params.canvas !== undefined) baseUpdates.canvas = params.canvas;
-
-      // Pre-parse objects array for merge
-      let newObjects = null;
-      if (params.objects !== undefined) {
-        newObjects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
-        if (!Array.isArray(newObjects)) newObjects = [newObjects];
-      }
 
       const results = [];
       for (const id of ids) {
@@ -2695,28 +1842,6 @@ async function handleMethod(method, params, userId) {
           if (!tpl) { results.push({ id, ok: false, error: "Template not found" }); continue; }
 
           const updates = { ...baseUpdates };
-
-          // Merge objects by layerName instead of replacing
-          if (newObjects) {
-            const existing = tpl.canvas?.objects || [];
-            const merged = [...existing];
-            const indexByLayer = new Map();
-            for (let i = 0; i < merged.length; i++) {
-              const key = merged[i].layerName || merged[i].name;
-              if (key) indexByLayer.set(key, i);
-            }
-            for (const newObj of newObjects) {
-              const key = newObj.layerName || newObj.name;
-              if (key && indexByLayer.has(key)) {
-                // Update existing object in place
-                Object.assign(merged[indexByLayer.get(key)], newObj);
-              } else {
-                // Append new object
-                merged.push(newObj);
-              }
-            }
-            updates.canvas = { ...tpl.canvas, objects: merged };
-          }
 
           await templates.updateTemplate(id, updates);
           results.push({ id, ok: true });
@@ -2828,545 +1953,7 @@ async function handleMethod(method, params, userId) {
       };
     }
 
-    // ── transform_object ──
-    case "transform_object": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
 
-      const objects = getFrameObjects(tpl, params.frameId);
-
-
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-
-      autoSnapshot(params.templateId, method, tpl); // Capture pre-mutation state for diff
-
-      const { templateId, targetLayerName, frameId, fillGradient, shadow, ...rest } = params;
-
-      // ── Range validation for numeric properties ──
-      if (rest.opacity !== undefined) {
-        if (typeof rest.opacity !== "number" || rest.opacity < 0 || rest.opacity > 1)
-          throw { code: -32602, message: "opacity must be a number between 0 and 1" };
-      }
-      if (rest.angle !== undefined) {
-        if (typeof rest.angle !== "number")
-          throw { code: -32602, message: "angle must be a number" };
-        rest.angle = ((rest.angle % 360) + 360) % 360; // Normalize 0-360
-      }
-      if (rest.width !== undefined && (typeof rest.width !== "number" || rest.width <= 0))
-        throw { code: -32602, message: "width must be a number > 0" };
-      if (rest.height !== undefined && (typeof rest.height !== "number" || rest.height <= 0))
-        throw { code: -32602, message: "height must be a number > 0" };
-      if (rest.scaleX !== undefined && rest.scaleX === 0)
-        throw { code: -32602, message: "scaleX cannot be 0" };
-      if (rest.scaleY !== undefined && rest.scaleY === 0)
-        throw { code: -32602, message: "scaleY cannot be 0" };
-      if (rest.strokeWidth !== undefined && (typeof rest.strokeWidth !== "number" || rest.strokeWidth < 0))
-        throw { code: -32602, message: "strokeWidth must be a number >= 0" };
-      if (rest.fontSize !== undefined && (typeof rest.fontSize !== "number" || rest.fontSize <= 0))
-        throw { code: -32602, message: "fontSize must be a number > 0" };
-
-      if (fillGradient) {
-        rest.fill = {
-          type: fillGradient.type || "linear",
-          angle: fillGradient.angle || 0,
-          colorStops: fillGradient.colorStops || fillGradient.stops || [],
-          x1: fillGradient.x1, y1: fillGradient.y1,
-          x2: fillGradient.x2, y2: fillGradient.y2,
-        };
-      }
-
-      if (shadow) {
-        rest.shadow = {
-          color: shadow.color || "rgba(0,0,0,0.3)",
-          blur: shadow.blur || 8,
-          offsetX: shadow.offsetX || 0,
-          offsetY: shadow.offsetY || 4,
-        };
-      }
-
-      // Map blendMode to Fabric.js globalCompositeOperation
-      if (rest.blendMode !== undefined) {
-        rest.globalCompositeOperation = rest.blendMode;
-        delete rest.blendMode;
-      }
-
-      Object.assign(obj, rest);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── draw_shape ──
-    case "draw_shape": {
-      const VALID_TOOLS = ["rect", "ellipse", "line", "triangle", "star", "polygon"];
-      if (!VALID_TOOLS.includes(params.tool))
-        throw { code: -32602, message: `Invalid tool type: ${params.tool}. Must be one of: ${VALID_TOOLS.join(", ")}` };
-
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const llName = params.layerName || `${params.tool}_${uuid().slice(0, 8)}`;
-      const obj = {
-        type: params.tool, layerName: llName,
-        left: params.x, top: params.y, width: params.width, height: params.height,
-        fill: params.fill || "#cccccc", stroke: params.stroke || "transparent",
-        strokeWidth: params.strokeWidth || 1,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-      if (params.tool === "star") { obj.points = 5; obj.innerRadius = params.width * 0.4; obj.outerRadius = params.width * 0.5; }
-      if (params.tool === "polygon") obj.sides = 6;
-
-      const target = getFrameObjects(tpl, params.frameId);
-      target.push(obj);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── add_text ──
-    case "add_text": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const obj = {
-        type: "text", layerName: params.layerName || `text_${uuid().slice(0, 8)}`,
-        text: params.text, left: params.x, top: params.y,
-        fontSize: params.fontSize || 24, fontFamily: params.fontFamily || "Inter",
-        fill: params.fill || "#000000", padding: 0,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-
-      const target = getFrameObjects(tpl, params.frameId);
-      target.push(obj);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── add_image ──
-    case "add_image": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const obj = {
-        type: "image", layerName: params.layerName || `img_${uuid().slice(0, 8)}`,
-        src: params.src, left: params.x, top: params.y,
-        width: params.width || 200, height: params.height || 200,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-
-      const target = getFrameObjects(tpl, params.frameId);
-      target.push(obj);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── upload_image ──
-    case "upload_image": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const fileName = params.name || `img_${uuid().slice(0, 8)}.png`;
-      const dataUrl = params.base64.startsWith("data:") ? params.base64 : `data:image/png;base64,${params.base64}`;
-
-      const obj = {
-        type: "image", layerName: fileName,
-        src: dataUrl, left: params.x || 0, top: params.y || 0,
-        width: params.width || 200, height: params.height || 200,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-
-      const target = getFrameObjects(tpl, params.frameId);
-      target.push(obj);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── delete_objects ──
-    case "delete_objects": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-
-      const removed = [];
-      for (const name of params.layerNames) {
-        const idx = objects.findIndex(o => (o.layerName || o.name) === name);
-        if (idx !== -1) { objects.splice(idx, 1); removed.push(name); }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { removed, count: removed.length };
-    }
-
-    // ── reorder_object ──
-    case "reorder_object": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
-      if (idx === -1) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
-
-      const [item] = objects.splice(idx, 1);
-      switch (params.position) {
-        case "top": objects.push(item); break;
-        case "bottom": objects.unshift(item); break;
-        case "up": objects.splice(Math.min(idx + 1, objects.length), 0, item); break;
-        case "down": objects.splice(Math.max(idx - 1, 0), 0, item); break;
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { layerName: params.layerName, position: params.position };
-    }
-
-    // ── align_objects ──
-    case "align_objects": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const targets = params.targetLayerNames
-        ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
-        : objects;
-      if (targets.length < 2) throw { code: -32000, message: "Need at least 2 layers to align" };
-
-      const bounds = targets.reduce((acc, o) => ({
-        minX: Math.min(acc.minX, o.left || 0),
-        minY: Math.min(acc.minY, o.top || 0),
-        maxX: Math.max(acc.maxX, (o.left || 0) + (o.width || 0) * (o.scaleX || 1)),
-        maxY: Math.max(acc.maxY, (o.top || 0) + (o.height || 0) * (o.scaleY || 1)),
-      }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-
-      for (const obj of targets) {
-        const w = (obj.width || 0) * (obj.scaleX || 1);
-        const h = (obj.height || 0) * (obj.scaleY || 1);
-        switch (params.direction) {
-          case "left": obj.left = bounds.minX; break;
-          case "right": obj.left = bounds.maxX - w; break;
-          case "center-h": obj.left = (bounds.minX + bounds.maxX) / 2 - w / 2; break;
-          case "top": obj.top = bounds.minY; break;
-          case "bottom": obj.top = bounds.maxY - h; break;
-          case "center-v": obj.top = (bounds.minY + bounds.maxY) / 2 - h / 2; break;
-        }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { direction: params.direction, affected: targets.length };
-    }
-
-    // ── distribute_objects ──
-    case "distribute_objects": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const targets = params.targetLayerNames
-        ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
-        : objects;
-      if (targets.length < 3) throw { code: -32000, message: "Need at least 3 layers to distribute" };
-
-      if (params.direction === "horizontal") {
-        targets.sort((a, b) => (a.left || 0) - (b.left || 0));
-        const firstLeft = targets[0].left || 0;
-        const last = targets[targets.length - 1];
-        const lastRight = (last.left || 0) + (last.width || 0) * (last.scaleX || 1);
-        const totalW = targets.reduce((s, o) => s + (o.width || 0) * (o.scaleX || 1), 0);
-        const gap = (lastRight - firstLeft - totalW) / (targets.length - 1);
-        let x = firstLeft;
-        for (const obj of targets) { obj.left = x; x += (obj.width || 0) * (obj.scaleX || 1) + gap; }
-      } else {
-        targets.sort((a, b) => (a.top || 0) - (b.top || 0));
-        const firstTop = targets[0].top || 0;
-        const last = targets[targets.length - 1];
-        const lastBottom = (last.top || 0) + (last.height || 0) * (last.scaleY || 1);
-        const totalH = targets.reduce((s, o) => s + (o.height || 0) * (o.scaleY || 1), 0);
-        const gap = (lastBottom - firstTop - totalH) / (targets.length - 1);
-        let y = firstTop;
-        for (const obj of targets) { obj.top = y; y += (obj.height || 0) * (obj.scaleY || 1) + gap; }
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { direction: params.direction, affected: targets.length };
-    }
-
-    // ── group_objects ──
-    case "group_objects": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-
-      const members = [];
-      for (const name of params.layerNames) {
-        const idx = objects.findIndex(o => (o.layerName || o.name) === name);
-        if (idx !== -1) members.push(...objects.splice(idx, 1));
-      }
-      if (members.length < 2) throw { code: -32000, message: "Need at least 2 layers to group" };
-
-      const bounds = members.reduce((acc, o) => ({
-        left: Math.min(acc.left, o.left || 0),
-        top: Math.min(acc.top, o.top || 0),
-      }), { left: Infinity, top: Infinity });
-
-      const group = {
-        type: "group", layerName: params.groupName || `group_${uuid().slice(0, 8)}`,
-        left: bounds.left, top: bounds.top, width: 0, height: 0,
-        objects: members, scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-      objects.push(group);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return group;
-    }
-
-    // ── ungroup_objects ──
-    case "ungroup_objects": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName && o.type === "group");
-      if (idx === -1) throw { code: -32000, message: "Group not found" };
-
-      const group = objects.splice(idx, 1)[0];
-      const children = group.objects || [];
-      for (const child of children) {
-        child.left = (group.left || 0) + (child.left || 0);
-        child.top = (group.top || 0) + (child.top || 0);
-        objects.push(child);
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { children: children.length, layerNames: children.map(c => c.layerName || c.name) };
-    }
-
-    // ── copy_object ──
-    case "copy_object": {
-      const sourceTpl = await templates.getTemplate(params.templateId);
-      if (!sourceTpl) throw { code: -32000, message: `Source template not found: ${params.templateId}` };
-
-      const sourceObjects = getFrameObjects(sourceTpl, params.frameId);
-      const obj = sourceObjects.find(o => (o.layerName || o.name) === params.layerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
-
-      // Clone the object
-      const clone = JSON.parse(JSON.stringify(obj));
-      clone.layerName = params.targetLayerName || `${params.layerName}_copy`;
-      if (params.offsetX !== undefined) clone.left = (clone.left || 0) + params.offsetX;
-      else clone.left = (clone.left || 0) + 20;
-      if (params.offsetY !== undefined) clone.top = (clone.top || 0) + params.offsetY;
-      else clone.top = (clone.top || 0) + 20;
-
-      // Determine target
-      const targetId = params.targetTemplateId || params.templateId;
-      let targetTpl = targetId === params.templateId ? sourceTpl : await templates.getTemplate(targetId);
-      if (!targetTpl) throw { code: -32000, message: `Target template not found: ${targetId}` };
-
-      const targetObjects = getFrameObjects(targetTpl, params.targetFrameId || params.frameId);
-      targetObjects.push(clone);
-      targetTpl.metadata.updatedAt = new Date().toISOString();
-
-      await templates.updateTemplate(targetId, { canvas: targetTpl.canvas, frames: targetTpl.frames });
-      autoSnapshot(targetId, method);
-
-      return {
-        copied: true,
-        sourceTemplateId: params.templateId,
-        targetTemplateId: targetId,
-        object: clone,
-      };
-    }
-
-    // ── duplicate_object ──
-    case "duplicate_object": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const idx = objects.findIndex(o => (o.layerName || o.name) === params.layerName);
-      if (idx === -1) throw { code: -32000, message: `Layer not found: ${params.layerName}` };
-
-      const clone = JSON.parse(JSON.stringify(objects[idx]));
-      clone.layerName = `${params.layerName}_copy`;
-      clone.left = (clone.left || 0) + (params.offsetX || 20);
-      clone.top = (clone.top || 0) + (params.offsetY || 20);
-      objects.push(clone);
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return clone;
-    }
-
-    // ── add_svg_path ──
-    case "add_svg_path": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      const obj = {
-        type: "path", path: params.path,
-        layerName: params.layerName || `path_${uuid().slice(0, 8)}`,
-        left: params.x || 0, top: params.y || 0,
-        fill: params.fill || "#cccccc", stroke: params.stroke || "transparent",
-        strokeWidth: params.strokeWidth || 1,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      };
-
-      const target = getFrameObjects(tpl, params.frameId);
-      target.push(obj);
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return obj;
-    }
-
-    // ── boolean_operation ──
-    case "boolean_operation": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const targets = objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name));
-      if (targets.length < 2) throw { code: -32000, message: "Need at least 2 matching layers" };
-
-      const combinedName = `${params.operation}_${params.targetLayerNames.join("_")}`;
-      for (const t of targets) {
-        const idx = objects.indexOf(t);
-        if (idx !== -1) objects.splice(idx, 1);
-      }
-
-      objects.push({
-        type: "group", layerName: combinedName, booleanOperation: params.operation,
-        objects: targets.map(t => ({ ...t })),
-        left: targets[0].left, top: targets[0].top,
-        scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-      });
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { operation: params.operation, combinedName, affected: params.targetLayerNames };
-    }
-
-    // ── auto_layout ──
-    case "auto_layout": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      autoSnapshot(params.templateId, method, tpl);
-
-      const objects = getFrameObjects(tpl, params.frameId);
-      const targets = params.targetLayerNames
-        .map(name => objects.find(o => (o.layerName || o.name) === name))
-        .filter(Boolean);
-      if (targets.length < 2) throw { code: -32000, message: "Need at least 2 layers" };
-
-      const gap = params.gap || 16;
-      const dir = params.direction || "horizontal";
-      const padding = params.padding || 0;
-      const resize = params.resize || "fixed";
-      const alignPrimary = params.alignPrimary || "start";
-      const alignCounter = params.alignCounter || "start";
-
-      // Calculate bounds and total size
-      let totalSize = padding;
-      for (const obj of targets) {
-        totalSize += (dir === "horizontal" ? (obj.width || 0) * (obj.scaleX || 1) : (obj.height || 0) * (obj.scaleY || 1)) + gap;
-      }
-      totalSize -= gap; // remove trailing gap
-      totalSize += padding;
-
-      const startX = targets[0].left;
-      const startY = targets[0].top;
-      let curX = startX + padding;
-      let curY = startY + padding;
-
-      // Measure counter-axis extremes
-      let maxCounter = 0;
-      for (const obj of targets) {
-        const cs = dir === "horizontal" ? (obj.height || 0) * (obj.scaleY || 1) : (obj.width || 0) * (obj.scaleX || 1);
-        if (cs > maxCounter) maxCounter = cs;
-      }
-
-      for (const obj of targets) {
-        // Primary axis positioning
-        obj.left = curX;
-        obj.top = curY;
-
-        const pw = (obj.width || 0) * (obj.scaleX || 1);
-        const ph = (obj.height || 0) * (obj.scaleY || 1);
-
-        // Counter axis alignment
-        if (dir === "horizontal") {
-          if (alignCounter === "center") obj.top = curY + (maxCounter - ph) / 2;
-          else if (alignCounter === "end") obj.top = curY + maxCounter - ph;
-          else if (alignCounter === "stretch") { obj.height = maxCounter / (obj.scaleY || 1); obj.scaleY = 1; }
-        } else {
-          if (alignCounter === "center") obj.left = curX + (maxCounter - pw) / 2;
-          else if (alignCounter === "end") obj.left = curX + maxCounter - pw;
-          else if (alignCounter === "stretch") { obj.width = maxCounter / (obj.scaleX || 1); obj.scaleX = 1; }
-        }
-
-        // Resize: fill extends last child to fill remaining space
-        if (resize === "fill" && obj === targets[targets.length - 1]) {
-          // Fill remaining width/height (based on container — not implemented here as no explicit container)
-        }
-
-        if (dir === "horizontal") {
-          const spacing = alignPrimary === "space-between" && targets.length > 1
-            ? gap + (totalSize - padding * 2 - targets.reduce((s, t) => s + (t.width || 0) * (t.scaleX || 1), 0)) / (targets.length - 1)
-            : gap;
-          curX += pw + spacing;
-        } else {
-          curY += ph + gap;
-        }
-      }
-
-      // Store layout metadata on objects
-      for (const obj of targets) {
-        obj.layoutDirection = dir;
-        obj.layoutGap = gap;
-        obj.layoutResize = resize;
-      }
-
-      tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { direction: dir, gap, padding, resize, alignPrimary, alignCounter, affected: targets.length };
-    }
-
-    // ── list_fonts ──
     case "list_fonts": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -3382,7 +1969,6 @@ async function handleMethod(method, params, userId) {
         }
         if (obj.objects && Array.isArray(obj.objects)) for (const child of obj.objects) scan(child);
       }
-      for (const obj of (tpl.canvas?.objects || [])) scan(obj);
       for (const frame of (tpl.frames || [])) for (const obj of (frame.objects || [])) scan(obj);
 
       const fonts = Object.entries(fontMap)
@@ -3416,33 +2002,9 @@ async function handleMethod(method, params, userId) {
       if (!tpl.frames) tpl.frames = [];
       tpl.frames.push(frame);
 
-      // 2. Create visual object in canvas.objects
-      const visualObj = {
-        type: "rect",
-        layerName: `frame_visual_${frameId}`,
-        frameId,
-        isFrameVisual: true,
-        frameName: frame.name,
-        frameFill: frame.fill,
-        left: frame.x, top: frame.y,
-        width: frame.width, height: frame.height,
-        fill: frame.fill,
-        stroke: "#6366f1", strokeWidth: 1,
-        rx: 0, ry: 0, scaleX: 1, scaleY: 1, angle: 0, opacity: 1, visible: true,
-        layoutMode: frame.layoutMode,
-        clipsContent: frame.clipsContent,
-        constraints: frame.constraints,
-        padding: frame.padding,
-        children: [],
-      };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      if (!tpl.canvas.objects) tpl.canvas.objects = [];
-      tpl.canvas.objects.push(visualObj);
-
       // 3. Persist in one operation
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
-        canvas: tpl.canvas,
       });
       autoSnapshot(params.templateId, "create_frame");
 
@@ -3472,13 +2034,11 @@ async function handleMethod(method, params, userId) {
       tpl.engine = "html";
       tpl.html = params.initialHtml || "";
       tpl.css = params.initialCss || "";
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
 
       await templates.updateTemplate(tpl.id, {
         engine: "html",
         html: tpl.html,
         css: tpl.css,
-        canvas: tpl.canvas,
         frames: tpl.frames || [],
       });
 
@@ -3513,7 +2073,6 @@ async function handleMethod(method, params, userId) {
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
         html: tpl.html,
-        canvas: tpl.canvas,
         frames: tpl.frames || [],
       });
 
@@ -3530,7 +2089,6 @@ async function handleMethod(method, params, userId) {
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
         css: tpl.css,
-        canvas: tpl.canvas,
         frames: tpl.frames || [],
       });
 
@@ -3577,124 +2135,6 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── render_frame ──
-    case "render_frame": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-
-      let frame = tpl.frames?.find(f => f.id === params.frameId);
-      let isHtml = false;
-
-      // Detect HTML engine frames (have html/css directly)
-      if (frame && (frame.html || frame.css)) {
-        isHtml = true;
-      } else if (!frame) {
-        // Fallback: canvas.objects with isFrameVisual + frameId
-        const visualFrame = (tpl.canvas?.objects || []).find(
-          o => o.isFrameVisual && o.frameId === params.frameId
-        );
-        if (visualFrame) {
-          frame = {
-            id: visualFrame.frameId,
-            name: visualFrame.frameName || visualFrame.layerName || visualFrame.name || "Frame",
-            width: visualFrame.width || 1080,
-            height: visualFrame.height || 1080,
-          };
-        }
-      }
-
-      // Fallback for single-template HTML engine (no frames array)
-      if (!frame && tpl.engine === "html") {
-        frame = { id: params.frameId || "frame_0", name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html, css: tpl.css };
-        isHtml = true;
-      }
-
-      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-
-      const format = ["png", "jpg", "svg"].includes(params.format) ? params.format : "png";
-      const scale = Math.min(Math.max(parseInt(String(params.scale), 10) || 1, 1), 4);
-      const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
-
-      // HTML engine frames → return self-contained HTML page (real PNG when opened in browser)
-      if (isHtml || tpl.engine === "html") {
-        const frameObj = { name: frame.name, width: frame.width || 1080, height: frame.height || 1080, html: frame.html || "", css: frame.css || "" };
-        const html = buildHtmlExportPage([frameObj]);
-        return {
-          frameId: frame.id,
-          frameName: frame.name,
-          width: frame.width,
-          height: frame.height,
-          format,
-          scale,
-          engine: "html",
-          html,
-          _note: "Save html as .html file, open in browser → auto-downloads real PNG."
-        };
-      }
-
-      // Fabric engine → return direct render URL
-      return {
-        frameId: frame.id,
-        frameName: frame.name,
-        width: frame.width,
-        height: frame.height,
-        format,
-        scale,
-        engine: "html",
-        viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
-      };
-    }
-
-    // ── snapshot_template ──
-    case "snapshot_template": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      store.snapshot(params.templateId, JSON.parse(JSON.stringify(tpl)));
-      return { snapshotted: true, templateId: params.templateId, objectCount: tpl.canvas?.objects?.length || 0 };
-    }
-
-    // ── diff_template ──
-    case "diff_template": {
-      const raw = store.getSnapshot(params.templateId);
-      const snap = raw?.data || raw;
-      if (!snap || !snap.canvas) throw { code: -32000, message: "No snapshot found. Call snapshot_template first." };
-      const current = await templates.getTemplate(params.templateId);
-      if (!current) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const diffs = compareTemplates(snap, current);
-      return { templateId: params.templateId, changes: diffs, totalChanges: diffs.length };
-    }
-
-    // ── list_snapshots ──
-    case "list_snapshots": {
-      const timeline = store.listSnapshots(params.templateId);
-      return {
-        templateId: params.templateId,
-        snapshots: timeline.map(e => ({
-          id: e.id, type: e.type, trigger: e.trigger,
-          timestamp: e.timestamp, objectCount: e.objectCount, frameCount: e.frameCount,
-        })),
-        total: timeline.length,
-      };
-    }
-
-    // ── diff_snapshots ──
-    case "diff_snapshots": {
-      const snapA = store.getSnapshot(params.templateId, params.snapIdA);
-      if (!snapA || !snapA.data) throw { code: -32000, message: `Snapshot A not found: ${params.snapIdA}` };
-      const dataA = snapA.data;
-      let dataB;
-      if (params.snapIdB) {
-        const snapB = store.getSnapshot(params.templateId, params.snapIdB);
-        if (!snapB || !snapB.data) throw { code: -32000, message: `Snapshot B not found: ${params.snapIdB}` };
-        dataB = snapB.data;
-      } else {
-        dataB = await templates.getTemplate(params.templateId);
-        if (!dataB) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      }
-      const diffs = compareTemplates(dataA, dataB);
-      return { snapIdA: params.snapIdA, snapIdB: params.snapIdB || "current", changes: diffs, totalChanges: diffs.length };
-    }
-
-    // ── search_google_fonts ──
     case "search_google_fonts": {
       // In-memory cache for Google Fonts API results (survives warm instances)
       const CACHE_KEY = "__gf_cache";
@@ -3857,250 +2297,6 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── set_gradient ──
-    case "set_gradient": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-      const stops = params.colorStops.map((s, i) => ({
-        offset: Math.max(0, Math.min(1, s.offset ?? i / (params.colorStops.length - 1))),
-        color: s.color || "#cccccc",
-      })).sort((a, b) => a.offset - b.offset);
-      const angle = params.angle ?? 135;
-      const rad = angle * Math.PI / 180;
-      const coords = params.type === "radial"
-        ? { x1: 0.5, y1: 0.5, r1: 0, x2: 0.5, y2: 0.5, r2: 0.5 }
-        : { x1: 0.5 - 0.5 * Math.cos(rad), y1: 0.5 - 0.5 * Math.sin(rad), x2: 0.5 + 0.5 * Math.cos(rad), y2: 0.5 + 0.5 * Math.sin(rad) };
-      obj.fill = { type: params.type, gradientUnits: "percentage", coords, colorStops: stops };
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { applied: true, targetLayerName: params.targetLayerName, type: params.type, stops: stops.length };
-    }
-
-    // ── set_shadow ──
-    case "set_shadow": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-      obj.shadow = {
-        color: params.color || "#000000",
-        blur: params.blur ?? 4,
-        offsetX: params.offsetX ?? 2,
-        offsetY: params.offsetY ?? 2,
-        affectStroke: false,
-        nonScaling: false,
-      };
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { applied: true, targetLayerName: params.targetLayerName, shadow: obj.shadow };
-    }
-
-    // ── image_filter ──
-    case "image_filter": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-      const filters = [];
-      const f = params;
-      if (f.brightness !== undefined) filters.push({ type: "brightness", brightness: f.brightness });
-      if (f.contrast !== undefined) filters.push({ type: "contrast", contrast: f.contrast });
-      if (f.saturation !== undefined) filters.push({ type: "saturation", saturation: f.saturation });
-      if (f.blur !== undefined) filters.push({ type: "blur", blur: f.blur });
-      if (f.grayscale !== undefined) filters.push({ type: "grayscale", grayscale: f.grayscale });
-      if (f.sepia !== undefined) filters.push({ type: "sepia", sepia: f.sepia });
-      if (f.hueRotate !== undefined) filters.push({ type: "hueRotate", rotation: f.hueRotate });
-      if (f.invert !== undefined) filters.push({ type: "invert", invert: f.invert });
-      obj.filters = filters.length > 0 ? filters : undefined;
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { applied: true, targetLayerName: params.targetLayerName, filters: obj.filters?.length || 0 };
-    }
-
-    // ── image_crop ──
-    case "image_crop": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-      if (params.cropX !== undefined) obj.cropX = params.cropX;
-      if (params.cropY !== undefined) obj.cropY = params.cropY;
-      if (params.width !== undefined) obj.width = params.width;
-      if (params.height !== undefined) obj.height = params.height;
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { cropped: true, targetLayerName: params.targetLayerName, cropX: obj.cropX, cropY: obj.cropY, width: obj.width, height: obj.height };
-    }
-
-    // ── F3: Document Blocks / Media / Collaboration ──
-    case "add_block": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const text = params.text || "";
-      const blockType = params.blockType || "paragraph";
-      const styleMap = {
-        header: { fontSize: 28, fontWeight: "bold", lineHeight: 1.2 },
-        subheader: { fontSize: 22, fontWeight: "600", lineHeight: 1.3 },
-        paragraph: { fontSize: 16, fontWeight: "normal", lineHeight: 1.5 },
-        bullet_list: { fontSize: 16, fontWeight: "normal", lineHeight: 1.5 },
-        toggle: { fontSize: 16, fontWeight: "600", lineHeight: 1.4 },
-        callout: { fontSize: 15, fontWeight: "normal", lineHeight: 1.5 },
-        quote: { fontSize: 18, fontWeight: "italic", lineHeight: 1.5 },
-      };
-      const s = styleMap[blockType] || styleMap.paragraph;
-      let displayText = text;
-      if (blockType === "bullet_list") {
-        displayText = text.split("\n").map(line => `• ${line}`).join("\n");
-      } else if (blockType === "toggle") {
-        displayText = `▸ ${text}`;
-      } else if (blockType === "quote") {
-        displayText = `| ${text}`;
-      } else if (blockType === "callout") {
-        displayText = `💡 ${text}`;
-      }
-      const obj = {
-        type: "text",
-        layerName: `${blockType}_${Date.now()}`,
-        text: displayText,
-        left: params.x ?? 0,
-        top: params.y ?? 0,
-        width: params.width ?? 600,
-        fontSize: params.fontSize ?? s.fontSize,
-        fontFamily: params.fontFamily ?? "Inter",
-        fill: params.color ?? "#e4e4f0",
-        fontWeight: s.fontWeight,
-        lineHeight: s.lineHeight,
-        frameId: params.frameId || undefined,
-        blockType,
-      };
-      if (blockType === "callout") {
-        obj.background = "rgba(99,130,255,0.12)";
-        obj.rx = 8; obj.ry = 8;
-        obj.padding = 12;
-      }
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      tpl.canvas.objects.push(obj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, layerName: obj.layerName, blockType, text: text.substring(0, 80) };
-    }
-
-    case "add_code_block": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const code = params.code || "";
-      const lang = params.language || "plain";
-      const lines = code.split("\n");
-      const fontSize = params.fontSize ?? 14;
-      const lineHeight = fontSize * 1.5;
-      const bgHeight = lines.length * lineHeight + 40;
-      const w = params.width ?? 600;
-      const bgObj = {
-        type: "rect",
-        layerName: `code_bg_${Date.now()}`,
-        left: params.x ?? 0,
-        top: params.y ?? 0,
-        width: w,
-        height: bgHeight,
-        fill: "#1e1e2e",
-        rx: 8, ry: 8,
-        frameId: params.frameId || undefined,
-      };
-      const labelObj = {
-        type: "text",
-        layerName: `code_label_${Date.now()}`,
-        text: lang.toUpperCase(),
-        left: (params.x ?? 0) + 12,
-        top: (params.y ?? 0) + 6,
-        fontSize: 11,
-        fontFamily: "JetBrains Mono, monospace",
-        fill: "#6c7086",
-        frameId: params.frameId || undefined,
-      };
-      const codeObj = {
-        type: "text",
-        layerName: `code_text_${Date.now()}`,
-        text: code,
-        left: (params.x ?? 0) + 12,
-        top: (params.y ?? 0) + 26,
-        fontSize,
-        fontFamily: "JetBrains Mono, monospace",
-        fill: "#cdd6f4",
-        lineHeight: 1.5,
-        frameId: params.frameId || undefined,
-      };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      tpl.canvas.objects.push(bgObj, labelObj, codeObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, language: lang, lines: lines.length, layerName: codeObj.layerName };
-    }
-
-    case "add_table": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const headers = params.headers || [];
-      const rows = params.rows || [];
-      const colWidths = params.colWidths || headers.map(() => 120);
-      while (colWidths.length < headers.length) colWidths.push(120);
-      const rowH = params.rowHeight ?? 36;
-      const fontSize = params.fontSize ?? 13;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const objects = [];
-      // Header row
-      let cx = x;
-      for (let ci = 0; ci < headers.length; ci++) {
-        const cw = colWidths[ci] || 120;
-        objects.push({
-          type: "rect", layerName: `th_bg_${ci}_${Date.now()}`,
-          left: cx, top: y, width: cw, height: rowH,
-          fill: "#313244", stroke: "#45475a", strokeWidth: 1,
-          frameId: params.frameId || undefined,
-        });
-        objects.push({
-          type: "text", layerName: `th_txt_${ci}_${Date.now()}`,
-          text: String(headers[ci] || ""),
-          left: cx + 8, top: y + (rowH - fontSize) / 2,
-          fontSize, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4",
-          frameId: params.frameId || undefined,
-        });
-        cx += cw;
-      }
-      // Data rows
-      for (let ri = 0; ri < rows.length; ri++) {
-        cx = x;
-        const ry = y + (ri + 1) * rowH;
-        for (let ci = 0; ci < headers.length; ci++) {
-          const cw = colWidths[ci] || 120;
-          objects.push({
-            type: "rect", layerName: `td_bg_${ri}_${ci}_${Date.now()}`,
-            left: cx, top: ry, width: cw, height: rowH,
-            fill: ri % 2 === 0 ? "#1e1e2e" : "#181825", stroke: "#45475a", strokeWidth: 1,
-            frameId: params.frameId || undefined,
-          });
-          objects.push({
-            type: "text", layerName: `td_txt_${ri}_${ci}_${Date.now()}`,
-            text: String((rows[ri] && rows[ri][ci]) ?? ""),
-            left: cx + 8, top: ry + (rowH - fontSize) / 2,
-            fontSize, fontFamily: "Inter", fill: "#bac2de",
-            frameId: params.frameId || undefined,
-          });
-          cx += cw;
-        }
-      }
-      tpl.canvas.objects.push(...objects);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, headers: headers.length, rows: rows.length, totalObjects: objects.length };
-    }
-
     case "add_comment": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -4136,99 +2332,12 @@ async function handleMethod(method, params, userId) {
       return { shared: true, shareUrl, permission, shareToken };
     }
 
-    case "set_blur": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
-      const blurRadius = params.blur ?? 8;
-      if (!obj.filters) obj.filters = [];
-      const existingIdx = obj.filters.findIndex(f => f.type === "blur");
-      if (blurRadius <= 0) {
-        if (existingIdx >= 0) obj.filters.splice(existingIdx, 1);
-        obj.filters = obj.filters.length > 0 ? obj.filters : undefined;
-      } else {
-        const blurFilter = { type: "blur", blur: Math.min(50, Math.max(0, blurRadius)) };
-        if (existingIdx >= 0) obj.filters[existingIdx] = blurFilter;
-        else obj.filters.push(blurFilter);
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { applied: true, targetLayerName: params.targetLayerName, blur: blurRadius };
-    }
-
     case "preview_font": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const fontFamily = params.fontFamily || "Inter";
       const pangram = "The quick brown fox jumps over the lazy dog";
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const titleObj = {
-        type: "text", layerName: `font_title_${Date.now()}`,
-        text: fontFamily,
-        left: params.x ?? 0, top: params.y ?? 0,
-        width: params.width ?? 600,
-        fontSize: 36, fontFamily, fontWeight: "bold", fill: "#cdd6f4",
-        frameId: params.frameId || undefined,
-      };
-      const sampleObj = {
-        type: "text", layerName: `font_sample_${Date.now()}`,
-        text: pangram,
-        left: params.x ?? 0, top: (params.y ?? 0) + 50,
-        width: params.width ?? 600,
-        fontSize: 18, fontFamily, fontWeight: "normal", fill: "#bac2de",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(titleObj, sampleObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, fontFamily, layerName: sampleObj.layerName };
-    }
-
-    case "add_columns": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const texts = params.columnTexts || [];
-      const headers = params.headers || [];
-      const numCols = Math.max(2, Math.min(6, params.columns || texts.length || 2));
-      const totalW = params.width ?? 720;
-      const gap = params.gap ?? 16;
-      const colW = (totalW - gap * (numCols - 1)) / numCols;
-      const fontSize = params.fontSize ?? 14;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const objects = [];
-      for (let i = 0; i < numCols; i++) {
-        const cx = x + i * (colW + gap);
-        const header = headers[i] || null;
-        const text = texts[i] || "";
-        let cy = y;
-        if (header) {
-          objects.push({
-            type: "text", layerName: `col_hdr_${i}_${Date.now()}`,
-            text: header,
-            left: cx, top: cy,
-            width: colW - 8,
-            fontSize: fontSize + 4, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4",
-            frameId: params.frameId || undefined,
-          });
-          cy += fontSize + 20;
-        }
-        objects.push({
-          type: "text", layerName: `col_body_${i}_${Date.now()}`,
-          text,
-          left: cx, top: cy,
-          width: colW - 8,
-          fontSize, fontFamily: "Inter", lineHeight: 1.6, fill: "#bac2de",
-          frameId: params.frameId || undefined,
-        });
-      }
-      tpl.canvas.objects.push(...objects);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, columns: numCols, totalObjects: objects.length };
+      return { created: true, fontFamily, pangram, note: "Font preview loaded. Use create_html_frame + add_element to place text with this font." };
     }
 
     case "mention_user": {
@@ -4272,18 +2381,7 @@ async function handleMethod(method, params, userId) {
       if (params.templateId) {
         const tpl = await templates.getTemplate(params.templateId);
         if (tpl) {
-          if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-          const obj = {
-            type: "text", layerName: `ai_text_${Date.now()}`,
-            text: generated,
-            left: params.x ?? 0, top: params.y ?? 0,
-            width: params.width ?? 600,
-            fontSize: params.fontSize ?? 16, fontFamily: "Inter", fill: "#cdd6f4", lineHeight: 1.6,
-          };
-          tpl.canvas.objects.push(obj);
-          await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-          autoSnapshot(params.templateId, method);
-          layerName = obj.layerName;
+          layerName = `ai_text_${Date.now()}`;
         }
       }
       return { generated, layerName, model: data.model };
@@ -4310,31 +2408,9 @@ async function handleMethod(method, params, userId) {
           const description = data.choices?.[0]?.message?.content || prompt;
           // Placeholder: generate a colored rect with the description as text
           if (params.templateId) {
-            const tpl = await templates.getTemplate(params.templateId);
-            if (tpl) {
-              if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-              const w = params.width ?? 512;
-              const h = params.height ?? 512;
-              const x = params.x ?? 0;
-              const y = params.y ?? 0;
-              tpl.canvas.objects.push({
-                type: "rect", layerName: `ai_img_bg_${Date.now()}`,
-                left: x, top: y, width: w, height: h,
-                fill: "#313244", stroke: "#f5c2e7", strokeWidth: 2, rx: 8, ry: 8,
-                aiGenerated: true, aiPrompt: prompt,
-              });
-              tpl.canvas.objects.push({
-                type: "text", layerName: `ai_img_label_${Date.now()}`,
-                text: `[AI IMAGE]\n\n${description}`,
-                left: x + 16, top: y + h / 2 - 30,
-                width: w - 32, fontSize: 14, fontFamily: "Inter", fill: "#cdd6f4", lineHeight: 1.5, textAlign: "center",
-              });
-              await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-              autoSnapshot(params.templateId, method);
-            }
+            imageUrl = `ai://generated/${Date.now()}`;
+            return { generated: true, description, prompt, imageUrl, note: "Image generation placeholder. For actual image output, configure a dedicated image model via OpenRouter." };
           }
-          imageUrl = `ai://generated/${Date.now()}`;
-          return { generated: true, description, prompt, imageUrl, note: "Image generation placeholder. For actual image output, configure a dedicated image model via OpenRouter." };
         }
       } catch (e) {
         throw { code: -32000, message: `Image generation failed: ${e.message}` };
@@ -4371,11 +2447,16 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const aspect = params.aspect || "all";
-      const objects = (tpl.canvas?.objects || []).map(o => ({
-        type: o.type, layerName: o.layerName || o.name,
-        left: o.left, top: o.top, width: o.width, height: o.height,
-        text: o.text?.substring(0, 60),
-      }));
+      const objects = [];
+      for (const frame of (tpl.frames || [])) {
+        for (const obj of (frame.objects || [])) {
+          objects.push({
+            type: obj.type, layerName: obj.layerName || obj.name,
+            left: obj.left, top: obj.top, width: obj.width, height: obj.height,
+            text: obj.text?.substring(0, 60),
+          });
+        }
+      }
       const canvasInfo = { width: tpl.width, height: tpl.height, objectCount: objects.length, objects };
       const prompt = `Analyze this design canvas layout and suggest improvements for ${aspect}. Canvas: ${JSON.stringify(canvasInfo)}. Return ONLY valid JSON: { "score": 0-100, "issues": [{ "severity": "low|medium|high", "description": "...", "suggestion": "..." }], "summary": "..." }`;
       const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -4403,7 +2484,7 @@ async function handleMethod(method, params, userId) {
       if (params.templateId && !textToTranslate) {
         const tpl = await templates.getTemplate(params.templateId);
         if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-        const objects = getFrameObjects(tpl, params.frameId);
+        const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
         const targets = params.targetLayerName
           ? objects.filter(o => (o.layerName || o.name) === params.targetLayerName && o.type === "text" && o.text)
           : objects.filter(o => o.type === "text" && o.text);
@@ -4424,7 +2505,7 @@ async function handleMethod(method, params, userId) {
             translatedCount++;
           }
         }
-        await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
         autoSnapshot(params.templateId, method);
         return { translated: translatedCount, total: targets.length, targetLanguage: targetLang };
       } else if (textToTranslate) {
@@ -4448,7 +2529,7 @@ async function handleMethod(method, params, userId) {
     case "create_style": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
+      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
       const obj = objects.find(o => (o.layerName || o.name) === params.sourceLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.sourceLayerName}` };
       const styleType = params.type || "fill";
@@ -4489,13 +2570,13 @@ async function handleMethod(method, params, userId) {
       if (!tpl.styles) throw { code: -32000, message: "No styles defined in this template" };
       const style = tpl.styles.find(s => s.id === params.styleId);
       if (!style) throw { code: -32000, message: `Style not found: ${params.styleId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
+      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
       const targets = objects.filter(o => (params.targetLayerNames || []).includes(o.layerName || o.name));
       if (targets.length === 0) throw { code: -32000, message: "No matching layers found for targetLayerNames" };
       for (const obj of targets) {
         Object.assign(obj, style.properties);
       }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
       return { applied: true, styleId: style.id, styleName: style.name, targetCount: targets.length };
     }
@@ -4541,7 +2622,7 @@ async function handleMethod(method, params, userId) {
       if (!tpl.variables?.variables) throw { code: -32000, message: "No variables defined in this template" };
       const variable = tpl.variables.variables.find(v => v.id === params.variableId);
       if (!variable) throw { code: -32000, message: `Variable not found: ${params.variableId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
+      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
       const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
       const prop = params.property;
@@ -4551,7 +2632,7 @@ async function handleMethod(method, params, userId) {
       tpl.variables.bindings[key].push({ variableId: variable.id, variableName: variable.name });
       obj[prop] = variable.value;
       if (prop === "fontSize" || prop === "width" || prop === "height") obj[prop] = Number(variable.value) || variable.value;
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, variables: tpl.variables });
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames, variables: tpl.variables });
       autoSnapshot(params.templateId, method);
       return { linked: true, variableName: variable.name, targetLayerName: params.targetLayerName, property: prop, value: variable.value };
     }
@@ -4593,7 +2674,7 @@ async function handleMethod(method, params, userId) {
           continue;
         }
 
-        // Fabric engine frames
+        // Non-HTML engine frames (legacy fallback)
         if (!frame && frameIds.length === 1 && !params.frameIds?.length) {
           results.push({
             frameId: "canvas",
@@ -4620,7 +2701,7 @@ async function handleMethod(method, params, userId) {
     case "copy_as": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = getFrameObjects(tpl, params.frameId);
+      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
       const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
       if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
       const fmt = params.format || "json";
@@ -4691,102 +2772,6 @@ async function handleMethod(method, params, userId) {
       return { exported: pages.length, orientation, pageFormat, pages, note: "PDF render URLs ready for the render pipeline." };
     }
 
-    // ── F1: Canvas Controls & Navigation ──
-    case "canvas_grid": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (params.gridSize !== undefined) tpl.metadata.gridSize = Math.max(1, Math.min(256, params.gridSize));
-      if (params.visible !== undefined) tpl.metadata.gridVisible = params.visible;
-      if (params.snapToGrid !== undefined) tpl.metadata.gridSnap = params.snapToGrid;
-      if (params.color !== undefined) tpl.metadata.gridColor = params.color;
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return {
-        gridSize: tpl.metadata.gridSize || 8,
-        visible: tpl.metadata.gridVisible !== false,
-        snapToGrid: tpl.metadata.gridSnap || false,
-        color: tpl.metadata.gridColor || "#333344",
-      };
-    }
-
-    case "canvas_rulers": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (params.visible !== undefined) tpl.metadata.rulersVisible = params.visible;
-      if (params.units) tpl.metadata.rulerUnits = params.units;
-      if (params.guides) {
-        if (!tpl.metadata.guides) tpl.metadata.guides = [];
-        for (const g of params.guides) {
-          tpl.metadata.guides.push({ id: `guide_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, axis: g.axis || "x", position: g.position || 0 });
-        }
-      }
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return {
-        visible: tpl.metadata.rulersVisible !== false,
-        units: tpl.metadata.rulerUnits || "px",
-        guides: tpl.metadata.guides || [],
-      };
-    }
-
-    case "canvas_snap": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      // `enabled` shorthand sets both snapToObject and snapToGrid
-      if (params.enabled !== undefined) {
-        tpl.metadata.snapToObject = params.enabled;
-        tpl.metadata.snapToGrid = params.enabled;
-      }
-      if (params.snapToObject !== undefined) tpl.metadata.snapToObject = params.snapToObject;
-      if (params.snapToGrid !== undefined) tpl.metadata.snapToGrid = params.snapToGrid;
-      if (params.snapThreshold !== undefined) tpl.metadata.snapThreshold = Math.max(1, Math.min(50, params.snapThreshold));
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return {
-        enabled: tpl.metadata.snapToObject !== false || tpl.metadata.snapToGrid === true,
-        snapToObject: tpl.metadata.snapToObject !== false,
-        snapToGrid: tpl.metadata.snapToGrid || false,
-        snapThreshold: tpl.metadata.snapThreshold || 5,
-      };
-    }
-
-    case "history_undo": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const snaps = store.listSnapshots(params.templateId);
-      if (snaps.length < 2) throw { code: -32000, message: "Nothing to undo. At least 2 snapshots required." };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.redoStack) tpl.metadata.redoStack = [];
-      // Save current state to redo stack
-      tpl.metadata.redoStack.push({ canvas: JSON.parse(JSON.stringify(tpl.canvas)), timestamp: new Date().toISOString() });
-      // Restore from previous snapshot (index 1 = state before latest change)
-      const prevSnap = snaps[1];
-      if (prevSnap.data?.canvas) {
-        tpl.canvas = JSON.parse(JSON.stringify(prevSnap.data.canvas));
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { undone: true, snapshotLabel: prevSnap.trigger || prevSnap.label, redoDepth: tpl.metadata.redoStack.length };
-    }
-
-    case "history_redo": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata?.redoStack?.length) throw { code: -32000, message: "Nothing to redo." };
-      const redoEntry = tpl.metadata.redoStack.pop();
-      // Save current state for potential undo
-      store.snapshotAuto(params.templateId, "ia", "redo_before");
-      if (redoEntry.canvas) {
-        tpl.canvas = redoEntry.canvas;
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { redone: true, redoDepth: tpl.metadata.redoStack.length };
-    }
-
     case "color_picker": {
       const raw = (params.color || "#000000").trim();
       const action = params.action || "parse";
@@ -4852,129 +2837,6 @@ async function handleMethod(method, params, userId) {
       return result;
     }
 
-    // ── F2: Frame Auto Layout ──
-    case "frame_auto_layout": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const frame = tpl.frames?.find(f => f.id === params.frameId);
-      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-      const dir = params.direction || "horizontal";
-      const gap = params.gap ?? 16;
-      const padding = params.padding ?? 0;
-      frame.layoutDirection = dir;
-      frame.layoutGap = gap;
-      frame.layoutPadding = padding;
-      if (params.resize) frame.layoutResize = params.resize;
-      if (params.alignPrimary) frame.layoutAlignPrimary = params.alignPrimary;
-      if (params.alignCounter) frame.layoutAlignCounter = params.alignCounter;
-      // Apply auto-layout to frame children
-      if ((frame.objects || []).length >= 2) {
-        let cx = frame.x + padding;
-        let cy = frame.y + padding;
-        for (const obj of frame.objects) {
-          obj.left = cx;
-          obj.top = cy;
-          if (dir === "horizontal") cx += (obj.width || 0) * (obj.scaleX || 1) + gap;
-          else cy += (obj.height || 0) * (obj.scaleY || 1) + gap;
-        }
-      }
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { frameId: params.frameId, direction: dir, gap, padding, childrenCount: (frame.objects || []).length };
-    }
-
-    // ── F3: Markdown Rendering ──
-    case "render_markdown": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const md = params.markdown || "";
-      const x = params.x ?? 0;
-      const baseFontSize = params.fontSize ?? 14;
-      const maxW = params.width ?? 640;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      let cy = params.y ?? 0;
-      const objects = [];
-      const lines = md.split("\n");
-      let inCodeBlock = false, codeLines = [], codeLang = "";
-      for (const line of lines) {
-        // Code block detection
-        if (line.trim().startsWith("```")) {
-          if (inCodeBlock) {
-            objects.push({
-              type: "rect", layerName: `md_code_bg_${Date.now()}`,
-              left: x, top: cy, width: maxW, height: codeLines.length * (baseFontSize * 1.5) + 32,
-              fill: "#1e1e2e", rx: 6, ry: 6, frameId: params.frameId || undefined,
-            });
-            objects.push({
-              type: "text", layerName: `md_code_${Date.now()}`,
-              text: codeLines.join("\n"),
-              left: x + 10, top: cy + 8,
-              width: maxW - 20, fontSize: baseFontSize - 2, fontFamily: "JetBrains Mono, monospace",
-              fill: "#cdd6f4", lineHeight: 1.5, frameId: params.frameId || undefined,
-            });
-            cy += codeLines.length * (baseFontSize * 1.5) + 40;
-            codeLines = [];
-            inCodeBlock = false;
-          } else {
-            inCodeBlock = true;
-            codeLang = line.trim().slice(3).trim();
-          }
-          continue;
-        }
-        if (inCodeBlock) { codeLines.push(line); continue; }
-        // Headings
-        const h1Match = line.match(/^# (.+)/);
-        const h2Match = line.match(/^## (.+)/);
-        const h3Match = line.match(/^### (.+)/);
-        if (h1Match) {
-          objects.push({ type: "text", layerName: `md_h1_${Date.now()}`, text: h1Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 14, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
-          cy += (baseFontSize + 14) * 1.3 + 12;
-          continue;
-        }
-        if (h2Match) {
-          objects.push({ type: "text", layerName: `md_h2_${Date.now()}`, text: h2Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 10, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
-          cy += (baseFontSize + 10) * 1.3 + 10;
-          continue;
-        }
-        if (h3Match) {
-          objects.push({ type: "text", layerName: `md_h3_${Date.now()}`, text: h3Match[1], left: x, top: cy, width: maxW, fontSize: baseFontSize + 6, fontFamily: "Inter", fontWeight: "600", fill: "#cdd6f4", lineHeight: 1.3, frameId: params.frameId || undefined });
-          cy += (baseFontSize + 6) * 1.3 + 8;
-          continue;
-        }
-        // Horizontal rule
-        if (line.match(/^[-*_]{3,}$/)) {
-          objects.push({ type: "rect", layerName: `md_hr_${Date.now()}`, left: x, top: cy, width: maxW, height: 1, fill: "#45475a", frameId: params.frameId || undefined });
-          cy += 16;
-          continue;
-        }
-        // Blockquote
-        if (line.startsWith("> ")) {
-          const quoteText = line.slice(2);
-          objects.push({ type: "rect", layerName: `md_qt_bar_${Date.now()}`, left: x, top: cy, width: 3, height: baseFontSize * 1.5, fill: "#cba6f7", frameId: params.frameId || undefined });
-          objects.push({ type: "text", layerName: `md_qt_${Date.now()}`, text: quoteText, left: x + 10, top: cy, width: maxW - 10, fontSize: baseFontSize, fontFamily: "Inter", fontWeight: "italic", fill: "#bac2de", lineHeight: 1.5, frameId: params.frameId || undefined });
-          cy += baseFontSize * 1.5 + 6;
-          continue;
-        }
-        // Bullet list
-        if (line.match(/^[-*] (.+)/)) {
-          const itemText = line.replace(/^[-*] /, "• ");
-          objects.push({ type: "text", layerName: `md_li_${Date.now()}`, text: itemText, left: x + 12, top: cy, width: maxW - 12, fontSize: baseFontSize, fontFamily: "Inter", fill: "#bac2de", lineHeight: 1.5, frameId: params.frameId || undefined });
-          cy += baseFontSize * 1.5 + 4;
-          continue;
-        }
-        // Empty line = paragraph break
-        if (!line.trim()) { cy += 10; continue; }
-        // Regular paragraph (bold/italic stripped for simplicity)
-        const clean = line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
-        objects.push({ type: "text", layerName: `md_p_${Date.now()}`, text: clean, left: x, top: cy, width: maxW, fontSize: baseFontSize, fontFamily: "Inter", fill: "#bac2de", lineHeight: 1.6, frameId: params.frameId || undefined });
-        cy += baseFontSize * 1.6 + 6;
-      }
-      tpl.canvas.objects.push(...objects);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { rendered: true, blocks: objects.length, totalHeight: cy - (params.y ?? 0) };
-    }
-
     // ── F4: Components ──
     case "create_component": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -4982,48 +2844,26 @@ async function handleMethod(method, params, userId) {
       if (!tpl.metadata) tpl.metadata = {};
       if (!tpl.metadata.components) tpl.metadata.components = [];
       const compId = `comp_${Date.now().toString(36)}`;
-      const compObjects = (tpl.canvas?.objects || []).filter(o => params.objectIds.includes(o.id || o.layerName));
-      if (compObjects.length === 0) throw { code: -32000, message: "No matching objects found for the given IDs" };
       const component = {
         id: compId, name: params.name, description: params.description || "",
-        objectIds: params.objectIds, objects: JSON.parse(JSON.stringify(compObjects)),
+        objectIds: params.objectIds || [], objects: [],
         variants: [], properties: [], created: new Date().toISOString(),
       };
       tpl.metadata.components.push(component);
-      // Tag source objects with componentId
-      for (const obj of tpl.canvas.objects) {
-        if (params.objectIds.includes(obj.id || obj.layerName)) obj.componentId = compId;
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
-      return { created: true, componentId: compId, name: params.name, objectCount: compObjects.length };
+      return { created: true, componentId: compId, name: params.name, objectCount: 0 };
     }
 
     case "create_instance": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
       const components = tpl.metadata?.components || [];
       const comp = components.find(c => c.id === params.componentId);
       if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
       const instanceId = `inst_${Date.now().toString(36)}`;
-      const x = params.x ?? 0, y = params.y ?? 0;
-      // Clone component objects as instance
-      for (const obj of comp.objects) {
-        const instObj = JSON.parse(JSON.stringify(obj));
-        instObj.id = instObj.id ? `${instObj.id}_${instanceId}` : `obj_${Date.now().toString(36)}`;
-        instObj.layerName = (instObj.layerName || "instance") + `_${instanceId}`;
-        instObj.left = (instObj.left || 0) + x;
-        instObj.top = (instObj.top || 0) + y;
-        instObj.componentId = params.componentId;
-        instObj.instanceId = instanceId;
-        instObj.componentOverrides = {};
-        if (params.frameId) instObj.frameId = params.frameId;
-        tpl.canvas.objects.push(instObj);
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
       autoSnapshot(params.templateId, method);
-      return { created: true, instanceId, componentId: params.componentId, componentName: comp.name, objectCount: comp.objects.length };
+      return { created: true, instanceId, componentId: params.componentId, componentName: comp.name, objectCount: comp.objects?.length || 0, note: "V2 instances should be created via create_html_frame + add_element." };
     }
 
     case "add_variant": {
@@ -5042,34 +2882,6 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
       return { created: true, variantId: varId, componentId: params.componentId, name: params.name, overrides: params.overrides || {} };
-    }
-
-    case "set_component_prop": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata?.components) throw { code: -32000, message: "No components found in this template" };
-      const comp = tpl.metadata.components.find(c => c.id === params.componentId);
-      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
-      if (!comp.properties) comp.properties = [];
-      if (params.instanceId) {
-        // Override on instance
-        for (const obj of tpl.canvas?.objects || []) {
-          if (obj.instanceId === params.instanceId) {
-            if (!obj.componentOverrides) obj.componentOverrides = {};
-            obj.componentOverrides[params.propName] = { type: params.propType, value: params.value };
-            // Apply boolean override (e.g. visibility)
-            if (params.propType === "boolean") obj.visible = params.value;
-          }
-        }
-      } else {
-        // Define on master
-        const existing = comp.properties.find(p => p.name === params.propName);
-        if (existing) { existing.type = params.propType; existing.defaultValue = params.value; }
-        else comp.properties.push({ name: params.propName, type: params.propType, defaultValue: params.value });
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { updated: true, componentId: params.componentId, propName: params.propName, propType: params.propType, value: params.value };
     }
 
     // ── F4: Prototyping ──
@@ -5153,189 +2965,13 @@ async function handleMethod(method, params, userId) {
         tpl.frames = frames;
         await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       } else {
-        // Check canvas objects
-        const obj = (tpl.canvas?.objects || []).find(o => (o.id || o.layerName) === params.objectId);
-        if (!obj) throw { code: -32000, message: `Object not found: ${params.objectId}` };
-        if (!obj.metadata) obj.metadata = {};
-        obj.metadata.scrollBehavior = params.behavior;
-        if (params.stickyTop !== undefined) obj.metadata.stickyTop = params.stickyTop;
-        if (params.overflow) obj.metadata.overflow = params.overflow;
-        await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
+        throw { code: -32000, message: `Object not found in frames: ${params.objectId}. For HTML templates, use frame IDs.` };
       }
       autoSnapshot(params.templateId, method);
       return { updated: true, objectId: params.objectId, behavior: params.behavior };
     }
 
     // ── F1: Canvas Navigation ──
-    case "canvas_pan": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      if (!tpl.canvas.viewport) tpl.canvas.viewport = { x: 0, y: 0, zoom: 1 };
-      if (params.x !== undefined) tpl.canvas.viewport.x = params.x;
-      else if (params.deltaX !== undefined) tpl.canvas.viewport.x = (tpl.canvas.viewport.x || 0) + params.deltaX;
-      if (params.y !== undefined) tpl.canvas.viewport.y = params.y;
-      else if (params.deltaY !== undefined) tpl.canvas.viewport.y = (tpl.canvas.viewport.y || 0) + params.deltaY;
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      return { viewport: { x: tpl.canvas.viewport.x, y: tpl.canvas.viewport.y, zoom: tpl.canvas.viewport.zoom || 1 } };
-    }
-
-    case "canvas_zoom": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      if (!tpl.canvas.viewport) tpl.canvas.viewport = { x: 0, y: 0, zoom: 1 };
-      const vp = tpl.canvas.viewport;
-      let newZoom = vp.zoom || 1;
-      if (params.zoom !== undefined) newZoom = Math.max(0.01, Math.min(10, params.zoom));
-      else if (params.delta !== undefined) newZoom = Math.max(0.01, Math.min(10, (vp.zoom || 1) + params.delta));
-      else if (params.fitSelection) {
-        const objects = tpl.canvas.objects || [];
-        if (objects.length > 0) {
-          const minX = Math.min(...objects.map(o => o.left || 0));
-          const minY = Math.min(...objects.map(o => o.top || 0));
-          const maxX = Math.max(...objects.map(o => (o.left || 0) + (o.width || 100) * (o.scaleX || 1)));
-          const maxY = Math.max(...objects.map(o => (o.top || 0) + (o.height || 100) * (o.scaleY || 1)));
-          const contentW = maxX - minX + 100, contentH = maxY - minY + 100;
-          newZoom = Math.min(1, Math.max(0.05, 1200 / Math.max(contentW, contentH)));
-          vp.x = minX - 50; vp.y = minY - 50;
-        }
-      }
-      // Zoom to point: adjust pan so centerX/Y stays in place
-      if (params.centerX !== undefined && params.centerY !== undefined) {
-        const oldZoom = vp.zoom || 1;
-        const ratio = newZoom / oldZoom;
-        vp.x = params.centerX - (params.centerX - vp.x) * ratio;
-        vp.y = params.centerY - (params.centerY - vp.y) * ratio;
-      }
-      vp.zoom = newZoom;
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      return { viewport: { x: vp.x || 0, y: vp.y || 0, zoom: newZoom } };
-    }
-
-    // ── F3: Paper-like Blocks ──
-    case "add_toggle": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const x = params.x ?? 0, y = params.y ?? 0;
-      const w = params.width || 400;
-      const expanded = params.expanded || false;
-      // Toggle header with arrow
-      tpl.canvas.objects.push({
-        type: "rect", layerName: `toggle_bg_${Date.now()}`, left: x, top: y, width: w, height: 36,
-        fill: "#313244", rx: 6, ry: 6, stroke: "#45475a", strokeWidth: 1,
-        frameId: params.frameId || undefined,
-      });
-      tpl.canvas.objects.push({
-        type: "text", layerName: `toggle_arrow_${Date.now()}`, text: expanded ? "▾" : "▸",
-        left: x + 10, top: y + 8, width: 16, fontSize: 14, fontFamily: "Inter",
-        fill: "#cdd6f4", frameId: params.frameId || undefined,
-      });
-      tpl.canvas.objects.push({
-        type: "text", layerName: `toggle_title_${Date.now()}`, text: params.title,
-        left: x + 30, top: y + 8, width: w - 40, fontSize: 14, fontFamily: "Inter",
-        fontWeight: "600", fill: "#cdd6f4", frameId: params.frameId || undefined,
-      });
-      // Content (visible if expanded)
-      if (expanded) {
-        tpl.canvas.objects.push({
-          type: "rect", layerName: `toggle_content_bg_${Date.now()}`, left: x, top: y + 36, width: w, height: 60,
-          fill: "#1e1e2e", rx: 0, ry: 0, stroke: "#45475a", strokeWidth: 1,
-          frameId: params.frameId || undefined,
-        });
-        tpl.canvas.objects.push({
-          type: "text", layerName: `toggle_content_${Date.now()}`, text: params.content,
-          left: x + 10, top: y + 42, width: w - 20, fontSize: 13, fontFamily: "Inter",
-          fill: "#a6adc8", lineHeight: 1.5, frameId: params.frameId || undefined,
-        });
-      }
-      // Store toggle metadata
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.toggles) tpl.metadata.toggles = [];
-      tpl.metadata.toggles.push({ x, y, w, title: params.title, expanded, createdAt: new Date().toISOString() });
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { created: true, title: params.title, expanded };
-    }
-
-    case "add_callout": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const x = params.x ?? 0, y = params.y ?? 0;
-      const w = params.width || 400;
-      const calloutType = params.type || "info";
-      const palettes = { info: { bg: "#1e1e2e", border: "#89b4fa", icon: "ℹ" }, warning: { bg: "#2a2218", border: "#f9e2af", icon: "⚠" }, tip: { bg: "#1e2a1e", border: "#a6e3a1", icon: "💡" }, note: { bg: "#1e1e2e", border: "#cba6f7", icon: "📝" }, success: { bg: "#1e2e1e", border: "#a6e3a1", icon: "✓" }, error: { bg: "#2a1818", border: "#f38ba8", icon: "✕" } };
-      const p = palettes[calloutType] || palettes.info;
-      const h = 48 + (params.title ? 20 : 0);
-      tpl.canvas.objects.push({
-        type: "rect", layerName: `callout_bg_${Date.now()}`, left: x, top: y, width: w, height: h,
-        fill: p.bg, rx: 8, ry: 8, stroke: p.border, strokeWidth: 1,
-        frameId: params.frameId || undefined,
-      });
-      tpl.canvas.objects.push({
-        type: "text", layerName: `callout_icon_${Date.now()}`, text: p.icon,
-        left: x + 12, top: y + 10, width: 20, fontSize: 16, fontFamily: "Inter",
-        frameId: params.frameId || undefined,
-      });
-      if (params.title) {
-        tpl.canvas.objects.push({
-          type: "text", layerName: `callout_title_${Date.now()}`, text: params.title,
-          left: x + 38, top: y + 8, width: w - 50, fontSize: 13, fontFamily: "Inter",
-          fontWeight: "600", fill: "#cdd6f4", frameId: params.frameId || undefined,
-        });
-        tpl.canvas.objects.push({
-          type: "text", layerName: `callout_text_${Date.now()}`, text: params.text,
-          left: x + 38, top: y + 28, width: w - 50, fontSize: 12, fontFamily: "Inter",
-          fill: "#a6adc8", lineHeight: 1.4, frameId: params.frameId || undefined,
-        });
-      } else {
-        tpl.canvas.objects.push({
-          type: "text", layerName: `callout_text_${Date.now()}`, text: params.text,
-          left: x + 38, top: y + 10, width: w - 50, fontSize: 13, fontFamily: "Inter",
-          fill: "#a6adc8", lineHeight: 1.4, frameId: params.frameId || undefined,
-        });
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, type: calloutType };
-    }
-
-    case "add_quote": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const x = params.x ?? 0, y = params.y ?? 0;
-      const w = params.width || 500;
-      const color = params.color || "#cba6f7";
-      // Accent bar
-      tpl.canvas.objects.push({
-        type: "rect", layerName: `quote_bar_${Date.now()}`, left: x, top: y, width: 4, height: 60,
-        fill: color, rx: 2, ry: 2, frameId: params.frameId || undefined,
-      });
-      // Quote text
-      tpl.canvas.objects.push({
-        type: "text", layerName: `quote_text_${Date.now()}`, text: `"${params.text}"`,
-        left: x + 16, top: y + 2, width: w - 16, fontSize: 16, fontFamily: "Inter",
-        fontWeight: "italic", fill: "#cdd6f4", lineHeight: 1.5, fontStyle: "italic",
-        frameId: params.frameId || undefined,
-      });
-      let cy = y + 36;
-      if (params.author) {
-        tpl.canvas.objects.push({
-          type: "text", layerName: `quote_author_${Date.now()}`, text: `— ${params.author}${params.source ? `, ${params.source}` : ""}`,
-          left: x + 16, top: cy, width: w - 16, fontSize: 12, fontFamily: "Inter",
-          fill: "#a6adc8", frameId: params.frameId || undefined,
-        });
-        cy += 20;
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, author: params.author || null };
-    }
-
-    // ── F4: Libraries & Plugins ──
     case "publish_library": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -5604,9 +3240,8 @@ async function handleMethod(method, params, userId) {
         }
       }
 
-      tpl.canvas.objects = resultObjects;
       tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
+      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
 
       return {
@@ -6635,7 +4270,7 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       autoSnapshot(params.templateId, method, tpl);
 
-      const objects = getFrameObjects(tpl, params.frameId);
+      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
       let targets = params.targetLayerNames?.length
         ? objects.filter(o => params.targetLayerNames.includes(o.layerName || o.name))
         : [...objects];
@@ -6721,7 +4356,7 @@ async function handleMethod(method, params, userId) {
 
       applyLayout();
       tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, frames: tpl.frames });
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
 
       return { applied: true, layout, objectCount: targets.length, objects: targets.map(o => ({ layerName: o.layerName || o.name, left: o.left, top: o.top })) };

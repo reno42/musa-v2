@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import type {
-  Workspace, Frame, DesignTemplate, FabricCanvas,
+  Workspace, Frame, DesignTemplate, CanvasData,
   Webhook, RenderJob,
 } from "../types.js";
 
@@ -76,7 +76,7 @@ class Store {
 
   createTemplate(data: {
     workspaceId: string; name: string; width?: number; height?: number;
-    canvas?: FabricCanvas; userId: string;
+    canvas?: CanvasData; userId: string;
   }): DesignTemplate {
     const now = new Date().toISOString();
     const tpl: DesignTemplate = {
@@ -238,7 +238,7 @@ class Store {
       id: `snap_${uuid().slice(0, 12)}`,
       type, trigger,
       timestamp: new Date().toISOString(),
-      objectCount: tpl.canvas?.objects?.length || 0,
+      objectCount: tpl.frames?.length || 0,
       frameCount: tpl.frames?.length || 0,
       data: JSON.parse(JSON.stringify(tpl)),
     };
@@ -272,7 +272,7 @@ class Store {
       id: `snap_${uuid().slice(0, 12)}`,
       type: "ia", trigger: "manual",
       timestamp: new Date().toISOString(),
-      objectCount: data.canvas?.objects?.length || 0,
+      objectCount: data.frames?.length || 0,
       frameCount: data.frames?.length || 0,
       data,
     };

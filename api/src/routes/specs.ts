@@ -166,7 +166,8 @@ specRoutes.get("/:id/specs", async (req, res) => {
         if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
         walk(frame.objects, frame.x || 0, frame.y || 0);
       } else {
-        walk(tpl.canvas.objects);
+        // Walk only frame objects (canvas.objects is V1 legacy, removed)
+        for (const frame of tpl.frames) walk(frame.objects, frame.x || 0, frame.y || 0);
       }
       specs.layers = layers;
     } else {
@@ -179,9 +180,6 @@ specRoutes.get("/:id/specs", async (req, res) => {
         if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
         css += `/* Frame: ${frame.name} */\n${extractFrameCSS(frame)}`;
       } else {
-        for (const obj of tpl.canvas.objects) {
-          css += objToCSS(obj) + "\n\n";
-        }
         for (const frame of tpl.frames) {
           css += `\n/* Frame: ${frame.name} */\n${extractFrameCSS(frame)}\n`;
         }

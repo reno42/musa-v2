@@ -1,14 +1,12 @@
 /**
  * Layers Routes
  * ──────────────────────────────────────────────────────────────
- * CRUD for individual layers within a design template. Supports
- * both structured `tpl.layers` (legacy) and editor-native
- * `canvas.objects` via recursive fallback.
+ * CRUD for individual layers within a design template.
  *
  * @module routes/layers
  *
  * Database impact:
- *   - GET:  Reads templates.data → extracts layers (or walks canvas.objects)
+ *   - GET:  Reads templates.data → extracts layers
  *   - PATCH: Calls applyLayerOverrides → UPDATE templates SET data
  */
 
@@ -17,31 +15,14 @@ import * as templates from "../services/templates.js";
 
 export const layerRoutes = Router();
 
-/** Walk canvas.objects recursively to find layers by name */
-function findLayersInCanvas(canvas: any): any[] {
-  const result: any[] = [];
-  const walk = (objs: any[]) => {
-    for (const o of objs) {
-      result.push(o);
-      if (o.objects && Array.isArray(o.objects)) walk(o.objects);
-    }
-  };
-  if (canvas?.objects && Array.isArray(canvas.objects)) {
-    walk(canvas.objects);
-  }
-  return result;
-}
-
 function getLayers(tpl: any): any[] {
-  if (tpl.layers && tpl.layers.length > 0) return tpl.layers;
-  return findLayersInCanvas(tpl.canvas);
+  return tpl.layers || [];
 }
 
 /**
  * GET /api/templates/:id/layers
  * ──────────────────────────────────────────────────────────────
- * List all layers in a template. Falls back to walking
- * canvas.objects if the legacy layers[] array is empty.
+ * List all layers in a template.
  *
  * DB: SELECT data FROM templates WHERE id = :id → walk layers
  */
@@ -58,7 +39,7 @@ layerRoutes.get("/:id/layers", async (req, res) => {
 /**
  * GET /api/templates/:id/layers/:name
  * ──────────────────────────────────────────────────────────────
- * Get a single layer by its name (or layerName from canvas.objects).
+ * Get a single layer by name.
  */
 layerRoutes.get("/:id/layers/:name", async (req, res) => {
   try {

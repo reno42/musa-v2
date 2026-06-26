@@ -104,8 +104,7 @@ recipeRoutes.post("/:id/execute", async (req, res) => {
     if (variables?.colors) for (const [k, v] of Object.entries(variables.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
     const tpl = await templates.createTemplate(`${recipe.name}_${Date.now() % 10000}`, 1080, 1080, undefined, "", workspaceId || "default");
     tpl.engine = "html"; tpl.html = html; tpl.css = css;
-    if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-    await templates.updateTemplate(tpl.id, { engine: "html", html, css, canvas: tpl.canvas, frames: [] });
+    await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: [] });
     res.status(201).json({ success: true, data: { templateId: tpl.id, name: tpl.name } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

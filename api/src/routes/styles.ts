@@ -105,7 +105,6 @@ styleRoutes.post("/:id/styles/:styleId/apply", validate(applySchema), async (req
         if (o.objects && Array.isArray(o.objects)) walk(o.objects);
       }
     };
-    walk(tpl.canvas.objects);
     for (const f of tpl.frames) walk(f.objects);
 
     tpl.metadata.updatedAt = new Date().toISOString();

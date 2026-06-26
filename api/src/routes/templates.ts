@@ -41,7 +41,7 @@ export const templateRoutes = Router();
  * @body {string} [name]          Template name (defaults to auto-generated)
  * @body {number} [width=1080]    Canvas width in pixels
  * @body {number} [height=1080]   Canvas height in pixels
- * @body {object} [canvas]        Full Fabric.js canvas JSON for import
+ * @body {object} [canvas]        Canvas JSON for import (V2: use html/css/frames instead)
  *
  * @returns {201} { success, data: DesignTemplate }
  * @returns {400} Validation error
@@ -61,7 +61,6 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
         engine: tpl.engine,
         html: tpl.html,
         css: tpl.css,
-        canvas: tpl.canvas,
         frames: tpl.frames || [],
       });
     }
@@ -132,15 +131,12 @@ templateRoutes.get("/:id", async (req, res) => {
  * JSON (including objects, viewport) + optional metadata.
  *
  * @param {string} id              Template ID
- * @body {object} canvas           Fabric.js canvas JSON with { objects[], viewport }
- * @body {string} [name]           New name
- * @body {object} [metadata]       { updatedAt } timestamp
+ * @body {object} canvas           Canvas JSON with { objects[], viewport } (legacy — V2 uses html/css/frames)
  *
  * @returns {200} { success, data: DesignTemplate }
  * @returns {404} Template not found
  *
  * DB: UPDATE templates SET data = :data, name = :name WHERE id = :id
- *     Note: layers[] in data is separate from canvas.objects (see services/templates.ts)
  */
 templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
   try {
@@ -165,7 +161,7 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         id: `ver_${uuid().slice(0, 12)}`,
         templateId: tpl.id,
         label: `HTML save ${new Date().toLocaleString()}`,
-        canvas: tpl.canvas,
+        canvas: null as any,
         html: tpl.html,
         css: tpl.css,
         createdAt: new Date().toISOString(),
@@ -282,7 +278,6 @@ templateRoutes.get("/:id/export", async (req, res) => {
         name: tpl.name,
         width: tpl.width,
         height: tpl.height,
-        canvas: tpl.canvas,
         frames: tpl.frames,
         styles: tpl.styles,
         variables: tpl.variables,

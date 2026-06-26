@@ -24,9 +24,9 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const apiData = res.data;
     const localData = getLocalTemplate(id);
 
-    // Helper: check if data has meaningful content (V2: html/css/frames, V1 legacy: canvas.objects)
+    // Helper: check if data has meaningful content (V2: html/css/frames)
     const hasContent = (d: any) =>
-      (d?.canvas?.objects?.length > 0) || Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0);
+      Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0);
 
     // If localStorage has a newer version with content, prefer it
     if (localData && apiData) {
