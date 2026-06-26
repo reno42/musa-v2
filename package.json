@@ -14,7 +14,6 @@
     "@supabase/supabase-js": "^2.108.2",
     "@types/dompurify": "^3.0.5",
     "dompurify": "^3.4.11",
-    "fabric": "^6.9.1",
     "html2canvas": "^1.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

@@ -60,12 +60,12 @@ async function main() {
 
       // Verify HTML content
       if (result.html) {
-        const hasFabric = result.html.includes('fabric.min.js');
-        const hasCanvas = result.html.includes('id="c"');
-        const hasDownload = result.html.includes('downloadCanvas');
-        console.log('  Has Fabric.js CDN:', hasFabric);
-        console.log('  Has canvas element:', hasCanvas);
-        console.log('  Has download button:', hasDownload);
+        const hasHtml2canvas = result.html.includes('html2canvas.min.js');
+        const hasRenderTarget = result.html.includes('id="render-target"');
+        const hasDoCapture = result.html.includes('doCapture');
+        console.log('  Has html2canvas CDN:', hasHtml2canvas);
+        console.log('  Has render target:', hasRenderTarget);
+        console.log('  Has doCapture:', hasDoCapture);
       }
 
       // 4. Test GET polling
@@ -77,7 +77,7 @@ async function main() {
           if (ct.includes('text/html')) {
             const html = await poll.text();
             console.log('  ✅ GET returns HTML (' + html.length + ' chars)');
-            console.log('  Contains downloadCanvas:', html.includes('downloadCanvas'));
+            console.log('  Contains doCapture:', html.includes('doCapture'));
           } else {
             const pollJson = await poll.json();
             console.log('  Poll status:', pollJson.status);

@@ -10,14 +10,76 @@
 
 You are an AI agent with full access to the Futuraria Design API and MCP server. The API lets you create workspaces, templates, frames, and manipulate design elements using 100% of the available canvas tools. The MCP server exposes the same capabilities via JSON-RPC for AI agent consumption.
 
-**Cloud URL:** `https://futuraria.netlify.app/api`  
+**Prod URL:** `https://bejewelled-llama-a6719d.netlify.app/api`  
 **Dev URL:** `http://localhost:3001/api`  
 **Health:** `GET /api/health` → `{ "status": "ok", "timestamp": "..." }`  
-**MCP Endpoint:** `https://futuraria.netlify.app/mcp` (SSE + JSON-RPC, 10 tools)  
+**MCP Endpoint:** `https://bejewelled-llama-a6719d.netlify.app/mcp` (SSE + JSON-RPC)
+**Editor (v2 HTML engine):** `https://bejewelled-llama-a6719d.netlify.app`
+
+> ⚠️ `futuraria.netlify.app` es el Webflow de Futuraria (sitio principal), NO la Design API. La API solo existe en `bejewelled-llama`.  
 **Auth:** Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` header. Falls back to `dev_user_default` if no auth provided.  
 **Rate Limit:** 100 requests per 15-second window (shared across all endpoints).  
 **Persistence:** Supabase-primary dual-write with in-memory Map store fallback.  
 **Response Format:** `{ "success": true|false, "data": ..., "error?": "message" }`
+
+## 🧠 Agent Operational Guide (CRITICAL — READ FIRST)
+
+### CSS: Always Inline Per Frame
+
+**The editor v2 does NOT read global CSS set via `set_css`.** Even though `set_css` returns `success: true`, the CSS is stored separately and the editor only reads per-frame `css` fields.
+
+```powershell
+# WRONG — editor won't show CSS
+set_css(templateId, css=$fullCSS)
+create_html_frame(templateId, name="Slide", html=$html)  # css="" → invisible frame
+
+# CORRECT — CSS inline in every frame
+create_html_frame(templateId, name="Slide", html=$html, css=$fullCSS)
+```
+
+**Always include `css` in every `create_html_frame` or `update_html_frame` call.** Test frames showed `css: 0` → blank in editor.
+
+### Design System: NewForm
+
+Reference files for LinkedIn carousel designs:
+- **DESIGN.md:** `C:\Users\Renzo\.openclaw\workspace\DESIGN.md` (full brand tokens)
+- **CSS template:** `C:\Users\Renzo\.openclaw\workspace\exports\adisruptive-15x\` (working ADISruptive HTML/CSS)
+- **Fonts:** Playfair Display (headings) + Inter (UI/body), Google Fonts import
+- **Colors:** `#fafffa` (linen bg), `#121613` (obsidian text), `#2bee4b` (voltage accent), `#516254` (sage muted), `#c8d2c8` (mist borders)
+- **Theme:** Light. No dark backgrounds. No second saturated color.
+
+### LinkedIn Format
+
+- **Portrait/vertical:** 1080×1350 (use this for carousels)
+- **Square:** 1080×1080 (deprecated for carousels)
+- Create template with `engine="html"`, `width=1080`, `height=1350`
+
+### Building Slides
+
+1. Write complete HTML file locally with all slides (each as `<div class="slide">`)
+2. Build each slide's HTML individually in PowerShell here-strings (`@'...'@`) — do NOT regex-extract from the HTML file (extraction corrupts nested divs)
+3. Send each slide as a separate `create_html_frame` with `css=$fullCSS`
+4. Verify with `get_html_frames` — check every frame has `html` AND `css` with proper lengths
+5. Render locally with **Playwright** (`element.screenshot()` per slide), NOT Puppeteer
+
+### Emoji in JSON
+
+PowerShell `ConvertTo-Json` can corrupt Unicode emoji. Use HTML entities:
+- 🔴 → `&#x1f534;`
+- 🟣 → `&#x1f7e3;`
+- ⚪ → `&#x26aa;`
+- 🔵 → `&#x1f535;`
+- 🟡 → `&#x1f7e1;`
+
+### Workflow Checklist
+
+```
+1. create_workspace(name="...")
+2. create_html_template(name="...", workspaceId=$ws, width=1080, height=1350, engine="html")
+3. For each slide: create_html_frame(templateId=$tpl, name="NN - Title", html=$slideHtml, css=$fullCSS, width=1080, height=1350, background="#fafffa")
+4. get_html_frames(templateId=$tpl) → verify html + css lengths
+5. Local render: Playwright element.screenshot() per slide
+```
 
 ## Deployment Architecture
 

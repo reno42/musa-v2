@@ -35,7 +35,7 @@ export interface DesignTemplate {
   name: string;
   width: number;
   height: number;
-  engine: "fabric" | "html";
+  engine: "html";
   canvas: FabricCanvas;
   html?: string;
   css?: string;

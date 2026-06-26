@@ -182,7 +182,7 @@ const MCP_TOOLS = [
         workspaceId: { type: "string", description: "Workspace ID to create in" },
         width: { type: "number", description: "Canvas width in pixels (default 1080)" },
         height: { type: "number", description: "Canvas height in pixels (default 1080)" },
-        engine: { type: "string", enum: ["fabric", "html"], description: "Rendering engine (default 'fabric'). Use 'html' for code-based designs." },
+        engine: { type: "string", enum: ["html"], description: "Rendering engine (default 'html'). Use 'html' for code-based designs." },
         html: { type: "string", description: "Initial HTML content (HTML engine only)" },
         css: { type: "string", description: "Initial CSS styles (HTML engine only)" },
       },
@@ -198,7 +198,7 @@ const MCP_TOOLS = [
         id: { type: "string", description: "Template ID" },
         name: { type: "string", description: "New name" },
         canvas: { type: "object", description: "Full Fabric.js canvas JSON with objects and viewport" },
-        engine: { type: "string", enum: ["fabric", "html"], description: "Switch rendering engine" },
+        engine: { type: "string", enum: ["html"], description: "Switch rendering engine" },
         html: { type: "string", description: "HTML content for active frame (HTML engine)" },
         css: { type: "string", description: "CSS styles for active frame (HTML engine)" },
         frames: { type: "array", items: { type: "object" }, description: "Full frames array with html/css for each frame (HTML engine)" },
@@ -733,19 +733,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "snapshot_auto",
-    description: "Store a typed snapshot automatically. type='ia'|'human'|'system', trigger='update_template'|'autosave'|'beforeunload'|'idle'|'visibility'|'manual'. Auto-enforces 50-per-template limit.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        type: { type: "string", enum: ["ia", "human", "system"], description: "Who triggered the snapshot" },
-        trigger: { type: "string", description: "What triggered it (tool name, autosave, beforeunload, idle, visibility, manual)" },
-      },
-      required: ["templateId", "type", "trigger"],
-    },
-  },
-  {
     name: "list_snapshots",
     description: "List all snapshots for a template as a timeline (newest first). Each entry has id, type, trigger, timestamp, objectCount, frameCount.",
     inputSchema: {
@@ -911,40 +898,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "embed_video",
-    description: "Embed a YouTube or Vimeo video as a placeholder frame with URL metadata.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        url: { type: "string", description: "YouTube or Vimeo video URL" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 640)" },
-        height: { type: "number", description: "Height in px (default 360)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "url"],
-    },
-  },
-  {
-    name: "embed_figma",
-    description: "Embed a Figma file or frame as a placeholder with link metadata.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        figmaUrl: { type: "string", description: "Figma file or frame URL" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 640)" },
-        height: { type: "number", description: "Height in px (default 480)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "figmaUrl"],
-    },
-  },
-  {
     name: "add_comment",
     description: "Add a comment to a specific object or position on the canvas. Comments are stored in template metadata.",
     inputSchema: {
@@ -1021,59 +974,6 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Optional frame ID" },
       },
       required: ["templateId", "columnTexts"],
-    },
-  },
-  {
-    name: "embed_audio",
-    description: "Embed an audio player placeholder for SoundCloud, Spotify, or direct audio URLs. Renders as a sleek audio card.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        url: { type: "string", description: "Audio URL (SoundCloud, Spotify, or direct .mp3 link)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 480)" },
-        height: { type: "number", description: "Height in px (default 80)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "url"],
-    },
-  },
-  {
-    name: "embed_pdf",
-    description: "Embed a PDF document as a placeholder with file metadata. Requires a PDF URL accessible from Supabase Storage or external CDN.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        url: { type: "string", description: "PDF file URL" },
-        title: { type: "string", description: "Document title (default extracted from URL)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 480)" },
-        height: { type: "number", description: "Height in px (default 320)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "url"],
-    },
-  },
-  {
-    name: "embed_social",
-    description: "Embed a social media post placeholder (Twitter/X, GitHub repo, Instagram, LinkedIn). Auto-detects platform from URL.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        url: { type: "string", description: "Social media post URL" },
-        platform: { type: "string", enum: ["twitter", "github", "instagram", "linkedin"], description: "Platform (auto-detected if omitted)" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Width in px (default 480)" },
-        height: { type: "number", description: "Height in px (default 200)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "url"],
     },
   },
   {
@@ -1344,21 +1244,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "canvas_pages",
-    description: "Manage multiple pages per template: add, remove, reorder, and switch the active page. Pages store independent canvas states.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        action: { type: "string", enum: ["list", "add", "remove", "set_active", "reorder"], description: "Page action" },
-        pageName: { type: "string", description: "Page name (for add/set_active actions)" },
-        pageId: { type: "string", description: "Page ID (for remove/set_active actions)" },
-        pageIndex: { type: "number", description: "Target index (for reorder)" },
-      },
-      required: ["templateId", "action"],
-    },
-  },
-  {
     name: "color_picker",
     description: "Color utilities: parse hex/rgba/hsl, generate complementary/analogous/triadic palettes, create light-dark shade gradients. Pure computation, no canvas required.",
     inputSchema: {
@@ -1404,25 +1289,6 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Optional frame ID" },
       },
       required: ["templateId", "markdown"],
-    },
-  },
-  {
-    name: "gallery_create",
-    description: "Create an image gallery from an array of URLs. Renders as a responsive grid of image objects with optional captions.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        images: { type: "array", items: { type: "object", properties: { url: { type: "string" }, caption: { type: "string" } } }, description: "Array of { url, caption? } objects" },
-        x: { type: "number", description: "Start X position (default 0)" },
-        y: { type: "number", description: "Start Y position (default 0)" },
-        columns: { type: "number", description: "Images per row (default 3, max 6)" },
-        imageWidth: { type: "number", description: "Width per image in px (default 200)" },
-        imageHeight: { type: "number", description: "Height per image in px (default 200)" },
-        gap: { type: "number", description: "Gap between images in px (default 12)" },
-        frameId: { type: "string", description: "Optional frame ID" },
-      },
-      required: ["templateId", "images"],
     },
   },
   {
@@ -3773,7 +3639,7 @@ async function handleMethod(method, params, userId) {
         height: frame.height,
         format,
         scale,
-        engine: "fabric",
+        engine: "html",
         viewUrl: `${API_BASE}/api/render/${params.templateId}/frame/${params.frameId}?format=${format}&scale=${scale}`,
       };
     }
@@ -3795,15 +3661,6 @@ async function handleMethod(method, params, userId) {
       if (!current) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const diffs = compareTemplates(snap, current);
       return { templateId: params.templateId, changes: diffs, totalChanges: diffs.length };
-    }
-
-    // ── snapshot_auto ──
-    case "snapshot_auto": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const type = ["ia", "human", "system"].includes(params.type) ? params.type : "ia";
-      const entry = store.snapshotAuto(params.templateId, type, params.trigger || "manual");
-      return { snapshotted: true, templateId: params.templateId, snapshot: entry };
     }
 
     // ── list_snapshots ──
@@ -4244,90 +4101,6 @@ async function handleMethod(method, params, userId) {
       return { created: true, headers: headers.length, rows: rows.length, totalObjects: objects.length };
     }
 
-    case "embed_video": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const w = params.width ?? 640;
-      const h = params.height ?? 360;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      // YouTube thumbnail URL fallback
-      let thumbUrl = null;
-      const ytMatch = params.url.match(/(?:youtu\.be\/|watch\?v=)([\w-]{11})/);
-      const vimeoMatch = params.url.match(/vimeo\.com\/(\d+)/);
-      if (ytMatch) thumbUrl = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const bgObj = {
-        type: "rect", layerName: `video_bg_${Date.now()}`,
-        left: x, top: y, width: w, height: h,
-        fill: "#181825", stroke: "#45475a", strokeWidth: 2, rx: 12, ry: 12,
-        frameId: params.frameId || undefined,
-        embedType: "video", embedUrl: params.url,
-      };
-      const playObj = {
-        type: "text", layerName: `video_play_${Date.now()}`,
-        text: "▶",
-        left: x + w / 2 - 20, top: y + h / 2 - 20,
-        fontSize: 40, fontFamily: "Inter", fill: "#cdd6f4",
-        frameId: params.frameId || undefined,
-      };
-      const labelObj = {
-        type: "text", layerName: `video_label_${Date.now()}`,
-        text: params.url.substring(0, 60),
-        left: x + 12, top: y + h - 24,
-        fontSize: 11, fontFamily: "Inter", fill: "#6c7086",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(bgObj);
-      if (thumbUrl) {
-        const thumbObj = {
-          type: "image", layerName: `video_thumb_${Date.now()}`,
-          src: thumbUrl, left: x, top: y, width: w, height: h, opacity: 0.6,
-          frameId: params.frameId || undefined,
-        };
-        tpl.canvas.objects.push(thumbObj);
-      }
-      tpl.canvas.objects.push(playObj, labelObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, url: params.url, width: w, height: h, hasThumbnail: !!thumbUrl };
-    }
-
-    case "embed_figma": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const w = params.width ?? 640;
-      const h = params.height ?? 480;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const bgObj = {
-        type: "rect", layerName: `figma_bg_${Date.now()}`,
-        left: x, top: y, width: w, height: h,
-        fill: "#1e1e2e", stroke: "#a6e3a1", strokeWidth: 2, rx: 12, ry: 12,
-        frameId: params.frameId || undefined,
-        embedType: "figma", embedUrl: params.figmaUrl,
-      };
-      const iconObj = {
-        type: "text", layerName: `figma_icon_${Date.now()}`,
-        text: "⬡",
-        left: x + w / 2 - 18, top: y + h / 2 - 30,
-        fontSize: 36, fontFamily: "Inter", fill: "#a6e3a1",
-        frameId: params.frameId || undefined,
-      };
-      const labelObj = {
-        type: "text", layerName: `figma_label_${Date.now()}`,
-        text: params.figmaUrl.substring(0, 60),
-        left: x + 12, top: y + h - 24,
-        fontSize: 11, fontFamily: "Inter", fill: "#6c7086",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(bgObj, iconObj, labelObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, figmaUrl: params.figmaUrl, width: w, height: h };
-    }
-
     case "add_comment": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -4456,147 +4229,6 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
       autoSnapshot(params.templateId, method);
       return { created: true, columns: numCols, totalObjects: objects.length };
-    }
-
-    case "embed_audio": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const w = params.width ?? 480;
-      const h = params.height ?? 80;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      let platformHint = "audio";
-      if (params.url.includes("soundcloud")) platformHint = "SoundCloud";
-      else if (params.url.includes("spotify")) platformHint = "Spotify";
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const bgObj = {
-        type: "rect", layerName: `audio_bg_${Date.now()}`,
-        left: x, top: y, width: w, height: h,
-        fill: "#1e1e2e", stroke: "#cba6f7", strokeWidth: 2, rx: 10, ry: 10,
-        frameId: params.frameId || undefined,
-        embedType: "audio", embedUrl: params.url,
-      };
-      const iconObj = {
-        type: "text", layerName: `audio_icon_${Date.now()}`,
-        text: "♪",
-        left: x + 14, top: y + (h - 28) / 2,
-        fontSize: 28, fontFamily: "Inter", fill: "#cba6f7",
-        frameId: params.frameId || undefined,
-      };
-      const labelObj = {
-        type: "text", layerName: `audio_label_${Date.now()}`,
-        text: `${platformHint}: ${params.url.substring(0, 50)}`,
-        left: x + 50, top: y + (h - 14) / 2,
-        fontSize: 13, fontFamily: "Inter", fill: "#a6adc8",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(bgObj, iconObj, labelObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, url: params.url, platform: platformHint };
-    }
-
-    case "embed_pdf": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const w = params.width ?? 480;
-      const h = params.height ?? 320;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      const title = params.title || params.url.split("/").pop()?.replace(/\.pdf$/i, "") || "PDF Document";
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const bgObj = {
-        type: "rect", layerName: `pdf_bg_${Date.now()}`,
-        left: x, top: y, width: w, height: h,
-        fill: "#181825", stroke: "#f38ba8", strokeWidth: 2, rx: 10, ry: 10,
-        frameId: params.frameId || undefined,
-        embedType: "pdf", embedUrl: params.url,
-      };
-      const iconObj = {
-        type: "text", layerName: `pdf_icon_${Date.now()}`,
-        text: "📄",
-        left: x + w / 2 - 20, top: y + h / 2 - 40,
-        fontSize: 40, fontFamily: "Inter", fill: "#f38ba8",
-        frameId: params.frameId || undefined,
-      };
-      const titleObj = {
-        type: "text", layerName: `pdf_title_${Date.now()}`,
-        text: title,
-        left: x + 12, top: y + h / 2 + 10,
-        width: w - 24,
-        fontSize: 16, fontFamily: "Inter", fontWeight: "bold", fill: "#cdd6f4", textAlign: "center",
-        frameId: params.frameId || undefined,
-      };
-      const urlObj = {
-        type: "text", layerName: `pdf_url_${Date.now()}`,
-        text: params.url.substring(0, 60),
-        left: x + 12, top: y + h - 24,
-        fontSize: 10, fontFamily: "Inter", fill: "#6c7086",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(bgObj, iconObj, titleObj, urlObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, title, url: params.url };
-    }
-
-    case "embed_social": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const url = params.url || "";
-      let platform = params.platform || null;
-      let icon = "🔗";
-      let color = "#89b4fa";
-      if (!platform) {
-        if (url.includes("twitter.com") || url.includes("x.com")) { platform = "twitter"; icon = "𝕏"; color = "#74c7ec"; }
-        else if (url.includes("github.com")) { platform = "github"; icon = "⬡"; color = "#a6e3a1"; }
-        else if (url.includes("instagram.com")) { platform = "instagram"; icon = "📷"; color = "#f5c2e7"; }
-        else if (url.includes("linkedin.com")) { platform = "linkedin"; icon = "in"; color = "#89b4fa"; }
-        else platform = "link";
-      } else {
-        const platIcons = { twitter: "𝕏", github: "⬡", instagram: "📷", linkedin: "in" };
-        const platColors = { twitter: "#74c7ec", github: "#a6e3a1", instagram: "#f5c2e7", linkedin: "#89b4fa" };
-        icon = platIcons[platform] || "🔗";
-        color = platColors[platform] || "#89b4fa";
-      }
-      const w = params.width ?? 480;
-      const h = params.height ?? 200;
-      const x = params.x ?? 0;
-      const y = params.y ?? 0;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const bgObj = {
-        type: "rect", layerName: `social_bg_${Date.now()}`,
-        left: x, top: y, width: w, height: h,
-        fill: "#1e1e2e", stroke: color, strokeWidth: 2, rx: 12, ry: 12,
-        frameId: params.frameId || undefined,
-        embedType: "social", embedPlatform: platform, embedUrl: url,
-      };
-      const iconObj = {
-        type: "text", layerName: `social_icon_${Date.now()}`,
-        text: icon,
-        left: x + 16, top: y + 16,
-        fontSize: 24, fontFamily: "Inter", fill: color,
-        frameId: params.frameId || undefined,
-      };
-      const platObj = {
-        type: "text", layerName: `social_plat_${Date.now()}`,
-        text: platform.charAt(0).toUpperCase() + platform.slice(1),
-        left: x + 50, top: y + 20,
-        fontSize: 14, fontFamily: "Inter", fontWeight: "bold", fill: color,
-        frameId: params.frameId || undefined,
-      };
-      const urlObj = {
-        type: "text", layerName: `social_url_${Date.now()}`,
-        text: url.substring(0, 65),
-        left: x + 16, top: y + h / 2 - 8,
-        width: w - 32,
-        fontSize: 12, fontFamily: "Inter", fill: "#bac2de",
-        frameId: params.frameId || undefined,
-      };
-      tpl.canvas.objects.push(bgObj, iconObj, platObj, urlObj);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      return { created: true, platform, url: params.url };
     }
 
     case "mention_user": {
@@ -4982,7 +4614,7 @@ async function handleMethod(method, params, userId) {
           format: isSvg ? "svg" : `png@${scale}x`,
         });
       }
-      return { exported: results.length, engine: isHtml ? "html" : "fabric", results, format: isSvg ? "svg" : `png@${scale}x`, totalFrames: isHtml ? results.length : (tpl.frames?.length || 0), html: isHtml ? buildHtmlExportPage(results.map(r => ({ name: r.frameName, width: r.width / scale, height: r.height / scale, html: tpl.frames?.find(f => f.id === r.frameId)?.html || tpl.html || "", css: tpl.frames?.find(f => f.id === r.frameId)?.css || tpl.css || "" }))) : null };
+      return { exported: results.length, engine: "html", results, format: isSvg ? "svg" : `png@${scale}x`, totalFrames: results.length, html: buildHtmlExportPage(results.map(r => ({ name: r.frameName, width: r.width / scale, height: r.height / scale, html: tpl.frames?.find(f => f.id === r.frameId)?.html || tpl.html || "", css: tpl.frames?.find(f => f.id === r.frameId)?.css || tpl.css || "" }))) };
     }
 
     case "copy_as": {
@@ -5153,62 +4785,6 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
       autoSnapshot(params.templateId, method);
       return { redone: true, redoDepth: tpl.metadata.redoStack.length };
-    }
-
-    case "canvas_pages": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const action = params.action || "list";
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.pages) tpl.metadata.pages = [];
-      if (!tpl.metadata.activePageId && tpl.metadata.pages.length === 0) {
-        // Initialize with default page
-        tpl.metadata.pages.push({ id: `page_${Date.now()}`, name: "Page 1", canvas: JSON.parse(JSON.stringify(tpl.canvas)), order: 0 });
-        tpl.metadata.activePageId = tpl.metadata.pages[0].id;
-      }
-      if (action === "list") {
-        return {
-          pages: tpl.metadata.pages.map(p => ({ id: p.id, name: p.name, order: p.order, isActive: p.id === tpl.metadata.activePageId })),
-          activePageId: tpl.metadata.activePageId,
-          total: tpl.metadata.pages.length,
-        };
-      } else if (action === "add") {
-        const page = {
-          id: `page_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
-          name: params.pageName || `Page ${tpl.metadata.pages.length + 1}`,
-          canvas: { objects: [], viewport: { x: 0, y: 0, zoom: 1 } },
-          order: tpl.metadata.pages.length,
-        };
-        tpl.metadata.pages.push(page);
-        tpl.metadata.activePageId = page.id;
-        tpl.canvas = JSON.parse(JSON.stringify(page.canvas));
-      } else if (action === "remove") {
-        const idx = params.pageId ? tpl.metadata.pages.findIndex(p => p.id === params.pageId) : params.pageIndex;
-        if (idx < 0 || idx >= tpl.metadata.pages.length) throw { code: -32000, message: "Page not found" };
-        tpl.metadata.pages.splice(idx, 1);
-        if (tpl.metadata.activePageId === (params.pageId || tpl.metadata.pages[idx]?.id)) {
-          tpl.metadata.activePageId = tpl.metadata.pages[0]?.id || null;
-        }
-      } else if (action === "set_active") {
-        const page = tpl.metadata.pages.find(p => p.id === params.pageId || p.name === params.pageName);
-        if (!page) throw { code: -32000, message: "Page not found" };
-        // Save current canvas to current page
-        const curPage = tpl.metadata.pages.find(p => p.id === tpl.metadata.activePageId);
-        if (curPage) curPage.canvas = JSON.parse(JSON.stringify(tpl.canvas));
-        tpl.metadata.activePageId = page.id;
-        tpl.canvas = JSON.parse(JSON.stringify(page.canvas));
-      } else if (action === "reorder") {
-        const page = tpl.metadata.pages.find(p => p.id === params.pageId);
-        if (!page) throw { code: -32000, message: "Page not found" };
-        const from = tpl.metadata.pages.indexOf(page);
-        const to = Math.max(0, Math.min(tpl.metadata.pages.length - 1, params.pageIndex ?? 0));
-        tpl.metadata.pages.splice(from, 1);
-        tpl.metadata.pages.splice(to, 0, page);
-        tpl.metadata.pages.forEach((p, i) => { p.order = i; });
-      }
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas, metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { action, activePageId: tpl.metadata.activePageId, totalPages: tpl.metadata.pages.length, pages: tpl.metadata.pages.map(p => ({ id: p.id, name: p.name, order: p.order, isActive: p.id === tpl.metadata.activePageId })) };
     }
 
     case "color_picker": {
@@ -5397,57 +4973,6 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
       autoSnapshot(params.templateId, method);
       return { rendered: true, blocks: objects.length, totalHeight: cy - (params.y ?? 0) };
-    }
-
-    // ── F3: Image Gallery ──
-    case "gallery_create": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const images = params.images || [];
-      if (images.length === 0) throw { code: -32000, message: "At least one image required" };
-      const cols = Math.max(1, Math.min(6, params.columns || 3));
-      const iw = params.imageWidth || 200;
-      const ih = params.imageHeight || 200;
-      const gap = params.gap || 12;
-      const startX = params.x ?? 0;
-      const startY = params.y ?? 0;
-      if (!tpl.canvas) tpl.canvas = { objects: [], viewport: { x: 0, y: 0, zoom: 1 } };
-      const objects = [];
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        const ix = startX + col * (iw + gap);
-        const iy = startY + row * (ih + gap + (img.caption ? 24 : 0));
-        objects.push({
-          type: "image", layerName: `gallery_img_${i}_${Date.now()}`,
-          src: img.url,
-          left: ix, top: iy, width: iw, height: ih, scaleX: 1, scaleY: 1,
-          rx: 4, ry: 4,
-          frameId: params.frameId || undefined,
-        });
-        // Border rect for gallery card effect
-        objects.push({
-          type: "rect", layerName: `gallery_border_${i}_${Date.now()}`,
-          left: ix, top: iy, width: iw, height: ih,
-          fill: "transparent", stroke: "#45475a", strokeWidth: 1, rx: 4, ry: 4,
-          frameId: params.frameId || undefined,
-        });
-        if (img.caption) {
-          objects.push({
-            type: "text", layerName: `gallery_cap_${i}_${Date.now()}`,
-            text: img.caption,
-            left: ix, top: iy + ih + 6,
-            width: iw, fontSize: 11, fontFamily: "Inter", fill: "#a6adc8", textAlign: "center",
-            frameId: params.frameId || undefined,
-          });
-        }
-      }
-      tpl.canvas.objects.push(...objects);
-      await templates.updateTemplate(params.templateId, { canvas: tpl.canvas });
-      autoSnapshot(params.templateId, method);
-      const rows = Math.ceil(images.length / cols);
-      return { created: true, images: images.length, columns: cols, rows, totalWidth: cols * iw + (cols - 1) * gap, totalHeight: rows * (ih + gap + (images[0]?.caption ? 24 : 0)) };
     }
 
     // ── F4: Components ──

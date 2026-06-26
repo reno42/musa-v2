@@ -24,16 +24,22 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const apiData = res.data;
     const localData = getLocalTemplate(id);
 
-    // If localStorage has a newer version, prefer it
+    // Helper: check if data has meaningful content (V2: html/css/frames, V1 legacy: canvas.objects)
+    const hasContent = (d: any) =>
+      (d?.canvas?.objects?.length > 0) || Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0);
+
+    // If localStorage has a newer version with content, prefer it
     if (localData && apiData) {
       const apiUpdated = (apiData as any).metadata?.updatedAt || "";
       const localUpdated = localData.updatedAt || "";
-      if (localUpdated > apiUpdated && localData.canvas?.objects?.length > 0) {
+      if (localUpdated > apiUpdated && hasContent(localData)) {
         console.log("[getTemplate] Local version is newer, using localStorage");
         return {
           ...apiData,
           ...localData,
           canvas: localData.canvas,
+          html: localData.html || apiData.html,
+          css: localData.css || apiData.css,
           pages: localData.pages || (apiData as any).pages,
           frames: localData.frames || (apiData as any).frames,
           styles: localData.styles || (apiData as any).styles,
@@ -43,13 +49,15 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
       }
     }
 
-    // If API returned empty canvas but localStorage has data
-    if (apiData && (!apiData.canvas?.objects || apiData.canvas.objects.length === 0) && localData?.canvas?.objects?.length > 0) {
-      console.log("[getTemplate] API has empty canvas, using localStorage");
+    // If API returned empty data but localStorage has content
+    if (apiData && !hasContent(apiData) && hasContent(localData)) {
+      console.log("[getTemplate] API has empty content, using localStorage");
       return {
         ...apiData,
         ...localData,
         canvas: localData.canvas,
+        html: localData.html || apiData.html,
+        css: localData.css || apiData.css,
         pages: localData.pages || (apiData as any).pages,
         frames: localData.frames || (apiData as any).frames,
         styles: localData.styles || (apiData as any).styles,

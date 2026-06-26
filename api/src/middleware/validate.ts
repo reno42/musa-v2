@@ -37,7 +37,7 @@ export const createTemplateSchema = z.object({
   height: z.number().int().min(1).max(10000).optional(),
   canvas: z.any().optional(),
   workspaceId: z.string().min(1),
-  engine: z.enum(["fabric", "html"]).optional(),
+  engine: z.enum(["html"]).optional(),
   html: z.string().optional(),
   css: z.string().optional(),
 });
@@ -48,7 +48,7 @@ export const updateTemplateSchema = z.object({
   width: z.number().int().min(1).max(10000).optional(),
   height: z.number().int().min(1).max(10000).optional(),
   metadata: z.object({ updatedAt: z.string().optional() }).optional(),
-  engine: z.enum(["fabric", "html"]).optional(),
+  engine: z.enum(["html"]).optional(),
   html: z.string().optional(),
   css: z.string().optional(),
 });

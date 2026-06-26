@@ -6,7 +6,7 @@ interface Template {
   name: string;
   width: number;
   height: number;
-  engine?: "fabric" | "html";
+  engine?: "html";
   workspaceId: string;
   metadata: { createdAt: string; updatedAt: string };
 }
@@ -18,7 +18,6 @@ interface Workspace {
 
 interface DashboardProps {
   onSelectTemplate: (id: string) => void;
-  onCreateTemplate: (workspaceId: string) => void;
   onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
 }
 
@@ -33,7 +32,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
   return res.json();
 }
 
-export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemplate }: DashboardProps) {
+export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
@@ -163,17 +162,9 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemp
   const handleCreateWithName = async () => {
     const name = newTplName.trim() || "Untitled";
     if (!selectedWs) return;
-    try {
-      const res = await apiFetch<{ success: boolean; data: Template }>("/templates", {
-        method: "POST",
-        body: JSON.stringify({ workspaceId: selectedWs, name, width: 1080, height: 1080 }),
-      });
-      if (res.data) {
-        setCreatingTpl(false);
-        setNewTplName("");
-        onSelectTemplate(res.data.id);
-      }
-    } catch { /* ignore */ }
+    setCreatingTpl(false);
+    setNewTplName("");
+    onCreateHtmlTemplate(selectedWs, name);
   };
 
   return (
@@ -231,28 +222,14 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemp
             autoFocus
           />
         ) : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              type="button"
-              onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
-              style={btnPrimary}
-              disabled={!selectedWs}
-            >
-              + Fabric
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!selectedWs) return;
-                const name = `HTML ${new Date().toLocaleDateString()}`;
-                onCreateHtmlTemplate(selectedWs, name);
-              }}
-              style={{ ...btnPrimary, background: "#3B82F6" }}
-              disabled={!selectedWs}
-            >
-              + HTML
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
+            style={{ ...btnPrimary, background: "#3B82F6" }}
+            disabled={!selectedWs}
+          >
+            + HTML
+          </button>
         )}
       </div>
 
@@ -266,7 +243,7 @@ export function Dashboard({ onSelectTemplate, onCreateTemplate, onCreateHtmlTemp
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
-              onClick={() => selectedWs && onCreateTemplate(selectedWs)}
+              onClick={() => selectedWs && onCreateHtmlTemplate(selectedWs, "Untitled")}
               style={{ ...btnPrimary, marginTop: 16 }}
               disabled={!selectedWs}
             >

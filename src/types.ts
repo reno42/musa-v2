@@ -14,7 +14,7 @@ export interface HtmlTemplate {
   name: string;
   width: number;
   height: number;
-  engine: "fabric" | "html";
+  engine: "html";
   html?: string;
   css?: string;
   canvas?: any;

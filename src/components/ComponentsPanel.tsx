@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import type { FabricObject } from "fabric";
 import { mcpCall } from "../lib/mcpClient";
 import { getTemplate } from "../lib/templateApi";
 
@@ -23,7 +22,7 @@ interface VariantDef {
 
 interface ComponentsPanelProps {
   templateId: string | null;
-  selectedObjects: FabricObject[];
+  selectedObjects: any[];
   onUpdate?: () => void;
   onClose: () => void;
 }
