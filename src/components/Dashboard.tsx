@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useReducer } from "react";
-import { IconFolder, IconFile } from "../shared/icons";
+import { IconFolder, IconFile, IconTag } from "../shared/icons";
 
 interface Template {
   id: string;
@@ -9,6 +9,20 @@ interface Template {
   engine?: "html";
   workspaceId: string;
   metadata: { createdAt: string; updatedAt: string };
+}
+
+interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  workspaceId: string;
+  templateWidth: number;
+  templateHeight: number;
+  structure: any;
+  tags: string[];
+  usageCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface Workspace {
@@ -43,6 +57,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
+  const [activeTab, setActiveTab] = useState<"templates" | "recipes">("templates");
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [loadingRecipes, setLoadingRecipes] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -70,6 +87,20 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, [setLoading]);
 
   loadTemplatesRef.current = loadTemplates;
+
+  const loadRecipes = useCallback(async () => {
+    setLoadingRecipes(true);
+    try {
+      const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/recipes");
+      setRecipes(res.data || []);
+    } catch { setRecipes([]); }
+    setLoadingRecipes(false);
+  }, []);
+
+  // Load recipes when tab switches to recipes
+  useEffect(() => {
+    if (activeTab === "recipes") loadRecipes();
+  }, [activeTab, loadRecipes]);
 
   const handleSearch = useCallback((value: string) => {
     setSearchDisplay(value);
@@ -167,6 +198,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     onCreateHtmlTemplate(selectedWs, name);
   };
 
+  const handleDeleteRecipe = async (id: string) => {
+    try {
+      await apiFetch(`/recipes/${id}`, { method: "DELETE" });
+      setRecipes(prev => prev.filter(r => r.id !== id));
+    } catch { /* ignore */ }
+  };
+
+  const handleCreateFromRecipe = async (recipeId: string, recipeName: string) => {
+    try {
+      const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/recipes/${recipeId}/execute`, {
+        method: "POST",
+        body: JSON.stringify({ variables: {}, workspaceId: selectedWs || "default" }),
+      });
+      if (res.data) {
+        onSelectTemplate(res.data.templateId);
+      }
+    } catch { /* ignore */ }
+  };
+
   return (
     <div style={dashboardStyle}>
       {/* Header */}
@@ -233,7 +283,39 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         )}
       </div>
 
+      {/* Tab Navigation */}
+      <div style={{ display: "flex", gap: 0, padding: "0 20px", marginTop: 8 }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab("templates")}
+          style={{
+            ...btnSecondary,
+            borderRadius: "8px 8px 0 0",
+            borderBottom: activeTab === "templates" ? "2px solid #c8b898" : "2px solid transparent",
+            background: activeTab === "templates" ? "rgba(200,184,152,0.08)" : "transparent",
+            color: activeTab === "templates" ? "#c8b898" : "#7a7668",
+            marginRight: 4,
+          }}
+        >
+          <IconFile size={14} style={{ marginRight: 4 }} /> Templates
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("recipes")}
+          style={{
+            ...btnSecondary,
+            borderRadius: "8px 8px 0 0",
+            borderBottom: activeTab === "recipes" ? "2px solid #c8b898" : "2px solid transparent",
+            background: activeTab === "recipes" ? "rgba(200,184,152,0.08)" : "transparent",
+            color: activeTab === "recipes" ? "#c8b898" : "#7a7668",
+          }}
+        >
+          <IconTag size={14} style={{ marginRight: 4 }} /> Key Visuals
+        </button>
+      </div>
+
       {/* Template Grid */}
+      {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading…</div>
@@ -315,6 +397,67 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         )}
       </div>
+      )}
+
+      {/* Key Visuals / Recipes Grid */}
+      {activeTab === "recipes" && (
+      <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        {loadingRecipes ? (
+          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading...</div>
+        ) : recipes.length === 0 ? (
+          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconTag size={40} color="#7a7668" /></div>
+            <div>No Key Visuals saved yet.</div>
+            <div style={{ fontSize: 11, marginTop: 4, opacity: 0.6 }}>
+              Open a template in the editor and click the tag icon to save it as a Key Visual.
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+            {recipes.map(r => (
+              <div
+                key={r.id}
+                style={cardStyle}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#c8b898"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 32px rgba(0, 0, 0, 0.5)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.05)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 24px rgba(0, 0, 0, 0.3)"; }}
+              >
+                <button
+                  type="button"
+                  aria-label={`Create from recipe ${r.name}`}
+                  onClick={() => handleCreateFromRecipe(r.id, r.name)}
+                  style={cardBtnStyle}
+                >
+                  <div style={thumbnailStyle}>
+                    <div style={{ textAlign: "center" }}>
+                      <IconTag size={28} color="#7a7668" />
+                      <div style={{ fontSize: 11, marginTop: 4, color: "#7a7668" }}>{r.templateWidth}×{r.templateHeight}</div>
+                    </div>
+                  </div>
+                  <div style={{ padding: "8px 12px" }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: "#7a7668", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.description || "No description"}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 11, color: "#7a7668" }}>
+                      <span>Used: {r.usageCount || 0}×</span>
+                      <span>{new Date(r.createdAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                </button>
+                <div style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.04)", fontSize: 12 }}>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleCreateFromRecipe(r.id, r.name); }} style={cardAction}>
+                    Create
+                  </button>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#f87171" }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      )}
     </div>
   );
 }

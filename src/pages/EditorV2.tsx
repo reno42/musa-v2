@@ -13,6 +13,7 @@ import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtm
 import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
+import { ImageUploadModal } from "../components/ImageUploadModal";
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
@@ -787,14 +788,39 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
 
   // ── Export ──
-  /// Capture a single frame to PNG blob via offscreen html2canvas (no page, no toolbars).
-  const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2): Promise<Blob | null> => {
+  /// Serialize a frame to SVG for vector export
+  const buildFrameSvg = useCallback((frame: FrameData): string => {
+    const w = frame.width || 1080;
+    const h = frame.height || 1080;
+    const bg = frame.background || "#ffffff";
+    const cssText = frame.css || "";
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <defs>
+    <style><![CDATA[${cssText}]]></style>
+  </defs>
+  <rect width="100%" height="100%" fill="${bg}" />
+  <foreignObject width="100%" height="100%">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="width:${w}px;height:${h}px;position:relative;overflow:hidden;">
+      ${frame.html || ""}
+    </div>
+  </foreignObject>
+</svg>`;
+  }, []);
+
+  /// Capture a single frame to PNG/blob via offscreen html2canvas (no page, no toolbars).
+  const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2, format: "png" | "jpg" = "png"): Promise<Blob | null> => {
     const container = document.createElement("div");
     container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
     document.body.appendChild(container);
 
     const target = document.createElement("div");
     target.style.cssText = `width:${frame.width}px;height:${frame.height}px;overflow:hidden;position:relative;`;
+    if (format === "jpg" && frame.background) {
+      target.style.background = frame.background;
+    }
     const style = document.createElement("style");
     style.textContent = frame.css;
     target.appendChild(style);
@@ -824,10 +850,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         scale,
         useCORS: true,
         allowTaint: true,
+        backgroundColor: format === "jpg" ? (frame.background || "#ffffff") : null,
       });
 
       return new Promise(resolve => {
-        canvas.toBlob(blob => resolve(blob), "image/png");
+        const mimeType = format === "jpg" ? "image/jpeg" : "image/png";
+        const quality = format === "jpg" ? 0.92 : undefined;
+        canvas.toBlob(blob => resolve(blob), mimeType, quality);
       });
     } catch (err) {
       console.warn("[Export] Capture failed", err);
@@ -838,35 +867,91 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
   }, []);
 
-  const handleExportFramePNG = useCallback(async () => {
+  const handleExportFramePNG = useCallback(async (format: "png" | "jpg" = "png") => {
     if (!selectedFrame) return;
     setShowExportMenu(false);
-    const blob = await captureFrameToPng(selectedFrame);
+    const blob = await captureFrameToPng(selectedFrame, format === "jpg" ? 1 : 2, format);
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.png`;
+    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
   }, [selectedFrame, captureFrameToPng]);
 
-  const handleExportAllFramesPNG = useCallback(async () => {
+  const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
     setShowExportMenu(false);
     for (const frame of frames) {
-      const blob = await captureFrameToPng(frame);
+      const blob = await captureFrameToPng(frame, format === "jpg" ? 1 : 2, format);
       if (!blob) continue;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.png`;
+      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
       await new Promise(r => setTimeout(r, 300));
     }
   }, [frames, captureFrameToPng]);
 
+  const handleExportFrameSVG = useCallback(async () => {
+    if (!selectedFrame) return;
+    setShowExportMenu(false);
+    const svgString = buildFrameSvg(selectedFrame);
+    const blob = new Blob([svgString], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [selectedFrame]);
+
+  const handleExportAllFramesSVG = useCallback(async () => {
+    setShowExportMenu(false);
+    for (const frame of frames) {
+      const svgString = buildFrameSvg(frame);
+      const blob = new Blob([svgString], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }, [frames]);
+
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showImageUpload, setShowImageUpload] = useState(false);
+  const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
+
+  const handleSaveRecipe = useCallback(async () => {
+    setSaveRecipeMsg("");
+    try {
+      const res = await apiFetch<{ recipeId: string; name: string }>("/recipes", {
+        method: "POST",
+        body: JSON.stringify({
+          name: templateName || "Untitled Key Visual",
+          description: `${templateName} - saved ${new Date().toLocaleDateString()}`,
+          workspaceId,
+          templateHtml: selectedFrame?.html || "",
+          templateCss: selectedFrame?.css || "",
+          structure: {
+            layout: { width: selectedFrame?.width || 1080, height: selectedFrame?.height || 1080 },
+            colors: [],
+            typography: [],
+          },
+        }),
+      });
+      setSaveRecipeMsg(`✓ Key Visual saved: ${res.name}`);
+      setTimeout(() => setSaveRecipeMsg(""), 3000);
+    } catch (e: any) {
+      setSaveRecipeMsg(`✗ Failed: ${e.message}`);
+      setTimeout(() => setSaveRecipeMsg(""), 4000);
+    }
+  }, [templateName, workspaceId, selectedFrame]);
 
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
@@ -1088,11 +1173,24 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 98 }} onClick={() => setShowExportMenu(false)} />
               <div className="editor-v2-dropdown-menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 99, marginTop: 4 }}>
-                <button type="button" onClick={() => { handleExportFramePNG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                <button type="button" onClick={() => { handleExportFramePNG("png"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
                   <IconImage size={14} /> Export Current Frame as PNG
                 </button>
-                <button type="button" onClick={() => { handleExportAllFramesPNG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                <button type="button" onClick={() => { handleExportFramePNG("jpg"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export Current Frame as JPG
+                </button>
+                <button type="button" onClick={() => { handleExportFrameSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export Current Frame as SVG
+                </button>
+                <div className="editor-v2-dropdown-sep" />
+                <button type="button" onClick={() => { handleExportAllFramesPNG("png"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
                   <IconImage size={14} /> Export All Frames as PNG
+                </button>
+                <button type="button" onClick={() => { handleExportAllFramesPNG("jpg"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export All Frames as JPG
+                </button>
+                <button type="button" onClick={() => { handleExportAllFramesSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconImage size={14} /> Export All Frames as SVG
                 </button>
                 <div className="editor-v2-dropdown-sep" />
                 <button type="button" onClick={() => { handleExportJSON(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
@@ -1102,6 +1200,26 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             </>
           )}
         </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleSaveRecipe}
+          title="Save as Key Visual (Recipe)"
+        >
+          <IconTag size={14} />
+        </button>
+
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowImageUpload(true)}
+          title="Upload Images"
+        >
+          <IconImage size={14} />
+        </button>
 
         <div className="editor-v2-topbar-sep" />
 
@@ -1270,6 +1388,29 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           {rightPanelTab === "agents" && (
             <ActiveAgentsPanel agents={activeAgents} />
           )}
+        </div>
+      )}
+
+      {/* ═══ Image Upload Modal ═══ */}
+      {showImageUpload && (
+        <ImageUploadModal
+          onClose={() => setShowImageUpload(false)}
+          onAssetUploaded={(asset) => {
+            console.log("[EditorV2] Asset uploaded:", asset);
+          }}
+        />
+      )}
+
+      {/* ═══ Save Recipe Toast ═══ */}
+      {saveRecipeMsg && (
+        <div style={{
+          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          zIndex: 600, padding: "8px 20px", borderRadius: 8,
+          background: saveRecipeMsg.startsWith("✓") ? "rgba(34,197,94,0.9)" : "rgba(239,68,68,0.9)",
+          color: "#fff", fontSize: 13, fontWeight: 500,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+        }}>
+          {saveRecipeMsg}
         </div>
       )}
     </div>

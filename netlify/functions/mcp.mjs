@@ -1444,6 +1444,123 @@ const MCP_TOOLS = [
       required: ["templateId", "frameId", "elementIds", "align"],
     },
   },
+  // ── Phase 1: Asset Management ──
+  {
+    name: "upload_image",
+    description: "Upload an image (PNG, JPG, SVG, WebP) to the design-assets bucket. Accepts base64 data or external URL. Returns asset record with public URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Asset display name" },
+        data: { type: "string", description: "Base64-encoded image data (data:image/...;base64,...)" },
+        url: { type: "string", description: "External image URL to download and store" },
+        workspaceId: { type: "string", description: "Optional workspace to associate with" },
+        tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "list_assets",
+    description: "List all uploaded assets with optional workspace and search filters",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Filter by workspace" },
+        search: { type: "string", description: "Search by name or filename" },
+        mimeType: { type: "string", description: "Filter by MIME type" },
+        limit: { type: "number", description: "Max results (default 50)" },
+        offset: { type: "number", description: "Pagination offset" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "delete_asset",
+    description: "Delete an asset from storage and database",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Asset ID" },
+      },
+      required: ["id"],
+    },
+  },
+  // ── Phase 3: Recipes / Key Visuals ──
+  {
+    name: "list_recipes",
+    description: "List all saved recipes (key visuals) with optional workspace and search filters",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Filter by workspace" },
+        search: { type: "string", description: "Search by recipe name" },
+        tag: { type: "string", description: "Filter by tag" },
+        limit: { type: "number", description: "Max results (default 50)" },
+        offset: { type: "number", description: "Pagination offset" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_recipe",
+    description: "Get a single recipe by ID with full HTML/CSS template data",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Recipe ID (rec_xxx)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "create_from_recipe",
+    description: "Create a new template from a saved recipe, applying optional variable substitutions",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recipeId: { type: "string", description: "Recipe ID to instantiate" },
+        workspaceId: { type: "string", description: "Target workspace (default: recipe's workspace)" },
+        name: { type: "string", description: "Name for the new template (default: recipe name + timestamp)" },
+        variables: {
+          type: "object",
+          description: "Variable substitutions: { texts: {KEY: value}, colors: {KEY: value}, images: {KEY: url} }",
+          properties: {
+            texts: { type: "object", description: "Text replacements {PLACEHOLDER: newText}" },
+            colors: { type: "object", description: "Color replacements {#HEX: #NEWHEX}" },
+            images: { type: "object", description: "Image URL replacements {PLACEHOLDER: newURL}" },
+          },
+        },
+      },
+      required: ["recipeId"],
+    },
+  },
+  {
+    name: "batch_from_recipe",
+    description: "Create multiple templates from a recipe with an array of variable sets, plus auto-render all results",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recipeId: { type: "string", description: "Recipe ID to batch from" },
+        workspaceId: { type: "string", description: "Target workspace" },
+        variableSets: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Name for this variant" },
+              texts: { type: "object" },
+              colors: { type: "object" },
+              images: { type: "object" },
+            },
+          },
+          description: "Array of variable sets, one template created per set",
+        },
+        render: { type: "boolean", description: "Auto-render all created templates (default true)" },
+      },
+      required: ["recipeId", "variableSets"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -3646,18 +3763,246 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── save_recipe ──
+    // ── Phase 3: save_recipe (enhanced) ──
     case "save_recipe": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const recipeId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const recipeId = `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       const supabase = getSupabase();
+
+      // Extract structure from frames
+      const frames = tpl.frames || [];
+      const frameHtml = frames.length > 0 ? frames[0].html : (tpl.html || "");
+      const frameCss = frames.length > 0 ? frames[0].css : (tpl.css || "");
+
+      // Build structure metadata
+      const structure = {
+        layout: { width: tpl.width || 1080, height: tpl.height || 1080 },
+        colors: [],
+        typography: [],
+        frameCount: frames.length,
+      };
+
+      // Extract color references from CSS
+      const colorRe = /(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\))/g;
+      let cm;
+      while ((cm = colorRe.exec(frameCss)) !== null) {
+        if (!structure.colors.includes(cm[1])) structure.colors.push(cm[1]);
+      }
+
+      // Extract font references
+      const fontRe = /font-family:\s*([^;]+)/g;
+      let fm;
+      while ((fm = fontRe.exec(frameCss)) !== null) {
+        const font = fm[1].trim().replace(/['"]/g, "");
+        if (!structure.typography.includes(font)) structure.typography.push(font);
+      }
+
       await supabase.from("recipes").upsert({
         id: recipeId, name: params.name || tpl.name, description: params.description || "",
-        workspace_id: tpl.workspaceId, structure: { layout: {}, colors: [], typography: [] },
-        template_html: tpl.html, template_css: tpl.css, preview_url: "",
+        workspace_id: tpl.workspaceId || params.workspaceId,
+        structure,
+        template_html: frameHtml,
+        template_css: frameCss,
+        template_width: tpl.width || 1080,
+        template_height: tpl.height || 1080,
+        variables: params.variables || {},
+        tags: params.tags || [],
+        preview_url: "",
+        created_by: userId,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       });
-      return { recipeId, name: params.name || tpl.name };
+
+      return {
+        recipeId,
+        name: params.name || tpl.name,
+        description: params.description || "",
+        structure,
+        frameCount: frames.length,
+      };
+    }
+
+    // ── Phase 3: list_recipes ──
+    case "list_recipes": {
+      const sb = getSupabase();
+      if (!sb) return { recipes: [], total: 0, _note: "Supabase not configured" };
+      try {
+        let q = sb.from("recipes").select("*", { count: "exact" });
+        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        if (params.search) q = q.ilike("name", `%${params.search}%`);
+        if (params.tag) q = q.contains("tags", [params.tag]);
+        q = q.order("created_at", { ascending: false });
+        q = q.range(params.offset || 0, (params.offset || 0) + (params.limit || 50) - 1);
+        const { data, count, error } = await q;
+        if (error) throw error;
+        const recipes = (data || []).map(r => ({
+          id: r.id, name: r.name, description: r.description,
+          workspaceId: r.workspace_id,
+          templateWidth: r.template_width, templateHeight: r.template_height,
+          structure: r.structure,
+          tags: r.tags || [],
+          usageCount: r.usage_count || 0,
+          createdAt: r.created_at, updatedAt: r.updated_at,
+        }));
+        return { recipes, total: count || recipes.length };
+      } catch (e) {
+        return { recipes: [], total: 0, _error: e.message };
+      }
+    }
+
+    // ── Phase 3: get_recipe ──
+    case "get_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data, error } = await sb.from("recipes").select("*").eq("id", params.id).single();
+      if (error || !data) throw { code: -32000, message: `Recipe not found: ${params.id}` };
+      return {
+        id: data.id, name: data.name, description: data.description,
+        workspaceId: data.workspace_id,
+        templateHtml: data.template_html,
+        templateCss: data.template_css,
+        templateWidth: data.template_width,
+        templateHeight: data.template_height,
+        structure: data.structure,
+        variables: data.variables,
+        tags: data.tags || [],
+        usageCount: data.usage_count || 0,
+        createdAt: data.created_at, updatedAt: data.updated_at,
+      };
+    }
+
+    // ── Phase 3: create_from_recipe ──
+    case "create_from_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: recipe, error } = await sb.from("recipes").select("*").eq("id", params.recipeId).single();
+      if (error || !recipe) throw { code: -32000, message: `Recipe not found: ${params.recipeId}` };
+
+      let html = recipe.template_html || "";
+      let css = recipe.template_css || "";
+      const vars = params.variables || {};
+
+      if (vars.texts) for (const [k, v] of Object.entries(vars.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }
+      if (vars.images) for (const [k, v] of Object.entries(vars.images)) { html = html.replace(new RegExp(k, "g"), String(v)); }
+      if (vars.colors) for (const [k, v] of Object.entries(vars.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
+
+      const tplName = params.name || `${recipe.name}_${Date.now() % 10000}`;
+      const targetWs = params.workspaceId || recipe.workspace_id || "default";
+      const tpl = await templates.createTemplate(tplName, recipe.template_width || 1080, recipe.template_height || 1080, undefined, "", targetWs);
+      tpl.engine = "html"; tpl.html = html; tpl.css = css;
+      const frame = {
+        id: `frame_${Date.now().toString(36)}`,
+        name: "Frame 1",
+        x: 0, y: 0,
+        width: recipe.template_width || 1080,
+        height: recipe.template_height || 1080,
+        html, css,
+        background: "#ffffff",
+      };
+      tpl.frames = [frame];
+      await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: tpl.frames });
+
+      // Increment usage count
+      await sb.from("recipes").update({ usage_count: (recipe.usage_count || 0) + 1 }).eq("id", params.recipeId);
+
+      return {
+        templateId: tpl.id,
+        name: tplName,
+        recipeId: params.recipeId,
+        recipeName: recipe.name,
+        width: recipe.template_width || 1080,
+        height: recipe.template_height || 1080,
+      };
+    }
+
+    // ── Phase 3: batch_from_recipe ──
+    case "batch_from_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: recipe, error } = await sb.from("recipes").select("*").eq("id", params.recipeId).single();
+      if (error || !recipe) throw { code: -32000, message: `Recipe not found: ${params.recipeId}` };
+
+      const varSets = params.variableSets || [];
+      const batchId = `batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const targetWs = params.workspaceId || recipe.workspace_id || "default";
+      const templateIds = [];
+      const errors = [];
+
+      for (let i = 0; i < varSets.length; i++) {
+        try {
+          const vs = varSets[i];
+          let html = recipe.template_html || "";
+          let css = recipe.template_css || "";
+          if (vs.texts) for (const [k, v] of Object.entries(vs.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }
+          if (vs.images) for (const [k, v] of Object.entries(vs.images)) { html = html.replace(new RegExp(k, "g"), String(v)); }
+          if (vs.colors) for (const [k, v] of Object.entries(vs.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
+
+          const tplName = vs.name || `${recipe.name}_${i + 1}`;
+          const tpl = await templates.createTemplate(tplName, recipe.template_width || 1080, recipe.template_height || 1080, undefined, "", targetWs);
+          tpl.engine = "html"; tpl.html = html; tpl.css = css;
+          const frame = {
+            id: `frame_${Date.now().toString(36)}`,
+            name: "Frame 1", x: 0, y: 0,
+            width: recipe.template_width || 1080,
+            height: recipe.template_height || 1080,
+            html, css, background: "#ffffff",
+          };
+          tpl.frames = [frame];
+          await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: tpl.frames });
+          templateIds.push(tpl.id);
+        } catch (e) {
+          errors.push({ index: i, name: varSets[i]?.name, error: e.message });
+        }
+      }
+
+      // Store batch job
+      await sb.from("batch_jobs").upsert({
+        id: batchId,
+        recipe_id: params.recipeId,
+        status: errors.length === varSets.length ? "failed" : errors.length > 0 ? "partial" : "completed",
+        total_count: varSets.length,
+        completed_count: templateIds.length,
+        failed_count: errors.length,
+        results: templateIds,
+        errors: errors,
+        created_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      });
+
+      // Increment usage count
+      await sb.from("recipes").update({ usage_count: (recipe.usage_count || 0) + templateIds.length }).eq("id", params.recipeId);
+
+      // Auto-render all created templates
+      let htmlExport = null;
+      if (params.render !== false && templateIds.length > 0) {
+        const allFrames = [];
+        for (const tid of templateIds) {
+          const tpl2 = await templates.getTemplate(tid);
+          if (tpl2) {
+            const fs = tpl2.frames || [];
+            if (fs.length === 0) {
+              allFrames.push({ id: "frame_0", name: tpl2.name, width: tpl2.width || 1080, height: tpl2.height || 1080, html: tpl2.html, css: tpl2.css });
+            } else {
+              for (const f of fs) allFrames.push(f);
+            }
+          }
+        }
+        if (allFrames.length > 0) {
+          htmlExport = buildHtmlExportPage(allFrames);
+        }
+      }
+
+      return {
+        batchId,
+        recipeId: params.recipeId,
+        recipeName: recipe.name,
+        totalCount: varSets.length,
+        templateIds,
+        errorCount: errors.length,
+        status: errors.length === 0 ? "completed" : "partial",
+        htmlExport: htmlExport || undefined,
+        _note: htmlExport ? "Save htmlExport as .html file, open in browser to auto-download all PNGs" : undefined,
+      };
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -3912,8 +4257,121 @@ async function handleMethod(method, params, userId) {
       return { optimizedUrl: params.imageUrl, originalBytes: 0, optimizedBytes: 0, reduction: "0%", _note: "Optimization requires Sharp or external service" };
     }
 
+    // ── Phase 1: upload_image ──
+    case "upload_image": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      let imageBuffer;
+      let mimeType = "image/png";
+      let filename;
+
+      if (params.data) {
+        // Base64 data
+        const matches = params.data.match(/^data:(image\/\w+);base64,(.+)$/);
+        if (!matches) throw { code: -32602, message: "Invalid base64 data format. Use data:image/...;base64,..." };
+        mimeType = matches[1];
+        imageBuffer = Buffer.from(matches[2], "base64");
+        const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
+        filename = `${assetId}.${ext}`;
+      } else if (params.url) {
+        // External URL
+        try {
+          const fetchResp = await fetch(params.url);
+          if (!fetchResp.ok) throw new Error(`Fetch failed: ${fetchResp.status}`);
+          const contentType = fetchResp.headers.get("content-type") || "image/png";
+          mimeType = contentType.split(";")[0].trim();
+          imageBuffer = Buffer.from(await fetchResp.arrayBuffer());
+          const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
+          filename = `${assetId}.${ext}`;
+        } catch (e) {
+          throw { code: -32000, message: `Failed to download image: ${e.message}` };
+        }
+      } else {
+        throw { code: -32602, message: "Provide either 'data' (base64) or 'url' parameter" };
+      }
+
+      const filePath = `${params.workspaceId || "default"}/${filename}`;
+      const { error: uploadErr } = await sb.storage.from("design-assets").upload(filePath, imageBuffer, {
+        contentType: mimeType,
+        upsert: true,
+      });
+      if (uploadErr) throw { code: -32000, message: `Upload failed: ${uploadErr.message}` };
+
+      const { data: publicUrlData } = sb.storage.from("design-assets").getPublicUrl(filePath);
+      const publicUrl = publicUrlData?.publicUrl || "";
+
+      const asset = {
+        id: assetId,
+        name: params.name,
+        filename,
+        mime_type: mimeType,
+        size_bytes: imageBuffer.length,
+        url: publicUrl,
+        tags: params.tags || [],
+        workspace_id: params.workspaceId || null,
+        created_by: userId,
+      };
+
+      await sb.from("assets").upsert(asset);
+      return {
+        assetId,
+        name: params.name,
+        url: publicUrl,
+        mimeType,
+        sizeBytes: imageBuffer.length,
+        _storagePath: filePath,
+      };
+    }
+
     case "list_assets": {
-      return { assets: [] };
+      const sb = getSupabase();
+      if (!sb) {
+        // Fallback: return empty when Supabase is not configured
+        return { assets: [], total: 0, _note: "Supabase not configured" };
+      }
+      try {
+        let q = sb.from("assets").select("*", { count: "exact" });
+        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        if (params.mimeType) q = q.eq("mime_type", params.mimeType);
+        if (params.search) q = q.ilike("name", `%${params.search}%`);
+        q = q.order("created_at", { ascending: false });
+        q = q.range(params.offset || 0, (params.offset || 0) + (params.limit || 50) - 1);
+        const { data, count, error } = await q;
+        if (error) throw error;
+        const assets = (data || []).map(r => ({
+          id: r.id,
+          name: r.name,
+          filename: r.filename,
+          mimeType: r.mime_type,
+          sizeBytes: r.size_bytes,
+          url: r.url,
+          width: r.width,
+          height: r.height,
+          tags: r.tags || [],
+          workspaceId: r.workspace_id,
+          createdAt: r.created_at,
+        }));
+        return { assets, total: count || assets.length };
+      } catch (e) {
+        return { assets: [], total: 0, _error: e.message };
+      }
+    }
+
+    case "delete_asset": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      // Get asset to find storage path
+      const { data: asset } = await sb.from("assets").select("*").eq("id", params.id).single();
+      if (!asset) throw { code: -32000, message: `Asset not found: ${params.id}` };
+      // Delete from storage
+      if (asset.filename && asset.workspace_id) {
+        const filePath = `${asset.workspace_id}/${asset.filename}`;
+        await sb.storage.from("design-assets").remove([filePath]);
+      }
+      // Delete from database
+      await sb.from("assets").delete().eq("id", params.id);
+      return { deleted: true, assetId: params.id };
     }
 
     case "replace_asset": {

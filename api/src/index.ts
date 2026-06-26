@@ -19,6 +19,7 @@ import { colorRoutes } from "./routes/colors.js";
 import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
+import { assetRoutes } from "./routes/assets.js";
 import fontCatalog from "./data/google-fonts.json";
 
 const app = express();
@@ -50,6 +51,7 @@ app.use("/api/templates", colorRoutes);
 app.use("/api/templates", fontRoutes);
 app.use("/api/templates", componentRoutes);
 app.use("/api/recipes", recipeRoutes);
+app.use("/api/assets", assetRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
 // ── Google Fonts Catalog ──
