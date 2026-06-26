@@ -102,6 +102,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [frames, setFrames] = useState<FrameData[]>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState("New Design");
+  const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [zoom, setZoom] = useState(0.5);
 
@@ -183,6 +184,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           return;
         }
         setTemplateName(t.name || "Untitled");
+        if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
 
         // Multi-frame support: if template has frames[], use them
         if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
@@ -935,7 +937,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         body: JSON.stringify({
           name: templateName || "Untitled Key Visual",
           description: `${templateName} - saved ${new Date().toLocaleDateString()}`,
-          workspaceId,
+          workspaceId: templateWorkspaceId,
           templateHtml: selectedFrame?.html || "",
           templateCss: selectedFrame?.css || "",
           structure: {
@@ -951,7 +953,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       setSaveRecipeMsg(`✗ Failed: ${e.message}`);
       setTimeout(() => setSaveRecipeMsg(""), 4000);
     }
-  }, [templateName, workspaceId, selectedFrame]);
+  }, [templateName, templateWorkspaceId, selectedFrame]);
 
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
