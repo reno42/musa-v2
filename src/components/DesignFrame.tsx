@@ -449,14 +449,17 @@ export function DesignFrame({
         document.removeEventListener("mousemove", onDragMove);
         document.removeEventListener("mouseup", onDragUp);
         if (!moved) return;
+        console.error("[DesignFrame] drag ended, syncing CSS", { frameId: frame.id, left: target.style.left, top: target.style.top });
         syncLockRef.current = true;
         const sel = getSelector(target);
+        console.error("[DesignFrame] selector:", sel, "cssLen:", cssRef.current.length);
         const updated = updateCssRule(cssRef.current, sel, {
           position: "absolute",
           left: target.style.left,
           top: target.style.top,
         });
         cssRef.current = updated;
+        console.error("[DesignFrame] calling onCssChange", { frameId: frame.id, newCssLen: updated.length, hasCallback: !!onCssChangeRef.current });
         onCssChangeRef.current?.(frame.id, updated);
       };
 
@@ -613,6 +616,7 @@ export function DesignFrame({
       document.removeEventListener("mouseup", onUp);
       syncLockRef.current = true;
       const sel = getSelector(target);
+      console.error("[DesignFrame] resize ended, syncing CSS", { frameId: frame.id, selector: sel });
       const props: Record<string, string> = {
         width: target.style.width,
         height: target.style.height,

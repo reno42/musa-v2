@@ -127,6 +127,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
+  const isDirtyRef = useRef(false);
+  const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
 
   // ── Selected element (inside a frame) ──
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
@@ -156,6 +158,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setFrames(prev);
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
+    isDirtyRef.current = true;
+    autoSaveRef.current(prev);
   }, [frames]);
 
   const handleRedo = useCallback(() => {
@@ -165,6 +169,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setFrames(next);
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
+    isDirtyRef.current = true;
+    autoSaveRef.current(next);
   }, [frames]);
 
   // ── Load template → parse into frames ──
@@ -201,6 +207,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           }));
           setFrames(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
+          // Reset undo stack and push initial state so Ctrl+Z can revert to loaded state
+          undoStack.current = [];
+          redoStack.current = [];
+          undoStack.current.push(JSON.parse(JSON.stringify(loaded)));
+          setCanUndo(false);
+          setCanRedo(false);
           console.error("[LOAD] ✓ Parsed frames:", { count: loaded.length, ids: loaded.map(f => f.id), firstHtmlLen: loaded[0]?.html?.length, firstCssLen: loaded[0]?.css?.length });
         } else {
           // Legacy: single template → one frame
@@ -216,6 +228,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           };
           setFrames([single]);
           setSelectedFrameId(single.id);
+          // Reset undo stack and push initial state
+          undoStack.current = [];
+          redoStack.current = [];
+          undoStack.current.push(JSON.parse(JSON.stringify([single])));
+          setCanUndo(false);
+          setCanRedo(false);
         }
       } catch (err: any) {
         if (!cancelled) setError(err.message || "Failed to load template");
@@ -227,30 +245,32 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     return () => { cancelled = true; };
   }, [templateId]);
 
-  // ── Auto-save (debounced 2s) ──
+  // ── Auto-save (immediate localStorage, debounced API sync) ──
   const autoSave = useCallback((updatedFrames: FrameData[]) => {
+    const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
+    const payload = {
+      frames: updatedFrames,
+      html: active?.html || "",
+      css: active?.css || "",
+      name: templateName,
+    };
+
+    // ✅ Immediate localStorage write (synchronous — survives refresh/tab close)
+    try {
+      saveLocal(templateId, payload);
+      console.error("[SAVE] ✓ localStorage IMMEDIATE save OK", { templateId, framesLen: updatedFrames.length });
+    } catch (localErr) {
+      console.error("[SAVE] ✗ localStorage FAILED:", localErr);
+    }
+
+    // ✅ Mark as dirty so polling won't overwrite our state
+    isDirtyRef.current = true;
+
+    // ✅ Debounced API sync (2s)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       setSaving(true);
-      const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
-      const payload = {
-        frames: updatedFrames,
-        html: active?.html || "",
-        css: active?.css || "",
-        name: templateName,
-      };
-      console.error("[SAVE] ═══ AUTO-SAVE FIRED ═══", { templateId, frameCount: updatedFrames.length, hasHtml: !!active?.html, hasCss: !!active?.css, activeId: active?.id });
-
-      // ✅ Dual-write: localStorage first (freemium resilience, instant persistence)
-      try {
-        saveLocal(templateId, payload);
-        console.error("[SAVE] ✓ localStorage saved OK", { templateId, framesLen: updatedFrames.length });
-        // Verify it was stored
-        const verify = (() => { try { const d = JSON.parse(localStorage.getItem("futuraria_local_templates") || "{}"); const entry = d[templateId]; return entry ? { hasFrames: !!entry.frames, framesLen: entry.frames?.length, updatedAt: entry.updatedAt } : null; } catch { return null; } })();
-        console.error("[SAVE] localStorage verify:", verify);
-      } catch (localErr) {
-        console.error("[SAVE] ✗ localStorage FAILED:", localErr);
-      }
+      console.error("[SAVE] ═══ API SYNC FIRED ═══", { templateId, frameCount: updatedFrames.length });
 
       // Sync to API + Supabase with exponential-backoff retry (max 3 attempts)
       const MAX_RETRIES = 3;
@@ -260,16 +280,17 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             method: "PUT",
             body: JSON.stringify(payload),
           });
-          console.error("[SAVE] ✓ API PUT OK", { attempt, status: 200, responseHasFrames: !!(putRes as any)?.data?.frames });
+          console.error("[SAVE] ✓ API PUT OK", { attempt, responseHasFrames: !!(putRes as any)?.data?.frames });
           broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
-          break; // success
+          isDirtyRef.current = false; // clear dirty flag after successful sync
+          break;
         } catch (err) {
           console.error(`[SAVE] ✗ API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
           retryCountRef.current = attempt + 1;
           if (attempt < MAX_RETRIES) {
-            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            const delay = Math.pow(2, attempt) * 1000;
             console.warn(`[EditorV2] Auto-save retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
             await new Promise(r => setTimeout(r, delay));
           } else {
@@ -278,9 +299,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         }
       }
       setSaving(false);
-      console.error("[SAVE] ═══ AUTO-SAVE COMPLETE ═══");
+      console.error("[SAVE] ═══ API SYNC COMPLETE ═══");
     }, 2000);
   }, [templateId, selectedFrameId, templateName]);
+
+  // Keep autoSaveRef in sync so undo/redo can call the latest version
+  autoSaveRef.current = autoSave;
 
   useEffect(() => {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
@@ -317,6 +341,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       realtimeChannelRef.current = channel;
     } else {
       pollingRef.current = setInterval(async () => {
+        // ✅ Guard: skip polling entirely if we have unsaved local changes
+        if (isDirtyRef.current) {
+          console.warn("[POLL] Skipping — local changes pending API sync");
+          return;
+        }
         try {
           const tpl = await getTemplate(templateId);
           if (!tpl) return;
@@ -326,7 +355,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             if (lastRemoteUpdate !== null) {
               // Safety: never replace non-empty local frames with empty remote frames
               if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
-                setFrames(t.frames);
+                // Only update if frame data actually differs (avoid unnecessary re-renders)
+                const localJson = JSON.stringify(framesRef.current);
+                const remoteJson = JSON.stringify(t.frames);
+                if (localJson !== remoteJson) {
+                  console.warn("[POLL] Remote frames differ from local — updating");
+                  setFrames(t.frames);
+                }
               } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
                 // Remote has no frames but we do → re-save our frames as recovery
                 console.warn("[EditorV2] Polling returned empty frames, re-saving local frames");

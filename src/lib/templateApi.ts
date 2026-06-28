@@ -38,11 +38,18 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
       Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0);
 
     // If localStorage has a newer version with content, prefer it
+    // Grace window: server clock is typically 200-800ms ahead of client clock.
+    // Treat timestamps within 5s of each other as equal — prefer localStorage
+    // in that case because it has the user's most recent edits.
     if (localData && apiData) {
       const apiUpdated = (apiData as any).metadata?.updatedAt || "";
       const localUpdated = localData.updatedAt || "";
-      if (localUpdated > apiUpdated && hasContent(localData)) {
-        console.error("[getTemplate] ✓ Using LOCAL (newer)");
+      const apiMs = new Date(apiUpdated).getTime() || 0;
+      const localMs = new Date(localUpdated).getTime() || 0;
+      const GRACE_MS = 5000;
+      const localIsNewer = (localMs > apiMs) || (Math.abs(localMs - apiMs) < GRACE_MS);
+      if (localIsNewer && hasContent(localData)) {
+        console.error("[getTemplate] ✓ Using LOCAL (newer or within grace)", { apiMs, localMs, diff: localMs - apiMs, grace: GRACE_MS });
         return {
           ...apiData,
           ...localData,
