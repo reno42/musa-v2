@@ -32,7 +32,7 @@ interface InfiniteHtmlCanvasProps {
   onElementDuplicate?: (layerId: string) => void;
 }
 
-const CANVAS_BG = "#1a1a2e";
+const CANVAS_BG = "#1E1E1E";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
