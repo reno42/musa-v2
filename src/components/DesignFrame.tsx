@@ -33,7 +33,7 @@ interface DesignFrameProps {
   zoom?: number;
   onActivate: (frameId: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
-  onCssChange?: (frameId: string, newCss: string) => void;
+  onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
   onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
@@ -521,7 +521,9 @@ export function DesignFrame({
         // Record the CSS we're about to emit so the echo-suppression check
         // can skip the re-render that bounces our own change back.
         lastEmittedCssRef.current = updated;
-        onCssChangeRef.current?.(frame.id, updated);
+        // Sync BOTH css and html — inline styles (position/left/top) are in the DOM,
+        // so content.innerHTML must be saved or reload reverts to original inline styles.
+        onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
       };
 
       document.addEventListener("mousemove", onDragMove);
@@ -688,7 +690,9 @@ export function DesignFrame({
       const updated = updateCssRule(cssRef.current, sel, props);
       cssRef.current = updated;
       lastEmittedCssRef.current = updated;
-      onCssChangeRef.current?.(frame.id, updated);
+      // Sync BOTH css and html — resize changes width/height inline styles in the DOM.
+      const contentEl = shadowRef.current?.getElementById("__df_content");
+      onCssChangeRef.current?.(frame.id, updated, contentEl?.innerHTML);
     };
 
     document.addEventListener("mousemove", onMove);

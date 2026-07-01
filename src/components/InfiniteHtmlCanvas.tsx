@@ -22,7 +22,7 @@ interface InfiniteHtmlCanvasProps {
   onZoomChange: (z: number) => void;
   onFrameMove?: (id: string, x: number, y: number) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
-  onFrameCssChange?: (frameId: string, newCss: string) => void;
+  onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
   onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
   onDrawShape?: (type: "rect" | "circle", x: number, y: number, w: number, h: number) => void;

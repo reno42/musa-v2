@@ -425,11 +425,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
-  // ── Frame CSS change from DesignFrame (drag/resize) ──
-  const handleFrameCssChange = useCallback((frameId: string, newCss: string) => {
-    console.error("[FRAME-CSS] handleFrameCssChange entry", { frameId, cssLen: newCss.length });
+  // ── Frame CSS (+ optional HTML) change from DesignFrame (drag/resize) ──
+  const handleFrameCssChange = useCallback((frameId: string, newCss: string, newHtml?: string) => {
+    console.error("[FRAME-CSS] handleFrameCssChange entry", { frameId, cssLen: newCss.length, hasHtml: !!newHtml });
     const updated = frames.map(f =>
-      f.id === frameId ? { ...f, css: newCss } : f
+      f.id === frameId ? { ...f, css: newCss, ...(newHtml ? { html: newHtml } : {}) } : f
     );
     pushUndo(frames);
     setFrames(updated);
