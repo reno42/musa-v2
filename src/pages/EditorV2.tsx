@@ -34,7 +34,7 @@ interface EditorV2Props {
 }
 
 const FRAME_GAP = 100;
-const BUILD_VERSION = "persist-fix-v3-2026-06-30";
+const BUILD_VERSION = "persist-fix-v4-2026-06-30";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
@@ -130,6 +130,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
   const isDirtyRef = useRef(false);
   const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
+  const framesRef = useRef(frames);
+  framesRef.current = frames;
 
   // ── Selected element (inside a frame) ──
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
@@ -158,11 +160,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       return;
     }
     const prev = undoStack.current.pop()!;
-    // Use functional update to capture the CURRENT frames state (not stale closure)
-    setFrames(current => {
-      redoStack.current.push(JSON.parse(JSON.stringify(current)));
-      return prev;
-    });
+    // Push current state to redo stack BEFORE setFrames (StrictMode-safe: outside updater)
+    redoStack.current.push(JSON.parse(JSON.stringify(framesRef.current)));
+    setFrames(prev);
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
     isDirtyRef.current = true;
@@ -172,10 +172,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const handleRedo = useCallback(() => {
     if (redoStack.current.length === 0) return;
     const next = redoStack.current.pop()!;
-    setFrames(current => {
-      undoStack.current.push(JSON.parse(JSON.stringify(current)));
-      return next;
-    });
+    // Push current state to undo stack BEFORE setFrames (StrictMode-safe: outside updater)
+    undoStack.current.push(JSON.parse(JSON.stringify(framesRef.current)));
+    setFrames(next);
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
     isDirtyRef.current = true;
@@ -322,8 +321,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Realtime sync ──
   const realtimeReadyRef = useRef(false);
   const lastBroadcastRef = useRef<{ html: string; css: string } | null>(null);
-  const framesRef = useRef(frames);
-  framesRef.current = frames;
 
   useEffect(() => {
     realtimeReadyRef.current = false; // Reset on re-mount
