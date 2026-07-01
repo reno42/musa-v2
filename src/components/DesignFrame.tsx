@@ -138,6 +138,58 @@ export function DesignFrame({
 
     // Attach interaction handlers
     setupInteraction(shadow, content, overlay);
+
+    // ═══ DIAGNOSTIC: Shadow init state ═══
+    requestAnimationFrame(() => {
+      const contentRect = content.getBoundingClientRect();
+      const overlayPE = overlay.style.pointerEvents;
+      const overlayComputedPE = getComputedStyle(overlay).pointerEvents;
+
+      // Scan all content children for pointer-events issues
+      const allEls = content.querySelectorAll("*");
+      const peIssues: { tag: string; selector: string; computedPE: string }[] = [];
+      allEls.forEach((child) => {
+        const cpe = getComputedStyle(child).pointerEvents;
+        if (cpe === "none") {
+          peIssues.push({
+            tag: child.tagName,
+            selector: getSelector(child as HTMLElement),
+            computedPE: cpe,
+          });
+        }
+      });
+
+      console.error("[SHADOW-INIT]", {
+        frameId: frame.id,
+        hasShadow: !!shadowRef.current,
+        hostW: el.offsetWidth,
+        hostH: el.offsetHeight,
+        contentW: contentRect.width,
+        contentH: contentRect.height,
+        contentChildren: content.children.length,
+        cssHasPointerEvents: /pointer-events\s*:/i.test(frame.css),
+        overlayStylePE: overlayPE,
+        overlayComputedPE,
+        peDisabledCount: peIssues.length,
+        peIssues: peIssues.slice(0, 20),
+      });
+    });
+
+    // ═══ DIAGNOSTIC: Capture-phase host listener ═══
+    // Fires BEFORE the shadow tree listener — tells us if events reach the host at all
+    el.addEventListener("mousedown", (ev: MouseEvent) => {
+      const path = ev.composedPath();
+      const inShadow = path.includes(content);
+      console.error("[HOST-MDOWN]", {
+        frameId: frame.id,
+        button: ev.button,
+        target: (ev.target as Element)?.tagName,
+        targetInShadow: inShadow,
+        composedPath: path.slice(0, 10).map((p: any) =>
+          p.tagName || (p === shadow ? "#shadow-root" : p.nodeName?.toLowerCase?.() || "unknown"),
+        ),
+      });
+    }, true); // capture = true
   }, []);
 
   // ── Code → DOM: CSS update ──
