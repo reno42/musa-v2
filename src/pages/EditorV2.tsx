@@ -34,6 +34,7 @@ interface EditorV2Props {
 }
 
 const FRAME_GAP = 100;
+const BUILD_VERSION = "persist-fix-v3-2026-06-30";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
@@ -151,34 +152,42 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   const handleUndo = useCallback(() => {
-    console.error("[UNDO] ═══ Ctrl+Z FIRED ═══", { stackSize: undoStack.current.length, frameCount: frames.length });
-    if (undoStack.current.length === 0) { console.error("[UNDO] ✗ Undo stack EMPTY — nothing to undo"); return; }
+    console.error("[UNDO] Ctrl+Z FIRED", { stackSize: undoStack.current.length });
+    if (undoStack.current.length === 0) {
+      console.error("[UNDO] Undo stack EMPTY — nothing to undo");
+      return;
+    }
     const prev = undoStack.current.pop()!;
-    redoStack.current.push(JSON.parse(JSON.stringify(frames)));
-    setFrames(prev);
+    // Use functional update to capture the CURRENT frames state (not stale closure)
+    setFrames(current => {
+      redoStack.current.push(JSON.parse(JSON.stringify(current)));
+      return prev;
+    });
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
     isDirtyRef.current = true;
     autoSaveRef.current(prev);
-  }, [frames]);
+  }, []);
 
   const handleRedo = useCallback(() => {
     if (redoStack.current.length === 0) return;
     const next = redoStack.current.pop()!;
-    undoStack.current.push(JSON.parse(JSON.stringify(frames)));
-    setFrames(next);
+    setFrames(current => {
+      undoStack.current.push(JSON.parse(JSON.stringify(current)));
+      return next;
+    });
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
     isDirtyRef.current = true;
     autoSaveRef.current(next);
-  }, [frames]);
+  }, []);
 
   // ── Load template → parse into frames ──
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        console.error("[LOAD] ═══ FETCHING TEMPLATE ═══", { templateId });
+        console.error("[LOAD] FETCHING TEMPLATE", { templateId, BUILD_VERSION });
         const tpl = await getTemplate(templateId);
         console.error("[LOAD] getTemplate returned:", { hasTpl: !!tpl, framesLen: (tpl as any)?.frames?.length, hasHtml: !!(tpl as any)?.html, hasCss: !!(tpl as any)?.css, metadata: (tpl as any)?.metadata });
         if (cancelled) return;

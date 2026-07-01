@@ -1,11 +1,30 @@
 # 🏗️ Futuraria Design — Arquitectura
 
+> **⚠️⚠️⚠️ ESTE DOCUMENTO ESTÁ OBSOLETO Y DEPRECADO ⚠️⚠️⚠️**
+>
+> Este documento describe la **versión 1 (Fabric.js)** del editor. La versión actual (V2) es un editor **full web HTML/CSS** sin Fabric.js.
+>
+> 📄 **Ver documentación actualizada:** [`ARCHITECTURE_V2.md`](./ARCHITECTURE_V2.md)
+>
+> **Diferencias clave:**
+> - ❌ Fabric.js v6 → ✅ Shadow DOM + iframe (HTML/CSS puro)
+> - ❌ CanvasEditor → ✅ EditorV2 + DesignFrame
+> - ❌ 37 MCP tools → ✅ 100+ MCP tools
+> - ❌ PropertiesPanel → ✅ HtmlContextualPanel
+> - ❌ useCanvas hook → ✅ DesignFrame + InfiniteHtmlCanvas
+>
+> **No confiar en la información de este documento.** Usar ARCHITECTURE_V2.md como fuente de verdad.
+
+---
+
 **Autor:** Renzo Perez Bartra / Futuraria  
 **Licencia:** MIT + CC BY 4.0 | **Stack:** $0/mes Freemium
 
 ---
 
 ## 🎯 Qué es
+
+> ⚠️ DESACTUALIZADO: La descripción a continuación corresponde a la V1 (Fabric.js).
 
 Un editor de diseño WYSIWYG con 37 herramientas MCP para agentes de IA. Crea templates por código, editalos visualmente, exporta a PNG. El primer "Mini-Figma" con agentes de IA integrados vía MCP, completamente open source y freemium.
 

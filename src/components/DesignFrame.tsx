@@ -69,7 +69,11 @@ export function DesignFrame({
   const selectedRef = useRef<Element | null>(null);
   const cssRef = useRef(frame.css);
   const htmlRef = useRef(frame.html);
-  const syncLockRef = useRef(false);
+  // Track the last CSS we wrote to React so we can skip ONLY our own echo.
+  // A boolean flag would swallow the next update (e.g. undo) in a batched render.
+  // Comparing content ensures we only skip when React feeds back the exact CSS
+  // we just emitted via onCssChange.
+  const lastEmittedCssRef = useRef<string | null>(null);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
   const onAddPrimitiveRef = useRef(onAddPrimitive);
@@ -138,8 +142,12 @@ export function DesignFrame({
 
   // ── Code → DOM: CSS update ──
   useEffect(() => {
-    console.warn("[SHADOW CSS] useEffect firing", { frameId: frame.id, cssLen: frame.css.length, syncLock: syncLockRef.current, hasImport: frame.css.startsWith("@import") });
-    if (syncLockRef.current) { console.warn("[SHADOW CSS] BLOCKED by syncLock"); syncLockRef.current = false; return; }
+    // Skip only if React is feeding back the exact CSS we just emitted (echo suppression).
+    // This allows undo/redo updates (different CSS) to flow through unblocked.
+    if (lastEmittedCssRef.current === frame.css) {
+      lastEmittedCssRef.current = null; // consume the echo
+      return;
+    }
     cssRef.current = frame.css;
     const shadow = shadowRef.current;
     if (!shadow) return;
@@ -162,7 +170,6 @@ export function DesignFrame({
 
   // ── Code → DOM: HTML update ──
   useEffect(() => {
-    if (syncLockRef.current) { syncLockRef.current = false; return; }
     htmlRef.current = frame.html;
     const shadow = shadowRef.current;
     if (!shadow) return;
@@ -449,17 +456,16 @@ export function DesignFrame({
         document.removeEventListener("mousemove", onDragMove);
         document.removeEventListener("mouseup", onDragUp);
         if (!moved) return;
-        console.error("[DesignFrame] drag ended, syncing CSS", { frameId: frame.id, left: target.style.left, top: target.style.top });
-        syncLockRef.current = true;
         const sel = getSelector(target);
-        console.error("[DesignFrame] selector:", sel, "cssLen:", cssRef.current.length);
         const updated = updateCssRule(cssRef.current, sel, {
           position: "absolute",
           left: target.style.left,
           top: target.style.top,
         });
         cssRef.current = updated;
-        console.error("[DesignFrame] calling onCssChange", { frameId: frame.id, newCssLen: updated.length, hasCallback: !!onCssChangeRef.current });
+        // Record the CSS we're about to emit so the echo-suppression check
+        // can skip the re-render that bounces our own change back.
+        lastEmittedCssRef.current = updated;
         onCssChangeRef.current?.(frame.id, updated);
       };
 
@@ -614,9 +620,7 @@ export function DesignFrame({
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      syncLockRef.current = true;
       const sel = getSelector(target);
-      console.error("[DesignFrame] resize ended, syncing CSS", { frameId: frame.id, selector: sel });
       const props: Record<string, string> = {
         width: target.style.width,
         height: target.style.height,
@@ -628,6 +632,7 @@ export function DesignFrame({
       }
       const updated = updateCssRule(cssRef.current, sel, props);
       cssRef.current = updated;
+      lastEmittedCssRef.current = updated;
       onCssChangeRef.current?.(frame.id, updated);
     };
 
