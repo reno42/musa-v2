@@ -832,24 +832,149 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
+  // ── Native SVG generation: walks DOM tree, resolves styles, emits <rect>/<text>/<image> ──
+  // Unlike foreignObject SVG, this produces elements Figma and Illustrator can import.
   const buildFrameSvg = useCallback((frame: FrameData): string => {
     const w = frame.width || 1080;
     const h = frame.height || 1080;
     const bg = frame.background || "#ffffff";
-    const cssText = frame.css || "";
+    const html = frame.html || "";
+    const css = frame.css || "";
+
+    // Parse CSS rules
+    const cssRules: { selector: string; props: Record<string, string> }[] = [];
+    const cleanCss = css.replace(/@import[^;]+;/g, "").replace(/@font-face\s*\{[^}]*\}/g, "");
+    const ruleRe = /([^{}]+)\{([^}]*)\}/g;
+    let rm;
+    while ((rm = ruleRe.exec(cleanCss)) !== null) {
+      const selectors = rm[1].trim().split(",").map(s => s.trim());
+      const props: Record<string, string> = {};
+      for (const decl of rm[2].trim().split(";")) {
+        const idx = decl.indexOf(":");
+        if (idx > 0) {
+          const p = decl.slice(0, idx).trim();
+          const v = decl.slice(idx + 1).trim();
+          if (p && v) props[p] = v;
+        }
+      }
+      if (Object.keys(props).length > 0) {
+        for (const sel of selectors) cssRules.push({ selector: sel, props });
+      }
+    }
+
+    // Simple selector matching
+    const matchesSel = (el: HTMLElement, selector: string): boolean => {
+      if (/^[a-z0-9]+$/i.test(selector)) return el.tagName.toLowerCase() === selector;
+      if (selector.startsWith("#")) return el.id === selector.slice(1);
+      if (selector.startsWith(".")) return el.classList.contains(selector.slice(1));
+      const compound = selector.match(/^([a-z0-9]+)?(?:\.([\w-]+))?(?:#([\w-]+))?$/i);
+      if (compound) {
+        const [, tag, cls, id] = compound;
+        if (tag && el.tagName.toLowerCase() !== tag) return false;
+        if (cls && !el.classList.contains(cls)) return false;
+        if (id && el.id !== id) return false;
+        return true;
+      }
+      return false;
+    };
+
+    const resolveStyles = (el: HTMLElement): Record<string, string> => {
+      const resolved: Record<string, string> = {};
+      // Inline styles first
+      const inline = el.getAttribute("style") || "";
+      for (const decl of inline.split(";")) {
+        const idx = decl.indexOf(":");
+        if (idx > 0) resolved[decl.slice(0, idx).trim()] = decl.slice(idx + 1).trim();
+      }
+      // CSS rules cascade on top
+      for (const { selector, props } of cssRules) {
+        if (matchesSel(el, selector)) Object.assign(resolved, props);
+      }
+      return resolved;
+    };
+
+    const escXml = (t: string) => t.replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]!);
+
+    // Parse HTML into temp container
+    const tmp = document.createElement("div");
+    tmp.innerHTML = `<div id="__svgroot">${html}</div>`;
+    const root = tmp.querySelector("#__svgroot") as HTMLElement;
+    if (!root) return `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${bg}"/></svg>`;
+
+    const svgParts: string[] = [];
+
+    const walkNode = (node: HTMLElement, offsetX: number, offsetY: number) => {
+      for (const child of Array.from(node.children) as HTMLElement[]) {
+        const tag = child.tagName.toLowerCase();
+        if (["script", "style", "link", "meta"].includes(tag)) continue;
+
+        const style = resolveStyles(child);
+        const text = (child.textContent || "").trim();
+        const hasChildren = child.children.length > 0;
+
+        const left = parseInt(style["left"]) || 0;
+        const top = parseInt(style["top"]) || 0;
+        const width = parseInt(style["width"]) || 0;
+        const height = parseInt(style["height"]) || 0;
+        const fontSize = style["font-size"] || style["fontSize"] || "16px";
+        const fontFamily = (style["font-family"] || style["fontFamily"] || "sans-serif").replace(/["']/g, "");
+        const color = style["color"] || "#000000";
+        const fontWeight = style["font-weight"] || style["fontWeight"] || "400";
+        const textAlign = style["text-align"] || style["textAlign"] || "left";
+        const background = style["background"] || style["background-color"] || style["backgroundColor"] || "";
+        const borderRadius = style["border-radius"] || style["borderRadius"] || "";
+        const opacity = parseFloat(style["opacity"]) || 1;
+
+        const x = left + offsetX;
+        const y = top + offsetY;
+
+        // Background rect
+        const bgC = background.match(/#[0-9a-f]{3,8}/i)?.[0] || background.match(/rgba?\([^)]+\)/i)?.[0] || "";
+        if (bgC && width && height) {
+          const rx = borderRadius.match(/(\d+)/)?.[1] || "0";
+          svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${bgC}" rx="${rx}" opacity="${opacity}"/>`);
+        }
+
+        // Image
+        if (tag === "img") {
+          const src = child.getAttribute("src") || "";
+          if (src && width && height) {
+            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"/>`);
+          }
+        }
+
+        // Text (leaf nodes only)
+        if (text && !hasChildren && tag !== "img") {
+          const anchor = textAlign === "center" ? "middle" : textAlign === "right" ? "end" : "start";
+          const textX = textAlign === "center" ? x + width / 2 : textAlign === "right" ? x + width : x;
+          const textY = y + parseInt(fontSize) || y + 16;
+          svgParts.push(`<text x="${textX}" y="${textY}" font-family="${escXml(fontFamily)}" font-size="${escXml(fontSize)}" font-weight="${escXml(fontWeight)}" fill="${color}" text-anchor="${anchor}" opacity="${opacity}">${escXml(text)}</text>`);
+        }
+
+        // Recurse
+        walkNode(child, x, y);
+      }
+    };
+
+    walkNode(root, 0, 0);
+
+    // Extract font links
+    const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+    const fontLinks: string[] = [];
+    let fm;
+    while ((fm = fontImportRe.exec(css)) !== null) {
+      fontLinks.push(`<link rel="stylesheet" href="${fm[1]}"/>`);
+    }
 
     return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xhtml="http://www.w3.org/1999/xhtml"
      width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   <defs>
-    <style><![CDATA[${cssText}]]></style>
+    <style><![CDATA[${cleanCss}]]></style>
+    ${fontLinks.join("\n  ")}
   </defs>
-  <rect width="100%" height="100%" fill="${bg}" />
-  <foreignObject width="100%" height="100%">
-    <div xmlns="http://www.w3.org/1999/xhtml" style="width:${w}px;height:${h}px;position:relative;overflow:hidden;">
-      ${frame.html || ""}
-    </div>
-  </foreignObject>
+  <rect width="${w}" height="${h}" fill="${bg}"/>
+  ${svgParts.join("\n  ")}
 </svg>`;
   }, []);
 
@@ -964,7 +1089,53 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       URL.revokeObjectURL(url);
       await new Promise(r => setTimeout(r, 200));
     }
-  }, [frames]);
+  }, [frames, buildFrameSvg]);
+
+  // ── PDF export via jsPDF ──
+  const handleExportFramePDF = useCallback(async () => {
+    if (!selectedFrame) return;
+    setShowExportMenu(false);
+    const blob = await captureFrameToPng(selectedFrame, 2, "png");
+    if (!blob) return;
+    const { jsPDF } = await import("jspdf");
+    const reader = new FileReader();
+    const imgData = await new Promise<string>((resolve, reject) => {
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const f = selectedFrame;
+    const pdf = new jsPDF({
+      orientation: (f.width || 1080) > (f.height || 1080) ? "landscape" : "portrait",
+      unit: "px",
+      format: [f.width || 1080, f.height || 1080],
+    });
+    pdf.addImage(imgData, "PNG", 0, 0, f.width || 1080, f.height || 1080);
+    pdf.save(`${f.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
+  }, [selectedFrame, captureFrameToPng]);
+
+  const handleExportAllFramesPDF = useCallback(async () => {
+    setShowExportMenu(false);
+    const { jsPDF } = await import("jspdf");
+    for (const frame of frames) {
+      const blob = await captureFrameToPng(frame, 2, "png");
+      if (!blob) continue;
+      const reader = new FileReader();
+      const imgData = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const pdf = new jsPDF({
+        orientation: (frame.width || 1080) > (frame.height || 1080) ? "landscape" : "portrait",
+        unit: "px",
+        format: [frame.width || 1080, frame.height || 1080],
+      });
+      pdf.addImage(imgData, "PNG", 0, 0, frame.width || 1080, frame.height || 1080);
+      pdf.save(`${frame.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }, [frames, captureFrameToPng]);
 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImageUpload, setShowImageUpload] = useState(false);
@@ -1225,6 +1396,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
                 <button type="button" onClick={() => { handleExportFrameSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
                   <IconImage size={14} /> Export Current Frame as SVG
                 </button>
+                <button type="button" onClick={() => { handleExportFramePDF(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconDownload size={14} /> Export Current Frame as PDF
+                </button>
                 <div className="editor-v2-dropdown-sep" />
                 <button type="button" onClick={() => { handleExportAllFramesPNG("png"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
                   <IconImage size={14} /> Export All Frames as PNG
@@ -1234,6 +1408,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
                 </button>
                 <button type="button" onClick={() => { handleExportAllFramesSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
                   <IconImage size={14} /> Export All Frames as SVG
+                </button>
+                <button type="button" onClick={() => { handleExportAllFramesPDF(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
+                  <IconDownload size={14} /> Export All Frames as PDF
                 </button>
                 <div className="editor-v2-dropdown-sep" />
                 <button type="button" onClick={() => { handleExportJSON(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">

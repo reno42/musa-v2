@@ -2,6 +2,321 @@ import * as templates from "../../api/src/services/templates.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
+import * as cheerio from "cheerio";
+
+// ═══════════════════════════════════════════════════════════════
+// Server-side SVG generation from HTML+CSS (no browser needed)
+// ═══════════════════════════════════════════════════════════════
+
+/** Parse CSS rules from a stylesheet string into {selector, props} pairs */
+function parseCssRules(css) {
+  const rules = [];
+  // Remove @import and @font-face blocks
+  const cleanCss = css.replace(/@import[^;]+;/g, "").replace(/@font-face\s*\{[^}]*\}/g, "");
+  const ruleRe = /([^{}]+)\{([^}]*)\}/g;
+  let m;
+  while ((m = ruleRe.exec(cleanCss)) !== null) {
+    const selectors = m[1].trim().split(",").map(s => s.trim());
+    const props = {};
+    const declText = m[2].trim();
+    for (const decl of declText.split(";")) {
+      const idx = decl.indexOf(":");
+      if (idx > 0) {
+        const prop = decl.slice(0, idx).trim();
+        const val = decl.slice(idx + 1).trim();
+        if (prop && val) props[prop] = val;
+      }
+    }
+    if (Object.keys(props).length > 0) {
+      for (const sel of selectors) rules.push({ selector: sel, props });
+    }
+  }
+  return rules;
+}
+
+/** Match a CSS selector against a cheerio element (simple: tag, .class, #id, compound) */
+function matchesSelector($el, selector) {
+  if ($el.length === 0) return false;
+  // Simple tag selector
+  if (/^[a-z0-9]+$/i.test(selector)) return $el.is(selector);
+  // ID selector
+  if (selector.startsWith("#")) return $el.attr("id") === selector.slice(1);
+  // Class selector
+  if (selector.startsWith(".")) return $el.hasClass(selector.slice(1));
+  // Attribute selector [data-layer-id="..."]
+  const attrMatch = /^\[([^=]+)(?:="([^"]*)")?\]$/.exec(selector);
+  if (attrMatch) {
+    const attrName = attrMatch[1];
+    const attrVal = attrMatch[2];
+    const elVal = $el.attr(attrName);
+    if (attrVal === undefined) return elVal !== undefined;
+    return elVal === attrVal;
+  }
+  // Compound selector: tag.class or tag#id
+  const compound = selector.match(/^([a-z0-9]+)?(?:\.([\w-]+))?(?:#([\w-]+))?(\[.+\])?$/i);
+  if (compound) {
+    const [, tag, cls, id, attr] = compound;
+    if (tag && !$el.is(tag)) return false;
+    if (cls && !$el.hasClass(cls)) return false;
+    if (id && $el.attr("id") !== id) return false;
+    if (attr) return matchesSelector($el, attr);
+    return true;
+  }
+  return false;
+}
+
+/** Resolve cascaded CSS for an element by walking CSS rules in order */
+function resolveStyles($el, cssRules) {
+  const resolved = {};
+  // Also parse inline style attribute
+  const inlineStyle = $el.attr("style") || "";
+  for (const decl of inlineStyle.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx > 0) {
+      resolved[decl.slice(0, idx).trim()] = decl.slice(idx + 1).trim();
+    }
+  }
+  // Apply CSS rules in order (later rules override earlier)
+  for (const { selector, props } of cssRules) {
+    if (matchesSelector($el, selector)) {
+      Object.assign(resolved, props);
+    }
+  }
+  return resolved;
+}
+
+/** Escape text content for XML */
+function escapeXml(text) {
+  return text.replace(/[<>&'\\"]/g, c => {
+    switch (c) {
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case "&": return "&amp;";
+      case "'": return "&apos;";
+      case '"': return "&quot;";
+      default: return c;
+    }
+  });
+}
+
+/** Build SVG element from a DOM node and its resolved styles */
+function nodeToSvg($, $el, cssRules, offsetX, offsetY) {
+  const tag = $el.prop("tagName")?.toLowerCase() || "";
+  if (["script", "style", "link", "meta"].includes(tag)) return null;
+
+  const style = resolveStyles($el, cssRules);
+  const text = $el.text().trim();
+  const hasChildren = $el.children().length > 0;
+
+  // Parse position and dimensions
+  const left = parseInt(style["left"]) || 0;
+  const top = parseInt(style["top"]) || 0;
+  const width = parseInt(style["width"]) || 0;
+  const height = parseInt(style["height"]) || 0;
+  const fontSize = style["font-size"] || style["fontSize"] || "16px";
+  const fontFamily = (style["font-family"] || style["fontFamily"] || "sans-serif").replace(/["']/g, "");
+  const color = style["color"] || "#000000";
+  const fontWeight = style["font-weight"] || style["fontWeight"] || "400";
+  const textAlign = style["text-align"] || style["textAlign"] || "left";
+  const background = style["background"] || style["background-color"] || style["backgroundColor"] || "";
+  const borderRadius = style["border-radius"] || style["borderRadius"] || "";
+  const border = style["border"] || "";
+  const opacity = parseFloat(style["opacity"]) || 1;
+  const position = style["position"] || "static";
+
+  const x = left + offsetX;
+  const y = top + offsetY;
+  const svgParts = [];
+
+  // Background rect (if element has background color)
+  const bgColor = background.match(/#[0-9a-f]{3,8}/i)?.[0] ||
+                  background.match(/rgba?\([^)]+\)/i)?.[0] || "";
+  if (bgColor && width && height) {
+    const rx = borderRadius.match(/(\d+)/)?.[1] || "0";
+    svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${bgColor}" rx="${rx}" opacity="${opacity}"/>`);
+  }
+
+  // Border rect
+  if (border && border !== "none" && width && height) {
+    const borderMatch = border.match(/(\d+)px\s+([^\s]+)\s+(.+)/);
+    if (borderMatch) {
+      const [, bw, bstyle, bcolor] = borderMatch;
+      svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="none" stroke="${bcolor}" stroke-width="${bw}"/>`);
+    }
+  }
+
+  // Image element
+  if (tag === "img") {
+    const src = $el.attr("src") || "";
+    if (src && width && height) {
+      svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escapeXml(src)}" preserveAspectRatio="xMidYMid slice"/>`);
+    }
+  }
+
+  // Text element (only if leaf node with text content)
+  if (text && !hasChildren && tag !== "img") {
+    // Calculate text anchor based on text-align
+    const anchor = textAlign === "center" ? "middle" : textAlign === "right" ? "end" : "start";
+    const textX = textAlign === "center" ? x + width / 2 : textAlign === "right" ? x + width : x;
+    const textY = y + parseInt(fontSize) || y + 16;
+    svgParts.push(`<text x="${textX}" y="${textY}" font-family="${escapeXml(fontFamily)}" font-size="${escapeXml(fontSize)}" font-weight="${escapeXml(fontWeight)}" fill="${color}" text-anchor="${anchor}" opacity="${opacity}">${escapeXml(text)}</text>`);
+  }
+
+  return svgParts.length > 0 ? svgParts.join("\n  ") : null;
+}
+
+/** Generate full SVG document from frame HTML+CSS using cheerio */
+function buildFrameSvgNative(frame) {
+  const w = frame.width || 1080;
+  const h = frame.height || 1080;
+  const bg = frame.background || "#ffffff";
+  const html = frame.html || "";
+  const css = frame.css || "";
+
+  // Parse CSS into rules
+  const cssRules = parseCssRules(css);
+
+  // Parse HTML with cheerio
+  const $ = cheerio.load(`<div id="__root">${html}</div>`);
+  const root = $("#__root");
+
+  // Extract font @import URLs for linking
+  const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+  const fontLinks = [];
+  let fm;
+  while ((fm = fontImportRe.exec(css)) !== null) {
+    fontLinks.push(fm[1]);
+  }
+
+  // Walk DOM tree and generate SVG elements
+  const svgElements = [];
+
+  function walkNode($node, parentX, parentY) {
+    $node.children().each((_, el) => {
+      const $el = $(el);
+      const svgPart = nodeToSvg($, $el, cssRules, parentX, parentY);
+      if (svgPart) svgElements.push(svgPart);
+
+      // Recurse into children with accumulated offset
+      const style = resolveStyles($el, cssRules);
+      const childOffsetX = parentX + (parseInt(style["left"]) || 0);
+      const childOffsetY = parentY + (parseInt(style["top"]) || 0);
+      walkNode($el, childOffsetX, childOffsetY);
+    });
+  }
+
+  walkNode(root, 0, 0);
+
+  const fontLinkTags = fontLinks.map(url => `<link rel="stylesheet" href="${url}"/>`).join("\n  ");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xhtml="http://www.w3.org/1999/xhtml"
+     width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <defs>
+    <style><![CDATA[${css.replace(/@import[^;]+;/g, "")}]]></style>
+    ${fontLinkTags}
+  </defs>
+  <rect width="${w}" height="${h}" fill="${bg}"/>
+  ${svgElements.join("\n  ")}
+</svg>`;
+}
+
+/** Build self-rendering HTML page for PDF export (uses jsPDF CDN) */
+function buildPdfExportPage(frames) {
+  const allCss = frames.map(f => f.css || "").join("\n");
+  const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
+  const fontLinks = [];
+  let m;
+  while ((m = fontImportRe.exec(allCss)) !== null) {
+    fontLinks.push(`<link rel="stylesheet" href="${m[1]}">`);
+  }
+
+  const framesJson = JSON.stringify(frames.map(f => ({
+    name: (f.name || "frame").replace(/[<>:"/\\|?*]/g, "_"),
+    width: f.width || 1080,
+    height: f.height || 1080,
+    html: f.html || "",
+    css: f.css || "",
+  })));
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Futuraria PDF Export</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"><\/script>
+${fontLinks.join("\n")}
+<style>
+  body { margin:0; padding:16px; background:#e5e7eb; font-family:-apple-system,sans-serif; }
+  #status { padding: 8px 16px; background:#fff; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); font-size:13px; color:#333; display:inline-block; }
+  #status.done { color:#059669; }
+</style>
+</head>
+<body>
+<div id="status">Generating PDF...</div>
+<script>
+  (function() {
+    var frames = ${framesJson};
+    var total = frames.length;
+    var done = 0;
+    var { jsPDF } = window.jspdf;
+
+    function renderNext(i) {
+      if (i >= total) {
+        document.getElementById('status').textContent = 'Done: ' + done + '/' + total + ' PDFs downloaded';
+        document.getElementById('status').className = 'done';
+        return;
+      }
+      var f = frames[i];
+      document.getElementById('status').textContent = 'Generating PDF ' + (i+1) + '/' + total + ': ' + f.name + '...';
+
+      var container = document.createElement('div');
+      container.style.cssText = 'position:fixed;left:-9999px;top:0;width:'+f.width+'px;height:'+f.height+'px;overflow:hidden;';
+      document.body.appendChild(container);
+
+      var target = document.createElement('div');
+      target.style.cssText = 'width:'+f.width+'px;height:'+f.height+'px;overflow:hidden;position:relative;background:'+ (f.background || '#fff') +';';
+      var style = document.createElement('style');
+      style.textContent = f.css;
+      target.appendChild(style);
+      var content = document.createElement('div');
+      content.innerHTML = f.html;
+      target.appendChild(content);
+      container.appendChild(target);
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function() { doPdf(target, f, container, i); });
+      } else {
+        setTimeout(function() { doPdf(target, f, container, i); }, 2000);
+      }
+    }
+
+    function doPdf(target, f, container, i) {
+      html2canvas(target, { width: f.width, height: f.height, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
+        var imgData = canvas.toDataURL('image/png');
+        var pdf = new jsPDF({
+          orientation: f.width > f.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [f.width, f.height]
+        });
+        pdf.addImage(imgData, 'PNG', 0, 0, f.width, f.height);
+        pdf.save(f.name + '.pdf');
+        done++;
+        container.remove();
+        renderNext(i + 1);
+      }).catch(function(err) {
+        document.getElementById('status').textContent = 'Error: ' + err.message;
+        container.remove();
+      });
+    }
+
+    renderNext(0);
+  })();
+</script>
+</body></html>`;
+}
 
 /** Utility: crypto-based UUID v4 (avoids uuid npm in Netlify edge) */
 function uuid() {
@@ -1252,6 +1567,19 @@ const MCP_TOOLS = [
     name: "render_to_formats",
     description: "Render template to multiple formats at once",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, formats: { type: "array" } }, required: ["templateId", "formats"] },
+  },
+  {
+    name: "export_frame",
+    description: "Export a frame as SVG (native, importable into Figma/Illustrator) or PDF. For PNG, use render_html_template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID (omit to export all frames)" },
+        format: { type: "string", enum: ["svg", "pdf"], description: "Export format (default 'svg')" },
+      },
+      required: ["templateId", "format"],
+    },
   },
   {
     name: "optimize_image",
@@ -4731,6 +5059,54 @@ async function handleMethod(method, params, userId) {
 
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, align, elementsAligned: elementData.length };
+    }
+
+    // ── Export frame as SVG or PDF (native SVG, importable into Figma/Illustrator) ──
+    case "export_frame": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const format = params.format || "svg";
+
+      // Resolve target frames
+      let targetFrames;
+      if (params.frameId) {
+        targetFrames = (tpl.frames || []).filter(f => f.id === params.frameId);
+        if (targetFrames.length === 0) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      } else {
+        targetFrames = tpl.frames?.filter(f => f.html || f.css) || [];
+        if (targetFrames.length === 0) {
+          targetFrames = [{ id: "default", name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "", background: "#ffffff" }];
+        }
+      }
+
+      if (format === "svg") {
+        // Return native SVG for each frame
+        const results = targetFrames.map(f => ({
+          frameId: f.id,
+          frameName: (f.name || "frame").replace(/[^a-zA-Z0-9_-]/g, "_"),
+          svg: buildFrameSvgNative(f),
+          width: f.width || 1080,
+          height: f.height || 1080,
+        }));
+        return {
+          format: "svg",
+          frames: results,
+          _note: "Each frame has a native SVG with <rect>, <text>, <image> elements. Save the svg string as .svg file. Imports into Figma and Illustrator.",
+        };
+      }
+
+      if (format === "pdf") {
+        // Return self-rendering HTML page that auto-downloads PDF via jsPDF + html2canvas CDN
+        const html = buildPdfExportPage(targetFrames);
+        return {
+          format: "pdf",
+          totalFrames: targetFrames.length,
+          html,
+          _note: "Save this html string as .html file, open in browser → auto-downloads PDF for each frame.",
+        };
+      }
+
+      throw { code: -32602, message: `Unsupported format: ${format}. Use 'svg' or 'pdf'.` };
     }
 
     default:
