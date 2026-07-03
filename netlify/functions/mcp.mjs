@@ -6036,8 +6036,53 @@ async function handleMethod(method, params, userId) {
 
       var csv = lines.join("\n");
 
+      // Build clean CSV (no comments, ready for DB import / Supabase)
+      var cleanLines = [];
+      cleanLines.push(headerCells.map(csvEscape).join(delimiter));
+      for (var ri2 = 0; ri2 < rowCount; ri2++) {
+        var cleanRow = [templateIds[0]];
+        for (var cj2 = 0; cj2 < columns.length; cj2++) { cleanRow.push(""); }
+        cleanLines.push(cleanRow.map(csvEscape).join(delimiter));
+      }
+      var cleanCsv = cleanLines.join("\n");
+
+      // Data URI for direct browser paste (no AI reformatting, zero-cost)
+      var dataUri = "data:text/csv;charset=utf-8," + encodeURIComponent(cleanCsv);
+
+      // Build self-contained HTML page with embedded CSV + download button
+      // Same pattern as render_html_template — deterministic, freemium-safe, $0
+      var csvForJs = csv.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+      var cleanCsvForJs = cleanCsv.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
+      // Template tags HTML
+      var tplTagsHtml = "";
+      for (var ti2 = 0; ti2 < templateIds.length; ti2++) {
+        tplTagsHtml += '<span class="tpl-tag">' + templateIds[ti2] + ' = ' + (templateNames[templateIds[ti2]] || "?") + '</span>\n    ';
+      }
+
+      // Table header cells
+      var thCellsHtml = "";
+      for (var ci2 = 0; ci2 < columns.length; ci2++) {
+        thCellsHtml += '<th>' + columns[ci2].name + '<span class="col-type">' + columns[ci2].type + '</span></th>\n        ';
+      }
+
+      // Table body rows
+      var tbodyHtml = "";
+      for (var ri3 = 0; ri3 < rowCount; ri3++) {
+        tbodyHtml += '<tr><td style="font-family:monospace;color:#c8b898;">' + templateIds[0] + '</td>';
+        for (var cj3 = 0; cj3 < columns.length; cj3++) {
+          tbodyHtml += '<td></td>';
+        }
+        tbodyHtml += '</tr>\n      ';
+      }
+
+      var downloadHtml = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>CSV Template — Futuraria Batch</title>\n<style>\n  * { margin:0; padding:0; box-sizing:border-box; }\n  body { background:#0f0f1a; color:#c8c8d4; font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif; padding:24px; }\n  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px; }\n  h1 { font-size:20px; font-weight:600; color:#e0d6c2; }\n  .actions { display:flex; gap:8px; }\n  .btn { padding:8px 16px; border:none; border-radius:6px; font-size:13px; cursor:pointer; font-weight:500; }\n  .btn-dl { background:#c8b898; color:#0f0f1a; }\n  .btn-dl:hover { background:#d4c5a5; }\n  .btn-copy { background:rgba(200,184,152,0.12); color:#c8b898; border:1px solid rgba(200,184,152,0.2); }\n  .btn-copy:hover { background:rgba(200,184,152,0.2); }\n  .meta { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; font-size:12px; color:#888; }\n  .meta span { background:rgba(255,255,255,0.04); padding:4px 10px; border-radius:4px; }\n  .table-wrap { overflow-x:auto; border-radius:8px; border:1px solid rgba(255,255,255,0.08); }\n  table { width:100%; border-collapse:collapse; font-size:12px; }\n  th { background:rgba(200,184,152,0.1); color:#c8b898; padding:10px 12px; text-align:left; font-weight:600; white-space:nowrap; border-bottom:1px solid rgba(255,255,255,0.06); }\n  td { padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.04); color:#a0a0b0; }\n  tr:hover td { background:rgba(255,255,255,0.02); }\n  .col-type { font-size:10px; color:#666; margin-left:6px; }\n  .toast { position:fixed; top:16px; right:16px; background:#059669; color:#fff; padding:10px 20px; border-radius:6px; font-size:13px; display:none; z-index:100; }\n  .templates { margin-bottom:20px; padding:14px; background:rgba(255,255,255,0.02); border-radius:8px; border:1px solid rgba(255,255,255,0.05); }\n  .templates h3 { font-size:13px; color:#888; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; margin-top:0; }\n  .tpl-list { display:flex; flex-wrap:wrap; gap:8px; }\n  .tpl-tag { font-size:11px; background:rgba(200,184,152,0.08); color:#c8b898; padding:4px 10px; border-radius:4px; font-family:monospace; }\n  .note { font-size:11px; color:#555; margin-top:16px; line-height:1.6; }\n</style>\n</head>\n<body>\n<div class="header">\n  <h1>📊 Template Pool CSV — ' + templateIds.length + ' templates, ' + (columns.length + 1) + ' columns, ' + rowCount + ' rows</h1>\n  <div class="actions">\n    <button class="btn btn-copy" onclick="copyCSV()">📋 Copy CSV</button>\n    <button class="btn btn-dl" onclick="downloadCSV()">⬇ Download .csv</button>\n  </div>\n</div>\n<div class="meta">\n  <span>Delimiter: ' + (delimiter === "\t" ? "TAB" : delimiter) + '</span>\n  <span>Rows: ' + rowCount + '</span>\n  <span>Columns: ' + (columns.length + 1) + '</span>\n  <span>Generated: ' + new Date().toISOString() + '</span>\n</div>\n<div class="templates">\n  <h3>Available Templates</h3>\n  <div class="tpl-list">\n    ' + tplTagsHtml + '\n  </div>\n</div>\n<div class="table-wrap">\n  <table>\n    <thead>\n      <tr>\n        <th>_template<span class="col-type">id</span></th>\n        ' + thCellsHtml + '\n      </tr>\n    </thead>\n    <tbody>\n      ' + tbodyHtml + '\n    </tbody>\n  </table>\n</div>\n<div class="note">💡 Save this .html file — open anytime to download CSV. Column <code>_template</code> uses immutable templateId. Empty cells = fill with content. First row shows placeholder templateId — replace with the template you want per row.</div>\n<div class="toast" id="toast">Copied!</div>\n<script>\n  var csvData = `' + csvForJs + '`;\n  var cleanCsv = `' + cleanCsvForJs + '`;\n\n  function downloadCSV() {\n    var blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });\n    var url = URL.createObjectURL(blob);\n    var a = document.createElement("a");\n    a.href = url;\n    a.download = "template_pool.csv";\n    document.body.appendChild(a);\n    a.click();\n    document.body.removeChild(a);\n    URL.revokeObjectURL(url);\n    showToast("CSV downloaded!");\n  }\n\n  function copyCSV() {\n    navigator.clipboard.writeText(csvData).then(function() {\n      showToast("CSV copied to clipboard!");\n    });\n  }\n\n  function showToast(msg) {\n    var t = document.getElementById("toast");\n    t.textContent = msg;\n    t.style.display = "block";\n    setTimeout(function() { t.style.display = "none"; }, 2000);\n  }\n<\/script>\n</body>\n</html>';
+
       return {
         csv: csv,
+        cleanCsv: cleanCsv,
+        dataUri: dataUri,
+        downloadHtml: downloadHtml,
         columns: ["_template"].concat(columns.map(function (c) { return c.name; })),
         columnDetails: columns,
         templateIds: templateIds,
@@ -6046,6 +6091,7 @@ async function handleMethod(method, params, userId) {
         delimiter: delimiter,
         profiles: profiles,
         _deterministic: true,
+        _note: "Save downloadHtml as .html file → open in browser → one-click CSV download. Or paste dataUri in any browser address bar for instant .csv file.",
       };
     }
 
