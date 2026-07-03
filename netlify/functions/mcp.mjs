@@ -1687,7 +1687,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_frame_content",
-    description: "Surgically update a specific element inside a frame by CSS selector. Uses cheerio for deterministic DOM patching. Supports: text replacement, innerHTML swap, src/href/className changes, style overrides, backgroundImage swap, and element removal.",
+    description: "Surgically update a specific element inside a frame by CSS selector. Uses cheerio for deterministic DOM patching. Supports: text replacement, innerHTML swap, src/href/className changes, arbitrary attributes (attr), style overrides, backgroundImage swap, and element removal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1706,6 +1706,7 @@ const MCP_TOOLS = [
             style: { type: "object", description: "CSS properties to set (e.g. {color: 'red', fontSize: '20px'})" },
             backgroundImage: { type: "string", description: "Set background-image URL (pass the URL, wraps in url())" },
             remove: { type: "boolean", description: "Remove the element entirely" },
+            attr: { type: "object", description: "HTML attributes to set on the element (e.g. { 'data-slot': 'headline', alt: 'Photo' }). Pass null as value to remove the attribute." },
           },
         },
       },
@@ -5831,6 +5832,20 @@ async function handleMethod(method, params, userId) {
         if (patch.className !== undefined) {
           $el.attr("class", patch.className);
           applied.push("class set to " + patch.className);
+        }
+        if (patch.attr && typeof patch.attr === "object") {
+          var attrKeys = Object.keys(patch.attr).sort();
+          for (var ai = 0; ai < attrKeys.length; ai++) {
+            var attrName = attrKeys[ai];
+            var attrVal = patch.attr[attrName];
+            if (attrVal === null) {
+              $el.removeAttr(attrName);
+              applied.push("attr removed: " + attrName);
+            } else {
+              $el.attr(attrName, String(attrVal));
+              applied.push("attr set: " + attrName + "=" + attrVal);
+            }
+          }
         }
         if (patch.backgroundImage !== undefined) {
           var currentStyle = $el.attr("style") || "";

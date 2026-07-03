@@ -27,6 +27,75 @@ var IMAGE_TAGS = ["img"];
 var FONT_SIZE_PROPS = ["font-size"];
 var WIDTH_PROPS = ["width"];
 
+// ─── Content vs Chrome Filtering ─────────────────────────────────
+
+// Element classes that indicate decorative elements (never content slots)
+var DECORATIVE_CLASSES = [
+  "bg-grid", "glow-tr", "glow-bl", "glow-tl", "glow-br",
+  "star", "accent-line", "bg-pattern", "bg-gradient",
+  "grid-line", "noise-overlay", "glass-effect", "blur-bg",
+  "gradient-bg",
+];
+
+// Element classes that indicate template chrome (logo, page numbers, etc.)
+var CHROME_CLASSES = [
+  "futuraria-logo", "wordmark", "slide-num", "page-num",
+  "footer-bar", "header-bar", "nav-bar", "breadcrumb",
+  "pagination",
+];
+
+// Tags that are always structural (never content)
+var STRUCTURAL_TAGS = [
+  "html", "head", "body", "style", "script", "meta", "link",
+  "br", "hr", "iframe", "svg",
+];
+
+/**
+ * Determines whether an element is a content element (should be profiled
+ * as a slot) or decorative/chrome (should be ignored).
+ *
+ * Rules (in order):
+ *   1. Structural tags → excluded
+ *   2. Decorative classes → excluded
+ *   3. Chrome classes → excluded
+ *   4. .slide container → excluded (entire frame wrapper)
+ *   5. No text AND no src/background-image → excluded (empty decorative)
+ *   6. Text < 3 chars and no data-slot and no src → excluded (likely chrome)
+ */
+function isContentElement($el) {
+  var tag = ($el.prop("tagName") || "").toLowerCase();
+  var classes = ($el.attr("class") || "").split(/\s+/);
+  var text = ($el.text() || "").trim();
+  var src = ($el.attr("src") || "").trim();
+  var style = ($el.attr("style") || "").trim();
+  var hasBgImage = /background-image\s*:\s*url\(/i.test(style);
+  var hasSrc = !!src || hasBgImage;
+
+  // Rule 1: structural tags
+  if (STRUCTURAL_TAGS.indexOf(tag) !== -1) return false;
+
+  // Rule 2: decorative classes
+  for (var i = 0; i < DECORATIVE_CLASSES.length; i++) {
+    if (classes.indexOf(DECORATIVE_CLASSES[i]) !== -1) return false;
+  }
+
+  // Rule 3: chrome classes
+  for (var j = 0; j < CHROME_CLASSES.length; j++) {
+    if (classes.indexOf(CHROME_CLASSES[j]) !== -1) return false;
+  }
+
+  // Rule 4: .slide container
+  if (classes.indexOf("slide") !== -1) return false;
+
+  // Rule 5: no text and no image
+  if (!text && !hasSrc) return false;
+
+  // Rule 6: very short text without data-slot or src
+  if (text.length < 3 && !$el.attr("data-slot") && !hasSrc) return false;
+
+  return true;
+}
+
 // ─── Slot Detection ─────────────────────────────────────────────
 
 /**
@@ -188,6 +257,10 @@ function classifyLayout(slots) {
 /**
  * Profile a single frame: detect slots, estimate capacity, classify layout.
  *
+ * Two operating modes:
+ *   EXPLICIT: If any element has data-slot → ONLY data-slot elements are slots
+ *   AUTO: No data-slot found → auto-detect content elements, filter out chrome
+ *
  * @param {string} html - Frame HTML content
  * @param {string} css - Frame CSS content
  * @param {Object} frameMeta - { id, name, width, height }
@@ -200,8 +273,19 @@ export function profileFrame(html, css, frameMeta) {
   var frameWidth = frameMeta.width || 1080;
   var frameHeight = frameMeta.height || 1080;
 
+  // ── Pre-scan: check if ANY element has data-slot → EXPLICIT mode ──
+  var hasExplicitSlots = false;
+  $("*").each(function () {
+    if ($(this).attr("data-slot")) {
+      hasExplicitSlots = true;
+      return false; // break out of cheerio each()
+    }
+  });
+
   var slots = [];
   var seenText = {};
+  var elementsScanned = 0;
+  var elementsFiltered = 0;
 
   // Walk all elements with content or src
   $("*").each(function () {
@@ -211,9 +295,23 @@ export function profileFrame(html, css, frameMeta) {
     var src = ($el.attr("src") || "").trim();
     var backgroundStyle = ($el.attr("style") || "").trim();
 
-    // Skip empty elements and utility tags
+    // Skip utility/structural tags (fast path)
     if (!tag || tag === "html" || tag === "head" || tag === "body" ||
         tag === "script" || tag === "style" || tag === "meta" || tag === "link") {
+      return;
+    }
+
+    elementsScanned++;
+
+    // ── EXPLICIT mode: only elements with data-slot ──
+    if (hasExplicitSlots && !$el.attr("data-slot")) {
+      elementsFiltered++;
+      return;
+    }
+
+    // ── AUTO mode: filter decorative/chrome elements ──
+    if (!hasExplicitSlots && !isContentElement($el)) {
+      elementsFiltered++;
       return;
     }
 
@@ -232,6 +330,7 @@ export function profileFrame(html, css, frameMeta) {
         tag: tag,
         dimensions: ($el.attr("width") || $el.attr("data-width") || "") + "×" + ($el.attr("height") || $el.attr("data-height") || ""),
         sampleSrc: src || null,
+        _explicit: hasExplicitSlots,
       });
       return;
     }
@@ -258,6 +357,7 @@ export function profileFrame(html, css, frameMeta) {
         tag: tag,
         maxChars: maxChars,
         sampleContent: text.length > 80 ? text.substring(0, 77) + "..." : text,
+        _explicit: hasExplicitSlots,
       });
     }
   });
@@ -270,8 +370,8 @@ export function profileFrame(html, css, frameMeta) {
 
   var layoutType = classifyLayout(slots);
 
-  // Confidence: based on ratio of slots detected vs elements parsed
-  var totalElements = $("*").length;
+  // Confidence: based on ratio of slots detected vs content elements passed filter
+  var totalElements = elementsScanned;
   var confidence = totalElements > 0 && slots.length / totalElements > 0.5 ? "high" :
     slots.length > 0 ? "medium" : "low";
 
@@ -285,6 +385,7 @@ export function profileFrame(html, css, frameMeta) {
     height: frameHeight,
     layoutType: layoutType,
     confidence: confidence,
+    mode: hasExplicitSlots ? "explicit" : "auto",
     slots: slots,
     stats: {
       totalSlots: slots.length,
@@ -292,6 +393,13 @@ export function profileFrame(html, css, frameMeta) {
       imageSlots: imageSlots.length,
       ctaSlots: slots.filter(function (s) { return s.type === "cta"; }).length,
       totalMaxChars: textSlots.reduce(function (sum, s) { return sum + (s.maxChars || 0); }, 0),
+      explicitSlots: slots.filter(function (s) { return s._explicit; }).length,
+      autoSlots: slots.filter(function (s) { return !s._explicit; }).length,
+    },
+    _debug: {
+      elementsScanned: elementsScanned,
+      elementsFiltered: elementsFiltered,
+      hasExplicitSlots: hasExplicitSlots,
     },
   };
 }
