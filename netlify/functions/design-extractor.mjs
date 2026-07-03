@@ -140,7 +140,7 @@ var SHADOW_PROPS = ["box-shadow"];
  * Returns array of { selector, property, value }
  * Handles @import, @keyframes, @media by storing them raw.
  */
-function parseCss(cssText) {
+export function parseCss(cssText) {
   var rules = [];
   var atRules = []; // @keyframes, @supports, @media — stored raw
   var imports = [];

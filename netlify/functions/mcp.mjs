@@ -4,6 +4,7 @@ import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash } from "./design-extractor.mjs";
+import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -2030,6 +2031,89 @@ const MCP_TOOLS = [
         render: { type: "boolean", description: "Auto-render all created templates (default true)" },
       },
       required: ["recipeId", "variableSets"],
+    },
+  },
+  {
+    name: "profile_template_pool",
+    description: "Profile multiple templates to detect content slots (text, image, richtext, cta), estimate text capacity (maxChars), classify layout type, and compute CSV column schema. Supports data-slot attribute for explicit slot naming. Deterministic — no AI involved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Template IDs to profile. Uses the first frame of each template as the source.",
+        },
+      },
+      required: ["templateIds"],
+    },
+  },
+  {
+    name: "generate_csv_template",
+    description: "Generate a CSV template with columns matching profiled slots across a template pool. Includes _template column with immutable templateId values and human-readable names in comments. Ready for Excel/Sheets. Deterministic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Template IDs in the pool",
+        },
+        rowCount: {
+          type: "number",
+          description: "Number of empty data rows to generate (default 1)",
+        },
+        delimiter: {
+          type: "string",
+          description: "CSV delimiter (default comma)",
+        },
+      },
+      required: ["templateIds"],
+    },
+  },
+  {
+    name: "apply_csv_to_frames",
+    description: "Apply CSV data to generate frames from a template pool. Each row becomes a frame in a NEW output template. The system duplicates the chosen template and fills slots with CSV values. Empty cells are skipped. Deterministic — no AI content generation, no summarization. Returns per-row report.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: {
+          type: "string",
+          description: "Workspace ID where the output template will be created",
+        },
+        csvData: {
+          type: "string",
+          description: "Raw CSV content as string (with header row, _template column required)",
+        },
+        templateIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Template IDs in the pool. First frame of each is used as the source.",
+        },
+        outputName: {
+          type: "string",
+          description: "Name for the output template. Default: 'Batch Export — YYYY-MM-DD'",
+        },
+        delimiter: {
+          type: "string",
+          description: "CSV delimiter (default comma)",
+        },
+        naming: {
+          type: "string",
+          description: "Frame naming template. Use {index} and column names in braces. Example: 'Post {index} — {titulo}'",
+        },
+        onMissingTemplate: {
+          type: "string",
+          enum: ["error", "skip"],
+          description: "What to do if _template value is not in the pool (default 'error')",
+        },
+        onOverflow: {
+          type: "string",
+          enum: ["truncate", "skip_row", "continue_warn"],
+          description: "What to do if text exceeds slot maxChars (default 'truncate')",
+        },
+      },
+      required: ["workspaceId", "csvData", "templateIds"],
     },
   },
 ];
@@ -5836,6 +5920,431 @@ async function handleMethod(method, params, userId) {
       };
 
       return result;
+    }
+
+    // ── profile_template_pool: deterministic slot detection across template pool ──
+    case "profile_template_pool": {
+      var templateIds = params.templateIds;
+      if (!templateIds || !templateIds.length) throw { code: -32602, message: "templateIds array is required" };
+
+      var profiles = [];
+      for (var i = 0; i < templateIds.length; i++) {
+        var tid = templateIds[i];
+        var tpl = await templates.getTemplate(tid);
+        if (!tpl) throw { code: -32000, message: "Template not found: " + tid };
+        if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
+        var frame = tpl.frames[0];
+        var profile = profileFrame(frame.html || "", frame.css || "", {
+          id: frame.id,
+          name: frame.name || tpl.name,
+          width: frame.width || tpl.width || 1080,
+          height: frame.height || tpl.height || 1080,
+        });
+        profiles.push(profile);
+      }
+
+      var poolResult = profileTemplatePool(profiles);
+      return {
+        profiles: poolResult.profiles,
+        csvColumns: poolResult.csvColumns,
+        templateCount: profiles.length,
+        totalSlots: profiles.reduce(function (s, p) { return s + p.slots.length; }, 0),
+        _deterministic: true,
+      };
+    }
+
+    // ── generate_csv_template: build CSV from profiled pool ──
+    case "generate_csv_template": {
+      var templateIds = params.templateIds;
+      var rowCount = params.rowCount || 1;
+      var delimiter = params.delimiter || ",";
+      if (!templateIds || !templateIds.length) throw { code: -32602, message: "templateIds array is required" };
+
+      // Profile the pool
+      var profiles = [];
+      var templateNames = {};
+      for (var i = 0; i < templateIds.length; i++) {
+        var tid = templateIds[i];
+        var tpl = await templates.getTemplate(tid);
+        if (!tpl) throw { code: -32000, message: "Template not found: " + tid };
+        if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
+        var frame = tpl.frames[0];
+        var profile = profileFrame(frame.html || "", frame.css || "", {
+          id: frame.id, name: frame.name || tpl.name,
+          width: frame.width || tpl.width || 1080, height: frame.height || tpl.height || 1080,
+        });
+        profiles.push(profile);
+        templateNames[tid] = frame.name || tpl.name;
+      }
+      var poolResult = profileTemplatePool(profiles);
+
+      // Build CSV columns (union across pool)
+      var columns = poolResult.csvColumns;
+
+      // Escape a CSV field
+      function csvEscape(val) {
+        var s = String(val || "");
+        if (s.indexOf(delimiter) !== -1 || s.indexOf("\"") !== -1 || s.indexOf("\n") !== -1) {
+          return "\"" + s.replace(/"/g, "\"\"") + "\"";
+        }
+        return s;
+      }
+
+      // Build comment header
+      var lines = [];
+      lines.push("# Template Pool CSV — generated " + new Date().toISOString());
+      lines.push("# Delimiter: " + (delimiter === "\t" ? "TAB" : delimiter));
+      lines.push("# _template column: immutable templateId (copy from Available templates below)");
+      lines.push("# Slot columns: " + columns.map(function (c) { return c.name + " (" + c.type + ")"; }).join(", "));
+      lines.push("#");
+      lines.push("# Available templates:");
+      for (var ti = 0; ti < templateIds.length; ti++) {
+        lines.push("#   " + templateIds[ti] + "  —  " + (templateNames[templateIds[ti]] || "Unknown"));
+      }
+      lines.push("#");
+
+      // Header row
+      var headerCells = ["_template"];
+      for (var ci = 0; ci < columns.length; ci++) {
+        headerCells.push(columns[ci].name);
+      }
+      lines.push(headerCells.map(csvEscape).join(delimiter));
+
+      // Data rows (empty, placeholder _template)
+      for (var ri = 0; ri < rowCount; ri++) {
+        var row = [templateIds[0]]; // placeholder
+        for (var cj = 0; cj < columns.length; cj++) {
+          row.push("");
+        }
+        lines.push(row.map(csvEscape).join(delimiter));
+      }
+
+      var csv = lines.join("\n");
+
+      return {
+        csv: csv,
+        columns: ["_template"].concat(columns.map(function (c) { return c.name; })),
+        columnDetails: columns,
+        templateIds: templateIds,
+        templateNames: templateNames,
+        rowCount: rowCount,
+        delimiter: delimiter,
+        profiles: profiles,
+        _deterministic: true,
+      };
+    }
+
+    // ── apply_csv_to_frames: generate frames from CSV → new output template ──
+    case "apply_csv_to_frames": {
+      var workspaceId = params.workspaceId;
+      var csvData = params.csvData;
+      var templateIds = params.templateIds;
+      var outputName = params.outputName || ("Batch Export — " + new Date().toISOString().slice(0, 10));
+      var delimiter = params.delimiter || ",";
+      var naming = params.naming || "Frame {index}";
+      var onMissingTemplate = params.onMissingTemplate || "error";
+      var onOverflow = params.onOverflow || "truncate";
+
+      if (!workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      if (!csvData) throw { code: -32602, message: "csvData is required" };
+      if (!templateIds || !templateIds.length) throw { code: -32602, message: "templateIds array is required" };
+
+      // ── Parse CSV ──
+      function csvParse(text, delim) {
+        var rows = [];
+        var rawLines = text.split(/\r?\n/);
+        var currentRow = [];
+        var currentField = "";
+        var inQ = false;
+
+        function pushField() {
+          currentRow.push(currentField.trim());
+          currentField = "";
+        }
+
+        for (var li = 0; li < rawLines.length; li++) {
+          var line = rawLines[li];
+
+          // Skip comment lines
+          if (!inQ && (line.trim().length === 0 || line.trim()[0] === "#")) continue;
+
+          for (var ci = 0; ci < line.length; ci++) {
+            var ch = line[ci];
+            if (inQ) {
+              if (ch === "\"") {
+                if (ci + 1 < line.length && line[ci + 1] === "\"") {
+                  currentField += "\"";
+                  ci++;
+                } else {
+                  inQ = false;
+                }
+              } else {
+                currentField += ch;
+              }
+            } else {
+              if (ch === "\"") {
+                inQ = true;
+              } else if (ch === delim) {
+                pushField();
+              } else {
+                currentField += ch;
+              }
+            }
+          }
+
+          if (!inQ) {
+            pushField();
+            if (currentRow.length > 0 && (currentRow.length > 1 || currentRow[0] !== "")) {
+              rows.push(currentRow);
+            }
+            currentRow = [];
+          } else {
+            currentField += "\n";
+          }
+        }
+
+        // Flush any remaining field
+        if (currentField.length > 0) pushField();
+        if (currentRow.length > 0 && (currentRow.length > 1 || currentRow[0] !== "")) {
+          rows.push(currentRow);
+        }
+
+        return rows;
+      }
+
+      var allRows = csvParse(csvData, delimiter);
+      if (allRows.length === 0) throw { code: -32602, message: "CSV has no data rows" };
+
+      // Header is first row
+      var headerRow = allRows[0];
+      var dataRows = allRows.slice(1);
+
+      // Find _template column index
+      var templateColIdx = -1;
+      for (var hi = 0; hi < headerRow.length; hi++) {
+        if (headerRow[hi].toLowerCase() === "_template") { templateColIdx = hi; break; }
+      }
+      if (templateColIdx === -1) throw { code: -32602, message: "CSV must have a _template column" };
+
+      // ── Pre-load templates and profile each ──
+      var templateCache = {};
+      var slotMapByTemplate = {}; // templateId → slotsByName: { slotName: slot }
+
+      for (var ti = 0; ti < templateIds.length; ti++) {
+        var tid = templateIds[ti];
+        var tpl = await templates.getTemplate(tid);
+        if (!tpl) throw { code: -32000, message: "Template not found: " + tid };
+        if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
+        templateCache[tid] = tpl;
+
+        var frame = tpl.frames[0];
+        var prof = profileFrame(frame.html || "", frame.css || "", {
+          id: frame.id, name: frame.name || tpl.name,
+          width: frame.width || tpl.width || 1080, height: frame.height || tpl.height || 1080,
+        });
+
+        var slotsByName = {};
+        for (var si = 0; si < prof.slots.length; si++) {
+          slotsByName[prof.slots[si].name] = prof.slots[si];
+        }
+        slotMapByTemplate[tid] = slotsByName;
+      }
+
+      // ── Create output template ──
+      var outputTpl = store.createTemplate({
+        workspaceId: workspaceId,
+        name: outputName,
+        width: 1080,
+        height: 1080,
+        userId: userId,
+      });
+      outputTpl.engine = "html";
+      outputTpl.frames = [];
+      outputTpl.html = "";
+      outputTpl.css = "";
+
+      // ── Process each CSV row ──
+      var report = [];
+      var yOffset = 0;
+      var colSpacing = 40;
+
+      for (var ri = 0; ri < dataRows.length; ri++) {
+        var row = dataRows[ri];
+        var rowTemplateId = (row[templateColIdx] || "").trim();
+
+        // Validate template
+        if (!rowTemplateId) {
+          if (onMissingTemplate === "skip") {
+            report.push({ row: ri + 1, status: "skipped", reason: "empty _template" });
+            continue;
+          }
+          throw { code: -32602, message: "Row " + (ri + 1) + ": _template is empty" };
+        }
+
+        // Resolve templateId from available pool
+        var resolvedTid = null;
+        // Try exact match first
+        if (templateCache[rowTemplateId]) {
+          resolvedTid = rowTemplateId;
+        } else {
+          // Try partial match (user may have typed just the suffix)
+          for (var ati = 0; ati < templateIds.length; ati++) {
+            if (templateIds[ati].indexOf(rowTemplateId) !== -1 || rowTemplateId.indexOf(templateIds[ati]) !== -1) {
+              resolvedTid = templateIds[ati];
+              break;
+            }
+          }
+        }
+
+        if (!resolvedTid) {
+          if (onMissingTemplate === "skip") {
+            report.push({ row: ri + 1, status: "skipped", reason: "template not found: " + rowTemplateId });
+            continue;
+          }
+          throw { code: -32000, message: "Row " + (ri + 1) + ": template not in pool: " + rowTemplateId };
+        }
+
+        var srcTpl = templateCache[resolvedTid];
+        var srcFrame = srcTpl.frames[0];
+        var slotsByName = slotMapByTemplate[resolvedTid];
+
+        // Deep-clone the source frame
+        var newFrame = JSON.parse(JSON.stringify(srcFrame));
+        var newFrameId = "frame_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+        newFrame.id = newFrameId;
+        newFrame.x = 0;
+        newFrame.y = yOffset;
+
+        // Build frame name from naming template
+        var frameName = naming;
+        frameName = frameName.replace(/\{index\}/g, String(ri + 1));
+        for (var hi2 = 0; hi2 < headerRow.length; hi2++) {
+          var colName = headerRow[hi2];
+          var colVal = (row[hi2] || "").trim();
+          frameName = frameName.replace(new RegExp("\\{" + colName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\}", "gi"), colVal);
+        }
+        newFrame.name = frameName;
+
+        newFrame.order = outputTpl.frames.length;
+        newFrame.lastModifiedBy = "agent:apply_csv_to_frames";
+        newFrame.lastModifiedAt = new Date().toISOString();
+
+        // ── Apply CSV values to the frame HTML ──
+        var $ = cheerio.load(newFrame.html || "");
+        var rowReport = { row: ri + 1, templateId: resolvedTid, frameId: newFrameId, name: frameName, applied: [], warnings: [] };
+
+        for (var hii = 0; hii < headerRow.length; hii++) {
+          if (hii === templateColIdx) continue; // skip _template column
+
+          var hdrColName = headerRow[hii];
+          var cellValue = (row[hii] || "").trim();
+          if (!cellValue) continue; // skip empty cells
+
+          var slot = slotsByName[hdrColName];
+          if (!slot) {
+            rowReport.warnings.push("Column '" + hdrColName + "' has no matching slot in template " + resolvedTid);
+            continue;
+          }
+
+          // Check overflow for text slots
+          if ((slot.type === "text" || slot.type === "richtext") && slot.maxChars && cellValue.length > slot.maxChars) {
+            if (onOverflow === "skip_row") {
+              rowReport.status = "skipped";
+              rowReport.reason = "Text overflow in '" + hdrColName + "': " + cellValue.length + " > " + slot.maxChars + " chars";
+              break; // skip this row entirely
+            } else if (onOverflow === "continue_warn") {
+              rowReport.warnings.push("Text truncated in '" + hdrColName + "': " + cellValue.length + " > " + slot.maxChars + " chars");
+              cellValue = cellValue.substring(0, slot.maxChars);
+            } else {
+              // truncate (default)
+              cellValue = cellValue.substring(0, slot.maxChars);
+              rowReport.applied.push(hdrColName + ": text (truncated " + cellValue.length + " chars)");
+            }
+          }
+
+          // Apply value based on slot type
+          var $el = $(slot.selector);
+
+          if ($el.length === 0 && slot.tag) {
+            // Fallback: try tag selector
+            $el = $(slot.tag);
+          }
+
+          if ($el.length > 0) {
+            if (slot.type === "image") {
+              $el.attr("src", cellValue);
+              if (cellValue.indexOf("background") !== -1 || cellValue.indexOf("url(") !== -1) {
+                // cell contains a CSS background-image value
+                var currentStyle = $el.attr("style") || "";
+                currentStyle = currentStyle.replace(/background-image\s*:\s*url\([^)]+\)\s*;?\s*/gi, "");
+                currentStyle += " background-image: url(" + cellValue + ");";
+                $el.attr("style", currentStyle.trim());
+              }
+            } else if (slot.type === "cta") {
+              $el.text(cellValue);
+            } else {
+              // text, richtext
+              $el.text(cellValue);
+            }
+            if (!rowReport.applied.some(function (a) { return a.indexOf(hdrColName) === 0; })) {
+              rowReport.applied.push(hdrColName + ": " + slot.type);
+            }
+          } else {
+            rowReport.warnings.push("Column '" + hdrColName + "': selector '" + slot.selector + "' did not match any element");
+          }
+        }
+
+        // Skip-row overflow handling
+        if (rowReport.status === "skipped") {
+          report.push(rowReport);
+          continue;
+        }
+
+        // Serialize the modified HTML
+        newFrame.html = $.html();
+        newFrame.contentHash = computeFrameHash(newFrame.html || "", newFrame.css || "");
+
+        outputTpl.frames.push(newFrame);
+        yOffset += (newFrame.height || 1080) + colSpacing;
+
+        rowReport.status = "ok";
+        report.push(rowReport);
+      }
+
+      // ── Persist output template ──
+      outputTpl.metadata = { ...(outputTpl.metadata || {}), updatedAt: new Date().toISOString() };
+      // Also set output template dimensions to accommodate all frames
+      if (outputTpl.frames.length > 0 && yOffset > 0) {
+        outputTpl.height = yOffset;
+      }
+
+      await templates.updateTemplate(outputTpl.id, { frames: outputTpl.frames, height: outputTpl.height });
+
+      // Dual-write to Supabase
+      var sb = getSupabase();
+      if (sb) {
+        try {
+          var row = {
+            id: outputTpl.id, name: outputTpl.name, workspace_id: workspaceId,
+            data: outputTpl, updated_at: new Date().toISOString(),
+          };
+          if (UUID_RE.test(userId)) row.user_id = userId;
+          await sb.from("templates").upsert(row);
+        } catch { /* non-blocking */ }
+      }
+
+      autoSnapshot(outputTpl.id, "apply_csv_to_frames");
+
+      return {
+        outputTemplateId: outputTpl.id,
+        outputTemplateName: outputName,
+        workspaceId: workspaceId,
+        totalRows: dataRows.length,
+        generatedFrames: report.filter(function (r) { return r.status === "ok"; }).length,
+        skippedRows: report.filter(function (r) { return r.status === "skipped"; }).length,
+        report: report,
+        _deterministic: true,
+      };
     }
 
     default:

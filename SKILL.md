@@ -177,7 +177,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **119 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, and iterative change attribution.
+AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **122 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, and iterative change attribution.
 
 ### Protocol Flow
 
@@ -186,7 +186,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 119 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 122 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -211,7 +211,7 @@ Agent (Claude / Cursor / Custom)
 | Collaboration | `share_template`, `claim_section`, `get_active_agents`, `broadcast_section_change` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
-| Design System | `generate_design_artifacts`, `get_design_artifacts`, `duplicate_frame`, `update_frame_content`, `get_frame_changes` | 5 |
+| Design System | `generate_design_artifacts`, `get_design_artifacts`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 8 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
 ### Agent Workflow Patterns (via MCP)
@@ -275,6 +275,42 @@ tools/call: get_frame_changes({ templateId: tplId, sinceTimestamp: "2026-06-25T0
   → { changedFrames: ["f1"], unchangedFrames: ["f2"], currentHashes: {...} }
 // Use to know if human edited after AI's last change
 ```
+
+**Pattern 8: Batch content generation — CSV-driven frame automation**
+```
+// Step 1: Profile template pool to detect slots
+tools/call: profile_template_pool({ templateIds: ["tpl_abc", "tpl_def"] })
+  → { profiles: [...], csvColumns: [...], totalSlots: 12, _deterministic: true }
+
+// Step 2: Generate CSV template for the human
+tools/call: generate_csv_template({ templateIds: ["tpl_abc", "tpl_def"], rowCount: 30 })
+  → { csv: "# Template Pool CSV\n...", columns: [...], delimiter: ",", _deterministic: true }
+
+// — Human fills CSV in Excel/Sheets, choosing template per row via _template column —
+// CSV structure:
+//   _template     | title          | body           | hero_image
+//   tpl_abc       | "New Headline" | "Body text..." | "https://..."
+//   tpl_def       | "Compact Post" | "Short body"   | "https://..."
+
+// Step 3: Apply filled CSV → new output template with generated frames
+tools/call: apply_csv_to_frames({
+  workspaceId: "ws_123",
+  csvData: "<human-filled CSV content>",
+  templateIds: ["tpl_abc", "tpl_def"],
+  outputName: "News Batch — 30 Posts",
+  naming: "Post {index} — {title}",
+  onMissingTemplate: "skip",
+  onOverflow: "truncate"
+})
+  → { outputTemplateId: "tpl_new", generatedFrames: 28, skippedRows: 2, report: [...] }
+```
+
+**Key guarantees:**
+- The AI never touches content — system profiles templates deterministically, generates CSV template, human fills it
+- `_template` column uses immutable templateId (not mutable frame name) — templates are listed in CSV comments
+- Output goes to a NEW template, never modifying source templates
+- Slot overflow is handled deterministically: truncate, skip_row, or continue_warn
+- `data-slot` attribute on HTML elements overrides auto-detected slot names for precise CSV column naming
 
 ### Error Reference
 
@@ -1143,7 +1179,7 @@ npm run preview
 | `api/src/services/store.ts` | — | In-memory store (fallback) |
 | `api/src/services/supabase.ts` | — | Supabase admin client |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~337 | MCP server (10 tools) |
+| `netlify/functions/mcp.mjs` | ~337 | MCP server (122 tools) |
 | `netlify.toml` | 22 | Build config + redirects |
 | `package.json` | 36 | Config + react-doctor ignore rules |
 | `vite.config.ts` | 12 | Vite + React plugin + alias |
