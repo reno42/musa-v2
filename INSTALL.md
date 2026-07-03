@@ -1,0 +1,703 @@
+# Futuraria Design — Zero-to-Deploy Install Guide
+
+---
+
+## Quick Reference
+
+| Who | What to do | Time |
+|-----|-----------|------|
+| **Human** | Read [For Humans](#for-humans) — manual setup with dashboard clicks | 25 min |
+| **AI Agent** | Read [For AI Agents](#for-ai-agents) — execute phases sequentially | 10 min |
+| **Human → AI** | Tell your AI: *"Install the design tool from https://github.com/reno42/design"* | 30 sec |
+
+**Total cost: $0/month.** Netlify Free tier + Supabase Free tier (500MB). No credit card.
+
+---
+
+## For AI Agents
+
+> You are an AI agent reading this file. Your job: execute every phase in order.
+> Each phase ends with a ✓ checkpoint. If a checkpoint fails, stop and report to the human.
+> Ask the human for credentials only when the phase instructions say "ASK HUMAN".
+
+### Phase 0 — Prerequisites
+
+Run these checks first:
+
+```bash
+node -v        # ≥18 required
+npm -v         # ≥9 required
+git --version  # any version
+```
+
+If any fail, tell the human what's missing and stop.
+
+### Phase 1 — Local Clone & Run
+
+```bash
+git clone https://github.com/reno42/design.git
+cd design
+npm install
+npm run dev &
+```
+
+Wait 5 seconds, then verify:
+
+```bash
+curl -s http://localhost:5173 | head -5
+```
+
+Must return HTML with `<title>` tag. ✓
+
+**ASK HUMAN:** *"The editor is running at http://localhost:5173. Do you want cloud persistence (Supabase) and AI agent access (Netlify deploy)? Or is local-only fine?"*
+
+If local-only → **DONE.** Skip to Phase 4 (MCP config), pointing at `http://localhost:5173/mcp`.
+
+### Phase 2 — Supabase (Cloud Persistence)
+
+#### Path A: Automated via Management API
+
+**ASK HUMAN:** *"I need a Supabase Personal Access Token. Go to https://app.supabase.com/account/tokens, click 'Generate new token', and paste it here."*
+
+Store the PAT as `$SUPABASE_PAT`.
+
+**Step 1: Get available organizations**
+
+```bash
+curl -s https://api.supabase.com/v1/organizations \
+  -H "Authorization: Bearer $SUPABASE_PAT"
+```
+
+Pick the first organization ID from the response. Store as `$ORG_ID`.
+
+**Step 2: Create project**
+
+```bash
+DB_PASS=$(node -e "console.log(require('crypto').randomBytes(12).toString('base64').replace(/[^a-zA-Z0-9]/g,'').slice(0,16))")
+
+curl -s -X POST https://api.supabase.com/v1/projects \
+  -H "Authorization: Bearer $SUPABASE_PAT" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"futuraria\",\"organization_id\":\"$ORG_ID\",\"region\":\"us-east-1\",\"db_pass\":\"$DB_PASS\",\"kps_enabled\":false}"
+```
+
+Store `response.id` as `$PROJECT_REF`.
+
+**Step 3: Wait for project to be ready**
+
+```bash
+# Poll until status is ACTIVE_HEALTHY (up to 2 min)
+for i in $(seq 1 24); do
+  STATUS=$(curl -s https://api.supabase.com/v1/projects/$PROJECT_REF \
+    -H "Authorization: Bearer $SUPABASE_PAT" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).status)}catch(e){console.log('PENDING')}})")
+  echo "Status: $STATUS"
+  if [ "$STATUS" = "ACTIVE_HEALTHY" ]; then break; fi
+  sleep 5
+done
+```
+
+**Step 4: Get API keys**
+
+```bash
+KEYS=$(curl -s https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys \
+  -H "Authorization: Bearer $SUPABASE_PAT")
+
+SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
+SUPABASE_SERVICE_KEY=$(echo "$KEYS" | node -e "process.stdin.on('data',d=>{const k=JSON.parse(d);const s=k.find(x=>x.name==='service_role');console.log(s?s.api_key:'')})")
+SUPABASE_ANON_KEY=$(echo "$KEYS" | node -e "process.stdin.on('data',d=>{const k=JSON.parse(d);const a=k.find(x=>x.name==='anon');console.log(a?a.api_key:'')})")
+```
+
+**Step 5: Run complete database migration**
+
+The SQL is at the bottom of this file in [Appendix A: Complete Database Schema](#appendix-a-complete-database-schema). Read it, escape it for JSON, and POST:
+
+```bash
+# Read the SQL from Appendix A of this file, then:
+curl -s -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/sql" \
+  -H "Authorization: Bearer $SUPABASE_PAT" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\":\"<ESCAPED_SQL_HERE>\"}"
+```
+
+**Step 6: Verify tables exist**
+
+```bash
+curl -s "$SUPABASE_URL/rest/v1/workspaces?limit=1" \
+  -H "apikey: $SUPABASE_ANON_KEY"
+```
+
+Must return `[]` (not an error). ✓
+
+**Step 7: Write .env**
+
+Read `.env.example` and write `.env` with the actual values:
+
+```env
+SUPABASE_URL=https://PROJECT_REF.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbGciOi...  (service_role key)
+SUPABASE_ANON_KEY=eyJhbGciOi...     (anon key)
+```
+
+#### Path B: Fallback (if Management API fails)
+
+If Step 2 returns 403 or the human can't get a PAT:
+
+**ASK HUMAN:** *"Create a Supabase project manually: go to https://supabase.com, sign up, create a project called 'futuraria'. Then go to Project Settings → API and give me the Project URL, service_role key, and anon key."*
+
+Then:
+1. **ASK HUMAN:** *"Go to SQL Editor in your Supabase dashboard, paste the SQL from Appendix A of INSTALL.md, and run it."*
+2. Write `.env` with the provided values.
+
+✓ **Checkpoint:** Restart `npm run dev`. Create a workspace, create a template, refresh the browser — it persists. If data disappears, Supabase is not connected.
+
+### Phase 3 — Netlify Deploy
+
+**ASK HUMAN:** *"I'm going to deploy to Netlify. When the browser opens for OAuth, click 'Authorize'."*
+
+```bash
+npm install -g netlify-cli
+netlify login
+```
+
+**If netlify login fails (headless/token):**
+
+**ASK HUMAN:** *"I need a Netlify Personal Access Token. Go to https://app.netlify.com/user/applications#personal-access-tokens, create one, and paste it."*
+
+```bash
+netlify login --auth $NETLIFY_TOKEN
+```
+
+**Create and deploy:**
+
+```bash
+# Create site (interactive — pick team, enter site name like "my-futuraria")
+netlify init
+
+# Set env vars
+netlify env:set SUPABASE_URL "$SUPABASE_URL"
+netlify env:set SUPABASE_SERVICE_KEY "$SUPABASE_SERVICE_KEY"
+netlify env:set SUPABASE_ANON_KEY "$SUPABASE_ANON_KEY"
+
+# Build and deploy
+npm run build:functions
+npm run build
+netlify deploy --prod --dir=dist
+```
+
+Note the deployed URL from the output (e.g., `https://my-futuraria.netlify.app`). Store as `$SITE_URL`.
+
+**Verify:**
+
+```bash
+curl -s -X POST "$SITE_URL/mcp" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Must return JSON with `"tools": [...]` containing 122 tools. ✓
+
+### Phase 4 — Connect AI Agent to MCP
+
+Now configure the AI agent's own MCP connection to the deployed endpoint.
+
+**If the AI agent is Claude Desktop/Code:**
+
+Read and update the MCP config file:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add or merge:
+
+```json
+{
+  "mcpServers": {
+    "futuraria": {
+      "type": "sse",
+      "url": "https://YOUR-SITE.netlify.app/mcp",
+      "headers": { "x-api-key": "dev-key" }
+    }
+  }
+}
+```
+
+**If the AI agent is OpenClaw/Qoder:**
+
+Tell the human to add an MCP server in settings:
+- Name: `Futuraria`
+- Transport: `SSE`
+- URL: `https://YOUR-SITE.netlify.app/mcp`
+- Headers: `x-api-key = dev-key`
+
+**If the AI agent is Cursor:**
+
+Write `.cursor/mcp.json` in the current project:
+
+```json
+{
+  "mcpServers": {
+    "futuraria": {
+      "transport": "sse",
+      "url": "https://YOUR-SITE.netlify.app/mcp",
+      "headers": { "x-api-key": "dev-key" }
+    }
+  }
+}
+```
+
+✓ **Final Checkpoint:** Restart the AI agent. Ask the agent: *"Call list_workspaces on Futuraria."* It must return workspace data (or empty array if none exist yet).
+
+---
+
+### One-Message Install Recipe
+
+When the human tells their AI agent:
+
+> *"Install the Futuraria design tool from https://github.com/reno42/design"*
+
+The AI reads this INSTALL.md and executes Phases 0-4. Total human involvement:
+
+| Moment | Human action | Time |
+|--------|-------------|------|
+| Phase 1 | None (AI clones + installs) | 0 min |
+| Phase 2 | Paste Supabase PAT | 30 sec |
+| Phase 3 | Click Netlify OAuth "Authorize" | 10 sec |
+| Phase 4 | None (AI writes MCP config) | 0 min |
+
+Human does 2 things. Everything else is automated.
+
+---
+
+## For Humans
+
+Follow these steps manually. Each step tells you what to click, paste, or type.
+
+### Step 1: Install Prerequisites
+
+1. Install Node.js from https://nodejs.org (LTS version, ≥18)
+2. Install Git from https://git-scm.com
+
+Verify in terminal:
+
+```bash
+node -v
+npm -v
+git --version
+```
+
+### Step 2: Clone & Run Locally
+
+```bash
+git clone https://github.com/reno42/design.git
+cd design
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 in your browser. You should see the Futuraria dashboard.
+
+**Done!** The editor works at this point. Continue only if you want cloud persistence or AI agent access.
+
+### Step 3: Supabase (Cloud Persistence)
+
+1. Go to https://supabase.com → Sign up (free, no credit card)
+2. Click "New project" → name it "futuraria" → create
+3. Wait 2 minutes for the database to provision
+4. Go to Project Settings → API
+5. Copy these three values:
+   - **Project URL** (`https://xxxxx.supabase.co`)
+   - **service_role key** (starts with `eyJhbGciOi...`)
+   - **anon key** (starts with `eyJhbGciOi...`)
+6. Go to SQL Editor → New query
+7. Paste the complete SQL from [Appendix A](#appendix-a-complete-database-schema)
+8. Click "Run"
+
+Back on your machine:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in a text editor and fill in:
+
+```env
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbGciOi...  ← service_role key
+SUPABASE_ANON_KEY=eyJhbGciOi...     ← anon key
+```
+
+Restart `npm run dev`. Create a template, refresh — it should persist.
+
+### Step 4: Deploy to Netlify
+
+1. Install Netlify CLI:
+
+```bash
+npm install -g netlify-cli
+```
+
+2. Login:
+
+```bash
+netlify login
+```
+
+A browser opens — click "Authorize".
+
+3. Create a site:
+
+```bash
+netlify init
+```
+
+Choose "Create & configure a new site" → pick your team → enter a site name (e.g., `my-futuraria`).
+
+4. Upload environment variables:
+
+```bash
+netlify env:set SUPABASE_URL "https://your-project.supabase.co"
+netlify env:set SUPABASE_SERVICE_KEY "eyJhbGciOi..."
+netlify env:set SUPABASE_ANON_KEY "eyJhbGciOi..."
+```
+
+5. Build and deploy:
+
+```bash
+npm run build:functions
+npm run build
+netlify deploy --prod --dir=dist
+```
+
+Note the URL in the output (e.g., `https://my-futuraria.netlify.app`).
+
+6. Verify MCP works:
+
+```bash
+curl -X POST https://YOUR-SITE.netlify.app/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+You should see JSON with `"tools": [...]` — 122 tools.
+
+### Step 5: Connect Your AI Agent
+
+Configure your AI coding assistant to use the MCP endpoint.
+
+**Claude Desktop / Claude Code:**
+
+Find your config file:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add:
+
+```json
+{
+  "mcpServers": {
+    "futuraria": {
+      "type": "sse",
+      "url": "https://YOUR-SITE.netlify.app/mcp",
+      "headers": { "x-api-key": "dev-key" }
+    }
+  }
+}
+```
+
+Restart Claude. Ask: "List my Futuraria workspaces."
+
+**OpenClaw / Qoder:**
+
+Settings → MCP Servers → Add:
+- Name: `Futuraria`
+- Transport: `SSE`
+- URL: `https://YOUR-SITE.netlify.app/mcp`
+- Headers: `x-api-key = dev-key`
+
+**Cursor:**
+
+In your project folder, create `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "futuraria": {
+      "transport": "sse",
+      "url": "https://YOUR-SITE.netlify.app/mcp",
+      "headers": { "x-api-key": "dev-key" }
+    }
+  }
+}
+```
+
+### Step 6: Tell Your AI to Install Itself
+
+Now that your AI agent has MCP access, you can install the tool on a fresh machine with one message:
+
+> *"Install the Futuraria design tool from https://github.com/reno42/design"*
+
+The AI reads `INSTALL.md` and does everything — clone, Supabase, Netlify, MCP config — asking you only for the Supabase PAT and Netlify OAuth click.
+
+---
+
+## Tier Reference
+
+| Tier | What you get | Steps | Time | Cost |
+|------|-------------|-------|------|------|
+| **Local only** | Editor at :5173, no persistence, no MCP | 1-2 | 5 min | $0 |
+| **Local + DB** | Editor + permanent cloud storage | 1-3 | 15 min | $0 |
+| **Full cloud** | Public URL + MCP for AI agents + persistence | 1-5 | 25 min | $0 |
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `npm run dev` fails: "Cannot find module" | Missing node_modules | `npm install` |
+| Blank dashboard at :5173 | No workspace exists | Click "New Workspace" |
+| `netlify deploy` fails: "Not authorized" | CLI not logged in | `netlify login` |
+| MCP returns "Unauthorized" | Missing x-api-key header | Add `x-api-key: dev-key` to requests |
+| MCP returns 404 | Site not deployed or wrong URL | Check `netlify deploy --prod` succeeded |
+| Templates disappear after restart | No Supabase or wrong keys | Verify .env keys match Supabase dashboard |
+| `tools/list` returns fewer than 122 | Old deploy cached | `npm run build && netlify deploy --prod --dir=dist` |
+| Supabase Management API returns 403 | PAT lacks permissions or wrong org | Create project manually via dashboard (Path B) |
+
+---
+
+## Appendix A: Complete Database Schema
+
+Run this entire script in Supabase SQL Editor. Every table, index, storage bucket, RLS policy, and realtime publication is included. Nothing is omitted.
+
+```sql
+-- ═══════════════════════════════════════════════════════════════
+-- Futuraria Design — Complete Database Schema
+-- Run in Supabase SQL Editor or via Management API
+-- 7 tables + 4 indexes + 1 storage bucket + 5 RLS policies
+-- ═══════════════════════════════════════════════════════════════
+
+-- ============================================================
+-- TABLE 1: workspaces
+-- ============================================================
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_id TEXT,
+  member_ids TEXT[] DEFAULT '{}',
+  data JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 2: templates
+-- ============================================================
+CREATE TABLE IF NOT EXISTS templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id UUID,
+  data JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 3: recipes (design recipes / brand configs)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS recipes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  workspace_id TEXT,
+  structure JSONB NOT NULL DEFAULT '{}',
+  template_html TEXT,
+  template_css TEXT,
+  preview_url TEXT,
+  template_width INTEGER DEFAULT 1080,
+  template_height INTEGER DEFAULT 1080,
+  variables JSONB DEFAULT '{}'::jsonb,
+  tags TEXT[] DEFAULT '{}',
+  usage_count INTEGER DEFAULT 0,
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipes_workspace ON recipes(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_tags ON recipes USING gin(tags);
+
+-- ============================================================
+-- TABLE 4: batch_jobs
+-- ============================================================
+CREATE TABLE IF NOT EXISTS batch_jobs (
+  id TEXT PRIMARY KEY,
+  template_id TEXT,
+  recipe_id TEXT,
+  status TEXT DEFAULT 'queued',
+  total_count INTEGER DEFAULT 0,
+  completed_count INTEGER DEFAULT 0,
+  failed_count INTEGER DEFAULT 0,
+  results JSONB DEFAULT '[]',
+  errors JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+-- ============================================================
+-- TABLE 5: section_locks (multi-agent collaboration)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS section_locks (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL,
+  section_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  acquired_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(template_id, section_id)
+);
+
+-- ============================================================
+-- TABLE 6: brands
+-- ============================================================
+CREATE TABLE IF NOT EXISTS brands (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  workspace_id TEXT,
+  colors JSONB DEFAULT '[]',
+  fonts JSONB DEFAULT '[]',
+  logo JSONB,
+  spacing JSONB,
+  rules JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 7: assets (uploaded images metadata)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY DEFAULT ('asset_' || substr(md5(random()::text), 1, 16)),
+  name TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL DEFAULT 'image/png',
+  size_bytes BIGINT DEFAULT 0,
+  url TEXT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  tags TEXT[] DEFAULT '{}',
+  workspace_id TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_workspace ON assets(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_assets_created_at ON assets(created_at DESC);
+
+-- ============================================================
+-- STORAGE BUCKET: design-assets
+-- Public bucket for user-uploaded images.
+-- Max file size: 10 MB. Allowed types: PNG, JPEG, SVG, WebP.
+-- ============================================================
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'design-assets',
+  'design-assets',
+  true,
+  10485760,
+  ARRAY['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp']
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = true,
+  file_size_limit = 10485760,
+  allowed_mime_types = ARRAY['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+
+-- ============================================================
+-- RLS POLICIES: design-assets bucket
+-- The API uses service_role (bypasses RLS), but these policies
+-- ensure public URLs work for <img src> tags and future
+-- client-side access.
+-- ============================================================
+
+DROP POLICY IF EXISTS "Public read design-assets" ON storage.objects;
+CREATE POLICY "Public read design-assets"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'design-assets');
+
+DROP POLICY IF EXISTS "Insert to design-assets" ON storage.objects;
+CREATE POLICY "Insert to design-assets"
+  ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id = 'design-assets');
+
+DROP POLICY IF EXISTS "Delete from design-assets" ON storage.objects;
+CREATE POLICY "Delete from design-assets"
+  ON storage.objects FOR DELETE
+  USING (bucket_id = 'design-assets');
+
+-- ============================================================
+-- REALTIME: Enable on collaboration tables
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE recipes;
+ALTER PUBLICATION supabase_realtime ADD TABLE batch_jobs;
+ALTER PUBLICATION supabase_realtime ADD TABLE section_locks;
+ALTER PUBLICATION supabase_realtime ADD TABLE brands;
+
+-- ═══════════════════════════════════════════════════════════════
+-- VERIFICATION: Run this block to confirm everything exists
+-- ═══════════════════════════════════════════════════════════════
+SELECT 'workspaces table' as check_item,
+       count(*)::text as result
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'workspaces'
+UNION ALL
+SELECT 'templates table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'templates'
+UNION ALL
+SELECT 'recipes table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'recipes'
+UNION ALL
+SELECT 'batch_jobs table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'batch_jobs'
+UNION ALL
+SELECT 'section_locks table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'section_locks'
+UNION ALL
+SELECT 'brands table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'brands'
+UNION ALL
+SELECT 'assets table',
+       count(*)::text
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'assets'
+UNION ALL
+SELECT 'design-assets bucket',
+       count(*)::text
+FROM storage.buckets WHERE id = 'design-assets';
+
+-- All results should show '1'.
+```
+
+---
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `INSTALL.md` | ← This file. AI + human zero-to-deploy instructions. |
+| `SETUP.md` | Quickstart (shorter, human-only). |
+| `SKILL.md` | AI agent skill reference — 122 MCP tools, components, coding standards. |
+| `ARCHITECTURE_V2.md` | Deep-dive architecture (V2 HTML/CSS engine). |
+| `netlify.toml` | Build command, function bundler, URL redirects. |
+| `.env.example` | Template for Supabase credentials. |
+| `docs/SUPABASE_MIGRATIONS_DESIGN_HARNESS.sql` | Migration v1 source. |
+| `supabase_migrations_v3.sql` | Migration v3 source (assets, storage, RLS). |
