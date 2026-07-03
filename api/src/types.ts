@@ -27,6 +27,13 @@ export interface Frame {
   clipsContent: boolean;
   constraints: { left?: boolean; right?: boolean; top?: boolean; bottom?: boolean; centerX?: boolean; centerY?: boolean; scale?: boolean };
   padding: { top: number; right: number; bottom: number; left: number };
+  // HTML engine fields
+  html?: string;
+  css?: string;
+  // Iterative change attribution
+  contentHash?: string;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
 }
 
 export interface DesignTemplate {

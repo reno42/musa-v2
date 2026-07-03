@@ -177,7 +177,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **114 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, and collaborative design operations.
+AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **119 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, and iterative change attribution.
 
 ### Protocol Flow
 
@@ -186,7 +186,7 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 114 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 119 tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
@@ -211,6 +211,7 @@ Agent (Claude / Cursor / Custom)
 | Collaboration | `share_template`, `claim_section`, `get_active_agents`, `broadcast_section_change` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
+| Design System | `generate_design_artifacts`, `get_design_artifacts`, `duplicate_frame`, `update_frame_content`, `get_frame_changes` | 5 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
 ### Agent Workflow Patterns (via MCP)
@@ -236,6 +237,43 @@ tools/call: transform_element({ templateId: tplId, frameId, layerName: "h1-0", x
 tools/call: batch_create_variants({ templateId: tplId, variations: [...] })
 tools/call: batch_render_html({ templateId: tplId })
 tools/call: batch_export({ batchId: "..." })
+```
+
+**Pattern 4: Extract a design system deterministically**
+```
+tools/call: generate_design_artifacts({ templateId: tplId, action: "generate" })
+  → { designMd, tokensJson, sharedCss, sourceHash, frameCount, _deterministic: true }
+// Optionally publish to template metadata:
+tools/call: generate_design_artifacts({ templateId: tplId, action: "publish" })
+  → { designMd, tokensJson, sharedCss, _published: true }
+```
+
+**Pattern 5: Retrieve + check staleness of stored artifacts**
+```
+tools/call: get_design_artifacts({ templateId: tplId })
+  → { designMd, tokensJson, sharedCss, _stale: true|false, sourceHash }
+// If _stale: true, re-generate to get current values
+```
+
+**Pattern 6: Duplicate a frame and swap content**
+```
+tools/call: duplicate_frame({ templateId: tplId, sourceFrameId: "f1" })
+  → { frameId: "f2", contentHash: "abc123" }
+tools/call: update_frame_content({
+  templateId: tplId, frameId: "f2",
+  patches: [
+    { selector: "h1", patch: { text: "New Title" } },
+    { selector: ".hero-img", patch: { src: "https://example.com/new.jpg" } },
+    { selector: ".cta", patch: { text: "Buy Now!", style: { background: "#f00" } } }
+  ]
+})
+```
+
+**Pattern 7: Detect frame changes since last AI edit**
+```
+tools/call: get_frame_changes({ templateId: tplId, sinceTimestamp: "2026-06-25T00:00:00Z" })
+  → { changedFrames: ["f1"], unchangedFrames: ["f2"], currentHashes: {...} }
+// Use to know if human edited after AI's last change
 ```
 
 ### Error Reference

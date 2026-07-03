@@ -1,0 +1,296 @@
+PLAN: Canonical Design Artifacts + Iterative Co-Editing
+
+What you've asked for (all requirements, consolidated)
+
+┌────┬──────────────────────────────────────────────────────────────────────┬────────────────────┐
+│ #  │ Requirement                                                          │ Source             │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R1 │ AI must see changes I make to designs                                │ Iterative          │
+│    │                                                                      │ co-editing         │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R2 │ AI must recognize what changed since its last edit — iteratively     │ Change attribution │
+│    │ (she edits, I edit, she edits again)                                 │                    │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R3 │ AI must use my designs as a style reference to create NEW designs    │ Style transfer     │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R4 │ AI must duplicate my design exactly and swap content (text, images,  │ Template           │
+│    │ buttons)                                                             │ duplication        │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R5 │ System (not AI) must auto-generate DESIGN.md, tokens.json,           │ Canonical          │
+│    │ shared.css — deterministically, losslessly                           │ artifacts          │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R6 │ Human must be able to extract these artifacts via UI AND via AI/MCP  │ Dual extraction    │
+│    │                                                                      │ path               │
+├────┼──────────────────────────────────────────────────────────────────────┼────────────────────┤
+│ R7 │ Artifacts must be portable — give them to any external model or tool │ Interoperability   │
+└────┴──────────────────────────────────────────────────────────────────────┴────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+
+Phase 1: Deterministic Extraction Engine (serves R5, R6, R7)
+
+### What it does
+
+A pure JavaScript function that takes frames' HTML+CSS as input and produces three structured
+outputs. No AI involvement. Same input → identical output, every time.
+
+### 1.1 — New file: netlify/functions/design-extractor.mjs
+
+A standalone module, imported by mcp.mjs. Contains:
+
+Function: extractDesignSystem(frames)
+
+Input: [{ name, html, css, width, height, layoutMode }]
+Output: structured object (see below)
+
+The extraction algorithm (each step is deterministic):
+
+```
+  Step 1: CSS Parsing
+   - Concatenate all frame CSS into one string
+   - Regex parse into rules: { selector, property, value }
+   - Handle @import (extract font URLs), @keyframes (store raw), @media (store raw)
+
+  Step 2: Color Extraction
+   - Walk all rules where property ∈ [background, background-color, color, border, border-color,
+border-top, fill, box-shadow]
+   - Parse each value: extract hex (#xxx, #xxxxxx), rgb(), rgba(), named colors
+   - Count occurrences across all frames
+   - Cluster by frequency
+   - Classify by role:
+   - Most frequent background → --color-canvas
+   - Most frequent text color → --color-text
+   - Highest saturation (HSL S > 0.7) → --color-accent
+   - Low saturation, medium lightness → --color-muted
+   - Near-white → --color-surface
+   - Near-black → --color-ink
+   - Output: [{ name, value, hex, role, usageCount }]
+
+  Step 3: Typography Extraction
+   - Walk all rules where property ∈ [font-family, font-size, font-weight, line-height,
+letter-spacing]
+   - Group font-family values, rank by frequency → primary, secondary, fallback
+   - Collect all font-size values, sort ascending → type scale
+   - Collect all font-weight values → weight range
+   - Collect all line-height values → leading scale
+   - Collect all letter-spacing values → tracking scale
+   - Output: { families: [], typeScale: [], weights: [], leading: [], tracking: [] }
+
+  Step 4: Spacing Extraction
+   - Walk all rules where property ∈ [padding, margin, gap, padding-top, margin-bottom, ...]
+   - Extract px values, cluster into a scale
+   - Output: [4px, 8px, 10px, 15px, 20px, ...]
+
+  Step 5: Border Radius Extraction
+   - Collect all border-radius values
+   - Output: [5px, 8px, 10px, 14px, 50%]
+
+  Step 6: Shadow Extraction
+   - Collect all box-shadow values verbatim
+   - Output: [{ value, usageCount }]
+
+  Step 7: Component Detection
+   - Parse HTML of each frame with cheerio
+   - Extract all class combinations per element: [{ tag, classes, depth }]
+   - Find class groups that appear in 3+ frames with same tag → registered component
+   - Example: div.cta appears in all 10 frames → Component: "CTA Button"
+   - Output: [{ name, selector, tag, classCombo, frameCount, sampleHtml }]
+
+  Step 8: Constraint Detection (facts, not advice)
+   - Count unique saturated colors → "Palette uses N accent color(s)"
+   - Check if any body text uses accent color → "Warning: accent used for body text"
+   - Count fonts → "Typography uses N families"
+   - Check for @keyframes → "N animations detected"
+   - Output: [{ type: "fact", statement: "..." }]
+```
+
+Function: generateTokensJson(extraction)
+
+Takes extraction output → generates DTCG-format JSON:
+
+```json
+  {
+   "$schema": "https://design-tokens.org/format",
+   "color": {
+   "canvas": { "$value": "#fafffa", "$description": "Page background" },
+   "ink": { "$value": "#121613", "$description": "Primary text" },
+   "accent": { "$value": "#2bee4b", "$description": "Highest saturation color" }
+   },
+   "typography": {
+   "fontFamily": {
+   "primary": { "$value": "Inter" },
+   "display": { "$value": "Playfair Display" }
+   },
+   "fontSize": {
+   "caption": { "$value": "11px" },
+   "body": { "$value": "16px" },
+   "display": { "$value": "132px" }
+   }
+   },
+   "spacing": { ... },
+   "radius": { ... },
+   "shadow": { ... }
+  }
+```
+
+Function: generateDesignMd(extraction, templateMeta)
+
+Template-driven, not AI-driven. Fills a fixed markdown template with extracted values:
+
+```markdown
+  # {templateName} — Style Reference
+
+  ## Tokens — Colors
+  | Name | Value | Token | Role | Usage |
+  |------|-------|-------|------|-------|
+  {for each color: | {autoName} | {hex} | --color-{autoName} | {role} | {count}× |}
+
+  ## Tokens — Typography
+  ### {fontFamily} — {substituteHint}
+  - Weights: {weights}
+  - Sizes: {sizes}
+  - Line height: {leadingRange}
+  - Letter spacing: {trackingRange}
+
+  ### Type Scale
+  | Role | Size | Line Height | Letter Spacing |
+  {for each type scale entry}
+
+  ## Tokens — Spacing
+  | Name | Value | Token |
+  {for each spacing value}
+
+  ## Components (detected)
+  ### {componentName}
+  **Selector:** `{selector}`
+  **Found in:** {frameCount} frames
+  **Sample:** ```html\n{sampleHtml}\n```
+
+  ## Detected Constraints
+  {for each constraint fact}
+  - {statement}
+
+  ## CSS Custom Properties
+  ```css
+  :root {
+   {all extracted tokens as CSS variables}
+  }
+```
+
+```
+
+  **Function: `generateSharedCss(extraction)`**
+
+  Generates a canonical CSS file with `:root` variables + component class definitions extracted
+from the most common patterns.
+
+  ### 1.2 — MCP tool: `generate_design_ar
+  ...(truncated)...
+```
+
+
+Buen plan. El agente entendió bien el problema. Mis puntos:
+
+────────────────────────────────────────────────────────────────────────────────
+
+✅ Lo que está bien
+
+Extracción determinista, no IA. Ese es el acierto principal. El sistema extrae colores,
+tipografía, espaciado, sombras del HTML/CSS real de los frames. Mismo input → mismo output. Sin
+resúmenes, sin improvisación. Es justo lo que dijiste: "no es algo que debería crear la IA y
+redactarlo, sino que el sistema debería dartelo hecho."
+
+El algoritmo de extracción está bien pensado. Paso a paso sobre el CSS real: parsea reglas →
+extrae colores por frecuencia y rol → extrae tipografía por family/size/weight → espaciado →
+border-radius → sombras → detección de componentes por repetición (.cta en 3+ frames =
+componente). Es lo mismo que haría un humano revisando el código, pero automático.
+
+contentHash para el loop iterativo. Simple y efectivo. SHA-256 del html+css del frame. Cada vez
+que alguien guarda (humano o AI), se actualiza el hash + lastModifiedBy. Cuando la IA vuelve,
+compara su último hash conocido con el actual. Si cambiaron → re-lee. Resuelve R1 y R2 con una
+sola función.
+
+update_frame_content con cheerio. Selector CSS + patch quirúrgico. La IA dice "en .post-title,
+cambia el texto a X" y solo toca ese elemento. Sin reemplazar todo el HTML. Ya tienen cheerio en
+package.json.
+
+────────────────────────────────────────────────────────────────────────────────
+
+⚠️ Lo que me genera dudas (menores)
+
+Parser de CSS por regex. El plan lo reconoce. Para CSS simple de social media (.cta { color:
+#ef4d23 }) funciona perfecto. Para CSS complejo con @supports, @container, o selectores anidados,
+va a fallar. No es bloqueante — el 95% de los frames de Futuraria usan CSS plano. Pero si algún
+día alguien mete un @layer o nesting moderno, el parser no lo va a procesar.
+
+Detección de componentes por frecuencia. "3+ frames con la misma combinación de clases =
+componente". Es heurístico. Puede haber falsos positivos (.card genérico que no es un componente
+real) y falsos negativos (componente que solo aparece en 2 frames). Para v1 está bien, pero el
+output debería marcar el confidence level.
+
+Color role por saturación. "Highest saturation → accent". Funciona para paletas limpias. Si el
+diseño usa varios colores saturados (ej: un dashboard con 5 colores de gráfico), la heurística
+escoge uno arbitrariamente. De nuevo, no es bloqueante — el humano puede renombrar los tokens
+después.
+
+Fase 4 (Shared CSS) es opcional, y debería quedarse así. Meter shared CSS con frames que ya tienen
+su propio CSS es riesgoso. Conflictos de especificidad. El plan dice "deferrable" — estoy de
+acuerdo. Que no entre en este sprint.
+
+────────────────────────────────────────────────────────────────────────────────
+
+🎯 Veredicto
+
+El plan resuelve tus 7 requisitos. ~8h para Fases 1-3. $0. Sin magia negra — puro código
+determinista.
+
+Lo que más me gusta es que el DESIGN.md, tokens.json y shared.css no los escribe la IA. Los extrae
+el sistema del CSS real que ya existe en los frames. Eso es lo que hace que sea portátil y
+confiable. Si le das esos 3 archivos a ChatGPT, Claude, o Gemini, todos entienden exactamente lo
+mismo.
+
+La pieza que conecta todo es get_design_artifacts + get_frame_changes. Con esas dos tools,
+cualquier IA que se conecte puede:
+1. Leer el design system actual (sin alucinar)
+2. Saber qué cambió desde la última vez que editó
+3. Duplicar frames y hacerles cirugía de contenido
+4. Extraer los artifacts en cualquier momento
+
+El humano también puede exportar desde la UI. Mismo output, misma garantía determinista.
+
+Adelante con Fase 1. Cuando quieras cambiar a agent mode.
+
+
+Lara's feedback is solid. I'll bake her two adjustments into the implementation:
+
+1. Component confidence levels — Instead of binary "component/not component", each detected
+component will include:
+
+```json
+  {
+   "selector": "div.cta",
+   "confidence": "high",
+   "frameCount": 10,
+   "totalFrames": 10,
+   "coverage": 1.0
+  }
+```
+
+- high: appears in 60%+ of frames
+- medium: appears in 30-59%
+- low: appears in 10-29%
+- Below 10%: not included
+
+This way the AI (and human) know which components are structural patterns vs. one-off elements.
+
+2. Color role disambiguation — When multiple saturated colors exist, the extractor will:
+- List all saturated colors sorted by frequency
+- Assign --color-accent-1, --color-accent-2 (deterministic, not arbitrary)
+- Include a note: "Multiple saturated colors detected. Human should assign semantic names." in the
+  output
+- Not force a single "accent" pick
+
+3. Phase 4 stays deferred. Agreed. No shared CSS injection this sprint.
+
+Everything else Lara confirmed as correct. The plan is locked. Give me the green light and I start
+Phase 1 — the extraction engine.

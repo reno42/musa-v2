@@ -28,6 +28,17 @@ import {
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
+// Deterministic hash for content change tracking (client-side, no crypto dependency)
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
+}
+
 interface EditorV2Props {
   templateId: string;
   onBack: () => void;
@@ -256,8 +267,17 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Auto-save (immediate localStorage, debounced API sync) ──
   const autoSave = useCallback((updatedFrames: FrameData[]) => {
     const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
+
+    // Compute content hash + attribution for change tracking
+    const hashedFrames = updatedFrames.map(f => ({
+      ...f,
+      contentHash: simpleHash((f.html || "") + "||" + (f.css || "")),
+      lastModifiedBy: "human",
+      lastModifiedAt: new Date().toISOString(),
+    }));
+
     const payload = {
-      frames: updatedFrames,
+      frames: hashedFrames,
       html: active?.html || "",
       css: active?.css || "",
       name: templateName,
@@ -1167,6 +1187,47 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
   }, [templateName, templateWorkspaceId, selectedFrame]);
 
+  // ── Extract Design System (R6: Human UI path) ──
+  const handleExtractDesignSystem = useCallback(async () => {
+    try {
+      const mcpRes = await fetch("/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "generate_design_artifacts", arguments: { templateId, action: "generate" } },
+          id: 1,
+        }),
+      });
+      const json = await mcpRes.json();
+      const text = json?.result?.content?.[0]?.text;
+      if (!text) throw new Error("No artifacts returned");
+      const data = JSON.parse(text);
+
+      const downloads = [
+        { name: `${templateName.replace(/[<>:"/\\|?* ]/g, "_")}_DESIGN.md`, content: data.designMd, type: "text/markdown" },
+        { name: `${templateName.replace(/[<>:"/\\|?* ]/g, "_")}_tokens.json`, content: data.tokensJson, type: "application/json" },
+        { name: `${templateName.replace(/[<>:"/\\|?* ]/g, "_")}_shared.css`, content: data.sharedCss, type: "text/css" },
+      ];
+
+      for (const d of downloads) {
+        if (!d.content) continue;
+        const blob = new Blob([d.content], { type: d.type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = d.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        await new Promise(r => setTimeout(r, 150));
+      }
+    } catch (e: any) {
+      console.error("[Extract DS]", e);
+      alert("Failed to extract design system: " + (e?.message || e));
+    }
+  }, [templateId, templateName]);
+
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
     if (tpl) {
@@ -1454,6 +1515,18 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           title="Delete frame (Del)"
         >
           <IconTrash size={14} />
+        </button>
+
+        <div className="editor-v2-topbar-sep" />
+
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleExtractDesignSystem}
+          title="Extract Design System — downloads DESIGN.md, tokens.json, and shared.css"
+        >
+          <IconDownload size={14} />
+          <span style={{ fontSize: 9, marginLeft: 3 }}>DS</span>
         </button>
       </div>
 

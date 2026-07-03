@@ -17,6 +17,10 @@ export interface FrameData {
   html: string;
   css: string;
   background: string;
+  layoutMode?: "fixed" | "responsive";
+  contentHash?: string;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
 }
 
 export interface SelectedElementInfo {

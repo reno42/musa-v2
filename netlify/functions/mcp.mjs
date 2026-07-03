@@ -3,6 +3,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
+import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash } from "./design-extractor.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -97,6 +98,34 @@ function escapeXml(text) {
       default: return c;
     }
   });
+}
+
+/** Build a simple CSS selector string from a cheerio element */
+function getCheerioSelector($el) {
+  const tag = ($el.prop("tagName") || "div").toLowerCase();
+  const id = $el.attr("id");
+  const cls = $el.attr("class");
+  let sel = tag;
+  if (id) sel += `#${id}`;
+  if (cls) sel += `.${cls.split(" ").join(".")}`;
+  return sel;
+}
+
+/** WCAG contrast ratio between two hex colors */
+function computeContrast(hex1, hex2) {
+  const lum = (hex) => {
+    let h = hex.replace("#", "");
+    if (h.length === 3) h = h.split("").map(c => c + c).join("");
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    const lin = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  };
+  const l1 = lum(hex1);
+  const l2 = lum(hex2);
+  const [brighter, darker] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (brighter + 0.05) / (darker + 0.05);
 }
 
 /** Build SVG element from a DOM node and its resolved styles */
@@ -702,7 +731,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_frame",
-    description: "Update a frame's properties (name, position, size, fill)",
+    description: "Update a frame's properties (name, position, size, fill, html, css). For surgical element-level editing (text, src, style on specific elements), use update_frame_content instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -714,6 +743,8 @@ const MCP_TOOLS = [
         width: { type: "number", description: "Width in px" },
         height: { type: "number", description: "Height in px" },
         fill: { type: "string", description: "Background fill color" },
+        html: { type: "string", description: "Full HTML content replacement (for entire frame rewrites)" },
+        css: { type: "string", description: "Full CSS content replacement" },
       },
       required: ["templateId", "frameId"],
     },
@@ -1579,6 +1610,118 @@ const MCP_TOOLS = [
         format: { type: "string", enum: ["svg", "pdf"], description: "Export format (default 'svg')" },
       },
       required: ["templateId", "format"],
+    },
+  },
+  {
+    name: "get_design_system",
+    description: "Read the full design system (tokens, components, brand, frames) before designing. Returns JSON + CSS :root block with all design tokens, component inventory, and frame metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to inspect" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "lint_design",
+    description: "Run quality heuristics on a frame's HTML/CSS. Returns score (0-100), issues with severity, and layout-specific rules. Adapts to frame's layoutMode (fixed vs responsive).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to lint (lints all frames if omitted)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "export_design_tokens",
+    description: "Export design tokens as CSS :root block and/or DTCG JSON (Design Tokens Community Group format). For Figma, Storybook, or design system portability.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        format: { type: "string", enum: ["css", "dtcg", "all"], description: "Export format (default 'all')" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "generate_design_artifacts",
+    description: "Deterministically extract DESIGN.md, tokens.json, and shared.css from the actual frame HTML/CSS. No AI summarization — pure code extraction. Returns colors, typography, spacing, components, images, and constraint facts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        action: { type: "string", enum: ["extract", "generate", "publish"], description: "extract=raw data only, generate=full artifacts (DESIGN.md+tokens.json+shared.css), publish=generate+store on template metadata (default: generate)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "get_design_artifacts",
+    description: "Retrieve stored design artifacts (DESIGN.md, tokens.json, shared.css) for a template. Auto-generates if not yet created. Includes staleness check (sourceHash) to detect if frames changed since last generation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        format: { type: "string", enum: ["tokens", "design", "css", "all"], description: "Which artifact to return (default: all)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "duplicate_frame",
+    description: "Duplicate an existing frame exactly (HTML, CSS, dimensions, layoutMode). Returns the new frame ID. Use with update_frame_content to swap text/images in the copy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        sourceFrameId: { type: "string", description: "Frame ID to duplicate" },
+        newName: { type: "string", description: "Name for the duplicate (defaults to 'Original (copy)')" },
+      },
+      required: ["templateId", "sourceFrameId"],
+    },
+  },
+  {
+    name: "update_frame_content",
+    description: "Surgically update a specific element inside a frame by CSS selector. Uses cheerio for deterministic DOM patching. Supports: text replacement, innerHTML swap, src/href/className changes, style overrides, backgroundImage swap, and element removal.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to edit" },
+        selector: { type: "string", description: "CSS selector within the frame HTML (e.g. 'img.hero', 'h1', '.cta')" },
+        patch: {
+          type: "object",
+          description: "What to change",
+          properties: {
+            text: { type: "string", description: "Replace textContent" },
+            html: { type: "string", description: "Replace innerHTML" },
+            src: { type: "string", description: "Set img/video src attribute" },
+            href: { type: "string", description: "Set link href attribute" },
+            className: { type: "string", description: "Replace class attribute" },
+            style: { type: "object", description: "CSS properties to set (e.g. {color: 'red', fontSize: '20px'})" },
+            backgroundImage: { type: "string", description: "Set background-image URL (pass the URL, wraps in url())" },
+            remove: { type: "boolean", description: "Remove the element entirely" },
+          },
+        },
+      },
+      required: ["templateId", "frameId", "selector"],
+    },
+  },
+  {
+    name: "get_frame_changes",
+    description: "Detect which frames changed since a known hash. The AI passes its last-known sourceHash or per-frame hashes, and gets back what changed with attribution (human vs agent). Enables iterative co-editing without stale overwrites.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        sinceSourceHash: { type: "string", description: "Last-known template-level sourceHash (from get_design_artifacts)" },
+        frameHashes: { type: "object", description: "Map of frameId → last-known contentHash for per-frame checking" },
+      },
+      required: ["templateId"],
     },
   },
   {
@@ -2448,10 +2591,16 @@ async function handleMethod(method, params, userId) {
     // ── update_frame ──
     case "update_frame": {
       const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
       const { templateId, frameId, ...updates } = params;
       const frame = store.updateFrame(params.templateId, params.frameId, updates);
       if (!frame) throw { code: -32000, message: "Frame not found" };
+      // Compute hash + attribution for change tracking
+      if (updates.html !== undefined || updates.css !== undefined) {
+        frame.contentHash = computeFrameHash(frame.html || "", frame.css || "");
+        frame.lastModifiedBy = "agent:update_frame";
+        frame.lastModifiedAt = new Date().toISOString();
+      }
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
       return frame;
@@ -5109,8 +5258,588 @@ async function handleMethod(method, params, userId) {
       throw { code: -32602, message: `Unsupported format: ${format}. Use 'svg' or 'pdf'.` };
     }
 
+    // ── get_design_system: Inspection-first enabler ──
+    case "get_design_system": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      // Extract variables (design tokens)
+      const rawVars = tpl.variables || tpl.data?.variables || [];
+      const tokens = Array.isArray(rawVars)
+        ? rawVars.map(v => ({ id: v.id || v.name, name: v.name, type: v.type || "color", value: v.value || v.resolvedValue || "" }))
+        : [];
+
+      // Build CSS :root block from tokens
+      const tokensAsCss = tokens.length > 0
+        ? ":root {\n" + tokens.map(t => `  --${t.name}: ${t.value};`).join("\n") + "\n}"
+        : ":root { /* No tokens defined */ }";
+
+      // Extract components
+      const rawComps = tpl.components || tpl.data?.components || [];
+      const components = Array.isArray(rawComps)
+        ? rawComps.map(c => ({ id: c.id, name: c.name, description: c.description || "" }))
+        : [];
+
+      // Extract brand metadata
+      const meta = tpl.metadata || tpl.data?.metadata || {};
+      const brand = meta.brand || {};
+
+      // Extract frames metadata
+      const frames = (tpl.frames || []).map(f => ({
+        id: f.id,
+        name: f.name,
+        width: f.width,
+        height: f.height,
+        layoutMode: f.layoutMode || "fixed",
+      }));
+
+      // Generate dynamic instruction from actual state
+      const parts = [];
+      if (tokens.length > 0) {
+        const colorTokens = tokens.filter(t => t.type === "color");
+        parts.push(`Found ${tokens.length} design tokens (${colorTokens.length} colors, ${tokens.length - colorTokens.length} other).`);
+      } else {
+        parts.push("No design tokens found. Create variables for colors and spacing.");
+      }
+      if (brand.colors) parts.push(`Brand colors: ${typeof brand.colors === "object" ? JSON.stringify(brand.colors) : brand.colors}.`);
+      if (brand.fonts) parts.push(`Brand fonts: ${Array.isArray(brand.fonts) ? brand.fonts.join(", ") : brand.fonts}.`);
+      if (components.length > 0) {
+        parts.push(`Found ${components.length} components (${components.map(c => c.name).join(", ")}). Reuse these before creating new ones.`);
+      } else {
+        parts.push("No components found. Create new ones as needed.");
+      }
+      if (frames.length > 0) {
+        parts.push(`Found ${frames.length} frames: ${frames.map(f => `${f.name} ${f.width}x${f.height} (${f.layoutMode})`).join(", ")}.`);
+      }
+      parts.push("Do not invent colors outside the defined palette. Use var(--token-name) in CSS.");
+
+      return {
+        templateId: params.templateId,
+        tokens,
+        tokensAsCss,
+        components,
+        brand,
+        frames,
+        instruction: parts.join(" "),
+      };
+    }
+
+    // ── lint_design: Quality heuristics per layoutMode ──
+    case "lint_design": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      // Resolve target frames
+      let targetFrames;
+      if (params.frameId) {
+        targetFrames = (tpl.frames || []).filter(f => f.id === params.frameId);
+        if (targetFrames.length === 0) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      } else {
+        targetFrames = tpl.frames?.filter(f => f.html || f.css) || [];
+        if (targetFrames.length === 0) {
+          targetFrames = [{ id: "default", name: tpl.name || "Frame", width: tpl.width || 1080, height: tpl.height || 1080, html: tpl.html || "", css: tpl.css || "", background: "#ffffff" }];
+        }
+      }
+
+      // Get brand tokens for comparison
+      const rawVars = tpl.variables || tpl.data?.variables || [];
+      const brandColors = (Array.isArray(rawVars) ? rawVars : []).filter(v => v.type === "color").map(v => v.value || v.resolvedValue || "").filter(Boolean);
+      const brandColorNames = (Array.isArray(rawVars) ? rawVars : []).filter(v => v.type === "color").map(v => v.name);
+      const meta = tpl.metadata || tpl.data?.metadata || {};
+      const brandFonts = (meta.brand?.fonts || []).flatMap(f => typeof f === "string" ? [f] : [f.family]).filter(Boolean);
+
+      const results = targetFrames.map(f => {
+        const layoutMode = f.layoutMode || "fixed";
+        const css = f.css || "";
+        const html = f.html || "";
+        const issues = [];
+        let score = 100;
+
+        // Parse CSS rules
+        const cssRules = parseCssRules(css);
+
+        // Parse HTML with cheerio
+        const $ = cheerio.load(`<div id="__lintroot">${html}</div>`);
+
+        // Walk elements and check rules
+        $("#__lintroot").find("*").each((_, el) => {
+          const $el = $(el);
+          const tag = ($el.prop("tagName") || "").toLowerCase();
+          if (["script", "style", "link", "meta"].includes(tag)) return;
+
+          const style = resolveStyles($el, cssRules);
+          const selector = getCheerioSelector($el);
+
+          // Rule: Hardcoded colors (not using tokens)
+          const color = style["color"] || "";
+          const bgColor = style["background"] || style["background-color"] || "";
+          const allColors = [color, bgColor].filter(Boolean);
+          for (const c of allColors) {
+            const hex = c.match(/#[0-9a-f]{3,8}/i)?.[0];
+            if (hex && brandColors.length > 0) {
+              const lowerHex = hex.toLowerCase();
+              const isToken = brandColors.some(tc => tc.toLowerCase() === lowerHex);
+              if (!isToken) {
+                issues.push({
+                  severity: "error",
+                  rule: "hardcoded-color",
+                  message: "Element " + selector + " uses " + hex + " which is not a design token",
+                  selector,
+                  suggestion: brandColorNames.length > 0 ? "Use a var(--" + brandColorNames[0] + ") token" : "Define a color token first",
+                });
+                score -= 8;
+              }
+            }
+          }
+
+          // Rule: Missing explicit position (fixed mode)
+          if (layoutMode === "fixed") {
+            const position = style["position"] || "";
+            const left = style["left"];
+            const top = style["top"];
+            if (position !== "absolute" && position !== "relative" && tag !== "style") {
+              // Only flag block-level elements that should be positioned
+              if (parseInt(style["width"]) || parseInt(style["height"])) {
+                issues.push({
+                  severity: "warn",
+                  rule: "missing-position",
+                  message: "Element " + selector + " has dimensions but no position:absolute in fixed layout",
+                  selector,
+                  suggestion: "Add position:absolute with left/top for fixed layout",
+                });
+                score -= 5;
+              }
+            }
+          }
+
+          // Rule: Absolute positioning in responsive mode
+          if (layoutMode === "responsive" && style["position"] === "absolute") {
+            issues.push({
+              severity: "warn",
+              rule: "absolute-in-responsive",
+              message: "Element " + selector + " uses position:absolute in a responsive frame. Consider flexbox/grid.",
+              selector,
+            });
+            score -= 5;
+          }
+
+          // Rule: Font family not in brand list
+          const fontFamily = (style["font-family"] || style["fontFamily"] || "").replace(/["']/g, "");
+          if (fontFamily && brandFonts.length > 0) {
+            const isBrand = brandFonts.some(bf => fontFamily.toLowerCase().includes(bf.toLowerCase()));
+            if (!isBrand) {
+              issues.push({
+                severity: "error",
+                rule: "non-brand-font",
+                message: "Element " + selector + " uses font '" + fontFamily + "' not in brand fonts (" + brandFonts.join(", ") + ")",
+                selector,
+              });
+              score -= 8;
+            }
+          }
+
+          // Rule: Contrast check (basic)
+          if (color && bgColor) {
+            const fgHex = color.match(/#[0-9a-f]{3,8}/i)?.[0];
+            const bgHex = bgColor.match(/#[0-9a-f]{3,8}/i)?.[0];
+            if (fgHex && bgHex) {
+              const ratio = computeContrast(fgHex, bgHex);
+              if (ratio < 4.5) {
+                issues.push({
+                  severity: "warn",
+                  rule: "low-contrast",
+                  message: "Element " + selector + " has contrast ratio " + ratio.toFixed(1) + ":1 (WCAG AA requires 4.5:1)",
+                  selector,
+                  suggestion: "Darken text or lighten background",
+                });
+                score -= 4;
+              }
+            }
+          }
+        });
+
+        return {
+          frameId: f.id,
+          frameName: f.name,
+          layoutMode,
+          score: Math.max(0, score),
+          issueCount: issues.length,
+          issues,
+        };
+      });
+
+      const totalScore = results.length > 0 ? Math.round(results.reduce((s, r) => s + r.score, 0) / results.length) : 0;
+
+      return {
+        templateId: params.templateId,
+        overallScore: totalScore,
+        frames: results,
+        parserLimitations: "CSS parsed with regex. @keyframes, @supports, nested custom properties, and complex selectors may not be fully analyzed.",
+      };
+    }
+
+    // ── export_design_tokens: CSS + DTCG JSON export ──
+    case "export_design_tokens": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      const format = params.format || "all";
+
+      const rawVars = tpl.variables || tpl.data?.variables || [];
+      const tokens = Array.isArray(rawVars)
+        ? rawVars.map(v => ({ id: v.id || v.name, name: v.name, type: v.type || "color", value: v.value || v.resolvedValue || "" }))
+        : [];
+
+      // CSS format
+      let cssOutput = "";
+      if (format === "css" || format === "all") {
+        cssOutput = tokens.length > 0
+          ? ":root {\n" + tokens.map(t => `  --${t.name}: ${t.value};`).join("\n") + "\n}"
+          : ":root { /* No tokens defined */ }";
+      }
+
+      // DTCG JSON format
+      let dtcgOutput = null;
+      if (format === "dtcg" || format === "all") {
+        const dtcg = { "$schema": "https://design-tokens.org/format" };
+        for (const t of tokens) {
+          const typeGroup = t.type === "color" ? "color" : t.type === "number" ? "spacing" : "text";
+          if (!dtcg[typeGroup]) dtcg[typeGroup] = {};
+          dtcg[typeGroup][t.name] = { "$value": t.value, "$type": t.type };
+        }
+        dtcgOutput = dtcg;
+      }
+
+      const result = { templateId: params.templateId, tokenCount: tokens.length };
+      if (cssOutput) result.css = cssOutput;
+      if (dtcgOutput) result.dtcg = dtcgOutput;
+      return result;
+    }
+
+    // ── generate_design_artifacts: deterministic extraction ──
+    case "generate_design_artifacts": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      // Collect frames with html+css
+      var extFrames = (tpl.frames || []).map(function (f) {
+        return {
+          id: f.id,
+          name: f.name,
+          html: f.html || "",
+          css: f.css || "",
+          width: f.width,
+          height: f.height,
+          layoutMode: f.layoutMode,
+        };
+      }).filter(function (f) { return f.html || f.css; });
+
+      if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content found" };
+
+      var action = params.action || "generate";
+
+      if (action === "extract") {
+        var extraction = extractDesignSystem(extFrames);
+        return { templateId: params.templateId, extraction: extraction };
+      }
+
+      // generate or publish
+      var artifacts = generateAllArtifacts(extFrames, { name: tpl.name });
+
+      if (action === "publish") {
+        var designArtifacts = {
+          tokensJson: artifacts.tokensJson,
+          designMd: artifacts.designMd,
+          sharedCss: artifacts.sharedCss,
+          generatedFromHash: artifacts.sourceHash,
+          generatedAt: artifacts.generatedAt,
+        };
+        tpl.designArtifacts = designArtifacts;
+        tpl.metadata = tpl.metadata || {};
+        tpl.metadata.designArtifactsGeneratedAt = artifacts.generatedAt;
+        await templates.updateTemplate(params.templateId, {
+          designArtifacts: designArtifacts,
+          metadata: tpl.metadata,
+        });
+        return {
+          templateId: params.templateId,
+          action: "publish",
+          _published: true,
+          sourceHash: artifacts.sourceHash,
+          designMd: artifacts.designMd,
+          tokensJson: artifacts.tokensJson,
+          sharedCss: artifacts.sharedCss,
+          extraction: {
+            colorCount: artifacts.extraction.colors.length,
+            fontCount: artifacts.extraction.typography.families.length,
+            componentCount: artifacts.extraction.components.length,
+            imageCount: artifacts.extraction.images.length,
+          },
+        };
+      }
+
+      // default: generate (return without storing)
+      return {
+        templateId: params.templateId,
+        sourceHash: artifacts.sourceHash,
+        tokensJson: artifacts.tokensJson,
+        designMd: artifacts.designMd,
+        sharedCss: artifacts.sharedCss,
+        extraction: {
+          colors: artifacts.extraction.colors,
+          typography: artifacts.extraction.typography,
+          spacing: artifacts.extraction.spacing,
+          radii: artifacts.extraction.radii,
+          shadows: artifacts.extraction.shadows,
+          components: artifacts.extraction.components,
+          images: artifacts.extraction.images,
+          constraints: artifacts.extraction.constraints,
+          parserLimitations: artifacts.extraction.parserLimitations,
+        },
+      };
+    }
+
+    // ── get_design_artifacts: retrieve stored or auto-generate ──
+    case "get_design_artifacts": {
+      var tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      var format = params.format || "all";
+      var stored = tpl.designArtifacts;
+
+      // Compute current sourceHash for staleness check
+      var extFrames = (tpl.frames || []).map(function (f) {
+        return { id: f.id, html: f.html || "", css: f.css || "" };
+      }).filter(function (f) { return f.html || f.css; });
+
+      var currentHash = computeSourceHash(extFrames);
+
+      if (!stored) {
+        // Auto-generate on first access
+        if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content" };
+        var artifacts = generateAllArtifacts(
+          (tpl.frames || []).map(function (f) {
+            return { id: f.id, name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height, layoutMode: f.layoutMode };
+          }),
+          { name: tpl.name }
+        );
+        return {
+          templateId: params.templateId,
+          _autoGenerated: true,
+          sourceHash: artifacts.sourceHash,
+          tokensJson: format === "tokens" || format === "all" ? artifacts.tokensJson : undefined,
+          designMd: format === "design" || format === "all" ? artifacts.designMd : undefined,
+          sharedCss: format === "css" || format === "all" ? artifacts.sharedCss : undefined,
+        };
+      }
+
+      // Staleness check
+      var isStale = stored.generatedFromHash !== currentHash;
+
+      var result = {
+        templateId: params.templateId,
+        _stale: isStale,
+        sourceHash: currentHash,
+        storedHash: stored.generatedFromHash,
+        generatedAt: stored.generatedAt,
+      };
+
+      if (isStale) {
+        result._warning = "Frames have changed since artifacts were last generated. Run generate_design_artifacts with action='publish' to refresh.";
+      }
+
+      if (format === "tokens" || format === "all") result.tokensJson = stored.tokensJson;
+      if (format === "design" || format === "all") result.designMd = stored.designMd;
+      if (format === "css" || format === "all") result.sharedCss = stored.sharedCss;
+
+      return result;
+    }
+
+    // ── duplicate_frame: exact clone ──
+    case "duplicate_frame": {
+      var tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      var sourceFrame = (tpl.frames || []).find(function (f) { return f.id === params.sourceFrameId; });
+      if (!sourceFrame) throw { code: -32000, message: "Frame not found: " + params.sourceFrameId };
+
+      var newFrameId = "frame_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+
+      // Deep clone all fields
+      var clone = JSON.parse(JSON.stringify(sourceFrame));
+      clone.id = newFrameId;
+      clone.name = params.newName || (sourceFrame.name + " (copy)");
+      clone.x = (sourceFrame.x || 0) + 40;
+      clone.y = (sourceFrame.y || 0) + 40;
+      clone.order = (tpl.frames || []).length;
+
+      // Compute hash for the clone (same content as source initially)
+      clone.contentHash = computeFrameHash(clone.html || "", clone.css || "");
+      clone.lastModifiedBy = "agent:duplicate_frame";
+      clone.lastModifiedAt = new Date().toISOString();
+
+      if (!tpl.frames) tpl.frames = [];
+      tpl.frames.push(clone);
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, "duplicate_frame");
+
+      return {
+        frameId: newFrameId,
+        sourceFrameId: params.sourceFrameId,
+        name: clone.name,
+        x: clone.x, y: clone.y,
+        width: clone.width, height: clone.height,
+        contentHash: clone.contentHash,
+      };
+    }
+
+    // ── update_frame_content: surgical DOM patching ──
+    case "update_frame_content": {
+      var tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      var frame = (tpl.frames || []).find(function (f) { return f.id === params.frameId; });
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+
+      var html = frame.html || "";
+      var patch = params.patch || {};
+      var selector = params.selector;
+
+      // Use cheerio for deterministic DOM manipulation
+      var $ = cheerio.load(html);
+      var matched = $(selector);
+
+      if (matched.length === 0) {
+        return {
+          templateId: params.templateId,
+          frameId: params.frameId,
+          selector: selector,
+          matched: 0,
+          applied: [],
+          warning: "No elements matched the selector. No changes made.",
+        };
+      }
+
+      var applied = [];
+
+      matched.each(function (_, el) {
+        var $el = $(el);
+
+        if (patch.remove) {
+          $el.remove();
+          applied.push("removed");
+          return;
+        }
+
+        if (patch.text !== undefined) {
+          $el.text(patch.text);
+          applied.push("text replaced");
+        }
+        if (patch.html !== undefined) {
+          $el.html(patch.html);
+          applied.push("html replaced");
+        }
+        if (patch.src !== undefined) {
+          $el.attr("src", patch.src);
+          applied.push("src set to " + patch.src);
+        }
+        if (patch.href !== undefined) {
+          $el.attr("href", patch.href);
+          applied.push("href set to " + patch.href);
+        }
+        if (patch.className !== undefined) {
+          $el.attr("class", patch.className);
+          applied.push("class set to " + patch.className);
+        }
+        if (patch.backgroundImage !== undefined) {
+          var currentStyle = $el.attr("style") || "";
+          // Remove existing background-image
+          currentStyle = currentStyle.replace(/background-image\s*:\s*url\([^)]+\)\s*;?\s*/gi, "");
+          currentStyle += " background-image: url(" + patch.backgroundImage + ");";
+          $el.attr("style", currentStyle.trim());
+          applied.push("backgroundImage set");
+        }
+        if (patch.style && typeof patch.style === "object") {
+          var existingStyle = $el.attr("style") || "";
+          var styleStr = existingStyle;
+          var styleKeys = Object.keys(patch.style).sort(); // deterministic order
+          for (var si = 0; si < styleKeys.length; si++) {
+            var prop = styleKeys[si];
+            var val = patch.style[prop];
+            // Remove existing prop
+            var propRe = new RegExp(prop.replace(/([A-Z])/g, "-$1").toLowerCase() + "\\s*:\\s*[^;]+;?\\s*", "gi");
+            styleStr = styleStr.replace(propRe, "");
+            var cssProp = prop.replace(/([A-Z])/g, "-$1").toLowerCase();
+            styleStr += " " + cssProp + ": " + val + ";";
+          }
+          $el.attr("style", styleStr.trim());
+          applied.push("style updated (" + styleKeys.length + " properties)");
+        }
+      });
+
+      // Serialize back
+      var newHtml = $.html();
+
+      // Update frame
+      frame.html = newHtml;
+      frame.contentHash = computeFrameHash(frame.html || "", frame.css || "");
+      frame.lastModifiedBy = "agent:update_frame_content";
+      frame.lastModifiedAt = new Date().toISOString();
+
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, "update_frame_content");
+
+      return {
+        templateId: params.templateId,
+        frameId: params.frameId,
+        selector: selector,
+        matched: matched.length,
+        applied: applied,
+        contentHash: frame.contentHash,
+        lastModifiedBy: frame.lastModifiedBy,
+      };
+    }
+
+    // ── get_frame_changes: iterative change attribution ──
+    case "get_frame_changes": {
+      var tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      var changes = [];
+      var frameHashes = params.frameHashes || {};
+
+      (tpl.frames || []).forEach(function (f) {
+        var currentHash = computeFrameHash(f.html || "", f.css || "");
+        var knownHash = frameHashes[f.id] || null;
+        var changed = knownHash ? (knownHash !== currentHash) : true;
+
+        changes.push({
+          frameId: f.id,
+          frameName: f.name,
+          changed: changed,
+          currentHash: currentHash,
+          knownHash: knownHash,
+          lastModifiedBy: f.lastModifiedBy || "unknown",
+          lastModifiedAt: f.lastModifiedAt || null,
+        });
+      });
+
+      // Template-level sourceHash check
+      var extFrames = (tpl.frames || []).map(function (f) {
+        return { html: f.html || "", css: f.css || "" };
+      });
+      var currentSourceHash = computeSourceHash(extFrames);
+
+      var result = {
+        templateId: params.templateId,
+        sourceHash: currentSourceHash,
+        knownSourceHash: params.sinceSourceHash || null,
+        sourceChanged: params.sinceSourceHash ? (params.sinceSourceHash !== currentSourceHash) : true,
+        changes: changes,
+      };
+
+      return result;
+    }
+
     default:
-      throw { code: -32601, message: `Method not found: ${method}` };
+      throw { code: -32601, message: "Method not found: " + method };
   }
 }
 
