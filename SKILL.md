@@ -198,7 +198,7 @@ Agent (Claude / Cursor / Custom)
 |----------|--------------|-------|
 | Workspace | `list_workspaces`, `create_workspace` | 2 |
 | Templates | `create_template`, `get_template`, `update_template`, `export_template` | 8 |
-| Frames | `create_frame`, `update_frame`, `create_html_frame` | 8 |
+| Frames | `create_frame`, `create_html_frame`, `update_html_frame`, `update_frame_content` | 8 |
 | HTML/CSS | `set_html`, `set_css`, `add_element`, `update_element`, `remove_element` | 12 |
 | Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
 | Drawing | `draw_shape`, `draw_path`, `transform_element`, `group_elements`, `align_elements` | 5 |

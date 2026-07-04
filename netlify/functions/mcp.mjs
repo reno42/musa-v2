@@ -731,26 +731,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "update_frame",
-    description: "Update a frame's properties (name, position, size, fill, html, css). For surgical element-level editing (text, src, style on specific elements), use update_frame_content instead.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID to update" },
-        name: { type: "string", description: "New frame name" },
-        x: { type: "number", description: "X position" },
-        y: { type: "number", description: "Y position" },
-        width: { type: "number", description: "Width in px" },
-        height: { type: "number", description: "Height in px" },
-        fill: { type: "string", description: "Background fill color" },
-        html: { type: "string", description: "Full HTML content replacement (for entire frame rewrites)" },
-        css: { type: "string", description: "Full CSS content replacement" },
-      },
-      required: ["templateId", "frameId"],
-    },
-  },
-  {
     name: "delete_frame",
     description: "Delete a frame and all its contained objects",
     inputSchema: {
@@ -2670,24 +2650,6 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const frame = tpl.frames.find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: "Frame not found" };
-      return frame;
-    }
-
-    // ── update_frame ──
-    case "update_frame": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
-      const { templateId, frameId, ...updates } = params;
-      const frame = store.updateFrame(params.templateId, params.frameId, updates);
-      if (!frame) throw { code: -32000, message: "Frame not found" };
-      // Compute hash + attribution for change tracking
-      if (updates.html !== undefined || updates.css !== undefined) {
-        frame.contentHash = computeFrameHash(frame.html || "", frame.css || "");
-        frame.lastModifiedBy = "agent:update_frame";
-        frame.lastModifiedAt = new Date().toISOString();
-      }
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
       return frame;
     }
 
