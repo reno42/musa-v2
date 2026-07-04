@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
+import { mcpCall } from "../lib/mcpClient";
 
 interface Template {
   id: string;
@@ -184,7 +185,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const name = editingTplName.trim();
     if (!id || !name) { setEditingTplId(null); return; }
     try {
-      await apiFetch(`/templates/${id}`, { method: "PUT", body: JSON.stringify({ name }) });
+      await mcpCall("update_html_frame", { templateId: id, name });
       setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
     } catch { /* ignore */ }
     setEditingTplId(null);
@@ -347,17 +348,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   onClick={() => onSelectTemplate(t.id)}
                   style={cardBtnStyle}
                 >
-                  {/* Thumbnail placeholder */}
+                  {/* Thumbnail — render actual frame content at 0.15x scale */}
                   <div style={thumbnailStyle}>
                     {t.engine === "html" ? (
-                      <iframe
-                        srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.15);transform-origin:top left}${/* css is not available in the list, show placeholder */""}</style></head><body style="background:#1a1a2e;display:flex;align-items:center;justify-content:center;width:${t.width}px;height:${t.height}px"><span style="color:#888;font-family:sans-serif;font-size:48px">HTML</span></body></html>`}
-                        sandbox="allow-same-origin"
-                        style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
-                        title={t.name}
-                      />
+                      t.frames?.[0]?.html ? (
+                        <iframe
+                          srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.15);transform-origin:top left;background:${t.frames[0].background || "#1a1a2e"}}${t.frames[0].css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames[0].html || ""}</body></html>`}
+                          sandbox="allow-same-origin"
+                          style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+                          title={t.name}
+                        />
+                      ) : (
+                        <div style={{ width:"100%", height:"100%", background: `linear-gradient(135deg, #1a1a2e, #2a2a4e)` }}>
+                          <span style={{ color:"#888", fontFamily:"sans-serif", fontSize:36 }}>HTML</span>
+                        </div>
+                      )
                     ) : (
-                      <>{t.width}x{t.height}</>
+                      <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:"#7a7668", fontSize:11 }}>{t.width}×{t.height}</div>
                     )}
                   </div>
                   <div style={{ padding: "8px 10px" }}>

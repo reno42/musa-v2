@@ -3,7 +3,7 @@ import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
   IconFrame, IconZoomIn, IconZoomOut, IconMaximize,
-  IconChevronDown,
+  IconChevronDown, IconTriangle, IconStar, IconHexagon,
 } from "../shared/icons";
 
 interface Props {
@@ -115,6 +115,9 @@ export function FloatingToolbar({
 
       {toolBtn("rect", <IconRectangle size={16} />, "R", "Rectangle — click-drag to draw")}
       {toolBtn("circle", <IconCircleOutline size={16} />, "O", "Circle — click-drag to draw")}
+      {toolBtn("triangle", <IconTriangle size={16} />, "G", "Triangle — click-drag to draw")}
+      {toolBtn("star", <IconStar size={16} />, "S", "Star — click-drag to draw")}
+      {toolBtn("polygon", <IconHexagon size={16} />, "N", "Polygon — click-drag to draw (Shift for sides)")}
       {toolBtn("text", <IconType size={16} />, "T", "Text — click to place text block")}
       {toolBtn("pen", <IconPen size={16} />, "P", "Pen — click to add points, Enter to finalize")}
 

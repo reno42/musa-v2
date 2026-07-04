@@ -275,6 +275,21 @@ export const IconCircleOutline = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><circle cx="12" cy="12" r="9" /></Icon>
 );
 
+// ── Triangle ────────────────────────────────────────────
+export const IconTriangle = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><polygon points="12,3 22,21 2,21" /></Icon>
+);
+
+// ── Star ────────────────────────────────────────────────
+export const IconStar = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><polygon points="12,2 15,9 22,9 16,14 18,21 12,17 6,21 8,14 2,9 9,9" /></Icon>
+);
+
+// ── Hexagon / Polygon ────────────────────────────────────
+export const IconHexagon = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><polygon points="21,16 12,21 3,16 3,8 12,3 21,8" /></Icon>
+);
+
 // ── Flex Row ─────────────────────────────────────────────
 export const IconFlexRow = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="18" rx="1" /><rect x="17" y="3" width="5" height="18" rx="1" /></Icon>

@@ -633,17 +633,45 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [handleCssChange]);
 
   // ── Add visual primitive to active frame ──
-  const handleAddPrimitive = useCallback((type: "rect" | "circle" | "text", x: number, y: number) => {
+  const handleAddPrimitive = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => {
     if (!selectedFrameId) return;
     const layerId = `el_${Date.now().toString(36)}`;
     let html: string;
     let css: string;
+    const defaultSize = type === "polygon" ? 120 : (type === "star" ? 130 : 150);
     if (type === "rect") {
       html = `<div data-layer-id="${layerId}" style="width:200px;height:150px;background:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else if (type === "triangle") {
+      html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#10B981;clip-path:polygon(50% 0%, 0% 100%, 100% 100%);position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #10B981;\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else if (type === "star") {
+      const s = 130;
+      const hw = s / 2; const hh = s / 2;
+      const outerR = hw * 0.95; const innerR = hw * 0.38;
+      const pts: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI / 2 * -1) + (Math.PI / 5) * i;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+      }
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
+    } else if (type === "polygon") {
+      const n = sides || 6;
+      const s = 120;
+      const hw = s / 2; const hh = s / 2;
+      const r = hw * 0.92;
+      const pts: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
+        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+      }
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       html = `<div data-layer-id="${layerId}" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
       css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
@@ -660,7 +688,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   // ── Phase C: Draw shape with exact dimensions (drag-to-draw) ──
-  const handleDrawShape = useCallback((type: "rect" | "circle", x: number, y: number, w: number, h: number) => {
+  const handleDrawShape = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => {
     if (!selectedFrameId) return;
     const layerId = `el_${Date.now().toString(36)}`;
     let html: string;
@@ -668,9 +696,37 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (type === "rect") {
       html = `<div data-layer-id="${layerId}"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
-    } else {
+    } else if (type === "circle") {
       html = `<div data-layer-id="${layerId}"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else if (type === "triangle") {
+      html = `<div data-layer-id="${layerId}"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #10B981;\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+    } else if (type === "star") {
+      const s = Math.max(w, h);
+      const hw = s / 2; const hh = s / 2;
+      const outerR = hw * 0.95; const innerR = hw * 0.38;
+      const pts: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI / 2 * -1) + (Math.PI / 5) * i;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+      }
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
+    } else {
+      // polygon — uses SVG polygon with configurable sides
+      const n = sides || 6;
+      const s = Math.max(w, h);
+      const hw = s / 2; const hh = s / 2;
+      const r = hw * 0.92;
+      const pts: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
+        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+      }
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     }
     const updated = frames.map(f =>
       f.id === selectedFrameId

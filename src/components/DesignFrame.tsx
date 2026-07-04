@@ -40,8 +40,8 @@ interface DesignFrameProps {
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
-  onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
-  onDrawShape?: (type: "rect" | "circle", x: number, y: number, w: number, h: number) => void;
+  onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
+  onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }) => void;
   onElementDelete?: (layerId: string) => void;
@@ -311,8 +311,8 @@ export function DesignFrame({
       const mx = me.clientX - rect.left;
       const my = me.clientY - rect.top;
 
-      // ── Drawing tools: rect / circle → drag-to-draw ──
-      if (tool === "rect" || tool === "circle") {
+      // ── Drawing tools: rect / circle / triangle / star / polygon → drag-to-draw ──
+      if (tool === "rect" || tool === "circle" || tool === "triangle" || tool === "star" || tool === "polygon") {
         e.stopPropagation();
         e.preventDefault();
         onActivate(frame.id);
@@ -386,7 +386,9 @@ export function DesignFrame({
           const finalW = Math.max(10, Math.round(Math.abs(w)));
           const finalH = Math.max(10, Math.round(Math.abs(h)));
 
-          onDrawShapeRef.current?.(tool, finalX, finalY, finalW, finalH);
+          const sides = (tool === "polygon" && ev.shiftKey) ? prompt("Number of sides?", "6") : undefined;
+          const sidesNum = sides ? parseInt(sides) || 6 : undefined;
+          onDrawShapeRef.current?.(tool, finalX, finalY, finalW, finalH, sidesNum);
         };
 
         document.addEventListener("mousemove", onMove);
@@ -713,7 +715,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "text", "pen"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "pen"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Label above frame */}

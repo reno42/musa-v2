@@ -361,7 +361,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Simple in-memory rate limiter (survives warm Edge Function instances) */
 const rateLimitMap = new Map();
-const RATE_LIMIT_MAX = 60;      // requests per window
+const RATE_LIMIT_MAX = 200;     // requests per window
 const RATE_WINDOW_MS = 60_000;  // 1 minute
 function checkRateLimit(ip) {
   const now = Date.now();
@@ -1815,19 +1815,20 @@ const MCP_TOOLS = [
   // ── Phase C: Drawing Tools ──
   {
     name: "draw_shape",
-    description: "Draw a rectangle or circle shape with exact dimensions at a specific position. Creates a styled div element with the given dimensions, color and border-radius.",
+    description: "Draw a shape with exact dimensions at a specific position. Supports: rect, circle, triangle, star (5-point), polygon (with configurable sides). Triangle uses CSS clip-path. Star and polygon use SVG elements.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Frame ID to draw in" },
-        type: { type: "string", enum: ["rect", "circle"], description: "Shape type" },
+        type: { type: "string", enum: ["rect", "circle", "triangle", "star", "polygon"], description: "Shape type" },
         x: { type: "number", description: "X position" },
         y: { type: "number", description: "Y position" },
         width: { type: "number", description: "Shape width" },
         height: { type: "number", description: "Shape height" },
-        color: { type: "string", description: "Background color (default #3B82F6 for rect, #EF4444 for circle)" },
-        borderRadius: { type: "string", description: "Border radius override (e.g. '12px')" },
+        color: { type: "string", description: "Background/fill color" },
+        borderRadius: { type: "string", description: "Border radius override (rect only)" },
+        sides: { type: "number", description: "Number of sides for polygon (default 6), ignored for other types" },
       },
       required: ["templateId", "frameId", "type", "x", "y", "width", "height"],
     },
@@ -5090,10 +5091,42 @@ async function handleMethod(method, params, userId) {
 
       const layerId = `el_${Date.now().toString(36)}`;
       const { x, y, width, height, type } = params;
-      const color = params.color || (type === "rect" ? "#3B82F6" : "#EF4444");
-      const br = params.borderRadius || (type === "circle" ? "50%" : "8px");
-      const elHtml = `<div data-layer-id="${layerId}"></div>`;
-      const cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      const defaultColors = { rect: "#3B82F6", circle: "#EF4444", triangle: "#10B981", star: "#F59E0B", polygon: "#8B5CF6" };
+      const color = params.color || defaultColors[type] || "#3B82F6";
+      let elHtml, cssRule;
+
+      if (type === "triangle") {
+        elHtml = `<div data-layer-id="${layerId}"></div>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      } else if (type === "star") {
+        const s = Math.max(width, height);
+        const hw = s / 2, hh = s / 2, outerR = hw * 0.95, innerR = hw * 0.38;
+        const pts = [];
+        for (let i = 0; i < 10; i++) {
+          const angle = (Math.PI / 2 * -1) + (Math.PI / 5) * i;
+          const r = i % 2 === 0 ? outerR : innerR;
+          pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+        }
+        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="${color}" stroke="${color}" stroke-width="2"/></svg>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
+      } else if (type === "polygon") {
+        const n = params.sides || 6;
+        const s = Math.max(width, height);
+        const hw = s / 2, hh = s / 2, r = hw * 0.92;
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+          const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
+          pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
+        }
+        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="${color}" stroke="${color}" stroke-width="2"/></svg>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
+      } else {
+        // rect or circle — original div-based approach
+        const br = params.borderRadius || (type === "circle" ? "50%" : "8px");
+        elHtml = `<div data-layer-id="${layerId}"></div>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+      }
+
       frame.html = (frame.html || "") + "\n" + elHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });

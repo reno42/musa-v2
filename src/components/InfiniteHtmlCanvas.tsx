@@ -11,7 +11,7 @@ import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignF
  *  - Middle-click: always pans regardless of active tool
  */
 
-export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "text" | "pen";
+export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "pen";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -25,7 +25,7 @@ interface InfiniteHtmlCanvasProps {
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
   onAddPrimitive?: (type: "rect" | "circle" | "text", x: number, y: number) => void;
-  onDrawShape?: (type: "rect" | "circle", x: number, y: number, w: number, h: number) => void;
+  onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }) => void;
   onElementDelete?: (layerId: string) => void;
