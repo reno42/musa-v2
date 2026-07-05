@@ -2346,23 +2346,6 @@ async function handleMethod(method, params, userId) {
       return ws;
     }
 
-    // ── Teams ──
-    }
-
-    }
-
-    }
-
-    }
-
-    }
-
-    }
-
-    }
-
-    }
-
     // ── Templates ──
     case "list_templates": {
       const result = await templates.listTemplatesPaginated(
@@ -2631,10 +2614,7 @@ async function handleMethod(method, params, userId) {
       return { success: true, templateId: newTpl.id, name: tplName, width: svgW, height: svgH, elementCount: htmlParts.length };
     }
 
-    // ── Batch Update ──
-    }
-
-    // ── Render Batch ──
+    // Render Batch
     case "render_batch": {
       if (!params.templateIds?.length) throw { code: -32602, message: "templateIds array required" };
       const format = ["png", "jpg"].includes(params.format) ? params.format : "png";
@@ -3061,19 +3041,12 @@ async function handleMethod(method, params, userId) {
       return { fonts: enriched, total, categories: [...new Set(GOOGLE_FONTS.map(f => f.category))], source: GOOGLE_FONTS === BUILTIN_FONTS ? "builtin" : "google-fonts-api" };
     }
 
-    // ── set_gradient ──
-    }
-
-    }
-
     case "preview_font": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const fontFamily = params.fontFamily || "Inter";
       const pangram = "The quick brown fox jumps over the lazy dog";
       return { created: true, fontFamily, pangram, note: "Font preview loaded. Use create_html_frame + add_element to place text with this font." };
-    }
-
     }
 
     // ── F3: AI Features (OpenRouter) ──
@@ -3238,11 +3211,6 @@ async function handleMethod(method, params, userId) {
       throw { code: -32000, message: "Provide either templateId (with targetLayerName) or text to translate" };
     }
 
-    // ── F4: Styles, Variables, Export ──
-    }
-
-    }
-
     case "create_variable": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -3259,8 +3227,6 @@ async function handleMethod(method, params, userId) {
       await templates.updateTemplate(params.templateId, { variables: tpl.variables });
       autoSnapshot(params.templateId, method);
       return { created: true, variableId: variable.id, name: variable.name, type: variable.type, value: variable.value };
-    }
-
     }
 
     case "link_variable": {
@@ -4395,25 +4361,9 @@ async function handleMethod(method, params, userId) {
       };
     }
 
-    }
-
-    }
-
-    }
-
-    }
-
-    }
-
     // ═══════════════════════════════════════════════════════════
     // FASE 4: Multi-Agent Realtime
     // ═══════════════════════════════════════════════════════════
-
-    }
-
-    }
-
-    }
 
     case "assemble_template": {
       const tpl = await templates.getTemplate(params.templateId);
