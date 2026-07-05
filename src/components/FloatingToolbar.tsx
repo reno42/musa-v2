@@ -4,6 +4,7 @@ import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
   IconFrame, IconZoomIn, IconZoomOut, IconMaximize,
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
+  IconLayout,
 } from "../shared/icons";
 
 interface Props {
@@ -18,6 +19,9 @@ interface Props {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  multiSelectCount?: number;
+  onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
+  onSvgImport?: () => void;
 }
 
 const FRAME_PRESETS = [
@@ -32,8 +36,10 @@ export function FloatingToolbar({
   tool, onToolChange, onAddFrame,
   onZoomIn, onZoomOut, onZoomToFit, zoom,
   canUndo, canRedo, onUndo, onRedo,
+  multiSelectCount, onPathfinder, onSvgImport,
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
+  const [showPathfinder, setShowPathfinder] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close frame menu on outside click
@@ -181,6 +187,85 @@ export function FloatingToolbar({
       </div>
 
       {divider}
+
+      {/* Pathfinder */}
+      {onPathfinder && (
+        <>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              title={`Pathfinder (${(multiSelectCount || 0)} selected)`}
+              disabled={(multiSelectCount || 0) < 2}
+              onClick={() => setShowPathfinder(!showPathfinder)}
+              style={{
+                width: 36, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 8, cursor: (multiSelectCount || 0) >= 2 ? "pointer" : "not-allowed",
+                background: showPathfinder ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+                border: showPathfinder ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+                color: "var(--text-muted, #7a7668)", opacity: (multiSelectCount || 0) >= 2 ? 1 : 0.4,
+                transition: "all 0.15s ease",
+              }}
+            >
+              <IconLayout size={14} />
+            </button>
+            {showPathfinder && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setShowPathfinder(false)} />
+                <div style={{
+                  position: "absolute", left: 44, top: 0, zIndex: 30,
+                  background: "var(--glass-bg, rgba(12,12,12,0.85))",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
+                  borderRadius: 10, padding: 6, minWidth: 150,
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", padding: "2px 8px 4px", textTransform: "uppercase", letterSpacing: 1 }}>Pathfinder</div>
+                  {([
+                    { op: "union", label: "Union", icon: "∪" },
+                    { op: "subtract", label: "Subtract", icon: "−" },
+                    { op: "intersect", label: "Intersect", icon: "∩" },
+                    { op: "exclude", label: "Exclude", icon: "⊕" },
+                  ] as const).map(({ op, label, icon }) => (
+                    <button
+                      key={op}
+                      type="button"
+                      disabled={(multiSelectCount || 0) < 2}
+                      onClick={() => { onPathfinder(op); setShowPathfinder(false); }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        width: "100%", padding: "5px 10px",
+                        background: "transparent", border: "1px solid transparent",
+                        borderRadius: 6, color: "var(--text-main, #c4c0b4)",
+                        cursor: (multiSelectCount || 0) >= 2 ? "pointer" : "not-allowed",
+                        fontSize: 12, fontFamily: "inherit", opacity: (multiSelectCount || 0) >= 2 ? 1 : 0.4,
+                        transition: "all 0.1s",
+                      }}
+                      onMouseEnter={(e) => { if ((multiSelectCount || 0) >= 2) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                    >
+                      <span style={{ width: 18, textAlign: "center", fontSize: 14, fontWeight: 600 }}>{icon}</span>
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          {divider}
+        </>
+      )}
+
+      {/* SVG Import */}
+      {onSvgImport && (
+        <>
+          {actionBtn(
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>,
+            onSvgImport, "Import SVG",
+          )}
+          {divider}
+        </>
+      )}
 
       {/* Undo / Redo */}
       {actionBtn(

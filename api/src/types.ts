@@ -53,6 +53,8 @@ export interface DesignTemplate {
   variables: VariableStore;
   components: Component[];
   metadata: TemplateMetadata;
+  brandId?: string;
+  designArtifacts?: DesignArtifacts;
 }
 
 export interface Component {
@@ -138,6 +140,31 @@ export interface TemplateMetadata {
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
+  designArtifactsGeneratedAt?: string;
+}
+
+// ─── Brand Guidelines ─────────────────────────────────────
+
+export interface DesignArtifacts {
+  tokensJson: string;
+  designMd: string;
+  sharedCss: string;
+  generatedFromHash: string;
+  generatedAt: string;
+}
+
+export interface BrandGuideline {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description?: string;
+  tokensJson?: string;
+  designMd?: string;
+  sharedCss?: string;
+  sourceHash?: string;
+  sourceTemplateIds?: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── Tool Types ───────────────────────────────────────────

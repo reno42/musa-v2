@@ -369,3 +369,23 @@ export const IconDownload = (p: React.ComponentProps<typeof Icon>) => (
 export const IconMaximize = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" /></Icon>
 );
+
+// ── History (clock-back) ──────────────────────────────────
+export const IconHistory = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></Icon>
+);
+
+// ── Wand (magic/AI) ───────────────────────────────────────
+export const IconWand = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M15 4V2" /><path d="M15 16v-2" /><path d="M8 9h2" /><path d="M20 9h2" /><path d="M17.8 11.8L19 13" /><path d="M15 9h.01" /><path d="M17.8 6.2L19 5" /><path d="M3 21l9-9" /><path d="M12.2 6.2L11 5" /></Icon>
+);
+
+// ── Refresh (circular arrows) ─────────────────────────────
+export const IconRefresh = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></Icon>
+);
+
+// ── Upload ────────────────────────────────────────────────
+export const IconUpload = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></Icon>
+);

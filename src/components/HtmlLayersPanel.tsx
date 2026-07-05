@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { LayerNode } from "../hooks/useLayerTree";
 import { useLayerTree, reorderLayerInHtml, groupLayersInHtml, ungroupLayerInHtml } from "../hooks/useLayerTree";
 
@@ -10,6 +10,11 @@ interface Props {
   onHtmlChange: (newHtml: string) => void;
   onLayerDelete?: (layerId: string) => void;
   onLayerDuplicate?: (layerId: string) => void;
+  onMultiSelectChange?: (ids: string[]) => void;
+  onLockToggle?: (layerId: string, locked: boolean) => void;
+  onHideToggle?: (layerId: string, hidden: boolean) => void;
+  lockedLayers?: Set<string>;
+  hiddenLayers?: Set<string>;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -52,11 +57,18 @@ function tagColor(tag: string): string {
 export function HtmlLayersPanel({
   html, frameId, selectedElementId,
   onSelectElement, onHtmlChange, onLayerDelete, onLayerDuplicate,
+  onMultiSelectChange, onLockToggle, onHideToggle,
+  lockedLayers, hiddenLayers,
 }: Props) {
   const layers = useLayerTree(html);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; layerId: string } | null>(null);
   const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // Notify parent when multiSelect changes
+  useEffect(() => {
+    onMultiSelectChange?.(Array.from(multiSelect));
+  }, [multiSelect, onMultiSelectChange]);
 
   const handleClick = useCallback((layer: LayerNode, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -219,9 +231,25 @@ export function HtmlLayersPanel({
                   {layer.text || layer.tag}
                 </span>
 
-                {/* Action buttons (visible on hover or selection, only for non-auto layers) */}
+                {/* Lock / Hide / Action buttons */}
                 {!layer.layerId.startsWith("auto_") && (
-                <span style={{ display: "flex", gap: 2, opacity: isSelected ? 1 : 0, flexShrink: 0 }}>
+                <span style={{ display: "flex", gap: 2, opacity: isSelected ? 1 : 0.5, flexShrink: 0 }}>
+                  {/* Lock toggle */}
+                  {onLockToggle && (
+                    <button type="button" onClick={(e) => { e.stopPropagation(); onLockToggle(layer.layerId, !lockedLayers?.has(layer.layerId)); }}
+                      title={lockedLayers?.has(layer.layerId) ? "Unlock" : "Lock"}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 10, padding: 0, lineHeight: 1, color: lockedLayers?.has(layer.layerId) ? "#c8b898" : "#7a7668" }}>
+                      {lockedLayers?.has(layer.layerId) ? "🔒" : "🔓"}
+                    </button>
+                  )}
+                  {/* Hide toggle */}
+                  {onHideToggle && (
+                    <button type="button" onClick={(e) => { e.stopPropagation(); onHideToggle(layer.layerId, !hiddenLayers?.has(layer.layerId)); }}
+                      title={hiddenLayers?.has(layer.layerId) ? "Show" : "Hide"}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 10, padding: 0, lineHeight: 1, color: hiddenLayers?.has(layer.layerId) ? "#666" : "#7a7668" }}>
+                      {hiddenLayers?.has(layer.layerId) ? "∅" : "👁"}
+                    </button>
+                  )}
                   {/* Move up */}
                   <button type="button" onClick={(e) => { e.stopPropagation(); handleReorder(layer.layerId, "up"); }}
                     title="Move up"

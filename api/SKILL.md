@@ -367,7 +367,7 @@ All tool endpoints operate within a specific frame. Use `frameId` to target a fr
 The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same template/workspace services via JSON-RPC 2.0 for AI agents. **100% tested** — all tools + error cases pass. Same auth, same dual-write, same rate limits.
 
 **Protocol:** MCP 2024-11-05 via SSE transport (GET) + JSON-RPC 2.0 calls (POST).
-**Implementation:** `netlify/functions/mcp.mjs` (346 lines) — standalone Netlify Function, no Express dependency.
+**Implementation:** `netlify/functions/mcp.mjs` (~7500 lines) — standalone Netlify Function, no Express dependency.
 
 ### Connecting AI Agents
 
@@ -405,11 +405,13 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 1. GET  /mcp                                      → SSE handshake
 2. POST /mcp  { method: "initialize" }             → capabilities exchange
 3. POST /mcp  { method: "notifications/initialized" } → confirm ready
-4. POST /mcp  { method: "tools/list" }             → discover 10 tools
+4. POST /mcp  { method: "tools/list" }             → discover 145+ tools
 5. POST /mcp  { method: "tools/call", params: {...} } → invoke any tool
 ```
 
 ### Complete Tool Reference
+
+#### Workspace & Template Core
 
 | # | Tool | Required | Optional | Persistence |
 |---|------|----------|----------|-------------|
@@ -423,10 +425,105 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 8 | `duplicate_template` | `id` | `name` | store → Supabase upsert |
 | 9 | `export_template` | `id` | — | Supabase read |
 | 10 | `import_template` | `data`, `workspaceId` | — | store → Supabase upsert |
-| 11 | `create_html_frame` | `templateId`, `name` | `width`, `height`, `html`, `css`, `background`, `x`, `y` | Persist via updateTemplate |
-| 12 | `update_html_frame` | `templateId`, `frameId` | `name`, `html`, `css`, `width`, `height`, `x`, `y`, `background` | Persist via updateTemplate |
-| 13 | `delete_html_frame` | `templateId`, `frameId` | — | Persist via updateTemplate |
-| 14 | `get_html_frames` | `templateId` | — | Read-only |
+| 11 | `rename_template` | `templateId`, `newName` | — | store → Supabase upsert |
+
+#### HTML Frame Operations
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 12 | `create_html_frame` | `templateId`, `name` | `width`, `height`, `html`, `css`, `background`, `x`, `y` | Persist via updateTemplate |
+| 13 | `update_html_frame` | `templateId`, `frameId` | `name`, `html`, `css`, `width`, `height`, `x`, `y`, `background` | Persist via updateTemplate |
+| 14 | `delete_html_frame` | `templateId`, `frameId` | — | Persist via updateTemplate |
+| 15 | `get_html_frames` | `templateId` | — | Read-only |
+| 16 | `update_frame_content` | `templateId`, `frameId` | `html`, `css` | Persist via updateTemplate |
+
+#### HTML/CSS DOM Manipulation
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 17 | `set_html` | `templateId`, `html` | — | Persist via updateTemplate |
+| 18 | `set_css` | `templateId`, `css` | — | Persist via updateTemplate |
+| 19 | `add_element` | `templateId`, `tag`, `parentSelector` | `html`, `css`, `position`, `frameId` | Persist via updateTemplate |
+| 20 | `update_element` | `templateId`, `elementId` | `html`, `css`, `attributes` | Persist via updateTemplate |
+| 21 | `remove_element` | `templateId`, `elementId` | — | Persist via updateTemplate |
+| 22 | `get_template_structure` | `templateId` | — | Read-only |
+| 23 | `select_element` | `templateId`, `elementId` | — | Read-only |
+| 24 | `reorder_element` | `templateId`, `elementId`, `newIndex` | — | Persist via updateTemplate |
+
+#### Drawing & Vector Tools
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 25 | `draw_shape` | `templateId`, `frameId`, `tool` | `x`, `y`, `width`, `height`, `fill`, `stroke`, `layerName` | store → Supabase upsert |
+| 26 | `draw_path` | `templateId`, `frameId`, `pathData` | `fill`, `stroke`, `strokeWidth`, `layerName` | store → Supabase upsert |
+| 27 | `draw_bezier` | `templateId`, `frameId`, `points` | `fill`, `stroke`, `layerName`, `closed` | store → Supabase upsert |
+| 28 | `edit_path_points` | `templateId`, `frameId`, `layerId`, `points` | — | store → Supabase upsert |
+| 29 | `edit_path_point` | `templateId`, `frameId`, `layerId`, `pointIndex`, `x`, `y` | `handleIn`, `handleOut` | store → Supabase upsert |
+| 30 | `transform_element` | `templateId`, `frameId`, `layerId` | `x`, `y`, `width`, `height`, `scaleX`, `scaleY`, `angle`, `opacity` | store → Supabase upsert |
+| 31 | `group_elements` | `templateId`, `frameId`, `layerIds` | `groupName` | store → Supabase upsert |
+| 32 | `align_elements` | `templateId`, `frameId`, `layerIds`, `direction` | — | store → Supabase upsert |
+
+#### SVG & Path Operations
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 33 | `import_svg` | `templateId`, `frameId`, `svg` | `x`, `y`, `width`, `height` | store → Supabase upsert |
+| 34 | `pathfinder` | `templateId`, `frameId`, `operation`, `layerIds` | — | store → Supabase upsert |
+| 35 | `shape_to_path` | `templateId`, `frameId`, `elementId` | — | store → Supabase upsert |
+
+#### SVG Styling
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 36 | `set_stroke_style` | `templateId`, `frameId`, `layerId` | `stroke`, `strokeWidth`, `strokeLinecap`, `strokeLinejoin`, `strokeDasharray` | store → Supabase upsert |
+| 37 | `set_gradient` | `templateId`, `frameId`, `layerId`, `type` | `angle`, `stops`, `colors` | store → Supabase upsert |
+| 38 | `set_blend_mode` | `templateId`, `frameId`, `layerId`, `mode` | — | store → Supabase upsert |
+| 39 | `outline_stroke` | `templateId`, `frameId`, `layerId` | `strokeWidth`, `fillColor` | store → Supabase upsert |
+| 40 | `offset_path` | `templateId`, `frameId`, `layerId`, `offset` | — | store → Supabase upsert |
+
+#### AI Generation
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 41 | `ai_generate_text` | `templateId`, `prompt` | `style`, `tone`, `maxLength` | Read-only |
+| 42 | `ai_generate_image` | `templateId`, `prompt` | `style`, `size` | Read-only |
+| 43 | `ai_palette` | `templateId`, `prompt` | `count` | Read-only |
+| 44 | `ai_suggest_layout` | `templateId`, `prompt` | `format` | Read-only |
+
+#### Brand & Governance
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 45 | `register_brand` | `brandId`, `name`, `colors`, `fonts` | `logo`, `spacing`, `rules` | Supabase |
+| 46 | `validate_brand` | `templateId`, `brandId` | — | Read-only |
+| 47 | `check_contrast` | `templateId` | — | Read-only |
+| 48 | `auto_fix_brand` | `templateId`, `brandId` | `autoFix` | store → Supabase upsert |
+
+#### Variables & Design Tokens
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 49 | `create_variable` | `templateId`, `name`, `value` | `collectionId` | store → Supabase upsert |
+| 50 | `create_collection` | `templateId`, `name` | — | store → Supabase upsert |
+| 51 | `link_variable` | `templateId`, `variableId`, `targetSelector`, `property` | — | store → Supabase upsert |
+| 52 | `apply_variables` | `templateId` | `variables` | store → Supabase upsert |
+
+#### Version, Fonts, Batch & Collaboration
+
+| # | Tool | Required | Optional | Persistence |
+|---|------|----------|----------|-------------|
+| 53 | `list_versions` | `templateId` | `limit`, `offset` | Supabase read |
+| 54 | `restore_version` | `templateId`, `versionId` | — | store → Supabase upsert |
+| 55 | `search_google_fonts` | `query` | `limit`, `category` | Read-only |
+| 56 | `add_font_to_template` | `templateId`, `family` | `weights` | store → Supabase upsert |
+| 57 | `batch_update` | `templateId`, `updates` | — | store → Supabase upsert |
+| 58 | `render_batch` | `templateId` | `format`, `scale`, `frameIds` | Read-only |
+| 59 | `batch_create_variants` | `templateId`, `variables` | `prefix`, `startIndex` | store → Supabase upsert |
+| 60 | `batch_render_html` | `batchId` | `format`, `scale` | Read-only |
+| 61 | `share_template` | `templateId`, `userId` | `role` | Supabase |
+| 62 | `claim_section` | `templateId`, `sectionId`, `agentId` | `ttlSeconds` | Supabase |
+| 63 | `get_active_agents` | `templateId` | — | Supabase read |
+| 64 | `broadcast_section_change` | `channelId`, `sectionId`, `html`, `css`, `agentId` | — | Supabase Realtime |
 
 > ⚠️ `create_template` **validates** `workspaceId` — missing returns `-32602` (enforced in mcp.mjs).
 
@@ -453,7 +550,7 @@ curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key
 # List tools
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...10 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...145+ tools...}]}}
 
 # Create workspace
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
@@ -833,5 +930,5 @@ api/src/
 | `api/src/middleware/auth.ts` | Auth extraction (dev_user_default fallback) |
 | `api/src/middleware/rateLimit.ts` | 100 req/15s rate limiter |
 | `netlify/functions/api.mjs` | Express → Netlify Function bridge |
-| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 10 tools) |
+| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 145+ tools) |
 | `netlify.toml` | Build config + /api/* → /mcp → /* redirects |

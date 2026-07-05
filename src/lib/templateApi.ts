@@ -57,7 +57,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
           css: localData.css || apiData.css,
           pages: localData.pages || (apiData as any).pages,
           frames: localData.frames || (apiData as any).frames,
-          styles: localData.styles || (apiData as any).styles,
           variables: localData.variables || (apiData as any).variables,
           name: localData.name || apiData.name,
         } as TemplateFull;
@@ -74,7 +73,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
         css: localData.css || apiData.css,
         pages: localData.pages || (apiData as any).pages,
         frames: localData.frames || (apiData as any).frames,
-        styles: localData.styles || (apiData as any).styles,
         variables: localData.variables || (apiData as any).variables,
         name: localData.name || apiData.name,
       } as TemplateFull;
@@ -173,7 +171,6 @@ export async function listTemplates(
           height: local.height || 1080,
           pages: local.pages,
           frames: local.frames,
-          styles: local.styles,
           variables: local.variables,
           metadata: { updatedAt: local.updatedAt },
         } as any);

@@ -1,4 +1,5 @@
 import * as templates from "../../api/src/services/templates.js";
+import * as brands from "../../api/src/services/brands.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
@@ -34,6 +35,15 @@ function parseCssRules(css) {
     }
   }
   return rules;
+}
+
+/** Darken a hex color by percentage (0..1), e.g. darkenHex("#10B981", 0.15) => "#059669" */
+function darkenHex(hex, amount = 0.15) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.max(0, Math.floor(((num >> 16) & 0xFF) * (1 - amount)));
+  const g = Math.max(0, Math.floor(((num >> 8) & 0xFF) * (1 - amount)));
+  const b = Math.max(0, Math.floor((num & 0xFF) * (1 - amount)));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
 /** Match a CSS selector against a cheerio element (simple: tag, .class, #id, compound) */
@@ -598,27 +608,17 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "batch_update",
-    description: "Apply an update to multiple templates at once (e.g. change CTA text across all 18 styles)",
+    name: "import_svg",
+    description: "Import SVG content (string or URL) and convert into an editable HTML frame. Parses SVG elements (rect, circle, path, text, polygon, line) and maps them to positioned HTML/CSS with data-layer-id attributes. Creates a new template with one frame containing the result.",
     inputSchema: {
       type: "object",
       properties: {
-        templateIds: {
-          type: "array",
-          items: { type: "string" },
-          description: "List of template IDs to update",
-        },
-        search: { type: "string", description: "Optional: update all templates matching this name search instead of explicit IDs" },
-        workspaceId: { type: "string", description: "Required when using search to scope to a workspace" },
-        canvas: { type: "object", description: "Canvas JSON to merge into each template" },
-        objects: {
-          type: "array",
-          items: { type: "object" },
-          description: "Objects to merge into each template",
-        },
-        name: { type: "string", description: "New name(s) — appended suffix like ' - Updated'" },
+        svg: { type: "string", description: "Raw SVG content as a string" },
+        url: { type: "string", description: "URL to fetch SVG from (alternative to svg)" },
+        workspaceId: { type: "string", description: "Target workspace ID" },
+        name: { type: "string", description: "Template name (default: 'Imported SVG')" },
       },
-      required: [],
+      required: ["workspaceId"],
     },
   },
   {
@@ -756,35 +756,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "add_comment",
-    description: "Add a comment to a specific object or position on the canvas. Comments are stored in template metadata.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        text: { type: "string", description: "Comment text" },
-        targetLayerName: { type: "string", description: "Layer name to attach comment to (optional)" },
-        x: { type: "number", description: "X position for canvas-level comment" },
-        y: { type: "number", description: "Y position for canvas-level comment" },
-        author: { type: "string", description: "Comment author name (default 'Anonymous')" },
-        resolved: { type: "boolean", description: "Mark as resolved (default false)" },
-      },
-      required: ["templateId", "text"],
-    },
-  },
-  {
-    name: "share_template",
-    description: "Generate a shareable link for a template with optional permissions (view, comment, edit).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID to share" },
-        permission: { type: "string", enum: ["view", "comment", "edit"], description: "Access level (default view)" },
-      },
-      required: ["templateId"],
-    },
-  },
-  {
     name: "preview_font",
     description: "Render a font preview on the canvas showing the font family name at large size and a sample pangram in that typeface.",
     inputSchema: {
@@ -798,22 +769,6 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Optional frame ID" },
       },
       required: ["templateId", "fontFamily"],
-    },
-  },
-  {
-    name: "mention_user",
-    description: "Add an @mention annotation to an object or canvas position. Stored as a styled comment with the mention data.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        username: { type: "string", description: "Username to mention (e.g. 'lara', '@lara' — @ prefix added if missing)" },
-        targetLayerName: { type: "string", description: "Layer name to attach mention to (optional)" },
-        x: { type: "number", description: "X position for canvas-level mention" },
-        y: { type: "number", description: "Y position for canvas-level mention" },
-        message: { type: "string", description: "Optional message text with the mention" },
-      },
-      required: ["templateId", "username"],
     },
   },
   {
@@ -889,35 +844,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "create_style",
-    description: "Create a reusable style (fill, stroke, text, or effect) from a layer's current properties. Styles can be applied to other layers via apply_style.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        name: { type: "string", description: "Style name (e.g. 'Primary Blue', 'Heading H1')" },
-        type: { type: "string", enum: ["fill", "stroke", "text", "effect"], description: "Style type" },
-        sourceLayerName: { type: "string", description: "Layer name to extract style properties from" },
-        frameId: { type: "string", description: "Optional frame ID for source layer lookup" },
-      },
-      required: ["templateId", "name", "type", "sourceLayerName"],
-    },
-  },
-  {
-    name: "apply_style",
-    description: "Apply a saved style to one or more target layers, transferring fill/stroke/text/effect properties.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        styleId: { type: "string", description: "Style ID to apply" },
-        targetLayerNames: { type: "array", items: { type: "string" }, description: "Array of layer names to apply the style to" },
-        frameId: { type: "string", description: "Optional frame ID for target layer lookup" },
-      },
-      required: ["templateId", "styleId", "targetLayerNames"],
-    },
-  },
-  {
     name: "create_variable",
     description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     inputSchema: {
@@ -930,19 +856,6 @@ const MCP_TOOLS = [
         collectionId: { type: "string", description: "Optional collection ID to group this variable" },
       },
       required: ["templateId", "name", "type", "value"],
-    },
-  },
-  {
-    name: "create_collection",
-    description: "Create a variable collection with optional modes (e.g. 'Light/Dark'). Collections group related design tokens.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        name: { type: "string", description: "Collection name (e.g. 'Colors', 'Spacing', 'Typography')" },
-        modes: { type: "array", items: { type: "string" }, description: "Mode names (e.g. ['Light', 'Dark']). Default: ['Default']" },
-      },
-      required: ["templateId", "name"],
     },
   },
   {
@@ -1013,135 +926,6 @@ const MCP_TOOLS = [
         steps: { type: "number", description: "Number of steps for shades/gradient (default 5, max 20)" },
       },
       required: ["color"],
-    },
-  },
-  {
-    name: "create_component",
-    description: "Create a reusable component from selected canvas objects. Components support variants (alternative configurations) and property overrides (boolean, text, instance swap). Stored in template metadata.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        name: { type: "string", description: "Component name (e.g. Button/Primary)" },
-        description: { type: "string", description: "Optional description of the component" },
-        objectIds: { type: "array", items: { type: "string" }, description: "Array of object IDs to include in the component" },
-        frameId: { type: "string", description: "Optional frame ID to scope the component" },
-      },
-      required: ["templateId", "name", "objectIds"],
-    },
-  },
-  {
-    name: "create_instance",
-    description: "Create an instance of a component. Instances inherit the component master's properties but can override specific values. Changes to the master propagate to instances that haven't overridden the changed property.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        componentId: { type: "string", description: "Component ID to instantiate" },
-        x: { type: "number", description: "X position for the instance (default 0)" },
-        y: { type: "number", description: "Y position for the instance (default 0)" },
-        frameId: { type: "string", description: "Optional frame ID to place instance inside" },
-      },
-      required: ["templateId", "componentId"],
-    },
-  },
-  {
-    name: "add_variant",
-    description: "Add a variant to an existing component. Variants define alternative configurations (e.g. Button/Primary, Button/Secondary, Button/Disabled) with per-property overrides.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        componentId: { type: "string", description: "Component ID to add variant to" },
-        name: { type: "string", description: "Variant name (e.g. Hover, Disabled, Secondary)" },
-        overrides: { type: "object", description: "Key-value overrides for object properties (e.g. { \"fill\": \"#45475a\", \"opacity\": 0.5 })" },
-      },
-      required: ["templateId", "componentId", "name"],
-    },
-  },
-  {
-    name: "add_interaction",
-    description: "Add an interaction between frames or objects. Supports click-to-navigate, hover-to-overlay, press, and delay triggers with navigation, overlay, and scroll actions.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        sourceId: { type: "string", description: "Source frame or object ID that triggers the interaction" },
-        trigger: { type: "string", enum: ["onClick", "onHover", "onPress", "onDelay"], description: "Trigger type (default onClick)" },
-        action: { type: "string", enum: ["navigate", "overlay", "scroll", "back", "close"], description: "Action to perform (default navigate)" },
-        targetId: { type: "string", description: "Target frame ID for navigation or overlay" },
-        transition: { type: "string", enum: ["instant", "dissolve", "slide", "push", "smartAnimate"], description: "Transition animation (default instant)" },
-        duration: { type: "number", description: "Animation duration in ms (default 300)" },
-        delay: { type: "number", description: "Delay before trigger in ms (for onDelay trigger)" },
-        easing: { type: "string", enum: ["easeIn", "easeOut", "easeInOut", "linear"], description: "Easing curve (default easeOut)" },
-      },
-      required: ["templateId", "sourceId"],
-    },
-  },
-  {
-    name: "set_animation",
-    description: "Set entrance/exit animation on a frame or object. Supports dissolve, slide, smart animate, and custom easing curves.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        objectId: { type: "string", description: "Frame or object ID to animate" },
-        type: { type: "string", enum: ["dissolve", "slideIn", "slideOut", "push", "smartAnimate", "fade"], description: "Animation type" },
-        direction: { type: "string", enum: ["left", "right", "up", "down"], description: "Direction for slide animations" },
-        duration: { type: "number", description: "Duration in ms (default 300)" },
-        easing: { type: "string", enum: ["easeIn", "easeOut", "easeInOut", "linear", "spring", "bounce"], description: "Easing curve (default easeOut)" },
-        delay: { type: "number", description: "Delay in ms before animation starts" },
-      },
-      required: ["templateId", "objectId", "type"],
-    },
-  },
-  {
-    name: "add_overlay",
-    description: "Configure a frame as an overlay with positioning, backdrop, and close-on-click-outside behavior. Used for modals, tooltips, dropdowns, and slide-out panels.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID to configure as overlay" },
-        position: { type: "string", enum: ["center", "topLeft", "topRight", "bottomLeft", "bottomRight", "manual"], description: "Overlay position (default center)" },
-        backdrop: { type: "boolean", description: "Show semi-transparent backdrop (default true)" },
-        backdropColor: { type: "string", description: "Backdrop color with opacity (default rgba(0,0,0,0.5))" },
-        closeOnBackdrop: { type: "boolean", description: "Close overlay when clicking backdrop (default true)" },
-        manualX: { type: "number", description: "Manual X offset (for manual position)" },
-        manualY: { type: "number", description: "Manual Y offset (for manual position)" },
-      },
-      required: ["templateId", "frameId"],
-    },
-  },
-  {
-    name: "set_scroll_position",
-    description: "Set scroll behavior for frames or objects within a scrolling container. Supports fixed positioning (stays in place during scroll) and sticky positioning.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Template ID" },
-        objectId: { type: "string", description: "Frame or object ID" },
-        behavior: { type: "string", enum: ["fixed", "sticky", "scroll", "auto"], description: "Scroll behavior (default auto)" },
-        stickyTop: { type: "number", description: "Top offset in px for sticky positioning" },
-        stickyBottom: { type: "number", description: "Bottom offset in px for sticky positioning" },
-        overflow: { type: "string", enum: ["visible", "hidden", "scroll", "auto"], description: "Overflow behavior for the container (default visible)" },
-      },
-      required: ["templateId", "objectId", "behavior"],
-    },
-  },
-  {
-    name: "publish_library",
-    description: "Publish a style library from a template. Collections of styles (color, text, effect, grid) can be published and imported by other templates, enabling design system reuse across projects.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        templateId: { type: "string", description: "Source template ID containing the styles" },
-        name: { type: "string", description: "Library name (e.g. 'Brand Design System')" },
-        description: { type: "string", description: "Library description" },
-        styleIds: { type: "array", items: { type: "string" }, description: "Array of style IDs to include (omit to publish all)" },
-        visibility: { type: "string", enum: ["workspace", "public"], description: "Visibility scope (default workspace)" },
-      },
-      required: ["templateId", "name"],
     },
   },
   {
@@ -1431,11 +1215,6 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { templateId: { type: "string" } }, required: ["templateId"] },
   },
   {
-    name: "create_variant",
-    description: "Clone a template and replace variables (texts, images, colors) to create a new variant",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, variables: { type: "object" }, name: { type: "string" } }, required: ["templateId", "variables"] },
-  },
-  {
     name: "apply_variables",
     description: "Apply variable replacements directly to an existing template",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, variables: { type: "object" } }, required: ["templateId", "variables"] },
@@ -1447,56 +1226,11 @@ const MCP_TOOLS = [
   },
   // ── Fase 3: Batch Factory ──
   {
-    name: "batch_create_variants",
-    description: "Create multiple template variants from an array of variable sets",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, recipeId: { type: "string" }, variables: { type: "array" }, options: { type: "object" } }, required: ["variables"] },
-  },
-  {
     name: "batch_render_html",
     description: "Render multiple HTML templates to PNG",
     inputSchema: { type: "object", properties: { batchId: { type: "string" }, templateIds: { type: "array" }, format: { type: "string" }, scale: { type: "number" } } },
   },
-  {
-    name: "batch_status",
-    description: "Check status and progress of a batch job",
-    inputSchema: { type: "object", properties: { batchId: { type: "string" }, jobId: { type: "string" } } },
-  },
-  {
-    name: "batch_cancel",
-    description: "Cancel a running batch job",
-    inputSchema: { type: "object", properties: { batchId: { type: "string" }, jobId: { type: "string" } } },
-  },
-  {
-    name: "batch_export",
-    description: "Export batch results as ZIP or URL list",
-    inputSchema: { type: "object", properties: { batchId: { type: "string" }, templateIds: { type: "array" }, format: { type: "string" }, includeMetadata: { type: "boolean" } } },
-  },
-  {
-    name: "publish_batch",
-    description: "Publish rendered batch via n8n webhook to social channels",
-    inputSchema: { type: "object", properties: { batchId: { type: "string" }, renderUrls: { type: "array" }, channels: { type: "array" }, schedule: { type: "string" } } },
-  },
-  {
-    name: "publish_status",
-    description: "Check publishing job status",
-    inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] },
-  },
   // ── Fase 4: Multi-Agent Realtime ──
-  {
-    name: "claim_section",
-    description: "Claim exclusive editing access to a template section with TTL lock",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, sectionId: { type: "string" }, agentId: { type: "string" }, ttlSeconds: { type: "number" } }, required: ["templateId", "sectionId", "agentId"] },
-  },
-  {
-    name: "release_section",
-    description: "Release a previously claimed section lock",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, sectionId: { type: "string" }, lockId: { type: "string" } }, required: ["templateId", "lockId"] },
-  },
-  {
-    name: "list_sections",
-    description: "List all sections of a template with their lock status",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" } }, required: ["templateId"] },
-  },
   {
     name: "assemble_template",
     description: "Merge all section html/css into a complete template",
@@ -1547,6 +1281,16 @@ const MCP_TOOLS = [
     name: "auto_fix_brand",
     description: "Automatically fix colors, fonts, and spacing to match brand",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" }, autoFix: { type: "array" } }, required: ["templateId", "brandId"] },
+  },
+  {
+    name: "get_brands",
+    description: "List all saved brands with colors, fonts, and metadata",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "apply_brand",
+    description: "Apply a saved brand's colors and fonts as CSS custom properties to a template",
+    inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" } }, required: ["templateId", "brandId"] },
   },
   // ── Fase 6: Format Adaptation ──
   {
@@ -1635,7 +1379,32 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
-        action: { type: "string", enum: ["extract", "generate", "publish"], description: "extract=raw data only, generate=full artifacts (DESIGN.md+tokens.json+shared.css), publish=generate+store on template metadata (default: generate)" },
+        action: { type: "string", enum: ["extract", "generate", "publish"], description: "extract=raw data only, generate=full artifacts (DESIGN.md+tokens.json+shared.css), publish=generate+store on template AND brand_guidelines (default: generate)" },
+        brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name (creates/updates brand_guidelines row)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "verify_design_system",
+    description: "Verify extracted design tokens against actual frame content. Checks for orphan tokens (extracted but unused), missing tokens (used but not in extraction), font usage consistency, and color role classification accuracy. Returns a verification report with pass/fail/warn items.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to verify" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "generate_brand_manual",
+    description: "Generate a comprehensive brand identity manual in HTML format. Extracts colors, typography, spacing, components, and assets from the template, then produces a polished, printable brand guide with color swatches, type scale showcase, spacing reference, and component library.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to generate the brand manual from" },
+        brandName: { type: "string", description: "Brand name for the cover page (defaults to template name)" },
+        tagline: { type: "string", description: "Optional brand tagline" },
       },
       required: ["templateId"],
     },
@@ -1898,6 +1667,105 @@ const MCP_TOOLS = [
       required: ["templateId", "frameId", "elementIds", "align"],
     },
   },
+  {
+    name: "draw_bezier",
+    description: "Create an SVG path with cubic (C) or quadratic (Q) bezier curves. Supports smooth curves (S, T), absolute arcs (A), and combined commands. Returns the layer-id of the created path element.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID to draw in" },
+        pathData: { type: "string", description: "SVG path data with bezier commands (C, Q, S, T, A, M, L, Z)" },
+        x: { type: "number", description: "X position of bounding box" },
+        y: { type: "number", description: "Y position of bounding box" },
+        width: { type: "number", description: "Width of bounding box" },
+        height: { type: "number", description: "Height of bounding box" },
+        fill: { type: "string", description: "Fill color (default 'none')" },
+        stroke: { type: "string", description: "Stroke color (default #8B5CF6)" },
+        strokeWidth: { type: "number", description: "Stroke width (default 2)" },
+        closed: { type: "boolean", description: "Add Z at the end to close the path (default false)" },
+      },
+      required: ["templateId", "frameId", "pathData", "x", "y", "width", "height"],
+    },
+  },
+  {
+    name: "edit_path_points",
+    description: "Edit the d-attribute (path data) of an existing SVG path element. Use to move, add, or remove points in a path. Returns the updated path data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the path" },
+        elementId: { type: "string", description: "data-layer-id of the SVG path element" },
+        newPathData: { type: "string", description: "New SVG path d-attribute value. Replaces the existing d value entirely." },
+      },
+      required: ["templateId", "frameId", "elementId", "newPathData"],
+    },
+  },
+  // ── Phase E: Incremental point editing ──
+  {
+    name: "edit_path_point",
+    description: "Incrementally edit a single point in an SVG path. Move a point by index, toggle smooth/corner, delete a point, or insert a new point. No need to regenerate the full d-attribute.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the path" },
+        elementId: { type: "string", description: "data-layer-id of the SVG element" },
+        pointIndex: { type: "number", description: "0-based index of the point to edit. Required for move/delete/toggle." },
+        x: { type: "number", description: "New X coordinate (for move action)" },
+        y: { type: "number", description: "New Y coordinate (for move action)" },
+        type: { type: "string", enum: ["anchor", "smooth"], description: "Toggle point type between anchor (corner) and smooth (bezier)" },
+        action: { type: "string", enum: ["move", "delete", "toggle"], description: "Action: move (default), delete, or toggle smooth/corner" },
+        insertAfterIndex: { type: "number", description: "Insert a new anchor point after this index (requires x, y)" },
+      },
+      required: ["templateId", "frameId", "elementId"],
+    },
+  },
+  // ── Phase D: Convert CSS shape to SVG path ──
+  {
+    name: "shape_to_path",
+    description: "Convert a CSS-based shape (rect div with border-radius, circle div) to an SVG path element so it can participate in pathfinder boolean operations and point editing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        elementId: { type: "string", description: "data-layer-id of the CSS shape to convert" },
+      },
+      required: ["templateId", "frameId", "elementId"],
+    },
+  },
+  // ── Phase J: UI Components Generator ──
+  {
+    name: "generate_ui_components",
+    description: "Generate a standardized UI component kit (buttons, cards, nav, forms, hero) from the current design system tokens. Each component is an editable frame element using CSS custom properties from the brand.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Source template for design system extraction" },
+        targetFrameId: { type: "string", description: "Frame to add components to (uses first frame if omitted)" },
+        components: { type: "array", items: { type: "string", enum: ["button-primary", "button-secondary", "button-ghost", "card", "navbar", "form-input", "hero"] }, description: "Which components to generate (default all)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  // ── Phase B: Pathfinder ──
+  {
+    name: "pathfinder",
+    description: "Perform boolean operations (union, subtract, intersect, exclude) on two SVG path elements. Creates a new merged SVG element and removes the originals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the paths" },
+        elementIdA: { type: "string", description: "data-layer-id of the first SVG element" },
+        elementIdB: { type: "string", description: "data-layer-id of the second SVG element" },
+        operation: { type: "string", enum: ["union", "subtract", "intersect", "exclude"], description: "Boolean operation to perform" },
+      },
+      required: ["templateId", "frameId", "elementIdA", "elementIdB", "operation"],
+    },
+  },
   // ── Phase 1: Asset Management ──
   {
     name: "upload_image",
@@ -1990,32 +1858,6 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: "batch_from_recipe",
-    description: "Create multiple templates from a recipe with an array of variable sets, plus auto-render all results",
-    inputSchema: {
-      type: "object",
-      properties: {
-        recipeId: { type: "string", description: "Recipe ID to batch from" },
-        workspaceId: { type: "string", description: "Target workspace" },
-        variableSets: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string", description: "Name for this variant" },
-              texts: { type: "object" },
-              colors: { type: "object" },
-              images: { type: "object" },
-            },
-          },
-          description: "Array of variable sets, one template created per set",
-        },
-        render: { type: "boolean", description: "Auto-render all created templates (default true)" },
-      },
-      required: ["recipeId", "variableSets"],
-    },
-  },
-  {
     name: "profile_template_pool",
     description: "Profile multiple templates to detect content slots (text, image, richtext, cta), estimate text capacity (maxChars), classify layout type, and compute CSV column schema. Supports data-slot attribute for explicit slot naming. Deterministic — no AI involved.",
     inputSchema: {
@@ -2098,11 +1940,285 @@ const MCP_TOOLS = [
       required: ["workspaceId", "csvData", "templateIds"],
     },
   },
+  {
+    name: "lock_element",
+    description: "Lock or unlock a layer/element in a frame. Locked elements cannot be selected or moved on the canvas (pointer-events: none).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the element to lock/unlock" },
+        locked: { type: "boolean", description: "true to lock, false to unlock" },
+      },
+      required: ["templateId", "frameId", "layerId", "locked"],
+    },
+  },
+  {
+    name: "hide_element",
+    description: "Hide or show a layer/element in a frame. Hidden elements get display:none and are invisible on the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the element to hide/show" },
+        hidden: { type: "boolean", description: "true to hide, false to show" },
+      },
+      required: ["templateId", "frameId", "layerId", "hidden"],
+    },
+  },
+  {
+    name: "edit_text_content",
+    description: "Change the text content of a text element inside a frame. Finds the element by data-layer-id and replaces its inner text.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the text element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the text element" },
+        text: { type: "string", description: "New text content to set" },
+      },
+      required: ["templateId", "frameId", "layerId", "text"],
+    },
+  },
+  {
+    name: "copy_style",
+    description: "Copy all CSS properties from one element. Returns the CSS declarations as a string that can be pasted onto another element.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the source element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the element to copy from" },
+      },
+      required: ["templateId", "frameId", "layerId"],
+    },
+  },
+  {
+    name: "paste_style",
+    description: "Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the target element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the element to paste onto" },
+        styles: { type: "string", description: "CSS declarations string to apply (e.g. 'color: red; font-size: 16px;')" },
+      },
+      required: ["templateId", "frameId", "layerId", "styles"],
+    },
+  },
+  {
+    name: "set_pseudo_state",
+    description: "Set CSS pseudo-class styles (:hover, :active, :focus) for an element. Creates or updates a pseudo-class CSS rule like '.class:hover { ... }'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the element" },
+        pseudo: { type: "string", enum: [":hover", ":active", ":focus"], description: "Pseudo-class to set" },
+        styles: { type: "string", description: "CSS declarations to apply in the pseudo state (e.g. 'background-color: #333; transform: scale(1.05);')" },
+      },
+      required: ["templateId", "frameId", "layerId", "pseudo", "styles"],
+    },
+  },
+  {
+    name: "create_brand_guideline",
+    description: "Create a reusable brand guideline record (stored in brand_guidelines table). Brand guidelines contain design tokens, DESIGN.md, and shared.css that can be shared across templates in a workspace. Use this to establish a canonical brand identity that persists independently of any single template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        name: { type: "string", description: "Brand name (e.g. 'Acme Corp Design System')" },
+        description: { type: "string", description: "Optional description of the brand identity" },
+        tokensJson: { type: "string", description: "JSON string of extracted design tokens" },
+        designMd: { type: "string", description: "Markdown DESIGN.md content" },
+        sharedCss: { type: "string", description: "Shared CSS variables and utility classes" },
+        sourceHash: { type: "string", description: "SHA-256 hash of source frames for staleness detection" },
+        sourceTemplateIds: { type: "array", items: { type: "string" }, description: "Template IDs that contributed to this brand" },
+      },
+      required: ["workspaceId", "name"],
+    },
+  },
+  {
+    name: "get_brand_guideline",
+    description: "Retrieve a brand guideline by ID. Returns the full record including tokensJson, designMd, and sharedCss. Use this to load a brand's design system for use in an agent workflow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        brandId: { type: "string", description: "Brand Guideline ID" },
+      },
+      required: ["brandId"],
+    },
+  },
+  {
+    name: "list_brand_guidelines",
+    description: "List all brand guidelines in a workspace. Returns id, name, description, and metadata for each brand. Use this to discover available brand identities before applying one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "update_brand_guideline",
+    description: "Update an existing brand guideline's content. Use this to refresh design tokens, update documentation, or modify shared CSS after design changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        brandId: { type: "string", description: "Brand Guideline ID" },
+        name: { type: "string", description: "Updated brand name" },
+        description: { type: "string", description: "Updated description" },
+        tokensJson: { type: "string", description: "Updated tokens JSON" },
+        designMd: { type: "string", description: "Updated DESIGN.md" },
+        sharedCss: { type: "string", description: "Updated shared CSS" },
+        sourceHash: { type: "string", description: "Updated source hash" },
+        sourceTemplateIds: { type: "array", items: { type: "string" }, description: "Updated source template IDs" },
+      },
+      required: ["brandId"],
+    },
+  },
+  {
+    name: "delete_brand_guideline",
+    description: "Delete a brand guideline permanently. This does NOT affect templates that reference it; they will retain their last-seen designArtifacts snapshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        brandId: { type: "string", description: "Brand Guideline ID to delete" },
+      },
+      required: ["brandId"],
+    },
+  },
+  {
+    name: "apply_brand_to_template",
+    description: "Link a template to a brand guideline. Sets the template's brandId and copies the brand's designArtifacts (tokensJson, designMd, sharedCss) onto the template for immediate use. AI agents can then use get_design_artifacts to retrieve brand-aware design data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to apply the brand to" },
+        brandId: { type: "string", description: "Brand Guideline ID to apply" },
+      },
+      required: ["templateId", "brandId"],
+    },
+  },
+  {
+    name: "set_stroke_style",
+    description: "Set stroke properties (color, width, linecap, linejoin, dasharray) on an SVG path element. Applies CSS stroke-* properties to the element's selector.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        stroke: { type: "string", description: "Stroke color (CSS color value, e.g. '#ff0000', 'none')" },
+        strokeWidth: { type: "number", description: "Stroke width in pixels" },
+        strokeLinecap: { type: "string", enum: ["butt", "round", "square"], description: "Stroke linecap style" },
+        strokeLinejoin: { type: "string", enum: ["miter", "round", "bevel"], description: "Stroke linejoin style" },
+        strokeDasharray: { type: "string", description: "Dash pattern (e.g. '4 4', '8 4 4 4', 'none')" },
+      },
+      required: ["templateId", "frameId", "layerId"],
+    },
+  },
+  {
+    name: "set_gradient",
+    description: "Apply a CSS gradient (linear, radial, conic) to an element's background or fill. For SVG paths, sets fill property; for div elements, sets background-image.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID of the element" },
+        gradientType: { type: "string", enum: ["linear", "radial", "conic"], description: "Gradient type" },
+        angle: { type: "number", description: "Angle in degrees for linear gradient (0=t→b, 90=l→r)" },
+        stops: { type: "array", description: "Array of {color, position} objects. Position is 0-100 percentage." },
+      },
+      required: ["templateId", "frameId", "layerId", "gradientType", "stops"],
+    },
+  },
+  {
+    name: "set_blend_mode",
+    description: "Set the CSS mix-blend-mode on an element. Controls how the element blends with its backdrop (multiply, screen, overlay, etc.).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the element" },
+        layerId: { type: "string", description: "Layer ID of the element" },
+        blendMode: { type: "string", enum: ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], description: "CSS blend mode" },
+      },
+      required: ["templateId", "frameId", "layerId", "blendMode"],
+    },
+  },
+  {
+    name: "outline_stroke",
+    description: "Convert an SVG stroke to a filled outline path. Uses svg-path-commander to expand the stroke into a filled shape. Useful for boolean operations and advanced path editing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG element" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        strokeWidth: { type: "number", description: "Stroke width to expand (overrides element's current stroke-width)" },
+      },
+      required: ["templateId", "frameId", "layerId"],
+    },
+  },
+  {
+    name: "offset_path",
+    description: "Create an offset (inset/outset) version of an SVG path. Positive offset expands outward, negative offset shrinks inward. Uses svg-path-commander pathOffset().",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the SVG element" },
+        layerId: { type: "string", description: "Layer ID of the SVG path element" },
+        offset: { type: "number", description: "Offset distance in pixels. Positive=outset, negative=inset." },
+        miterLimit: { type: "number", description: "Miter limit for offset (default: 4)" },
+      },
+      required: ["templateId", "frameId", "layerId", "offset"],
+    },
+  },
+  {
+    name: "rename_template",
+    description: "Rename a template (workspace). Updates the template name in the database.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to rename" },
+        name: { type: "string", description: "New name for the template" },
+      },
+      required: ["templateId", "name"],
+    },
+  },
 ];
 
 function getUserId(event) {
   const headers = event.headers || {};
-  return headers["x-api-key"] || headers["authorization"]?.replace("Bearer ", "") || "dev_user_default";
+  const apiKey = headers["x-api-key"];
+  const bearer = (headers["authorization"] || "").replace("Bearer ", "");
+
+  // If Supabase is configured and token looks like a JWT, try to verify it
+  if (bearer && bearer.startsWith("eyJ") && bearer.split(".").length === 3) {
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        // Store for async resolution later
+        event._supabaseToken = bearer;
+        // Return the raw JWT sub as fallback; actual verification happens in handler
+        const payload = JSON.parse(Buffer.from(bearer.split(".")[1], "base64url").toString("utf8"));
+        const userId = payload.sub || payload.user_id || payload.id;
+        if (userId) return userId;
+      } catch (_) {
+        // JWT decode failed, fall through
+      }
+    }
+  }
+
+  return apiKey || bearer || "dev_user_default";
 }
 
 function jsonRpcError(id, code, message) {
@@ -2230,6 +2346,23 @@ async function handleMethod(method, params, userId) {
       return ws;
     }
 
+    // ── Teams ──
+    }
+
+    }
+
+    }
+
+    }
+
+    }
+
+    }
+
+    }
+
+    }
+
     // ── Templates ──
     case "list_templates": {
       const result = await templates.listTemplatesPaginated(
@@ -2327,7 +2460,6 @@ async function handleMethod(method, params, userId) {
         exportedAt: new Date().toISOString(),
         template: {
           name: tpl.name, width: tpl.width, height: tpl.height,
-          frames: tpl.frames, styles: tpl.styles,
           variables: tpl.variables, metadata: tpl.metadata,
         },
       };
@@ -2363,41 +2495,143 @@ async function handleMethod(method, params, userId) {
       return newTpl;
     }
 
-    // ── Batch Update ──
-    case "batch_update": {
-      let ids = params.templateIds || params.operations || [];
-      // Resolve IDs via search if provided
-      if (params.search) {
-        const result = await templates.listTemplatesPaginated(200, 0, params.workspaceId, params.search);
-        const found = (result?.data || []).map(t => t.id);
-        ids = [...new Set([...ids, ...found])];
-      }
-      if (!ids.length) throw { code: -32602, message: "No templateIds or matching search results" };
-
-      // Build base updates
-      const baseUpdates = {};
-      if (params.name !== undefined) baseUpdates.name = params.name;
-
-      const results = [];
-      for (const id of ids) {
+    // ── SVG Import ──
+    case "import_svg": {
+      let svgContent = params.svg;
+      if (!svgContent && params.url) {
         try {
-          const tpl = await templates.getTemplate(id);
-          if (!tpl) { results.push({ id, ok: false, error: "Template not found" }); continue; }
-
-          const updates = { ...baseUpdates };
-
-          await templates.updateTemplate(id, updates);
-          results.push({ id, ok: true });
+          const svgRes = await fetch(params.url);
+          if (!svgRes.ok) throw { code: -32000, message: `Failed to fetch SVG: ${svgRes.status}` };
+          svgContent = await svgRes.text();
         } catch (e) {
-          results.push({ id, ok: false, error: e?.message || "update failed" });
+          if (e.code) throw e;
+          throw { code: -32000, message: `Failed to fetch SVG URL: ${e.message}` };
         }
       }
-      return {
-        updated: results.filter(r => r.ok).length,
-        failed: results.filter(r => !r.ok).length,
-        total: ids.length,
-        results,
+      if (!svgContent) throw { code: -32602, message: "Either svg or url parameter is required" };
+
+      // Parse SVG with cheerio
+      const $svg = cheerio.load(svgContent, { xmlMode: true });
+      const rootSvg = $svg("svg");
+      if (!rootSvg.length) throw { code: -32000, message: "No <svg> element found in content" };
+
+      // Extract dimensions
+      const vb = (rootSvg.attr("viewBox") || "").split(/[\s,]+/).filter(Boolean).map(Number);
+      let svgW = parseInt(rootSvg.attr("width")) || vb[2] || 800;
+      let svgH = parseInt(rootSvg.attr("height")) || vb[3] || 600;
+      const vbX = vb[0] || 0, vbY = vb[1] || 0;
+
+      // Build HTML + CSS for each SVG child element
+      const htmlParts = [];
+      const cssParts = [];
+      let elIdx = 0;
+
+      rootSvg.children().each((_, el) => {
+        const $el = $svg(el);
+        const tag = (el.tagName || el.name || "").toLowerCase();
+        if (!tag || tag === "defs" || tag === "style" || tag === "title" || tag === "desc") return;
+        const layerId = `el_${Date.now().toString(36)}_${elIdx++}`;
+
+        let x = 0, y = 0, w = 100, h = 100;
+        // Parse position attributes
+        const attX = parseFloat($el.attr("x")); const attY = parseFloat($el.attr("y"));
+        const attW = parseFloat($el.attr("width")); const attH = parseFloat($el.attr("height"));
+        const attCx = parseFloat($el.attr("cx")); const attCy = parseFloat($el.attr("cy"));
+        const attR = parseFloat($el.attr("r"));
+        const attRx = parseFloat($el.attr("rx")); const attRy = parseFloat($el.attr("ry"));
+        const attD = $el.attr("d") || "";
+        const attPoints = $el.attr("points") || "";
+        const fill = $el.attr("fill") || "none";
+        const stroke = $el.attr("stroke") || "none";
+        const strokeW = $el.attr("stroke-width") || "1";
+        const opacity = $el.attr("opacity") || "1";
+        const transform = $el.attr("transform") || "";
+        const textContent = $el.text()?.trim() || "";
+
+        if (tag === "rect") {
+          x = isNaN(attX) ? 0 : attX; y = isNaN(attY) ? 0 : attY;
+          w = isNaN(attW) ? 100 : attW; h = isNaN(attH) ? 100 : attH;
+          const rx = isNaN(attRx) ? (isNaN(attR) ? 0 : attR) : attRx;
+          const ry = isNaN(attRy) ? rx : attRy;
+          htmlParts.push(`<div data-layer-id="${layerId}"></div>`);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x}px; top: ${y}px; width: ${w}px; height: ${h}px; background: ${fill}; border-radius: ${rx}px ${ry}px ${rx}px ${ry}px; opacity: ${opacity}; ${transform ? `transform: ${transform};` : ""} ${stroke !== "none" ? `border: ${strokeW}px solid ${stroke};` : ""} }`);
+        } else if (tag === "circle" || tag === "ellipse") {
+          const cx = isNaN(attCx) ? 0 : attCx, cy = isNaN(attCy) ? 0 : attCy;
+          const r = isNaN(attR) ? 50 : attR;
+          x = cx - r; y = cy - r; w = r * 2; h = r * 2;
+          htmlParts.push(`<div data-layer-id="${layerId}"></div>`);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x}px; top: ${y}px; width: ${w}px; height: ${h}px; background: ${fill}; border-radius: 50%; opacity: ${opacity}; ${transform ? `transform: ${transform};` : ""} ${stroke !== "none" ? `border: ${strokeW}px solid ${stroke};` : ""} }`);
+        } else if (tag === "line") {
+          const x1 = parseFloat($el.attr("x1")) || 0, y1 = parseFloat($el.attr("y1")) || 0;
+          const x2 = parseFloat($el.attr("x2")) || 100, y2 = parseFloat($el.attr("y2")) || 100;
+          x = Math.min(x1, x2); y = Math.min(y1, y2); w = Math.abs(x2 - x1) || 2; h = Math.abs(y2 - y1) || 2;
+          htmlParts.push(`<div data-layer-id="${layerId}"></div>`);
+          const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x1}px; top: ${y1}px; width: ${Math.max(w, 2)}px; height: ${strokeW}px; background: ${stroke !== "none" ? stroke : "#000"}; transform: rotate(${angle}deg); transform-origin: left center; opacity: ${opacity}; }`);
+        } else if (tag === "polygon" || tag === "polyline") {
+          const pts = attPoints.split(/[\s,]+/).filter(Boolean).map(Number);
+          const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
+          x = Math.min(...xs); y = Math.min(...ys); w = Math.max(...xs) - x; h = Math.max(...ys) - y;
+          // Embed as SVG for fidelity
+          htmlParts.push(`<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(w, 1)} ${Math.max(h, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(w, 1)}px;height:${Math.max(h, 1)}px;overflow:visible;"><${tag} points="${attPoints}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" opacity="${opacity}" ${transform ? `transform="${transform}"` : ""}/></svg>`);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x}px; top: ${y}px; width: ${Math.max(w, 1)}px; height: ${Math.max(h, 1)}px; overflow: visible; }`);
+        } else if (tag === "path") {
+          // Compute approximate bounds from path data
+          const nums = attD.match(/[-]?\d+\.?\d*/g)?.map(Number) || [];
+          const xs2 = nums.filter((_, i) => i % 2 === 0), ys2 = nums.filter((_, i) => i % 2 === 1);
+          x = xs2.length ? Math.min(...xs2) : 0; y = ys2.length ? Math.min(...ys2) : 0;
+          w = xs2.length ? Math.max(...xs2) - x : 100; h = ys2.length ? Math.max(...ys2) - y : 100;
+          htmlParts.push(`<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(w, 1)} ${Math.max(h, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(w, 1)}px;height:${Math.max(h, 1)}px;overflow:visible;"><path d="${attD}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" opacity="${opacity}" ${transform ? `transform="${transform}"` : ""}/></svg>`);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x}px; top: ${y}px; width: ${Math.max(w, 1)}px; height: ${Math.max(h, 1)}px; overflow: visible; }`);
+        } else if (tag === "text") {
+          x = isNaN(attX) ? 0 : attX; y = isNaN(attY) ? 0 : attY;
+          const fontSize = $el.attr("font-size") || "16";
+          const fontFamily = $el.attr("font-family") || "sans-serif";
+          const fontWeight = $el.attr("font-weight") || "normal";
+          const textAnchor = $el.attr("text-anchor") || "start";
+          htmlParts.push(`<div data-layer-id="${layerId}">${textContent}</div>`);
+          cssParts.push(`[data-layer-id="${layerId}"] { position: absolute; left: ${x}px; top: ${y}px; color: ${fill !== "none" ? fill : "#000"}; font-size: ${fontSize}px; font-family: ${fontFamily}; font-weight: ${fontWeight}; opacity: ${opacity}; ${textAnchor === "middle" ? "text-align: center;" : textAnchor === "end" ? "text-align: right;" : ""} }`);
+        }
+      });
+
+      // Create template
+      const tplName = params.name || "Imported SVG";
+      const newTpl = store.createTemplate({
+        workspaceId: params.workspaceId, name: tplName,
+        width: svgW, height: svgH, userId,
+      });
+      const frameId = `frame_${Date.now().toString(36)}`;
+      const frame = {
+        id: frameId, name: "Frame 1",
+        x: 0, y: 0, width: svgW, height: svgH,
+        html: htmlParts.join("\n"),
+        css: cssParts.join("\n"),
+        background: "#ffffff",
       };
+      newTpl.engine = "html";
+      newTpl.frames = [frame];
+      newTpl.html = frame.html;
+      newTpl.css = frame.css;
+      newTpl.metadata = newTpl.metadata || {};
+      newTpl.metadata.updatedAt = new Date().toISOString();
+
+      await templates.updateTemplate(newTpl.id, { frames: newTpl.frames, html: newTpl.html, css: newTpl.css });
+
+      // Dual-write to Supabase
+      const sb = getSupabase();
+      if (sb) {
+        try {
+          const row = { id: newTpl.id, name: newTpl.name, workspace_id: newTpl.workspaceId, data: newTpl, updated_at: new Date().toISOString() };
+          if (UUID_RE.test(userId)) row.user_id = userId;
+          await sb.from("templates").upsert(row);
+        } catch { /* non-blocking */ }
+      }
+
+      autoSnapshot(newTpl.id, "import_svg");
+      return { success: true, templateId: newTpl.id, name: tplName, width: svgW, height: svgH, elementCount: htmlParts.length };
+    }
+
+    // ── Batch Update ──
     }
 
     // ── Render Batch ──
@@ -2828,39 +3062,8 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── set_gradient ──
-    case "add_comment": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.comments) tpl.comments = [];
-      const comment = {
-        id: `cmt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        userId: params.author || "anonymous",
-        text: params.text,
-        targetLayerName: params.targetLayerName || null,
-        x: params.x ?? 0,
-        y: params.y ?? 0,
-        resolved: params.resolved ?? false,
-        createdAt: new Date().toISOString(),
-      };
-      tpl.comments.push(comment);
-      await templates.updateTemplate(params.templateId, { comments: tpl.comments });
-      autoSnapshot(params.templateId, method);
-      return { created: true, commentId: comment.id, totalComments: tpl.comments.length };
     }
 
-    case "share_template": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const permission = params.permission || "view";
-      const shareToken = `shr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const shareUrl = `https://futuraria.app/share/${shareToken}`;
-      if (!tpl.metadata) tpl.metadata = {};
-      tpl.metadata.shareToken = shareToken;
-      tpl.metadata.sharePermission = permission;
-      tpl.metadata.shareUrl = shareUrl;
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { shared: true, shareUrl, permission, shareToken };
     }
 
     case "preview_font": {
@@ -2871,27 +3074,6 @@ async function handleMethod(method, params, userId) {
       return { created: true, fontFamily, pangram, note: "Font preview loaded. Use create_html_frame + add_element to place text with this font." };
     }
 
-    case "mention_user": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      let username = params.username || "anonymous";
-      if (!username.startsWith("@")) username = "@" + username;
-      if (!tpl.comments) tpl.comments = [];
-      const mention = {
-        id: `mtn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        userId: username,
-        text: params.message ? `${username} ${params.message}` : `${username}`,
-        targetLayerName: params.targetLayerName || null,
-        x: params.x ?? 0,
-        y: params.y ?? 0,
-        resolved: false,
-        createdAt: new Date().toISOString(),
-        type: "mention",
-      };
-      tpl.comments.push(mention);
-      await templates.updateTemplate(params.templateId, { comments: tpl.comments });
-      autoSnapshot(params.templateId, method);
-      return { created: true, username, mentionId: mention.id };
     }
 
     // ── F3: AI Features (OpenRouter) ──
@@ -3057,59 +3239,8 @@ async function handleMethod(method, params, userId) {
     }
 
     // ── F4: Styles, Variables, Export ──
-    case "create_style": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
-      const obj = objects.find(o => (o.layerName || o.name) === params.sourceLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.sourceLayerName}` };
-      const styleType = params.type || "fill";
-      const props = {};
-      if (styleType === "fill") {
-        if (obj.fill) props.fill = obj.fill;
-        if (obj.opacity !== undefined) props.opacity = obj.opacity;
-      } else if (styleType === "stroke") {
-        if (obj.stroke) props.stroke = obj.stroke;
-        if (obj.strokeWidth !== undefined) props.strokeWidth = obj.strokeWidth;
-      } else if (styleType === "text") {
-        if (obj.fontSize) props.fontSize = obj.fontSize;
-        if (obj.fontFamily) props.fontFamily = obj.fontFamily;
-        if (obj.fontWeight) props.fontWeight = obj.fontWeight;
-        if (obj.fill) props.fill = obj.fill;
-        if (obj.lineHeight) props.lineHeight = obj.lineHeight;
-        if (obj.textAlign) props.textAlign = obj.textAlign;
-      } else if (styleType === "effect") {
-        if (obj.shadow) props.shadow = obj.shadow;
-        if (obj.filters) props.filters = obj.filters;
-      }
-      if (!tpl.styles) tpl.styles = [];
-      const style = {
-        id: `sty_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        name: params.name,
-        type: styleType,
-        properties: props,
-      };
-      tpl.styles.push(style);
-      await templates.updateTemplate(params.templateId, { styles: tpl.styles });
-      autoSnapshot(params.templateId, method);
-      return { created: true, styleId: style.id, name: style.name, type: styleType, properties: props };
     }
 
-    case "apply_style": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.styles) throw { code: -32000, message: "No styles defined in this template" };
-      const style = tpl.styles.find(s => s.id === params.styleId);
-      if (!style) throw { code: -32000, message: `Style not found: ${params.styleId}` };
-      const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
-      const targets = objects.filter(o => (params.targetLayerNames || []).includes(o.layerName || o.name));
-      if (targets.length === 0) throw { code: -32000, message: "No matching layers found for targetLayerNames" };
-      for (const obj of targets) {
-        Object.assign(obj, style.properties);
-      }
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { applied: true, styleId: style.id, styleName: style.name, targetCount: targets.length };
     }
 
     case "create_variable": {
@@ -3130,21 +3261,6 @@ async function handleMethod(method, params, userId) {
       return { created: true, variableId: variable.id, name: variable.name, type: variable.type, value: variable.value };
     }
 
-    case "create_collection": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.variables) tpl.variables = { collections: [], variables: [], bindings: {} };
-      if (!tpl.variables.collections) tpl.variables.collections = [];
-      const modes = params.modes?.length ? params.modes : ["Default"];
-      const collection = {
-        id: `col_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        name: params.name,
-        modes,
-      };
-      tpl.variables.collections.push(collection);
-      await templates.updateTemplate(params.templateId, { variables: tpl.variables });
-      autoSnapshot(params.templateId, method);
-      return { created: true, collectionId: collection.id, name: collection.name, modes };
     }
 
     case "link_variable": {
@@ -3366,167 +3482,6 @@ async function handleMethod(method, params, userId) {
         result.gradient = gradient;
       }
       return result;
-    }
-
-    // ── F4: Components ──
-    case "create_component": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.components) tpl.metadata.components = [];
-      const compId = `comp_${Date.now().toString(36)}`;
-      const component = {
-        id: compId, name: params.name, description: params.description || "",
-        objectIds: params.objectIds || [], objects: [],
-        variants: [], properties: [], created: new Date().toISOString(),
-      };
-      tpl.metadata.components.push(component);
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { created: true, componentId: compId, name: params.name, objectCount: 0 };
-    }
-
-    case "create_instance": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const components = tpl.metadata?.components || [];
-      const comp = components.find(c => c.id === params.componentId);
-      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
-      const instanceId = `inst_${Date.now().toString(36)}`;
-      autoSnapshot(params.templateId, method);
-      return { created: true, instanceId, componentId: params.componentId, componentName: comp.name, objectCount: comp.objects?.length || 0, note: "V2 instances should be created via create_html_frame + add_element." };
-    }
-
-    case "add_variant": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata?.components) throw { code: -32000, message: "No components found in this template" };
-      const comp = tpl.metadata.components.find(c => c.id === params.componentId);
-      if (!comp) throw { code: -32000, message: `Component not found: ${params.componentId}` };
-      if (!comp.variants) comp.variants = [];
-      const varId = `var_${Date.now().toString(36)}`;
-      comp.variants.push({
-        id: varId, name: params.name,
-        overrides: params.overrides || {},
-        created: new Date().toISOString(),
-      });
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { created: true, variantId: varId, componentId: params.componentId, name: params.name, overrides: params.overrides || {} };
-    }
-
-    // ── F4: Prototyping ──
-    case "add_interaction": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.interactions) tpl.metadata.interactions = [];
-      const interaction = {
-        id: `iact_${Date.now().toString(36)}`,
-        sourceId: params.sourceId,
-        trigger: params.trigger || "onClick",
-        action: params.action || "navigate",
-        targetId: params.targetId || null,
-        transition: params.transition || "instant",
-        duration: params.duration ?? 300,
-        delay: params.delay ?? 0,
-        easing: params.easing || "easeOut",
-      };
-      tpl.metadata.interactions.push(interaction);
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { created: true, interactionId: interaction.id, sourceId: params.sourceId, trigger: interaction.trigger, action: interaction.action };
-    }
-
-    case "set_animation": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      if (!tpl.metadata.animations) tpl.metadata.animations = [];
-      // Remove existing animation for this object
-      tpl.metadata.animations = tpl.metadata.animations.filter(a => a.objectId !== params.objectId);
-      const anim = {
-        id: `anim_${Date.now().toString(36)}`,
-        objectId: params.objectId,
-        type: params.type,
-        direction: params.direction || null,
-        duration: params.duration ?? 300,
-        easing: params.easing || "easeOut",
-        delay: params.delay ?? 0,
-      };
-      tpl.metadata.animations.push(anim);
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { created: true, animationId: anim.id, objectId: params.objectId, type: params.type, duration: anim.duration };
-    }
-
-    case "add_overlay": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const frames = tpl.frames || [];
-      const frameIdx = frames.findIndex(f => f.id === params.frameId);
-      if (frameIdx === -1) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-      if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
-      frames[frameIdx].metadata.overlay = {
-        position: params.position || "center",
-        backdrop: params.backdrop !== false,
-        backdropColor: params.backdropColor || "rgba(0,0,0,0.5)",
-        closeOnBackdrop: params.closeOnBackdrop !== false,
-        manualX: params.manualX ?? null,
-        manualY: params.manualY ?? null,
-      };
-      tpl.frames = frames;
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
-      autoSnapshot(params.templateId, method);
-      return { updated: true, frameId: params.frameId, position: frames[frameIdx].metadata.overlay.position };
-    }
-
-    case "set_scroll_position": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      // Check frames first
-      const frames = tpl.frames || [];
-      const frameIdx = frames.findIndex(f => f.id === params.objectId);
-      if (frameIdx !== -1) {
-        if (!frames[frameIdx].metadata) frames[frameIdx].metadata = {};
-        frames[frameIdx].metadata.scrollBehavior = params.behavior;
-        if (params.stickyTop !== undefined) frames[frameIdx].metadata.stickyTop = params.stickyTop;
-        if (params.stickyBottom !== undefined) frames[frameIdx].metadata.stickyBottom = params.stickyBottom;
-        if (params.overflow) frames[frameIdx].metadata.overflow = params.overflow;
-        tpl.frames = frames;
-        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
-      } else {
-        throw { code: -32000, message: `Object not found in frames: ${params.objectId}. For HTML templates, use frame IDs.` };
-      }
-      autoSnapshot(params.templateId, method);
-      return { updated: true, objectId: params.objectId, behavior: params.behavior };
-    }
-
-    // ── F1: Canvas Navigation ──
-    case "publish_library": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (!tpl.metadata) tpl.metadata = {};
-      const styles = (tpl.styles || []).filter(s => !params.styleIds || params.styleIds.includes(s.id));
-      const library = {
-        id: `lib_${Date.now().toString(36)}`,
-        name: params.name,
-        description: params.description || "",
-        styles: JSON.parse(JSON.stringify(styles)),
-        variables: tpl.metadata.variables || [],
-        collections: tpl.metadata.collections || [],
-        visibility: params.visibility || "workspace",
-        sourceTemplateId: params.templateId,
-        published: new Date().toISOString(),
-      };
-      // Store library in template metadata (free-tier: no separate libraries table)
-      if (!tpl.metadata.libraries) tpl.metadata.libraries = [];
-      tpl.metadata.libraries.push(library);
-      // Also mark this template as a library source
-      tpl.metadata.isLibrary = true;
-      await templates.updateTemplate(params.templateId, { metadata: tpl.metadata });
-      autoSnapshot(params.templateId, method);
-      return { published: true, libraryId: library.id, name: params.name, styleCount: styles.length };
     }
 
     case "register_tool": {
@@ -4240,39 +4195,6 @@ async function handleMethod(method, params, userId) {
       return { texts, images, colors, fixedSections: [] };
     }
 
-    // ── create_variant ──
-    case "create_variant": {
-      const tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
-      let html = tpl.html || "";
-      let css = tpl.css || "";
-      // Apply text replacements
-      if (params.variables?.texts) {
-        for (const [name, value] of Object.entries(params.variables.texts)) {
-          html = html.replace(new RegExp(String(name), "g"), String(value));
-        }
-      }
-      // Apply image replacements
-      if (params.variables?.images) {
-        for (const [name, url] of Object.entries(params.variables.images)) {
-          html = html.replace(new RegExp(`src="[^"]*"`, "g"), `src="${url}"`);
-        }
-      }
-      // Apply color replacements
-      if (params.variables?.colors) {
-        for (const [name, hex] of Object.entries(params.variables.colors)) {
-          css = css.replace(new RegExp(name, "g"), String(hex));
-        }
-      }
-      const newTpl = await templates.createTemplate(params.name || `${tpl.name} (variant)`, tpl.width, tpl.height, null, null, tpl.workspaceId);
-      newTpl.engine = "html";
-      newTpl.html = html;
-      newTpl.css = css;
-      await templates.updateTemplate(newTpl.id, { engine: "html", html, css, canvas: newTpl.canvas, frames: [] });
-      return { newTemplateId: newTpl.id, name: newTpl.name };
-    }
-
     // ── apply_variables ──
     case "apply_variables": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -4440,123 +4362,9 @@ async function handleMethod(method, params, userId) {
       };
     }
 
-    // ── Phase 3: batch_from_recipe ──
-    case "batch_from_recipe": {
-      const sb = getSupabase();
-      if (!sb) throw { code: -32000, message: "Supabase not configured" };
-      const { data: recipe, error } = await sb.from("recipes").select("*").eq("id", params.recipeId).single();
-      if (error || !recipe) throw { code: -32000, message: `Recipe not found: ${params.recipeId}` };
-
-      const varSets = params.variableSets || [];
-      const batchId = `batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-      const targetWs = params.workspaceId || recipe.workspace_id || "default";
-      const templateIds = [];
-      const errors = [];
-
-      for (let i = 0; i < varSets.length; i++) {
-        try {
-          const vs = varSets[i];
-          let html = recipe.template_html || "";
-          let css = recipe.template_css || "";
-          if (vs.texts) for (const [k, v] of Object.entries(vs.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }
-          if (vs.images) for (const [k, v] of Object.entries(vs.images)) { html = html.replace(new RegExp(k, "g"), String(v)); }
-          if (vs.colors) for (const [k, v] of Object.entries(vs.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
-
-          const tplName = vs.name || `${recipe.name}_${i + 1}`;
-          const tpl = await templates.createTemplate(tplName, recipe.template_width || 1080, recipe.template_height || 1080, undefined, "", targetWs);
-          tpl.engine = "html"; tpl.html = html; tpl.css = css;
-          const frame = {
-            id: `frame_${Date.now().toString(36)}`,
-            name: "Frame 1", x: 0, y: 0,
-            width: recipe.template_width || 1080,
-            height: recipe.template_height || 1080,
-            html, css, background: "#ffffff",
-          };
-          tpl.frames = [frame];
-          await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: tpl.frames });
-          templateIds.push(tpl.id);
-        } catch (e) {
-          errors.push({ index: i, name: varSets[i]?.name, error: e.message });
-        }
-      }
-
-      // Store batch job
-      await sb.from("batch_jobs").upsert({
-        id: batchId,
-        recipe_id: params.recipeId,
-        status: errors.length === varSets.length ? "failed" : errors.length > 0 ? "partial" : "completed",
-        total_count: varSets.length,
-        completed_count: templateIds.length,
-        failed_count: errors.length,
-        results: templateIds,
-        errors: errors,
-        created_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-      });
-
-      // Increment usage count
-      await sb.from("recipes").update({ usage_count: (recipe.usage_count || 0) + templateIds.length }).eq("id", params.recipeId);
-
-      // Auto-render all created templates
-      let htmlExport = null;
-      if (params.render !== false && templateIds.length > 0) {
-        const allFrames = [];
-        for (const tid of templateIds) {
-          const tpl2 = await templates.getTemplate(tid);
-          if (tpl2) {
-            const fs = tpl2.frames || [];
-            if (fs.length === 0) {
-              allFrames.push({ id: "frame_0", name: tpl2.name, width: tpl2.width || 1080, height: tpl2.height || 1080, html: tpl2.html, css: tpl2.css });
-            } else {
-              for (const f of fs) allFrames.push(f);
-            }
-          }
-        }
-        if (allFrames.length > 0) {
-          htmlExport = buildHtmlExportPage(allFrames);
-        }
-      }
-
-      return {
-        batchId,
-        recipeId: params.recipeId,
-        recipeName: recipe.name,
-        totalCount: varSets.length,
-        templateIds,
-        errorCount: errors.length,
-        status: errors.length === 0 ? "completed" : "partial",
-        htmlExport: htmlExport || undefined,
-        _note: htmlExport ? "Save htmlExport as .html file, open in browser to auto-download all PNGs" : undefined,
-      };
-    }
-
     // ═══════════════════════════════════════════════════════════
     // FASE 3: Batch Factory
     // ═══════════════════════════════════════════════════════════
-
-    case "batch_create_variants": {
-      const tpl = await templates.getTemplate(params.templateId || params.recipeId);
-      if (!tpl) throw { code: -32000, message: "Template not found" };
-      const varsArray = params.variables || [];
-      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const templateIds = [];
-      const supabase = getSupabase();
-      await supabase.from("batch_jobs").upsert({ id: batchId, template_id: params.templateId, status: "running", total_count: varsArray.length, completed_count: 0, failed_count: 0, results: [], errors: [], created_at: new Date().toISOString() });
-      for (const vars of varsArray) {
-        try {
-          let html = tpl.html || "";
-          let css = tpl.css || "";
-          if (vars.texts) for (const [k, v] of Object.entries(vars.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }
-          if (vars.colors) for (const [k, v] of Object.entries(vars.colors)) { css = css.replace(new RegExp(k, "g"), String(v)); }
-          const nt = await templates.createTemplate(`${params.options?.prefix || "variant"}_${templateIds.length}`, tpl.width, tpl.height, null, null, tpl.workspaceId);
-          nt.engine = "html"; nt.html = html; nt.css = css;
-          await templates.updateTemplate(nt.id, { engine: "html", html, css, canvas: nt.canvas, frames: [] });
-          templateIds.push(nt.id);
-        } catch (e) { /* skip failed */ }
-      }
-      await supabase.from("batch_jobs").upsert({ id: batchId, status: "completed", completed_count: templateIds.length, completed_at: new Date().toISOString() });
-      return { batchId, totalCount: varsArray.length, templateIds, status: "completed" };
-    }
 
     case "batch_render_html": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -4587,54 +4395,24 @@ async function handleMethod(method, params, userId) {
       };
     }
 
-    case "batch_status": {
-      const supabase = getSupabase();
-      const { data } = await supabase.from("batch_jobs").select("*").eq("id", params.batchId || params.jobId).single();
-      if (!data) throw { code: -32000, message: "Batch job not found" };
-      return { progress: { completed: data.completed_count || 0, total: data.total_count || 0, failed: data.failed_count || 0 }, results: data.results || [] };
     }
 
-    case "batch_cancel": {
-      const supabase = getSupabase();
-      await supabase.from("batch_jobs").update({ status: "cancelled" }).eq("id", params.batchId || params.jobId);
-      return { cancelled: true };
     }
 
-    case "batch_export": {
-      return { downloadUrl: "", urls: [], expiresAt: new Date(Date.now() + 86400000).toISOString() };
     }
 
-    case "publish_batch": {
-      return { jobId: `pub_${Date.now()}`, status: "scheduled", channels: params.channels || [] };
     }
 
-    case "publish_status": {
-      return { channels: [{ name: "pending", status: "queued" }] };
     }
 
     // ═══════════════════════════════════════════════════════════
     // FASE 4: Multi-Agent Realtime
     // ═══════════════════════════════════════════════════════════
 
-    case "claim_section": {
-      const supabase = getSupabase();
-      const lockId = `lock_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const expiresAt = new Date(Date.now() + (params.ttlSeconds || 300) * 1000).toISOString();
-      const { error } = await supabase.from("section_locks").upsert({ id: lockId, template_id: params.templateId, section_id: params.sectionId, agent_id: params.agentId, acquired_at: new Date().toISOString(), expires_at: expiresAt });
-      if (error) return { success: false, conflict: { claimedBy: "another_agent", since: new Date().toISOString() } };
-      return { success: true, lockId, expiresAt };
     }
 
-    case "release_section": {
-      const supabase = getSupabase();
-      await supabase.from("section_locks").delete().eq("id", params.lockId);
-      return { released: true };
     }
 
-    case "list_sections": {
-      const supabase = getSupabase();
-      const { data } = await supabase.from("section_locks").select("*").eq("template_id", params.templateId);
-      return (data || []).map(d => ({ sectionId: d.section_id, claimedBy: d.agent_id, status: "locked", updatedAt: d.acquired_at }));
     }
 
     case "assemble_template": {
@@ -4668,8 +4446,26 @@ async function handleMethod(method, params, userId) {
     case "register_brand": {
       const supabase = getSupabase();
       const brandId = params.brandId || `brand_${Date.now()}`;
-      await supabase.from("recipes").upsert({ id: brandId, name: params.name, structure: params, template_html: "", template_css: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
-      return { brandId };
+      let colors = params.colors || [];
+      let fonts = params.fonts || [];
+      // Extract colors and fonts from template CSS if templateId is provided
+      if (params.templateId && (!colors.length || !fonts.length)) {
+        const tpl = await templates.getTemplate(params.templateId);
+        if (tpl && tpl.css) {
+          if (!colors.length) {
+            const hexMatches = tpl.css.match(/#[0-9a-fA-F]{3,8}\b/g);
+            colors = [...new Set(hexMatches || [])];
+          }
+          if (!fonts.length) {
+            const fontMatches = tpl.css.match(/font-family:\s*["']?([^;"']+)/gi);
+            fonts = (fontMatches || []).map(f => f.replace(/font-family:\s*["']?/i, "").replace(/["']/g, "").trim()).filter(Boolean);
+            fonts = [...new Set(fonts)];
+          }
+        }
+      }
+      const structure = { ...params, colors, fonts };
+      await supabase.from("recipes").upsert({ id: brandId, name: params.name, structure, template_html: "", template_css: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+      return { brandId, colors, fonts };
     }
 
     case "validate_brand": {
@@ -4696,6 +4492,38 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: "Template not found" };
       let css = tpl.css || "";
       return { success: true, templateId: params.templateId, fixesApplied: [] };
+    }
+
+    case "get_brands": {
+      const supabase = getSupabase();
+      const { data } = await supabase.from("recipes").select("id, name, structure, created_at").order("created_at", { ascending: false }).limit(20);
+      const brands = (data || []).map(r => ({
+        id: r.id, name: r.name, colors: r.structure?.colors || [], fonts: r.structure?.fonts || [], createdAt: r.created_at,
+      }));
+      return { brands };
+    }
+
+    case "apply_brand": {
+      const supabase = getSupabase();
+      const { data: brand } = await supabase.from("recipes").select("*").eq("id", params.brandId).single();
+      if (!brand) throw { code: -32000, message: "Brand not found" };
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+      let cssVars = ":root {\n";
+      const colors = brand.structure?.colors || [];
+      colors.forEach((c, i) => {
+        const hex = typeof c === "string" ? c : (c.hex || c.value || "");
+        if (hex) cssVars += `  --color-brand-${i + 1}: ${hex};\n`;
+      });
+      const fonts = brand.structure?.fonts || [];
+      fonts.forEach((f, i) => {
+        const family = typeof f === "string" ? f : (f.family || f.name || "");
+        if (family) cssVars += `  --font-brand-${i + 1}: "${family}";\n`;
+      });
+      cssVars += "}\n";
+      const newCss = (tpl.css || "") + "\n" + cssVars;
+      await templates.updateTemplate(params.templateId, { css: newCss });
+      return { css: newCss, brandName: brand.name };
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -5080,7 +4908,7 @@ async function handleMethod(method, params, userId) {
       };
     }
 
-    // ── Phase C: draw_shape ──
+    // ── Phase D: draw_shape (all shapes as SVG <path>) ──
     case "draw_shape": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
@@ -5096,8 +4924,8 @@ async function handleMethod(method, params, userId) {
       let elHtml, cssRule;
 
       if (type === "triangle") {
-        elHtml = `<div data-layer-id="${layerId}"></div>`;
-        cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
+        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${width} ${height}" style="position:absolute;left:${x}px;top:${y}px;width:${width}px;height:${height}px;overflow:visible;"><path d="M${width / 2} 0 L0 ${height} L${width} ${height} Z" fill="${color}" stroke="${darkenHex(color)}" stroke-width="2"/></svg>`;
+        cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${width}px;\n  height: ${height}px;\n  overflow: visible;\n}`;
       } else if (type === "star") {
         const s = Math.max(width, height);
         const hw = s / 2, hh = s / 2, outerR = hw * 0.95, innerR = hw * 0.38;
@@ -5107,7 +4935,7 @@ async function handleMethod(method, params, userId) {
           const r = i % 2 === 0 ? outerR : innerR;
           pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
         }
-        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="${color}" stroke="${color}" stroke-width="2"/></svg>`;
+        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="${color}" stroke="${darkenHex(color)}" stroke-width="2"/></svg>`;
         cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
       } else if (type === "polygon") {
         const n = params.sides || 6;
@@ -5118,10 +4946,10 @@ async function handleMethod(method, params, userId) {
           const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
           pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
         }
-        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="${color}" stroke="${color}" stroke-width="2"/></svg>`;
+        elHtml = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="${color}" stroke="${darkenHex(color)}" stroke-width="2"/></svg>`;
         cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
       } else {
-        // rect or circle — original div-based approach
+        // rect or circle — original div-based approach (CSS border-radius, box-shadow, gradients preserved)
         const br = params.borderRadius || (type === "circle" ? "50%" : "8px");
         elHtml = `<div data-layer-id="${layerId}"></div>`;
         cssRule = `[data-layer-id="${layerId}"] {\n  width: ${width}px;\n  height: ${height}px;\n  background: ${color};\n  border-radius: ${br};\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}`;
@@ -5152,6 +4980,294 @@ async function handleMethod(method, params, userId) {
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type: "path" };
+    }
+
+    // ── Phase C: draw_bezier ──
+    case "draw_bezier": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const layerId = `el_${Date.now().toString(36)}`;
+      const { x, y, width, height, pathData } = params;
+      const fill = params.fill || "none";
+      const stroke = params.stroke || "#8B5CF6";
+      const strokeWidth = params.strokeWidth || 2;
+      const closed = params.closed ? " Z" : "";
+      const fullPathData = pathData + closed;
+      const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${x} ${y} ${Math.max(width, 1)} ${Math.max(height, 1)}" style="position:absolute;left:${x}px;top:${y}px;width:${Math.max(width, 1)}px;height:${Math.max(height, 1)}px;overflow:visible;"><path d="${fullPathData}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const cssRule = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${Math.max(width, 1)}px;\n  height: ${Math.max(height, 1)}px;\n  overflow: visible;\n}`;
+      frame.html = (frame.html || "") + "\n" + svgHtml;
+      frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type: "bezier", pathData: fullPathData };
+    }
+
+    // ── Phase C: edit_path_points ──
+    case "edit_path_points": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.elementId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+
+      // Find the <path> inside the SVG
+      const $path = $el.find("path").first();
+      if (!$path.length) {
+        // Maybe the element itself is a path or the path is a direct child
+        const directPath = $el.is("path") ? $el : $el.children("path").first();
+        if (!directPath.length) throw { code: -32000, message: "No <path> element found inside the SVG" };
+        $path.attr("d", params.newPathData);
+      } else {
+        $path.attr("d", params.newPathData);
+      }
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: params.newPathData };
+    }
+
+    // ── Phase E: edit_path_point (incremental) ──
+    case "edit_path_point": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $2 = cheerio.load(frame.html || "");
+      const elSel = `[data-layer-id="${params.elementId}"]`;
+      const $el = $2(elSel);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+      const $path = $el.find("path").first();
+      if (!$path.length) throw { code: -32000, message: "Element has no <path>" };
+
+      let d = $path.attr("d") || "";
+      const tokens = d.match(/[a-zA-Z]|[-+]?\d*\.?\d+/g) || [];
+      // Build indexed commands: [[cmd, x, y], ...]
+      const cmds = [];
+      let i = 0;
+      while (i < tokens.length) {
+        const c = tokens[i];
+        if (/[a-zA-Z]/.test(c)) {
+          if (c === "Z" || c === "z") { cmds.push([c]); i++; }
+          else if (c === "H" || c === "h") { cmds.push([c, parseFloat(tokens[i+1])]); i += 2; }
+          else if (c === "V" || c === "v") { cmds.push([c, parseFloat(tokens[i+1])]); i += 2; }
+          else { cmds.push([c, parseFloat(tokens[i+1]) || 0, parseFloat(tokens[i+2]) || 0]); i += 3; }
+        } else { i++; }
+      }
+
+      const { action, pointIndex, insertAfterIndex } = params;
+      let changed = false;
+
+      if (action === "delete" && typeof pointIndex === "number" && pointIndex < cmds.length) {
+        cmds.splice(pointIndex, 1);
+        changed = true;
+      } else if (typeof insertAfterIndex === "number" && params.x != null && params.y != null) {
+        cmds.splice(insertAfterIndex + 1, 0, ["L", params.x, params.y]);
+        changed = true;
+      } else if (typeof pointIndex === "number" && pointIndex < cmds.length) {
+        const cmd = cmds[pointIndex];
+        if (action === "toggle") {
+          if (cmd[0] === "L" || cmd[0] === "l") {
+            const prev = cmds[pointIndex - 1] || cmds[cmds.length - 1];
+            const cpx = cmd[1] + (cmd[1] - (prev?.[1] || cmd[1])) * 0.33;
+            const cpy = cmd[2] + (cmd[2] - (prev?.[2] || cmd[2])) * 0.33;
+            cmds[pointIndex] = ["C", cpx, cpy, cmd[1], cmd[2], cmd[1], cmd[2]];
+          } else { cmds[pointIndex] = ["L", cmd[1] || cmd[3] || cmd[5] || 0, cmd[2] || cmd[4] || cmd[6] || 0]; }
+          changed = true;
+        } else {
+          // move (default)
+          if (params.x != null) cmd[1] = params.x;
+          if (params.y != null) cmd[2] = params.y;
+          if (cmd.length > 3) { cmd[cmd.length - 2] = params.x != null ? params.x : cmd[cmd.length - 2]; cmd[cmd.length - 1] = params.y != null ? params.y : cmd[cmd.length - 1]; }
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        d = cmds.map(c => c.join(" ")).join(" ");
+        $path.attr("d", d);
+        frame.html = $2.html();
+        await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      }
+      return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: d, changed };
+    }
+
+    // ── Phase D: shape_to_path ──
+    case "shape_to_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $s = cheerio.load(frame.html || "");
+      const elSel2 = `[data-layer-id="${params.elementId}"]`;
+      const $div = $s(elSel2);
+      if (!$div.length) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+
+      // Extract CSS from style attribute and CSS rules
+      const style = $div.attr("style") || "";
+      const extract = (prop) => { const m = new RegExp(`${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
+      // Also check CSS rules
+      const esc = params.elementId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const cssRule = (frame.css || "").match(new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{([^}]*)\\}`));
+      const cssProps = {};
+      if (cssRule) {
+        for (const decl of cssRule[1].split(";")) {
+          const idx = decl.indexOf(":");
+          if (idx > 0) cssProps[decl.slice(0, idx).trim()] = decl.slice(idx + 1).trim();
+        }
+      }
+
+      const w = parseFloat(extract("width") || cssProps.width || "100");
+      const h = parseFloat(extract("height") || cssProps.height || "100");
+      const left = parseFloat(extract("left") || cssProps.left || "0");
+      const top = parseFloat(extract("top") || cssProps.top || "0");
+      const bg = extract("background-color") || extract("background") || cssProps.background || cssProps["background-color"] || "#3B82F6";
+      const br = extract("border-radius") || cssProps["border-radius"] || "0";
+
+      let pathD;
+      if (br === "50%") pathD = `M${w / 2} 0 A${w / 2} ${h / 2} 0 1 1 ${w / 2} ${0.01} Z`;
+      else if (br && br !== "0") pathD = `M${parseFloat(br)} 0 L${w - parseFloat(br)} 0 Q${w} 0 ${w} ${parseFloat(br)} L${w} ${h - parseFloat(br)} Q${w} ${h} ${w - parseFloat(br)} ${h} L${parseFloat(br)} ${h} Q0 ${h} 0 ${h - parseFloat(br)} L0 ${parseFloat(br)} Q0 0 ${parseFloat(br)} 0 Z`;
+      else pathD = `M0 0 L${w} 0 L${w} ${h} L0 ${h} Z`;
+
+      const newLayerId = `el_${Date.now().toString(36)}`;
+      const svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;overflow:visible;"><path d="${pathD}" fill="${bg}" stroke="none" stroke-width="0"/></svg>`;
+      const cssNew = `[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${left}px;\n  top: ${top}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}`;
+
+      // Remove old div and CSS rule, add new SVG
+      $div.remove();
+      const $body = $s("body").length ? $s("body") : $s(":root");
+      $body.append(svgHtml);
+      frame.html = $s.html();
+      frame.css = (frame.css || "").replace(new RegExp(`\\[data-layer-id="${esc}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "") + "\n" + cssNew + "\n";
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, newElementId: newLayerId, oldElementId: params.elementId, pathData: pathD };
+    }
+
+    // ── Phase B: pathfinder ──
+    case "pathfinder": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $elA = $(`[data-layer-id="${params.elementIdA}"]`);
+      const $elB = $(`[data-layer-id="${params.elementIdB}"]`);
+      if (!$elA.length) throw { code: -32000, message: `Element A not found: ${params.elementIdA}` };
+      if (!$elB.length) throw { code: -32000, message: `Element B not found: ${params.elementIdB}` };
+
+      // Extract path data from both elements
+      function extractPathData($svg) {
+        const $path = $svg.find("path").first();
+        if ($path.length) return { d: $path.attr("d") || "", fill: $path.attr("fill") || "#8B5CF6", stroke: $path.attr("stroke") || "none", strokeWidth: $path.attr("stroke-width") || "0" };
+        if ($svg.is("path")) return { d: $svg.attr("d") || "", fill: $svg.attr("fill") || "#8B5CF6", stroke: $svg.attr("stroke") || "none", strokeWidth: $svg.attr("stroke-width") || "0" };
+        // Transitional: support <polygon> for templates created before Phase D.
+        // All new shapes are <path>; this fallback can be removed once legacy templates are migrated.
+        const $polygon = $svg.find("polygon").first();
+        if ($polygon.length) {
+          const pts = ($polygon.attr("points") || "").trim();
+          if (pts) return { d: `M${pts} Z`, fill: $polygon.attr("fill") || "#8B5CF6", stroke: $polygon.attr("stroke") || "none", strokeWidth: $polygon.attr("stroke-width") || "0" };
+        }
+        return null;
+      }
+
+      function extractBBox($svg) {
+        const style = $svg.attr("style") || "";
+        const vbx = $svg.attr("viewBox");
+        if (vbx) {
+          const parts = vbx.split(/\s+/);
+          return { x: parseFloat(parts[0]) || 0, y: parseFloat(parts[1]) || 0, w: parseFloat(parts[2]) || 100, h: parseFloat(parts[3]) || 100 };
+        }
+        const leftM = style.match(/left:\s*(-?\d+)/);
+        const topM = style.match(/top:\s*(-?\d+)/);
+        const wM = style.match(/width:\s*(\d+)/);
+        const hM = style.match(/height:\s*(\d+)/);
+        return {
+          x: leftM ? parseFloat(leftM[1]) : 0,
+          y: topM ? parseFloat(topM[1]) : 0,
+          w: wM ? parseFloat(wM[1]) : 100,
+          h: hM ? parseFloat(hM[1]) : 100,
+        };
+      }
+
+      const pathA = extractPathData($elA);
+      const pathB = extractPathData($elB);
+      if (!pathA || !pathB) throw { code: -32000, message: "One or both elements have no path data" };
+
+      const bboxA = extractBBox($elA);
+      const bboxB = extractBBox($elB);
+
+      // Compute union bounding box
+      const minX = Math.min(bboxA.x, bboxB.x);
+      const minY = Math.min(bboxA.y, bboxB.y);
+      const maxX = Math.max(bboxA.x + bboxA.w, bboxB.x + bboxB.w);
+      const maxY = Math.max(bboxA.y + bboxA.h, bboxB.y + bboxB.h);
+      const unionW = maxX - minX;
+      const unionH = maxY - minY;
+
+      const newLayerId = `el_${Date.now().toString(36)}`;
+      const op = params.operation;
+      let svgHtml = "";
+      let fill = pathA.fill !== "none" ? pathA.fill : pathB.fill;
+      let stroke = pathA.stroke !== "none" ? pathA.stroke : pathB.stroke;
+      let strokeWidth = pathA.strokeWidth !== "0" ? pathA.strokeWidth : pathB.strokeWidth;
+
+      // Offset paths relative to union origin
+      const offAX = bboxA.x - minX;
+      const offAY = bboxA.y - minY;
+      const offBX = bboxB.x - minX;
+      const offBY = bboxB.y - minY;
+
+      if (op === "union") {
+        // Both paths in one SVG
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></svg>`;
+      } else if (op === "subtract") {
+        // A minus B using mask
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><mask id="m_${newLayerId}"><rect width="${unionW}" height="${unionH}" fill="white"/><path d="${pathB.d}" fill="black" transform="translate(${offBX},${offBY})"/></mask></defs><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#m_${newLayerId})" transform="translate(${offAX},${offAY})"/></svg>`;
+      } else if (op === "intersect") {
+        // Clip path A by path B
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><clipPath id="cp_${newLayerId}"><path d="${pathB.d}" transform="translate(${offBX},${offBY})"/></clipPath></defs><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" clip-path="url(#cp_${newLayerId})" transform="translate(${offAX},${offAY})"/></svg>`;
+      } else if (op === "exclude") {
+        // XOR via feComposite
+        svgHtml = `<svg data-layer-id="${newLayerId}" viewBox="0 0 ${unionW} ${unionH}" style="position:absolute;left:${minX}px;top:${minY}px;width:${unionW}px;height:${unionH}px;overflow:visible;"><defs><filter id="f_${newLayerId}"><feComposite operator="xor" in="SourceGraphic" in2="SourceGraphic"/></filter></defs><g filter="url(#f_${newLayerId})"><path d="${pathA.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offAX},${offAY})"/><path d="${pathB.d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${offBX},${offBY})"/></g></svg>`;
+      }
+
+      // Remove original elements from HTML
+      $(`[data-layer-id="${params.elementIdA}"]`).remove();
+      $(`[data-layer-id="${params.elementIdB}"]`).remove();
+
+      // Append new element
+      const $body = $("body").length ? $("body") : $(":root");
+      $body.append(svgHtml);
+
+      // Remove old CSS rules
+      const escA = params.elementIdA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escB = params.elementIdB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      frame.css = (frame.css || "").replace(new RegExp(`\\[data-layer-id="${escA}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "").replace(new RegExp(`\\[data-layer-id="${escB}"\\]\\s*\\{[^}]*\\}\\n?`, "g"), "");
+
+      // Add new CSS rule
+      const newCssRule = `[data-layer-id="${newLayerId}"] {\n  position: absolute;\n  left: ${minX}px;\n  top: ${minY}px;\n  width: ${unionW}px;\n  height: ${unionH}px;\n  overflow: visible;\n}`;
+      frame.css = (frame.css || "") + "\n" + newCssRule + "\n";
+      frame.html = $.html();
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, operation: op, newElementId: newLayerId, bbox: { x: minX, y: minY, width: unionW, height: unionH } };
     }
 
     // ── Phase C: transform_element ──
@@ -5640,6 +5756,38 @@ async function handleMethod(method, params, userId) {
           designArtifacts: designArtifacts,
           metadata: tpl.metadata,
         });
+
+        // Publish to brand_guidelines table if brandName provided
+        var brandRecord = null;
+        if (params.brandName) {
+          var workspaceId = tpl.workspaceId || "default";
+          // Check if template already has a brandId
+          if (tpl.brandId) {
+            await brands.updateBrand(tpl.brandId, {
+              name: params.brandName,
+              tokensJson: artifacts.tokensJson,
+              designMd: artifacts.designMd,
+              sharedCss: artifacts.sharedCss,
+              sourceHash: artifacts.sourceHash,
+              sourceTemplateIds: [params.templateId],
+            });
+            brandRecord = await brands.getBrand(tpl.brandId);
+          } else {
+            brandRecord = await brands.createBrand({
+              workspaceId: workspaceId,
+              name: params.brandName,
+              tokensJson: artifacts.tokensJson,
+              designMd: artifacts.designMd,
+              sharedCss: artifacts.sharedCss,
+              sourceHash: artifacts.sourceHash,
+              sourceTemplateIds: [params.templateId],
+            });
+            // Link template to the brand
+            tpl.brandId = brandRecord.id;
+            await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
+          }
+        }
+
         return {
           templateId: params.templateId,
           action: "publish",
@@ -5648,6 +5796,7 @@ async function handleMethod(method, params, userId) {
           designMd: artifacts.designMd,
           tokensJson: artifacts.tokensJson,
           sharedCss: artifacts.sharedCss,
+          brandId: brandRecord ? brandRecord.id : tpl.brandId || undefined,
           extraction: {
             colorCount: artifacts.extraction.colors.length,
             fontCount: artifacts.extraction.typography.families.length,
@@ -5678,6 +5827,309 @@ async function handleMethod(method, params, userId) {
       };
     }
 
+    // ── generate_brand_manual: brand identity guide in HTML ──
+    case "generate_brand_manual": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      const brandName = params.brandName || tpl.name || "Untitled Brand";
+      const tagline = params.tagline || "";
+
+      const extFrames = (tpl.frames || []).map(function (f) {
+        return { id: f.id, name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height };
+      }).filter(function (f) { return f.html || f.css; });
+
+      if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content found" };
+
+      const extraction = extractDesignSystem(extFrames);
+      const artifacts = generateAllArtifacts(extFrames, { name: brandName });
+
+      // Build color swatches HTML
+      let swatchesHtml = "";
+      (extraction.colors || []).forEach(function (c) {
+        if (!c.role) return;
+        swatchesHtml += `<div class="swatch"><div class="swatch-chip" style="background:${c.value}"></div><div class="swatch-info"><strong>${c.token}</strong><br>${c.value}<br><small>${c.role} · ${c.usageCount}x</small></div></div>`;
+      });
+
+      // Build typography showcase
+      let typeHtml = "";
+      if (extraction.typography.families.length > 0) {
+        extraction.typography.families.slice(0, 4).forEach(function (f, i) {
+          typeHtml += `<h3>${f.name} (${f.count} uses)</h3>`;
+          typeHtml += `<div style="font-family:'${f.name}',sans-serif;margin:8px 0;padding:8px;border:1px solid #ddd;border-radius:4px;"><p style="font-size:32px;margin:0;">Heading Example</p><p style="font-size:16px;margin:4px 0 0;">Body text example — The quick brown fox jumps over the lazy dog.</p></div>`;
+        });
+      }
+      if (extraction.typography.typeScale.length > 0) {
+        typeHtml += "<h3>Type Scale</h3><div class=\"scale-list\">";
+        var ascending = extraction.typography.typeScale.slice().sort(function (a, b) { return b - a; });
+        ascending.forEach(function (size) {
+          typeHtml += `<div style="font-size:${size}px;margin:4px 0;line-height:1.3;">${size}px — The quick brown fox</div>`;
+        });
+        typeHtml += "</div>";
+      }
+
+      // Build spacing scale
+      let spacingHtml = "";
+      if (extraction.spacing.length > 0) {
+        spacingHtml = "<div class=\"scale-list\">";
+        extraction.spacing.slice(0, 12).forEach(function (s) {
+          spacingHtml += `<div style="display:flex;align-items:center;margin:4px 0;"><div style="width:${Math.min(s, 200)}px;height:16px;background:#8B5CF6;border-radius:2px;margin-right:8px;"></div><span>${s}px</span></div>`;
+        });
+        spacingHtml += "</div>";
+      }
+
+      // Build component list
+      let componentsHtml = "";
+      if (extraction.components.length > 0) {
+        componentsHtml = "<div class=\"comp-list\">";
+        extraction.components.forEach(function (c) {
+          componentsHtml += `<div class="comp-card"><strong>${c.selector}</strong><br><small>${c.tag} · ${c.frameCount}/${c.totalFrames} frames · confidence: ${c.confidence}</small><pre style="background:#f5f5f5;padding:4px;font-size:12px;overflow:auto;">${(c.sampleHtml || "").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre></div>`;
+        });
+        componentsHtml += "</div>";
+      }
+
+      // Build CSS variables
+      let cssVarsHtml = "";
+      var cssLines = artifacts.sharedCss.split("\n");
+      cssVarsHtml = "<pre style=\"background:#1a1a2e;color:#e0e0e0;padding:16px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6;\">" + cssLines.map(function (l) { return l.replace(/</g, "&lt;").replace(/>/g, "&gt;"); }).join("<br>") + "</pre>";
+
+      // Build the full HTML document
+      var manualHtml = `<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+<meta charset=\"UTF-8\">
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>${brandName} — Brand Identity Manual</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;color:#1a1a2e;line-height:1.6;max-width:900px;margin:0 auto;padding:20px}
+.cover{text-align:center;padding:60px 20px;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:12px;margin-bottom:40px}
+.cover h1{font-size:48px;font-weight:800;margin-bottom:8px}
+.cover .tagline{font-size:20px;opacity:0.8}
+.cover .meta{font-size:14px;opacity:0.6;margin-top:20px}
+section{margin-bottom:40px}
+section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;margin-bottom:16px}
+.swatches{display:flex;flex-wrap:wrap;gap:12px}
+.swatch{display:flex;align-items:center;gap:12px;background:#f8f8f8;border-radius:8px;padding:12px;min-width:200px}
+.swatch-chip{width:48px;height:48px;border-radius:8px;border:1px solid rgba(0,0,0,.1);flex-shrink:0}
+.swatch-info{font-size:13px;line-height:1.4}
+.scale-list{font-family:monospace}
+.comp-list{display:flex;flex-direction:column;gap:12px}
+.comp-card{background:#f8f8f8;border-radius:8px;padding:12px;font-size:14px}
+.footer{text-align:center;padding:20px;color:#999;font-size:12px;border-top:1px solid #eee;margin-top:40px}
+</style>
+</head>
+<body>
+<div class=\"cover\">
+  <h1>${brandName}</h1>
+  ${tagline ? `<p class=\"tagline\">${tagline}</p>` : ""}
+  <p class=\"meta\">Brand Identity Manual · Generated ${new Date().toISOString().split("T")[0]} · ${extFrames.length} frame(s) analyzed</p>
+</div>
+
+<section>
+  <h2>🎨 Color Palette</h2>
+  <div class=\"swatches\">${swatchesHtml || "<p>No colors detected.</p>"}</div>
+</section>
+
+<section>
+  <h2>🔤 Typography</h2>
+  ${typeHtml || "<p>No typography data extracted.</p>"}
+</section>
+
+<section>
+  <h2>📏 Spacing Scale</h2>
+  ${spacingHtml || "<p>No spacing values detected.</p>"}
+</section>
+
+<section>
+  <h2>📐 Border Radius</h2>
+  ${extraction.radii.length > 0 ? `<div class=\"scale-list\">` + extraction.radii.map(function (r) { return `<div style=\"display:inline-block;margin:4px;padding:8px 16px;background:#f0f0f0;border-radius:${r.value};border:2px dashed #ccc;\">${r.value} (${r.count}x)</div>`; }).join("") + `</div>` : "<p>No border radius values detected.</p>"}
+</section>
+
+<section>
+  <h2>🌑 Shadows</h2>
+  ${extraction.shadows.length > 0 ? `<div class=\"scale-list\">` + extraction.shadows.map(function (s) { return `<div style=\"margin:8px;padding:16px;background:#fff;box-shadow:${s.value};border-radius:8px;\">${s.value} (${s.count}x)</div>`; }).join("") + `</div>` : "<p>No box shadows detected.</p>"}
+</section>
+
+<section>
+  <h2>🧩 Components</h2>
+  ${componentsHtml || "<p>No reusable components detected.</p>"}
+</section>
+
+<section>
+  <h2>🎯 CSS Custom Properties</h2>
+  ${cssVarsHtml}
+</section>
+
+<div class=\"footer\">
+  <p>Generated by Futuraria Design Extractor · Deterministic output · Same input → same manual</p>
+  <p>Source hash: ${extraction.sourceHash}</p>
+</div>
+</body>
+</html>`;
+
+      return {
+        templateId: params.templateId,
+        brandName: brandName,
+        brandManualHtml: manualHtml,
+        sourceHash: extraction.sourceHash,
+        summary: {
+          colorCount: extraction.colors.length,
+          fontCount: extraction.typography.families.length,
+          typeScaleSizes: extraction.typography.typeScale.length,
+          spacingValues: extraction.spacing.length,
+          componentCount: extraction.components.length,
+          imageCount: extraction.images.length,
+          frameCount: extFrames.length,
+        },
+      };
+    }
+
+    // ── Phase J: generate_ui_components ──
+    case "generate_ui_components": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      const extFrames2 = (tpl.frames || []).map(function (f) {
+        return { id: f.id, name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height };
+      }).filter(function (f) { return f.html || f.css; });
+
+      if (extFrames2.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content found" };
+
+      const extraction2 = extractDesignSystem(extFrames2);
+      const targetFrame = params.targetFrameId ? tpl.frames.find(f => f.id === params.targetFrameId) : tpl.frames[0];
+      if (!targetFrame) throw { code: -32000, message: "Target frame not found" };
+
+      const requested = params.components || ["button-primary", "button-secondary", "button-ghost", "card", "navbar", "form-input", "hero"];
+      const accent = extraction2.colors.find(c => c.role === "accent")?.value || "#8B5CF6";
+      const bg = extraction2.colors.find(c => c.role === "background")?.value || "#ffffff";
+      const text = extraction2.colors.find(c => c.role === "text")?.value || "#1a1a2e";
+      const font = extraction2.typography.families[0] || "system-ui";
+      const radius = extraction2.radii[0]?.value || "12px";
+
+      let componentHtml = "";
+      let componentCss = "";
+      let counter = 0;
+
+      const comps = {
+        "button-primary": { h: `<a data-layer-id="comp_${++counter}" style="display:inline-block;padding:12px 24px;background:${accent};color:#fff;border-radius:${radius};font-family:${font},sans-serif;font-size:16px;font-weight:600;text-decoration:none;cursor:pointer;position:absolute;left:20px;top:20px;">Primary Button</a>`, c: `[data-layer-id="comp_${counter}"] { display: inline-block; padding: 12px 24px; background: ${accent}; color: #fff; border-radius: ${radius}; font-family: ${font}, sans-serif; font-size: 16px; font-weight: 600; cursor: pointer; position: absolute; left: 20px; top: 20px; }` },
+        "button-secondary": { h: `<a data-layer-id="comp_${++counter}" style="display:inline-block;padding:12px 24px;background:transparent;color:${accent};border:2px solid ${accent};border-radius:${radius};font-family:${font},sans-serif;font-size:16px;font-weight:600;text-decoration:none;cursor:pointer;position:absolute;left:20px;top:70px;">Secondary</a>`, c: `[data-layer-id="comp_${counter}"] { display: inline-block; padding: 12px 24px; background: transparent; color: ${accent}; border: 2px solid ${accent}; border-radius: ${radius}; font-family: ${font}, sans-serif; font-size: 16px; font-weight: 600; cursor: pointer; position: absolute; left: 20px; top: 70px; }` },
+        "button-ghost": { h: `<a data-layer-id="comp_${++counter}" style="display:inline-block;padding:12px 24px;background:transparent;color:${text};border:none;border-radius:${radius};font-family:${font},sans-serif;font-size:16px;font-weight:500;text-decoration:none;cursor:pointer;position:absolute;left:20px;top:120px;">Ghost</a>`, c: `[data-layer-id="comp_${counter}"] { display: inline-block; padding: 12px 24px; background: transparent; color: ${text}; border: none; border-radius: ${radius}; font-family: ${font}, sans-serif; font-size: 16px; font-weight: 500; cursor: pointer; position: absolute; left: 20px; top: 120px; }` },
+        "card": { h: `<div data-layer-id="comp_${++counter}" style="width:320px;padding:24px;background:${bg};border-radius:${radius};box-shadow:0 2px 16px rgba(0,0,0,0.08);font-family:${font},sans-serif;position:absolute;left:20px;top:180px;"><h3 style="font-size:20px;font-weight:700;color:${text};margin:0 0 8px;">Card Title</h3><p style="font-size:14px;color:${text};opacity:0.7;margin:0 0 16px;">Card description text that explains the content of this component.</p><a style="display:inline-block;padding:8px 20px;background:${accent};color:#fff;border-radius:${radius};text-decoration:none;font-weight:600;font-size:14px;">Action</a></div>`, c: `[data-layer-id="comp_${counter}"] { width: 320px; padding: 24px; background: ${bg}; border-radius: ${radius}; box-shadow: 0 2px 16px rgba(0,0,0,0.08); font-family: ${font}, sans-serif; position: absolute; left: 20px; top: 180px; }` },
+        "navbar": { h: `<nav data-layer-id="comp_${++counter}" style="width:100%;padding:16px 32px;background:${bg};border-bottom:1px solid rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:space-between;font-family:${font},sans-serif;position:absolute;left:0;top:0;box-sizing:border-box;"><span style="font-size:20px;font-weight:700;color:${text};">Brand</span><div style="display:flex;gap:24px;"><a style="font-size:14px;color:${text};text-decoration:none;opacity:0.7;">Home</a><a style="font-size:14px;color:${text};text-decoration:none;opacity:0.7;">About</a><a style="font-size:14px;color:${text};text-decoration:none;opacity:0.7;">Contact</a></div></nav>`, c: `[data-layer-id="comp_${counter}"] { width: 100%; padding: 16px 32px; background: ${bg}; border-bottom: 1px solid rgba(0,0,0,0.06); display: flex; align-items: center; justify-content: space-between; font-family: ${font}, sans-serif; position: absolute; left: 0; top: 0; box-sizing: border-box; }` },
+        "form-input": { h: `<div data-layer-id="comp_${++counter}" style="position:absolute;left:20px;top:420px;font-family:${font},sans-serif;"><label style="display:block;font-size:14px;font-weight:600;color:${text};margin-bottom:6px;">Label</label><input placeholder="Placeholder text" style="display:block;width:280px;padding:10px 14px;border:1.5px solid rgba(0,0,0,0.12);border-radius:${radius};font-size:14px;font-family:${font},sans-serif;outline:none;color:${text};background:${bg};"></div>`, c: `[data-layer-id="comp_${counter}"] { position: absolute; left: 20px; top: 420px; font-family: ${font}, sans-serif; }` },
+        "hero": { h: `<section data-layer-id="comp_${++counter}" style="width:100%;padding:80px 40px;text-align:center;font-family:${font},sans-serif;position:absolute;left:0;top:60px;box-sizing:border-box;background:linear-gradient(135deg,${accent}08,${accent}15);"><h1 style="font-size:48px;font-weight:800;color:${text};margin:0 0 16px;">Build Something Great</h1><p style="font-size:18px;color:${text};opacity:0.65;max-width:500px;margin:0 auto 32px;">A compelling description that explains what your product does and why it matters.</p><a style="display:inline-block;padding:14px 32px;background:${accent};color:#fff;border-radius:${radius};text-decoration:none;font-weight:700;font-size:16px;">Get Started</a></section>`, c: `[data-layer-id="comp_${counter}"] { width: 100%; padding: 80px 40px; text-align: center; font-family: ${font}, sans-serif; position: absolute; left: 0; top: 60px; box-sizing: border-box; background: linear-gradient(135deg, ${accent}08, ${accent}15); }` },
+      };
+
+      for (const key of requested) {
+        if (comps[key]) { componentHtml += "\n" + comps[key].h; componentCss += "\n" + comps[key].c + "\n"; }
+      }
+
+      targetFrame.html = (targetFrame.html || "") + "\n" + componentHtml;
+      targetFrame.css = (targetFrame.css || "") + "\n" + componentCss;
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: targetFrame.id, generatedComponents: requested.length, sourceHash: extraction2.sourceHash };
+    }
+
+    // ── verify_design_system: audit extracted tokens vs actual content ──
+    case "verify_design_system": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found" };
+
+      const extFrames = (tpl.frames || []).map(function (f) {
+        return { id: f.id, name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height };
+      }).filter(function (f) { return f.html || f.css; });
+
+      if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content found" };
+
+      const extraction = extractDesignSystem(extFrames);
+      const issues = [];
+      let passCount = 0, warnCount = 0, failCount = 0;
+
+      // 1. Check that all extracted colors are actually used in CSS
+      const allCss = extFrames.map(function (f) { return (f.css || "") + " " + (f.html || ""); }).join(" ").toLowerCase();
+      (extraction.colors || []).forEach(function (c) {
+        if (!c.role) return;
+        const hex = c.value.toLowerCase();
+        if (!allCss.includes(hex) && !allCss.includes(hex.replace("#", ""))) {
+          issues.push({ level: "warn", category: "color", token: c.token, message: `Orphan token: ${c.token} (${c.value}) was extracted but not found in frame content. May be in an unused CSS rule.` });
+          warnCount++;
+        } else {
+          passCount++;
+        }
+      });
+
+      // 2. Check font families match actual usage
+      if (extraction.typography.families.length > 0) {
+        extraction.typography.families.forEach(function (f) {
+          if (!allCss.includes(f.name.toLowerCase())) {
+            issues.push({ level: "warn", category: "typography", family: f.name, message: `Font "${f.name}" extracted but not found in content. Check if it's applied via inline style or Google Fonts import.` });
+            warnCount++;
+          } else {
+            passCount++;
+          }
+        });
+      }
+
+      // 3. Check for colors used in CSS but NOT in extraction
+      const hexRe = /#[0-9a-f]{3,6}\b/g;
+      const allCssHexes = new Set();
+      let m;
+      while ((m = hexRe.exec(allCss)) !== null) {
+        let h = m[0];
+        if (h.length === 4) h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+        allCssHexes.add(h.toLowerCase());
+      }
+      const extractedHexes = new Set((extraction.colors || []).filter(function (c) { return c.role; }).map(function (c) { return c.value; }));
+      allCssHexes.forEach(function (hex) {
+        if (!extractedHexes.has(hex) && hex !== "#ffffff" && hex !== "#000000" && hex !== "#fff" && hex !== "#000") {
+          issues.push({ level: "fail", category: "color", hex: hex, message: `Missing token: color ${hex} is used in CSS but was NOT extracted as a design token. The extractor may have filtered it out.` });
+          failCount++;
+        }
+      });
+
+      // 4. Check if type scale sizes match actual usage
+      const fontSizeRe = /font-size:\s*(\d+)px/g;
+      const usedSizes = new Set();
+      while ((m = fontSizeRe.exec(allCss)) !== null) {
+        usedSizes.add(parseInt(m[1]));
+      }
+      const extractedSizes = new Set(extraction.typography.typeScale);
+      usedSizes.forEach(function (sz) {
+        if (!extractedSizes.has(sz)) {
+          issues.push({ level: "warn", category: "typography", size: sz, message: `Missing from type scale: font-size ${sz}px is used in CSS but not in the extracted type scale.` });
+          warnCount++;
+        }
+      });
+
+      // 5. Overall health score
+      const total = passCount + warnCount + failCount;
+      const score = total > 0 ? Math.round((passCount / total) * 100) : 100;
+      const status = score >= 90 ? "healthy" : score >= 70 ? "needs_attention" : "needs_work";
+
+      return {
+        templateId: params.templateId,
+        sourceHash: extraction.sourceHash,
+        status: status,
+        healthScore: score,
+        summary: {
+          pass: passCount,
+          warn: warnCount,
+          fail: failCount,
+          total: total,
+        },
+        issues: issues,
+        extractionSummary: {
+          colorCount: extraction.colors.length,
+          fontFamilyCount: extraction.typography.families.length,
+          typeScaleSizes: extraction.typography.typeScale.length,
+          spacingValues: extraction.spacing.length,
+          componentCount: extraction.components.length,
+        },
+        recommendation: status === "healthy" ? "Design system extraction is accurate and consistent with the actual frame content." : status === "needs_attention" ? "Some tokens may be stale or missing. Consider regenerating artifacts and reviewing orphan tokens." : "Significant discrepancies detected. Review the issues list and update your CSS to use consistent design tokens.",
+      };
+    }
+
     // ── get_design_artifacts: retrieve stored or auto-generate ──
     case "get_design_artifacts": {
       var tpl = await templates.getTemplate(params.templateId);
@@ -5686,6 +6138,21 @@ async function handleMethod(method, params, userId) {
       var format = params.format || "all";
       var stored = tpl.designArtifacts;
 
+      // Also check brand_guidelines if template has a brandId
+      var brandGuideline = null;
+      if (tpl.brandId) {
+        brandGuideline = await brands.getBrand(tpl.brandId);
+        // Prefer brand_guideline data if available and fresher
+        if (brandGuideline && brandGuideline.tokensJson) {
+          stored = stored || {};
+          stored.tokensJson = brandGuideline.tokensJson;
+          stored.designMd = brandGuideline.designMd;
+          stored.sharedCss = brandGuideline.sharedCss;
+          stored.generatedFromHash = brandGuideline.sourceHash || stored.generatedFromHash;
+          stored.generatedAt = brandGuideline.updatedAt || stored.generatedAt;
+        }
+      }
+
       // Compute current sourceHash for staleness check
       var extFrames = (tpl.frames || []).map(function (f) {
         return { id: f.id, html: f.html || "", css: f.css || "" };
@@ -5693,7 +6160,7 @@ async function handleMethod(method, params, userId) {
 
       var currentHash = computeSourceHash(extFrames);
 
-      if (!stored) {
+      if (!stored || !stored.tokensJson) {
         // Auto-generate on first access
         if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content" };
         var artifacts = generateAllArtifacts(
@@ -5705,6 +6172,7 @@ async function handleMethod(method, params, userId) {
         return {
           templateId: params.templateId,
           _autoGenerated: true,
+          brandId: tpl.brandId || undefined,
           sourceHash: artifacts.sourceHash,
           tokensJson: format === "tokens" || format === "all" ? artifacts.tokensJson : undefined,
           designMd: format === "design" || format === "all" ? artifacts.designMd : undefined,
@@ -5717,6 +6185,8 @@ async function handleMethod(method, params, userId) {
 
       var result = {
         templateId: params.templateId,
+        brandId: tpl.brandId || undefined,
+        brandName: brandGuideline ? brandGuideline.name : undefined,
         _stale: isStale,
         sourceHash: currentHash,
         storedHash: stored.generatedFromHash,
@@ -6401,6 +6871,551 @@ async function handleMethod(method, params, userId) {
         report: report,
         _deterministic: true,
       };
+    }
+
+    // ── lock_element ──
+    case "lock_element": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const css = frame.css || "";
+      const layerId = params.layerId;
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const lockRule = new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*pointer-events[^}]*\\}\\s*`, 'g');
+      let newCss;
+      if (params.locked) {
+        newCss = css.replace(lockRule, '').trim() + `\n[data-layer-id="${layerId}"] { pointer-events: none !important; }`;
+      } else {
+        newCss = css.replace(lockRule, '').trim();
+      }
+      frame.css = newCss;
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { success: true, layerId, locked: params.locked };
+    }
+
+    // ── hide_element ──
+    case "hide_element": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const css = frame.css || "";
+      const layerId = params.layerId;
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const hideRule = new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*display[^}]*\\}\\s*`, 'g');
+      let newCss;
+      if (params.hidden) {
+        newCss = css.replace(hideRule, '').trim() + `\n[data-layer-id="${layerId}"] { display: none !important; }`;
+      } else {
+        newCss = css.replace(hideRule, '').trim();
+      }
+      frame.css = newCss;
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { success: true, layerId, hidden: params.hidden };
+    }
+
+    // ── edit_text_content ──
+    case "edit_text_content": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const html = frame.html || "";
+      const $ = cheerio.load(html, { xmlMode: false });
+      const el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+      const oldText = el.text();
+      el.text(params.text);
+      frame.html = $("body").html() || $.html();
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { success: true, layerId: params.layerId, oldText, newText: params.text };
+    }
+
+    // ── copy_style ──
+    case "copy_style": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const css = frame.css || "";
+      const layerId = params.layerId;
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{([^}]*)\\}`, 's');
+      const match = ruleRe.exec(css);
+      if (!match) {
+        // Try class-based selector fallback: parse HTML to find class, then search CSS
+        const html = frame.html || "";
+        const $ = cheerio.load(html, { xmlMode: false });
+        const el = $(`[data-layer-id="${layerId}"]`);
+        if (el.length) {
+          const classes = (el.attr("class") || "").split(/\s+/).filter(Boolean);
+          for (const cls of classes) {
+            const clsRe = new RegExp(`\\.${cls.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`, 's');
+            const clsMatch = clsRe.exec(css);
+            if (clsMatch) return { styles: clsMatch[1].trim(), selector: `.${cls}`, layerId };
+          }
+        }
+        throw { code: -32000, message: `No CSS rule found for element ${layerId}` };
+      }
+      return { styles: match[1].trim(), selector: `[data-layer-id="${layerId}"]`, layerId };
+    }
+
+    // ── paste_style ──
+    case "paste_style": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      let css = frame.css || "";
+      const layerId = params.layerId;
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(\\[data-layer-id="${escaped}"\\]\\s*\\{)([^}]*)(\\})`, 's');
+      const match = ruleRe.exec(css);
+      const styles = params.styles.trim().replace(/;+$/, '');
+      if (match) {
+        // Merge styles into existing rule
+        let decl = match[2];
+        for (const st of styles.split(";")) {
+          const idx = st.indexOf(":");
+          if (idx === -1) continue;
+          const prop = st.slice(0, idx).trim();
+          const val = st.slice(idx + 1).trim();
+          if (!prop || !val) continue;
+          const propRe = new RegExp(`${prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[^;]*;?`, 'i');
+          if (propRe.test(decl)) {
+            decl = decl.replace(propRe, `${prop}: ${val};`);
+          } else {
+            decl = decl.trimEnd() + `\n  ${prop}: ${val};`;
+          }
+        }
+        css = css.replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+      } else {
+        css += `\n[data-layer-id="${layerId}"] {\n  ${styles.replace(/;/g, ";\n  ")}\n}`;
+      }
+      frame.css = css;
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { success: true, layerId, appliedStyles: styles };
+    }
+
+    // ── set_pseudo_state ──
+    case "set_pseudo_state": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      let css = frame.css || "";
+      const layerId = params.layerId;
+      const pseudo = params.pseudo;
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pseudoSelector = `[data-layer-id="${layerId}"]${pseudo}`;
+      const escapedPseudo = pseudoSelector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(${escapedPseudo}\\s*\\{)([^}]*)(\\})`, 's');
+      const match = ruleRe.exec(css);
+      const styles = params.styles.trim().replace(/;+$/, '');
+      if (match) {
+        let decl = match[2];
+        for (const st of styles.split(";")) {
+          const idx = st.indexOf(":");
+          if (idx === -1) continue;
+          const prop = st.slice(0, idx).trim();
+          const val = st.slice(idx + 1).trim();
+          if (!prop || !val) continue;
+          const propRe = new RegExp(`${prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[^;]*;?`, 'i');
+          if (propRe.test(decl)) {
+            decl = decl.replace(propRe, `${prop}: ${val};`);
+          } else {
+            decl = decl.trimEnd() + `\n  ${prop}: ${val};`;
+          }
+        }
+        css = css.replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+      } else {
+        css += `\n${pseudoSelector} {\n  ${styles.replace(/;/g, ";\n  ")}\n}`;
+      }
+      frame.css = css;
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, method);
+      return { success: true, layerId, pseudo, appliedStyles: styles };
+    }
+
+    // ── create_brand_guideline: store a reusable brand identity ──
+    case "create_brand_guideline": {
+      var brand = await brands.createBrand({
+        workspaceId: params.workspaceId,
+        name: params.name,
+        description: params.description,
+        tokensJson: params.tokensJson,
+        designMd: params.designMd,
+        sharedCss: params.sharedCss,
+        sourceHash: params.sourceHash,
+        sourceTemplateIds: params.sourceTemplateIds,
+      });
+      return { success: true, brand: brand };
+    }
+
+    // ── get_brand_guideline: retrieve a brand by ID ──
+    case "get_brand_guideline": {
+      var brand = await brands.getBrand(params.brandId);
+      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+      return { success: true, brand: brand };
+    }
+
+    // ── list_brand_guidelines: list all brands in a workspace ──
+    case "list_brand_guidelines": {
+      var list = await brands.listBrandsByWorkspace(params.workspaceId);
+      return {
+        success: true,
+        workspaceId: params.workspaceId,
+        count: list.length,
+        brands: list.map(function (b) {
+          return {
+            id: b.id,
+            name: b.name,
+            description: b.description,
+            sourceHash: b.sourceHash,
+            sourceTemplateIds: b.sourceTemplateIds,
+            createdAt: b.createdAt,
+            updatedAt: b.updatedAt,
+          };
+        }),
+      };
+    }
+
+    // ── update_brand_guideline: modify an existing brand ──
+    case "update_brand_guideline": {
+      var updates = {};
+      if (params.name !== undefined) updates.name = params.name;
+      if (params.description !== undefined) updates.description = params.description;
+      if (params.tokensJson !== undefined) updates.tokensJson = params.tokensJson;
+      if (params.designMd !== undefined) updates.designMd = params.designMd;
+      if (params.sharedCss !== undefined) updates.sharedCss = params.sharedCss;
+      if (params.sourceHash !== undefined) updates.sourceHash = params.sourceHash;
+      if (params.sourceTemplateIds !== undefined) updates.sourceTemplateIds = params.sourceTemplateIds;
+      var brand = await brands.updateBrand(params.brandId, updates);
+      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+      return { success: true, brand: brand };
+    }
+
+    // ── delete_brand_guideline: remove a brand permanently ──
+    case "delete_brand_guideline": {
+      await brands.deleteBrand(params.brandId);
+      return { success: true, deleted: params.brandId };
+    }
+
+    // ── apply_brand_to_template: link template to brand ──
+    case "apply_brand_to_template": {
+      var brand = await brands.getBrand(params.brandId);
+      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+
+      var tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+
+      // Copy brand artifacts onto template
+      var designArtifacts = {
+        tokensJson: brand.tokensJson,
+        designMd: brand.designMd,
+        sharedCss: brand.sharedCss,
+        generatedFromHash: brand.sourceHash,
+        generatedAt: brand.updatedAt,
+      };
+
+      await templates.updateTemplate(params.templateId, {
+        brandId: brand.id,
+        designArtifacts: designArtifacts,
+      });
+
+      return {
+        success: true,
+        templateId: params.templateId,
+        brandId: brand.id,
+        brandName: brand.name,
+        appliedArtifacts: {
+          hasTokens: !!brand.tokensJson,
+          hasDesignMd: !!brand.designMd,
+          hasSharedCss: !!brand.sharedCss,
+        },
+      };
+    }
+
+    // ── set_stroke_style: stroke color, width, linecap, linejoin, dasharray ──
+    case "set_stroke_style": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      // Find the <path> inside the SVG
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      if (params.stroke !== undefined) $path.attr("stroke", params.stroke);
+      if (params.strokeWidth !== undefined) $path.attr("stroke-width", String(params.strokeWidth));
+      if (params.strokeLinecap !== undefined) $path.attr("stroke-linecap", params.strokeLinecap);
+      if (params.strokeLinejoin !== undefined) $path.attr("stroke-linejoin", params.strokeLinejoin);
+      if (params.strokeDasharray !== undefined) $path.attr("stroke-dasharray", params.strokeDasharray);
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId };
+    }
+
+    // ── set_gradient: linear/radial/conic gradient on fill or background ──
+    case "set_gradient": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const stopsStr = (params.stops || []).map(s => `${s.color} ${s.position}%`).join(", ");
+      const angle = params.angle || 0;
+      let gradientValue;
+      if (params.gradientType === "linear") {
+        gradientValue = `linear-gradient(${angle}deg, ${stopsStr})`;
+      } else if (params.gradientType === "radial") {
+        gradientValue = `radial-gradient(circle, ${stopsStr})`;
+      } else {
+        gradientValue = `conic-gradient(from ${angle}deg, ${stopsStr})`;
+      }
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      // For SVG paths, set fill attribute; for divs, set background-image in CSS
+      const isSvgEl = $el.is("svg") || $el.find("svg").length > 0;
+      if (isSvgEl) {
+        // Find path and set fill with SVG gradient
+        let $path = $el.find("path").first();
+        if (!$path.length && $el.is("path")) $path = $el;
+        if ($path.length) {
+          // Use a simpler approach: set the fill to the first stop color
+          // Full SVG gradient defs would require <linearGradient> elements
+          const firstColor = (params.stops || [])[0]?.color || "#8B5CF6";
+          $path.attr("fill", firstColor);
+        }
+        frame.html = $.html();
+      } else {
+        // div element: set background-image in CSS
+        const selector = `[data-layer-id="${params.layerId}"]`;
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+        const match = ruleRe.exec(frame.css || "");
+        if (match) {
+          let decl = match[2];
+          const bgRe = /background-image\s*:[^;]*;?/;
+          if (bgRe.test(decl)) {
+            decl = decl.replace(bgRe, `background-image: ${gradientValue};`);
+          } else {
+            decl = decl.trimEnd() + `\n  background-image: ${gradientValue};\n`;
+          }
+          frame.css = (frame.css || "").replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+        } else {
+          frame.css = (frame.css || "") + `\n${selector} {\n  background-image: ${gradientValue};\n}`;
+        }
+      }
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, gradientValue };
+    }
+
+    // ── set_blend_mode: mix-blend-mode on element ──
+    case "set_blend_mode": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      $el.attr("style", ($el.attr("style") || "") + ` mix-blend-mode: ${params.blendMode};`);
+      frame.html = $.html();
+
+      // Also update CSS rule
+      const selector = `[data-layer-id="${params.layerId}"]`;
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+      const match = ruleRe.exec(frame.css || "");
+      if (match) {
+        let decl = match[2];
+        const bmRe = /mix-blend-mode\s*:[^;]*;?/;
+        if (bmRe.test(decl)) {
+          decl = decl.replace(bmRe, `mix-blend-mode: ${params.blendMode};`);
+        } else {
+          decl = decl.trimEnd() + `\n  mix-blend-mode: ${params.blendMode};\n`;
+        }
+        frame.css = (frame.css || "").replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+      } else {
+        frame.css = (frame.css || "") + `\n${selector} {\n  mix-blend-mode: ${params.blendMode};\n}`;
+      }
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, blendMode: params.blendMode };
+    }
+
+    // ── outline_stroke: convert stroke to filled outline path ──
+    case "outline_stroke": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const pathData = $path.attr("d") || "";
+      const sw = params.strokeWidth || parseFloat($path.attr("stroke-width") || "2");
+      const strokeColor = $path.attr("stroke") || "#8B5CF6";
+      const originalFill = $path.attr("fill") || "none";
+      const newFill = params.fillColor || strokeColor;
+
+      let outlinedPathData = pathData;
+      let usedSvgPathCommander = false;
+      let bbox = null;
+      try {
+        const spc = await import("svg-path-commander");
+        const pathInstance = new spc.SVGPathCommander(pathData);
+        // Normalize to absolute + standard notation (convert shorthand S/T to C/Q)
+        const normalized = pathInstance.normalize().toString();
+        bbox = pathInstance.getBBox();
+
+        // Scale the path outward by half the stroke width to simulate stroke outline.
+        // The path expands from its center by (strokeWidth/2) on each side.
+        if (sw > 0 && bbox.width > 0 && bbox.height > 0) {
+          const expandX = 1 + (sw / bbox.width);
+          const expandY = 1 + (sw / bbox.height);
+          // Use transform to scale the normalized path from its center
+          const scaled = new spc.SVGPathCommander(normalized);
+          scaled.transform({
+            scale: [expandX, expandY],
+            origin: [bbox.cx, bbox.cy, 0],
+          });
+          outlinedPathData = scaled.toString();
+        } else {
+          outlinedPathData = normalized;
+        }
+        usedSvgPathCommander = true;
+      } catch (_) {
+        outlinedPathData = pathData;
+      }
+
+      // Convert stroke to fill: set fill to stroke color, remove stroke attributes
+      $path.attr("fill", newFill);
+      $path.attr("stroke", "none");
+      $path.attr("stroke-width", "0");
+      $path.removeAttr("stroke-linecap");
+      $path.removeAttr("stroke-linejoin");
+      $path.removeAttr("stroke-dasharray");
+      $path.attr("d", outlinedPathData);
+      // Also update the CSS rule to remove stroke properties
+      if (frame.css) {
+        const selector = `[data-layer-id="${params.layerId}"]`;
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+        const match = ruleRe.exec(frame.css || "");
+        if (match) {
+          let decl = match[2];
+          decl = decl.replace(/\s*stroke\s*:[^;]*;?/g, "");
+          decl = decl.replace(/\s*stroke-width\s*:[^;]*;?/g, "");
+          decl = decl.replace(/\s*stroke-linecap\s*:[^;]*;?/g, "");
+          decl = decl.replace(/\s*stroke-linejoin\s*:[^;]*;?/g, "");
+          decl = decl.replace(/\s*stroke-dasharray\s*:[^;]*;?/g, "");
+          if (!/fill\s*:/.test(decl)) decl = decl.trimEnd() + `\n  fill: ${newFill};\n`;
+          frame.css = (frame.css || "").replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+        }
+      }
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, outlined: true, previousStrokeWidth: sw, newFill, expandedBy: usedSvgPathCommander && sw > 0 ? `${Math.round(sw / 2)}px` : "0px" };
+    }
+
+    // ── offset_path: inset/outset path by distance ──
+    case "offset_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $el = $(`[data-layer-id="${params.layerId}"]`);
+      if (!$el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
+
+      let $path = $el.find("path").first();
+      if (!$path.length && $el.is("path")) $path = $el;
+      if (!$path.length) throw { code: -32000, message: "No <path> element found" };
+
+      const pathData = $path.attr("d") || "";
+      const offset = params.offset || 0;
+      const miterLimit = params.miterLimit || 4;
+
+      let offsetPathData = pathData;
+      let usedSvgPathCommander = false;
+      let appliedScale = 1;
+      try {
+        const spc = await import("svg-path-commander");
+        const pathInstance = new spc.SVGPathCommander(pathData);
+        // Normalize to absolute + standard notation
+        const normalized = pathInstance.normalize();
+        const bbox = normalized.getBBox();
+
+        if (offset !== 0 && bbox.width > 0 && bbox.height > 0) {
+          // Scale from bbox center: positive offset = expand, negative = shrink
+          // Each side moves by |offset| pixels, so total dimension change = 2 * offset
+          const scaleX = 1 + (offset * 2 / bbox.width);
+          const scaleY = 1 + (offset * 2 / bbox.height);
+          appliedScale = (scaleX + scaleY) / 2;
+          const scaled = new spc.SVGPathCommander(normalized.toString());
+          scaled.transform({
+            scale: [scaleX, scaleY],
+            origin: [bbox.cx, bbox.cy, 0],
+          });
+          offsetPathData = scaled.toString();
+        } else {
+          offsetPathData = normalized.toString();
+        }
+        usedSvgPathCommander = true;
+      } catch (_) {
+        offsetPathData = pathData;
+      }
+
+      $path.attr("d", offsetPathData);
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerId: params.layerId, offset, appliedScale: Math.round(appliedScale * 1000) / 1000, usedSvgPathCommander };
+    }
+
+    // ── rename_template: rename a template/workspace ──
+    case "rename_template": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      await templates.updateTemplate(params.templateId, { name: params.name });
+      return { success: true, templateId: params.templateId, name: params.name };
     }
 
     default:

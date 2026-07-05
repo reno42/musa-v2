@@ -14,9 +14,13 @@ import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
+import { SvgImportDialog } from "../components/SvgImportDialog";
+import { InsertToolbar } from "../components/InsertToolbar";
+import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
+import { mcpCall } from "../lib/mcpClient";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
   IconArrowLeft, IconCode, IconSliders, IconLayout, IconDna, IconPalette,
@@ -25,6 +29,8 @@ import {
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
+  IconHistory, IconWand, IconRefresh, IconGrid,
+  IconUpload, IconSparkle, IconLink,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -48,6 +54,17 @@ const FRAME_GAP = 100;
 const BUILD_VERSION = "persist-fix-v4-2026-06-30";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
+
+const elemBtnStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)", color: "#ccc",
+  border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4,
+  padding: "3px 8px", fontSize: 11, cursor: "pointer",
+  fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
+  minWidth: 28, minHeight: 24,
+};
+const sepStyle: React.CSSProperties = {
+  width: 1, height: 20, background: "rgba(255,255,255,0.08)", margin: "0 4px",
+};
 
 const DEFAULT_HTML = `<div class="card">
   <h1 data-layer-id="heading">Hello World</h1>
@@ -136,6 +153,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [showFontPicker, setShowFontPicker] = useState(false);
   const [editingFrameName, setEditingFrameName] = useState<string | null>(null);
   const frameNameInputRef = useRef<HTMLInputElement>(null);
+  const [editingTemplateName, setEditingTemplateName] = useState<string | null>(null);
+  const templateNameInputRef = useRef<HTMLInputElement>(null);
   const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string; onlineAt: string }[]>([]);
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
@@ -150,6 +169,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<string>("contextual");
+  const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
+  const [showSvgImport, setShowSvgImport] = useState(false);
 
   // ── Derived: active frame ──
   const selectedFrame = frames.find(f => f.id === selectedFrameId) ?? null;
@@ -646,8 +667,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
-      html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#10B981;clip-path:polygon(50% 0%, 0% 100%, 100% 100%);position:absolute;left:${x}px;top:${y}px;"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #10B981;\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      const w = 150, h = 150;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = 130;
       const hw = s / 2; const hh = s / 2;
@@ -658,7 +680,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const r = i % 2 === 0 ? outerR : innerR;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else if (type === "polygon") {
       const n = sides || 6;
@@ -670,7 +692,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       html = `<div data-layer-id="${layerId}" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
@@ -700,8 +722,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       html = `<div data-layer-id="${layerId}"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
-      html = `<div data-layer-id="${layerId}"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #10B981;\n  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = Math.max(w, h);
       const hw = s / 2; const hh = s / 2;
@@ -712,10 +734,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const r = i % 2 === 0 ? outerR : innerR;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
-      // polygon — uses SVG polygon with configurable sides
+      // polygon — uses SVG path with configurable sides
       const n = sides || 6;
       const s = Math.max(w, h);
       const hw = s / 2; const hh = s / 2;
@@ -725,7 +747,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><polygon points="${pts.join(" ")}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -757,11 +779,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
-  // ── Phase C: Pen path creation ──
-  const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }) => {
+  // ── Phase E: Pen path creation (supports closed paths) ──
+  const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
     if (!selectedFrameId) return;
     const layerId = `el_${Date.now().toString(36)}`;
-    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}" fill="none" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const fillValue = closed ? "rgba(139,92,246,0.18)" : "none";
+    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}" fill="${fillValue}" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
@@ -773,6 +796,45 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
     setActiveTool("select");
   }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Phase F: Pathfinder boolean operations ──
+  const handlePathfinder = useCallback(async (op: "union" | "subtract" | "intersect" | "exclude") => {
+    if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "pathfinder",
+          params: { templateId, frameId: selectedFrameId, elementIdA: multiSelectLayerIds[0], elementIdB: multiSelectLayerIds[1], operation: op },
+          id: 0,
+        }),
+      });
+      if (res.result) {
+        const tpl = await getTemplate(templateId);
+        const t = tpl as any;
+        if (t?.frames && Array.isArray(t.frames)) {
+          const updated = t.frames.map((f: any) => ({
+            ...frames.find(lf => lf.id === f.id),
+            html: f.html || "",
+            css: f.css || "",
+          }));
+          if (updated.length > 0) {
+            pushUndo(frames);
+            setFrames(updated);
+            autoSave(updated);
+          }
+        }
+      }
+    } catch (err) { console.warn("[Pathfinder] Failed:", err); }
+    setMultiSelectLayerIds([]);
+  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave, pushUndo]);
+
+  // ── Phase G: SVG Import ──
+  const handleSvgImportOpen = useCallback(() => setShowSvgImport(true), []);
+  const handleSvgImported = useCallback(async (newTemplateId: string) => {
+    setShowSvgImport(false);
+    onBack();
+  }, [onBack]);
 
   // ── Phase C: Delete element inside frame ──
   const handleDeleteElement = useCallback((layerId: string) => {
@@ -868,6 +930,61 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
     setSelectedElement(prev => prev ? { ...prev, tag: newTag } : null);
   }, [selectedElement, selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Convert element to SVG path ──
+  const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
+    if (!templateId) return;
+    try {
+      const result = await mcpCall("shape_to_path", { templateId, frameId, elementId: layerId });
+      if (result?.success) {
+        // Reload template to get updated frames
+        const tpl = await getTemplate(templateId);
+        if (tpl && tpl.frames) {
+          pushUndo(frames);
+          setFrames(tpl.frames);
+          autoSave(tpl.frames);
+        }
+      }
+    } catch (err) {
+      console.error("[ConvertToPath] Error:", err);
+    }
+  }, [templateId, frames, autoSave, pushUndo]);
+
+  // ── Outline stroke: convert stroke to filled outline path ──
+  const handleOutlineStroke = useCallback(async (layerId: string, frameId: string) => {
+    if (!templateId) return;
+    try {
+      const result = await mcpCall("outline_stroke", { templateId, frameId, layerId });
+      if (result?.success) {
+        const tpl = await getTemplate(templateId);
+        if (tpl && tpl.frames) {
+          pushUndo(frames);
+          setFrames(tpl.frames);
+          autoSave(tpl.frames);
+        }
+      }
+    } catch (err) {
+      console.error("[OutlineStroke] Error:", err);
+    }
+  }, [templateId, frames, autoSave, pushUndo]);
+
+  // ── Offset path: inset/outset by distance ──
+  const handleOffsetPath = useCallback(async (layerId: string, frameId: string, offset: number) => {
+    if (!templateId) return;
+    try {
+      const result = await mcpCall("offset_path", { templateId, frameId, layerId, offset });
+      if (result?.success) {
+        const tpl = await getTemplate(templateId);
+        if (tpl && tpl.frames) {
+          pushUndo(frames);
+          setFrames(tpl.frames);
+          autoSave(tpl.frames);
+        }
+      }
+    } catch (err) {
+      console.error("[OffsetPath] Error:", err);
+    }
+  }, [templateId, frames, autoSave, pushUndo]);
 
 
   // ── Keyboard shortcuts ──
@@ -1300,6 +1417,22 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [selectedFrameId, editingFrameName, frames, autoSave, pushUndo]);
 
+  // ── Template (workspace) rename ──
+  const commitTemplateRename = useCallback(async () => {
+    if (!templateId || editingTemplateName === null) return;
+    const trimmed = editingTemplateName.trim();
+    if (!trimmed || trimmed === templateName) { setEditingTemplateName(null); return; }
+    try {
+      const result = await mcpCall("rename_template", { templateId, name: trimmed });
+      if (result?.success) {
+        setTemplateName(trimmed);
+      }
+    } catch (err) {
+      console.error("[TemplateRename] Error:", err);
+    }
+    setEditingTemplateName(null);
+  }, [templateId, editingTemplateName, templateName]);
+
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
     if (tpl) {
@@ -1314,6 +1447,259 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Code panel visibility ──
   const [showCodePanel, setShowCodePanel] = useState(false);
   const [showLayersPanel, setShowLayersPanel] = useState(false);
+  const [showInsertBar, setShowInsertBar] = useState(false);
+  const [showVersionPanel, setShowVersionPanel] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<"fixed" | "smart">("fixed");
+  const [mcpLoading, setMcpLoading] = useState<string | null>(null);
+  const [mcpMsg, setMcpMsg] = useState("");
+  const [clipboardStyle, setClipboardStyle] = useState<string | null>(null);
+  const [lockedLayers, setLockedLayers] = useState<Set<string>>(new Set());
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
+
+  // ── Copy / Paste Style ──
+  const handleCopyStyle = useCallback(() => {
+    if (!selectedElement) return;
+    // Extract all CSS for the current selector
+    const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const ruleRe = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`);
+    const match = ruleRe.exec(activeCss);
+    if (match) {
+      setClipboardStyle(match[1].trim());
+      setMcpMsg("✓ Style copied");
+      setTimeout(() => setMcpMsg(""), 1500);
+    }
+  }, [selectedElement, activeCss]);
+
+  const handlePasteStyle = useCallback(() => {
+    if (!selectedElement || !clipboardStyle) return;
+    const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+    const match = ruleRe.exec(activeCss);
+    let updated: string;
+    if (match) {
+      updated = activeCss.replace(ruleRe, `${match[1]}\n  ${clipboardStyle}\n${match[3]}`);
+    } else {
+      updated = activeCss + `\n${selectedElement.selector} {\n  ${clipboardStyle}\n}`;
+    }
+    handleCssChange(updated);
+    setMcpMsg("✓ Style pasted");
+    setTimeout(() => setMcpMsg(""), 1500);
+  }, [selectedElement, clipboardStyle, activeCss, handleCssChange]);
+
+  // ── Lock / Hide toggle ──
+  const handleLockToggle = useCallback((layerId: string, locked: boolean) => {
+    setLockedLayers(prev => {
+      const next = new Set(prev);
+      locked ? next.add(layerId) : next.delete(layerId);
+      return next;
+    });
+    if (locked) {
+      handleCssChange(activeCss + `\n[data-layer-id="${layerId}"] { pointer-events: none !important; }`);
+    } else {
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      handleCssChange(activeCss.replace(new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*pointer-events[^}]*\\}\\s*`, 'g'), ''));
+    }
+  }, [activeCss, handleCssChange]);
+
+  const handleHideToggle = useCallback((layerId: string, hidden: boolean) => {
+    setHiddenLayers(prev => {
+      const next = new Set(prev);
+      hidden ? next.add(layerId) : next.delete(layerId);
+      return next;
+    });
+    if (hidden) {
+      handleCssChange(activeCss + `\n[data-layer-id="${layerId}"] { display: none !important; }`);
+    } else {
+      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      handleCssChange(activeCss.replace(new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*display[^}]*\\}\\s*`, 'g'), ''));
+    }
+  }, [activeCss, handleCssChange]);
+
+  // ── Generic MCP call helper ──
+  const callMcp = useCallback(async (method: string, params: any) => {
+    const res = await apiFetch<any>("/mcp", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 0 }),
+    });
+    const text = res?.result?.content?.[0]?.text;
+    return text ? (typeof text === "string" ? JSON.parse(text) : text) : res?.result;
+  }, []);
+
+  // ── Reload template data from server after MCP mutations ──
+  const reloadFromServer = useCallback(async () => {
+    const tpl = await getTemplate(templateId);
+    const t = tpl as any;
+    if (t?.frames && Array.isArray(t.frames)) {
+      const updated = t.frames.map((f: any) => ({
+        ...framesRef.current.find(lf => lf.id === f.id),
+        html: f.html || "",
+        css: f.css || "",
+      }));
+      if (updated.length > 0) {
+        pushUndo(framesRef.current);
+        setFrames(updated);
+        autoSaveRef.current(updated);
+      }
+    }
+  }, [templateId, pushUndo]);
+
+  // ── Element operations (align/group/reorder/copy-as) ──
+  const handleAlign = useCallback(async (alignment: string) => {
+    if (!selectedFrameId || !selectedElement) return;
+    setMcpLoading("align");
+    try {
+      await callMcp("align_elements", {
+        templateId, frameId: selectedFrameId,
+        elementIds: multiSelectLayerIds.length > 1 ? multiSelectLayerIds : [selectedElement.layerId],
+        alignment,
+      });
+      await reloadFromServer();
+      setMcpMsg("✓ Aligned");
+    } catch { setMcpMsg("✗ Align failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 2000);
+  }, [selectedFrameId, selectedElement, multiSelectLayerIds, templateId, callMcp, reloadFromServer]);
+
+  const handleGroup = useCallback(async () => {
+    if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
+    setMcpLoading("group");
+    try {
+      await callMcp("group_elements", {
+        templateId, frameId: selectedFrameId, elementIds: multiSelectLayerIds,
+      });
+      await reloadFromServer();
+      setMcpMsg("✓ Grouped");
+    } catch { setMcpMsg("✗ Group failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 2000);
+  }, [selectedFrameId, multiSelectLayerIds, templateId, callMcp, reloadFromServer]);
+
+  const handleReorder = useCallback(async (direction: "up" | "down" | "top" | "bottom") => {
+    if (!selectedFrameId || !selectedElement) return;
+    setMcpLoading("reorder");
+    try {
+      await callMcp("reorder_element", {
+        templateId, frameId: selectedFrameId, elementId: selectedElement.layerId, direction,
+      });
+      await reloadFromServer();
+      setMcpMsg("✓ Reordered");
+    } catch { setMcpMsg("✗ Reorder failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 2000);
+  }, [selectedFrameId, selectedElement, templateId, callMcp, reloadFromServer]);
+
+  const handleCopyAs = useCallback(async (format: "html" | "css" | "json") => {
+    if (!selectedFrameId || !selectedElement) return;
+    try {
+      const data = await callMcp("copy_as", {
+        templateId, frameId: selectedFrameId, elementId: selectedElement.layerId, format,
+      });
+      const text = typeof data === "string" ? data : (data?.content || JSON.stringify(data, null, 2));
+      await navigator.clipboard.writeText(text);
+      setMcpMsg(`✓ Copied as ${format.toUpperCase()}`);
+    } catch { setMcpMsg("✗ Copy failed"); }
+    setTimeout(() => setMcpMsg(""), 2000);
+  }, [selectedFrameId, selectedElement, templateId, callMcp]);
+
+  // ── Smart Layout toggle ──
+  const handleSmartLayout = useCallback(async (mode: "smart" | "fixed") => {
+    setLayoutMode(mode);
+    if (mode === "smart" && selectedFrameId) {
+      setMcpLoading("smart");
+      try {
+        await callMcp("smart_layout", {
+          templateId, frameId: selectedFrameId,
+          layout: "grid",
+        });
+        await reloadFromServer();
+        setMcpMsg("✓ Smart layout applied");
+      } catch { setMcpMsg("✗ Smart layout failed"); }
+      setMcpLoading(null);
+    } else if (mode === "fixed" && selectedFrameId) {
+      // Remove smart layout CSS by reloading original template
+      await reloadFromServer();
+      setMcpMsg("✓ Fixed layout restored");
+    }
+    setTimeout(() => setMcpMsg(""), 2000);
+  }, [selectedFrameId, templateId, callMcp, reloadFromServer]);
+
+  // ── Design system actions ──
+  const handleLintDesign = useCallback(async () => {
+    setMcpLoading("lint");
+    try {
+      const data = await callMcp("lint_design", { templateId });
+      const issues = data?.issues || [];
+      setMcpMsg(`✓ Lint: ${issues.length} issues found`);
+    } catch { setMcpMsg("✗ Lint failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 3000);
+  }, [templateId, callMcp]);
+
+  const handleEnhance = useCallback(async () => {
+    setMcpLoading("enhance");
+    try {
+      await callMcp("enhance_template", { templateId });
+      await reloadFromServer();
+      setMcpMsg("✓ Template enhanced");
+    } catch { setMcpMsg("✗ Enhance failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 3000);
+  }, [templateId, callMcp, reloadFromServer]);
+
+  const handleExportTokens = useCallback(async () => {
+    setMcpLoading("tokens");
+    try {
+      const data = await callMcp("export_design_tokens", { templateId });
+      const json = JSON.stringify(data?.tokens || data, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${templateName.replace(/[^a-zA-Z0-9_]/g, "_")}_tokens.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMcpMsg("✓ Tokens exported");
+    } catch { setMcpMsg("✗ Token export failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 3000);
+  }, [templateId, templateName, callMcp]);
+
+  // ── Variable operations ──
+  const handleExtractVars = useCallback(async () => {
+    setMcpLoading("extract");
+    try {
+      await callMcp("extract_variables", { templateId });
+      await reloadFromServer();
+      setMcpMsg("✓ Variables extracted");
+    } catch { setMcpMsg("✗ Extract failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 3000);
+  }, [templateId, callMcp, reloadFromServer]);
+
+  const handleApplyVars = useCallback(async () => {
+    setMcpLoading("applyvars");
+    try {
+      await callMcp("apply_variables", { templateId });
+      await reloadFromServer();
+      setMcpMsg("✓ Variables applied");
+    } catch { setMcpMsg("✗ Apply failed"); }
+    setMcpLoading(null);
+    setTimeout(() => setMcpMsg(""), 3000);
+  }, [templateId, callMcp, reloadFromServer]);
+
+  // ── Import template ──
+  const handleImportTemplate = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await callMcp("import_template", { data, workspaceId: templateWorkspaceId });
+      setMcpMsg("✓ Template imported");
+    } catch { setMcpMsg("✗ Import failed"); }
+    setTimeout(() => setMcpMsg(""), 3000);
+    e.target.value = "";
+  }, [callMcp, templateWorkspaceId]);
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
@@ -1460,6 +1846,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     { id: "vars", icon: <IconDna size={14} />, title: "Variables" },
     { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
     { id: "format", icon: <IconFile size={14} />, title: "Format" },
+    { id: "history", icon: <IconHistory size={14} />, title: "History" },
     { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
   ];
 
@@ -1470,7 +1857,40 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
-        <span className="editor-v2-project-name">{templateName}</span>
+        {editingTemplateName !== null ? (
+          <input
+            ref={templateNameInputRef}
+            value={editingTemplateName}
+            onChange={e => setEditingTemplateName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") commitTemplateRename();
+              if (e.key === "Escape") { setEditingTemplateName(null); }
+            }}
+            onBlur={commitTemplateRename}
+            className="editor-v2-project-name"
+            autoFocus
+            style={{
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(200,184,152,0.4)",
+              borderRadius: 4,
+              color: "#c8b898",
+              fontSize: 13,
+              fontFamily: "inherit",
+              padding: "2px 8px",
+              outline: "none",
+              width: 200,
+            }}
+          />
+        ) : (
+          <span
+            className="editor-v2-project-name"
+            onDoubleClick={() => setEditingTemplateName(templateName)}
+            title="Double-click to rename workspace"
+            style={{ cursor: "text" }}
+          >
+            {templateName}
+          </span>
+        )}
         {selectedFrame && (
           editingFrameName !== null ? (
             <input
@@ -1631,6 +2051,80 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           <IconDownload size={14} />
           <span style={{ fontSize: 9, marginLeft: 3 }}>DS</span>
         </button>
+
+               <div className="editor-v2-topbar-sep" />
+
+        {/* Insert toolbar toggle */}
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${showInsertBar ? "active" : ""}`}
+          onClick={() => setShowInsertBar(!showInsertBar)}
+          title="Insert Elements Bar"
+        >
+          <IconPlus size={14} />
+        </button>
+
+        {/* Import template */}
+        <label className="editor-v2-topbar-icon-btn" title="Import Template JSON">
+          <IconUpload size={14} />
+          <input type="file" accept=".json" onChange={handleImportTemplate} style={{ display: "none" }} />
+        </label>
+
+        {/* Lint design */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleLintDesign}
+          disabled={mcpLoading === "lint"}
+          title="Lint Design — check for issues"
+        >
+          <IconWand size={14} />
+        </button>
+
+        {/* Enhance template */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleEnhance}
+          disabled={mcpLoading === "enhance"}
+          title="Enhance — AI-suggested improvements"
+        >
+          <IconSparkle size={14} />
+        </button>
+
+        {/* Export design tokens */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleExportTokens}
+          disabled={mcpLoading === "tokens"}
+          title="Export Design Tokens as JSON"
+        >
+          <IconDna size={14} />
+          <span style={{ fontSize: 9, marginLeft: 1 }}>X</span>
+        </button>
+
+        {/* Extract variables */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleExtractVars}
+          disabled={mcpLoading === "extract"}
+          title="Extract CSS variables from template"
+        >
+          <IconRefresh size={14} />
+        </button>
+
+        {/* Apply variables */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleApplyVars}
+          disabled={mcpLoading === "applyvars"}
+          title="Replace hardcoded values with CSS variables"
+        >
+          <IconLink size={14} />
+        </button>
       </div>
 
       {/* ═══ Font Picker Dropdown ═══ */}
@@ -1678,12 +2172,83 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               onHtmlChange={handleHtmlChange}
               onLayerDelete={handleDeleteElement}
               onLayerDuplicate={handleDuplicateElement}
+              onMultiSelectChange={setMultiSelectLayerIds}
+              onLockToggle={handleLockToggle}
+              onHideToggle={handleHideToggle}
+              lockedLayers={lockedLayers}
+              hiddenLayers={hiddenLayers}
             />
           </div>
         )}
 
         {/* ── Canvas (fills remaining space) ── */}
         <div id="canvas-container" className="editor-v2-canvas-area">
+          {/* ── Insert Toolbar (toggleable) ── */}
+          {showInsertBar && (
+            <InsertToolbar
+              templateId={templateId}
+              onHtmlUpdated={(html, css) => {
+                if (selectedFrameId) {
+                  handleFrameCssChange(selectedFrameId, css, html);
+                }
+              }}
+              onSvgImport={() => setShowSvgImport(true)}
+            />
+          )}
+          {/* ── Element Operations Bar (when element selected) ── */}
+          {selectedElement && (
+            <div style={{
+              display: "flex", gap: 2, padding: "4px 8px",
+              background: "rgba(12,12,36,0.8)", backdropFilter: "blur(12px)",
+              borderBottom: "1px solid rgba(255,255,255,0.06)",
+              flexShrink: 0, flexWrap: "wrap", alignItems: "center",
+            }}>
+              {/* Align buttons */}
+              <button type="button" onClick={() => handleAlign("left")} title="Align Left"
+                style={elemBtnStyle}><IconAlignLeft size={14} /></button>
+              <button type="button" onClick={() => handleAlign("center")} title="Align Center"
+                style={elemBtnStyle}><IconAlignCenter size={14} /></button>
+              <button type="button" onClick={() => handleAlign("right")} title="Align Right"
+                style={elemBtnStyle}><IconAlignRight size={14} /></button>
+              <div style={sepStyle} />
+              {/* Reorder buttons */}
+              <button type="button" onClick={() => handleReorder("up")} title="Bring Forward"
+                style={elemBtnStyle}>↑</button>
+              <button type="button" onClick={() => handleReorder("down")} title="Send Backward"
+                style={elemBtnStyle}>↓</button>
+              <button type="button" onClick={() => handleReorder("top")} title="Bring to Front"
+                style={elemBtnStyle}>⤒</button>
+              <button type="button" onClick={() => handleReorder("bottom")} title="Send to Back"
+                style={elemBtnStyle}>⤓</button>
+              <div style={sepStyle} />
+              {/* Group button */}
+              <button type="button" onClick={handleGroup} disabled={multiSelectLayerIds.length < 2}
+                title="Group Elements"
+                style={{ ...elemBtnStyle, opacity: multiSelectLayerIds.length < 2 ? 0.4 : 1 }}>Group</button>
+              <div style={sepStyle} />
+              {/* Copy-as buttons */}
+              <button type="button" onClick={() => handleCopyAs("html")} title="Copy as HTML"
+                style={elemBtnStyle}>HTML</button>
+              <button type="button" onClick={() => handleCopyAs("css")} title="Copy as CSS"
+                style={elemBtnStyle}>CSS</button>
+              <button type="button" onClick={() => handleCopyAs("json")} title="Copy as JSON"
+                style={elemBtnStyle}>JSON</button>
+              <div style={sepStyle} />
+              {/* Smart / Fixed layout toggle */}
+              <button type="button"
+                onClick={() => handleSmartLayout(layoutMode === "fixed" ? "smart" : "fixed")}
+                disabled={mcpLoading === "smart"}
+                title="Toggle smart vs fixed layout"
+                style={{
+                  ...elemBtnStyle,
+                  background: layoutMode === "smart" ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.06)",
+                  color: layoutMode === "smart" ? "#a78bfa" : "#ccc",
+                  fontWeight: 600,
+                }}>
+                {mcpLoading === "smart" ? "..." : layoutMode === "smart" ? "Smart" : "Fixed"}
+              </button>
+            </div>
+          )}
           <InfiniteHtmlCanvas
             frames={frames}
             selectedFrameId={selectedFrameId}
@@ -1744,6 +2309,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
+          multiSelectCount={multiSelectLayerIds.length}
+          onPathfinder={handlePathfinder}
+          onSvgImport={handleSvgImportOpen}
         />
       </div>
 
@@ -1762,6 +2330,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               css={activeCss}
               onCssChange={handleContextualCssChange}
               onChangeTag={handleChangeTag}
+              onCopyStyle={handleCopyStyle}
+              onPasteStyle={handlePasteStyle}
+              hasClipboardStyle={!!clipboardStyle}
+              onConvertToPath={handleConvertToPath}
+              onOutlineStroke={handleOutlineStroke}
+              onOffsetPath={handleOffsetPath}
             />
           )}
           {rightPanelTab === "structure" && (
@@ -1781,10 +2355,22 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               window.open(`/?template=${id}&v=2`, "_blank");
             }} />
           )}
+          {rightPanelTab === "history" && (
+            <VersionHistoryPanel templateId={templateId} onRestore={reloadFromServer} />
+          )}
           {rightPanelTab === "agents" && (
             <ActiveAgentsPanel agents={activeAgents} />
           )}
         </div>
+      )}
+
+      {/* ═══ SVG Import Dialog ═══ */}
+      {showSvgImport && (
+        <SvgImportDialog
+          workspaceId={templateWorkspaceId}
+          onImported={handleSvgImported}
+          onClose={() => setShowSvgImport(false)}
+        />
       )}
 
       {/* ═══ Image Upload Modal ═══ */}
@@ -1807,6 +2393,20 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
         }}>
           {saveRecipeMsg}
+        </div>
+      )}
+
+      {/* ═══ MCP Action Toast ═══ */}
+      {mcpMsg && (
+        <div style={{
+          position: "fixed", bottom: 56, left: "50%", transform: "translateX(-50%)",
+          zIndex: 600, padding: "6px 16px", borderRadius: 6,
+          background: mcpMsg.startsWith("✓") ? "rgba(34,197,94,0.85)" : "rgba(239,68,68,0.85)",
+          color: "#fff", fontSize: 12, fontWeight: 500,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+          backdropFilter: "blur(8px)",
+        }}>
+          {mcpMsg}
         </div>
       )}
     </div>

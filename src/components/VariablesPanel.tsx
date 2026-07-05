@@ -30,6 +30,8 @@ export function VariablesPanel({ templateId, onCssUpdated }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [actionLoading, setActionLoading] = useState("");
+  const [actionMsg, setActionMsg] = useState("");
 
   const loadVars = useCallback(async () => {
     setLoading(true);
@@ -64,6 +66,22 @@ export function VariablesPanel({ templateId, onCssUpdated }: Props) {
       setVars(prev => prev.map(v => v.name === name ? { ...v, value } : v));
     } catch { /* ignore */ }
   }, [templateId, onCssUpdated]);
+
+  const runMcpAction = useCallback(async (method: string, label: string) => {
+    setActionLoading(method);
+    try {
+      await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method, params: { templateId }, id: 0 }),
+      });
+      const tpl = await apiFetch<any>(`/api/templates/${templateId}`);
+      if (tpl.data) onCssUpdated(tpl.data.css || "");
+      loadVars();
+      setActionMsg(`✓ ${label}!`);
+    } catch { setActionMsg(`✗ ${label} failed`); }
+    setActionLoading("");
+    setTimeout(() => setActionMsg(""), 2000);
+  }, [templateId, onCssUpdated, loadVars]);
 
   if (!loaded) {
     return (
@@ -109,6 +127,19 @@ export function VariablesPanel({ templateId, onCssUpdated }: Props) {
           )}
         </div>
       ))}
+      {actionMsg && (
+        <div style={{ fontSize: 10, color: actionMsg.startsWith("✓") ? "#4ade80" : "#f87171", marginTop: 4 }}>{actionMsg}</div>
+      )}
+      <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+        <button onClick={() => runMcpAction("extract_variables", "Extract")} disabled={actionLoading !== ""}
+          style={{ ...inputStyle, flex: 1, background: "#3B82F6", color: "#fff", cursor: "pointer", border: "none" }}>
+          {actionLoading === "extract_variables" ? "..." : "Extract"}
+        </button>
+        <button onClick={() => runMcpAction("apply_variables", "Apply")} disabled={actionLoading !== ""}
+          style={{ ...inputStyle, flex: 1, background: "#8B5CF6", color: "#fff", cursor: "pointer", border: "none" }}>
+          {actionLoading === "apply_variables" ? "..." : "Apply"}
+        </button>
+      </div>
     </div>
   );
 }

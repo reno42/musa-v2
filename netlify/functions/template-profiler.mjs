@@ -341,6 +341,51 @@ export function profileFrame(html, css, frameMeta) {
       var slotType = classifySlotType($el, tag);
       var sName = detectSlotName($el, buildSelector($el));
 
+      // ── Rich text span detection: if element has <span> children with distinct inline styles ──
+      var $spans = $el.find("span");
+      var hasStyledSpans = false;
+      var spanStyles = [];
+
+      if ($spans.length > 0) {
+        $spans.each(function (j) {
+          var $span = $el.find("span").eq(j);
+          var st = ($span.attr("style") || "").trim();
+          var txt = ($span.text() || "").trim();
+          if (st && txt.length >= 1) {
+            hasStyledSpans = true;
+            spanStyles.push({
+              name: sName + "_span_" + (spanStyles.length > 0 ? spanStyles.length : 0),
+              selector: buildSelector($el) + " span:nth-of-type(" + (j + 1) + ")",
+              type: "text",
+              tag: "span",
+              sampleContent: txt.length > 40 ? txt.substring(0, 37) + "..." : txt,
+              style: st,
+              maxChars: Math.floor(txt.length * 2),
+              _richText: true,
+              _explicit: hasExplicitSlots,
+            });
+          }
+        });
+      }
+
+      // ── If rich text spans detected, add each as a separate slot ──
+      if (hasStyledSpans && spanStyles.length > 0) {
+        for (var si = 0; si < spanStyles.length; si++) {
+          // Disambiguate names
+          var rsName = spanStyles[si].name;
+          if (seenText[rsName]) {
+            seenText[rsName]++;
+            rsName = rsName + "_" + seenText[rsName];
+          } else {
+            seenText[rsName] = 1;
+          }
+          spanStyles[si].name = rsName;
+          slots.push(spanStyles[si]);
+        }
+        return; // Don't add the parent as a slot — children are the slots
+      }
+
+      // ── Regular text slot (no rich text spans) ──
       // Disambiguate duplicate slot names by appending index
       if (seenText[sName]) {
         seenText[sName]++;

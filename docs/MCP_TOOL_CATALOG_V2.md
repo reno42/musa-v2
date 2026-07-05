@@ -10,6 +10,7 @@
 | Categoría | Existentes | Existentes (necesitan adaptación HTML) | Nuevas | Total |
 |-----------|:---:|:---:|:---:|:---:|
 | Engine HTML/CSS | 3 | 2 | 8 | 13 |
+| SVG Vector & Path Editing | 0 | 0 | 9 | 9 |
 | Template Engine + Recipes | 3 | 0 | 5 | 8 |
 | Batch Factory | 1 | 1 | 5 | 7 |
 | Multi-Agent + Realtime | 0 | 0 | 8 | 8 |
@@ -21,7 +22,7 @@
 | AI Generation | 5 | 0 | 2 | 7 |
 | n8n / Publishing Bridge | 0 | 0 | 2 | 2 |
 | UI Components (sin MCP) | — | — | 6 | 6 |
-| **Total** | **18** | **5** | **53** | **76** |
+| **Total** | **18** | **5** | **62** | **85** |
 
 ---
 
@@ -109,6 +110,64 @@ Tools que hacen al editor HTML usable por humanos Y por agentes.
 | 8 | `set_css_variable` | `templateId, name, value, scope` | Template actualizado | Editar variable en panel |
 | — | `brand_analyze` 🔄 | Adaptar para leer html/css en vez de canvas.objects | | |
 | — | `brand_apply` 🔄 | Adaptar para escribir CSS custom properties en vez de objetos Fabric | | |
+
+---
+
+## 🟢 IMPLEMENTADAS — SVG Vector & Path Editing (9 tools)
+
+> **Estado:** ✅ Implementadas en `netlify/functions/mcp.mjs` (~Julio 2026).  
+> **Dependencia:** `svg-path-commander` v2.2.1 (npm).  
+> **UI:** Bezier pen tool, point editing overlay, gradient builder, snap/guides, rotation handle, outline/offset buttons integrados en `HtmlContextualPanel.tsx`.
+
+### Drawing & Bezier
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S1 | `draw_bezier` | `templateId, frameId, points: [{x,y,handleIn?,handleOut?}], fill?, stroke?, layerName?, closed?` | Template actualizado con path SVG | FloatingToolbar → Pen (P), drag crea handles, Alt rompe simetría |
+| S2 | `draw_path` | `templateId, frameId, pathData, fill?, stroke?, strokeWidth?, layerName?` | Template actualizado con elemento path | Click en canvas con Pen activo |
+
+### Point Editing
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S3 | `edit_path_points` | `templateId, frameId, layerId, points: [{x,y,handleIn?,handleOut?}]` | Template actualizado con path modificado | Point editing overlay: círculos SVG + líneas de control, drag anchors y handles |
+| S4 | `edit_path_point` | `templateId, frameId, layerId, pointIndex, x, y, handleIn?, handleOut?` | Template actualizado con punto individual modificado | Click + drag en anchor circle |
+
+### SVG Import & Conversion
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S5 | `import_svg` | `templateId, frameId, svg, x?, y?, width?, height?` | Elementos SVG parseados al template | File upload / drag & drop SVG |
+| S6 | `shape_to_path` | `templateId, frameId, elementId` | Elemento convertido a `<path>` con `d="..."` | Botón "Convert to Path" en HtmlContextualPanel |
+
+### Pathfinder (Boolean Operations)
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S7 | `pathfinder` | `templateId, frameId, operation: 'union'\|'subtract'\|'intersect'\|'exclude', layerIds: [id1, id2]` | Path resultante de la operación booleana | Botones Union/Subtract/Intersect/Exclude en HtmlContextualPanel |
+
+### Stroke & Path Styling
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S8 | `outline_stroke` | `templateId, frameId, layerId, strokeWidth?, fillColor?` | Stroke convertido a path relleno (expande el path usando `svg-path-commander` transform scale desde bbox center) | Botón "⬢ Outline Stroke" en HtmlContextualPanel → Stroke |
+| S9 | `offset_path` | `templateId, frameId, layerId, offset` | Path escalado (inset/outset usando `svg-path-commander` transform scale desde bbox center). Offset positivo = outset, negativo = inset | Botones "⊖ Inset" (-4px) y "⊕ Outset" (+4px) en HtmlContextualPanel → Stroke |
+
+### Gradient & Blend
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S10 | `set_gradient` | `templateId, frameId, layerId, type: 'linear'\|'radial'\|'conic', angle?, stops: [{color, offset}], colors?` | Elemento con fill gradiente SVG/HTML | Gradient builder en HtmlContextualPanel (tipo, ángulo scrub, color stops max 4, preview bar) |
+| S11 | `set_blend_mode` | `templateId, frameId, layerId, mode: 'normal'\|'multiply'\|'screen'\|'overlay'\|'darken'\|'lighten'\|'color-dodge'\|'color-burn'\|'hard-light'\|'soft-light'\|'difference'\|'exclusion'\|'hue'\|'saturation'\|'color'\|'luminosity'` | Elemento con `mix-blend-mode` aplicado | Dropdown blend mode en HtmlContextualPanel |
+| S12 | `set_stroke_style` | `templateId, frameId, layerId, stroke?, strokeWidth?, strokeLinecap?, strokeLinejoin?, strokeDasharray?` | Elemento con atributos de stroke | Sección Stroke en HtmlContextualPanel (color, width, cap, join, dash pattern) |
+
+### Transform & Alignment
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| S13 | `transform_element` | `templateId, frameId, layerId, x?, y?, width?, height?, scaleX?, scaleY?, angle?, opacity?` | Elemento transformado (CSS rotate + scale) | Rotation handle + resize handles en DesignFrame overlay; snap/guides (8px threshold, edge + center) |
+| S14 | `align_elements` | `templateId, frameId, layerIds, direction: 'left'\|'right'\|'top'\|'bottom'\|'center-h'\|'center-v'\|'distribute-h'\|'distribute-v'` | Elementos alineados | Align buttons en HtmlContextualPanel |
+| S15 | `group_elements` | `templateId, frameId, layerIds, groupName?` | Elementos agrupados en `<g>` | Botón Group (Ctrl+G) + ungroup en HtmlLayersPanel |
 
 ---
 

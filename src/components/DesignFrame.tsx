@@ -29,6 +29,8 @@ export interface SelectedElementInfo {
   selector: string;
   computedStyles: Record<string, string>;
   frameId: string;
+  isSvg: boolean;
+  svgChildTag?: string;
 }
 
 interface DesignFrameProps {
@@ -43,7 +45,8 @@ interface DesignFrameProps {
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
-  onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }) => void;
+  onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
+  onEditPathPoints?: (layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
 }
@@ -52,20 +55,41 @@ const SEL = "#3B82F6";
 const HANDLE = 7;
 
 const TRACKED_PROPS = [
+  // Typography
   "font-family", "font-size", "font-weight", "font-style",
-  "color", "background-color", "background",
-  "margin", "padding", "border", "border-radius",
-  "width", "height", "max-width", "max-height",
-  "position", "top", "left", "right", "bottom",
-  "display", "flex-direction", "gap", "align-items", "justify-content",
   "text-align", "line-height", "letter-spacing",
-  "text-decoration", "text-transform",
+  "text-decoration", "text-transform", "white-space", "word-spacing",
+  // Color & Background
+  "color", "background-color", "background", "background-image",
+  "background-size", "background-position", "background-repeat",
+  // Spacing
+  "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+  "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+  // Border
+  "border", "border-top", "border-right", "border-bottom", "border-left",
+  "border-radius", "border-width", "border-style", "border-color",
+  // Dimensions
+  "width", "height", "max-width", "max-height", "min-width", "min-height",
+  // Position
+  "position", "top", "left", "right", "bottom", "z-index",
+  // Layout
+  "display", "flex-direction", "flex-wrap", "gap", "row-gap", "column-gap",
+  "align-items", "justify-content", "align-content", "align-self",
+  "flex-grow", "flex-shrink", "flex-basis", "order",
+  "grid-template-columns", "grid-template-rows", "grid-gap",
+  // Overflow
+  "overflow", "overflow-x", "overflow-y",
+  // Effects
   "opacity", "box-shadow", "text-shadow",
+  "transform", "transform-origin",
+  "filter", "backdrop-filter",
+  "mix-blend-mode", "background-blend-mode",
+  "transition",
 ];
 
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
-  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onElementDelete, onElementDuplicate,
+  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onEditPathPoints, onElementDelete, onElementDuplicate,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -92,6 +116,8 @@ export function DesignFrame({
   onElementDeleteRef.current = onElementDelete;
   const onElementDuplicateRef = useRef(onElementDuplicate);
   onElementDuplicateRef.current = onElementDuplicate;
+  const onEditPathPointsRef = useRef(onEditPathPoints);
+  onEditPathPointsRef.current = onEditPathPoints;
   const onCssChangeRef = useRef(onCssChange);
   onCssChangeRef.current = onCssChange;
   const onHtmlChangeRef = useRef(onHtmlChange);
@@ -240,6 +266,8 @@ export function DesignFrame({
 
   function clearOverlay() {
     if (overlayRef.current) overlayRef.current.innerHTML = "";
+    pointEditPathRef.current = null;
+    pointEditOverlayRef.current = null;
   }
 
   function refreshOverlay(el: Element) {
@@ -247,6 +275,8 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!overlay || !shadow) return;
     overlay.innerHTML = "";
+    pointEditPathRef.current = null;
+    pointEditOverlayRef.current = null;
 
     const content = shadow.getElementById("__df_content")!;
     const elRect = el.getBoundingClientRect();
@@ -257,7 +287,15 @@ export function DesignFrame({
     const w = elRect.width / z;
     const h = elRect.height / z;
 
-    // Selection border
+    // Check if selected element is an SVG path (for point editing)
+    const elTag = el.tagName.toLowerCase();
+    const isPathEl = elTag === "path";
+    const pathEl = isPathEl ? el : (el as Element).querySelector?.("path");
+    const hasPath = isPathEl || !!pathEl;
+    const targetPath = (isPathEl ? el : pathEl) as Element | null;
+    const pathData = targetPath?.getAttribute("d");
+
+    // Selection border (always show)
     const box = document.createElement("div");
     Object.assign(box.style, {
       position: "absolute",
@@ -269,33 +307,492 @@ export function DesignFrame({
     });
     overlay.appendChild(box);
 
-    // Corner + midpoint handles (8 total)
-    const handles: [number, number, string][] = [
-      [0, 0, "nwse-resize"], [0.5, 0, "ns-resize"], [1, 0, "nesw-resize"],
-      [0, 0.5, "ew-resize"], [1, 0.5, "ew-resize"],
-      [0, 1, "nesw-resize"], [0.5, 1, "ns-resize"], [1, 1, "nwse-resize"],
-    ];
-    for (const [cx, cy, cursor] of handles) {
-      const handle = document.createElement("div");
-      Object.assign(handle.style, {
-        position: "absolute",
-        left: `${x + cx * w - HANDLE / 2}px`,
-        top: `${y + cy * h - HANDLE / 2}px`,
-        width: `${HANDLE}px`, height: `${HANDLE}px`,
-        background: SEL, border: "1px solid #fff",
-        cursor, pointerEvents: "auto", boxSizing: "border-box",
+    // If this is an SVG path, render point editing overlay
+    if (hasPath && pathData && targetPath) {
+      const cmds = parsePathCommands(pathData);
+      const layerId = el.getAttribute("data-layer-id") || targetPath.getAttribute("data-layer-id");
+      pointEditPathRef.current = { layerId: layerId || "", commands: cmds };
+
+      // Create point edit SVG overlay
+      const editSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      editSvg.setAttribute("width", "100%");
+      editSvg.setAttribute("height", "100%");
+      Object.assign(editSvg.style, {
+        position: "absolute", top: "0", left: "0",
+        width: "100%", height: "100%",
+        pointerEvents: "none", zIndex: "10000",
+        overflow: "visible",
       });
-      overlay.appendChild(handle);
-      handle.addEventListener("mousedown", (e) => {
+      overlay.appendChild(editSvg);
+      pointEditOverlayRef.current = editSvg;
+
+      // Get SVG element's viewBox offset
+      const svgEl = targetPath.closest("svg");
+      const svgRect = svgEl?.getBoundingClientRect();
+      const svgVbStr = svgEl?.getAttribute("viewBox");
+      let vbX = 0, vbY = 0;
+      if (svgVbStr) {
+        const vbp = svgVbStr.split(/\s+/);
+        vbX = parseFloat(vbp[0]) || 0;
+        vbY = parseFloat(vbp[1]) || 0;
+      }
+      // Offset from content rect to SVG rect
+      const svgLeft = svgRect ? (svgRect.left - cRect.left) / z : x;
+      const svgTop = svgRect ? (svgRect.top - cRect.top) / z : y;
+
+      // Render anchor points and control handles
+      for (let ci = 0; ci < cmds.length; ci++) {
+        const cmd = cmds[ci];
+        if (cmd.type === "Z") continue;
+
+        const px = cmd.x + svgLeft - vbX;
+        const py = cmd.y + svgTop - vbY;
+
+        // Anchor point
+        const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        anchor.setAttribute("cx", `${px}`);
+        anchor.setAttribute("cy", `${py}`);
+        anchor.setAttribute("r", cmd.type === "C" ? "5" : "4");
+        anchor.setAttribute("fill", cmd.type === "M" ? "#10B981" : cmd.type === "C" ? "#A78BFA" : "#3B82F6");
+        anchor.setAttribute("stroke", "#fff");
+        anchor.setAttribute("stroke-width", "1.5");
+        anchor.style.cursor = "move";
+        anchor.style.pointerEvents = "auto";
+        anchor.setAttribute("data-pe-cmd", `${ci}`);
+        anchor.setAttribute("data-pe-ctrl", "anchor");
+        editSvg.appendChild(anchor);
+
+        // Control handles for bezier
+        if (cmd.type === "C") {
+          // Handle 1 (incoming)
+          const h1x = cmd.cx1 + svgLeft - vbX;
+          const h1y = cmd.cy1 + svgTop - vbY;
+          const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line1.setAttribute("x1", `${px}`); line1.setAttribute("y1", `${py}`);
+          line1.setAttribute("x2", `${h1x}`); line1.setAttribute("y2", `${h1y}`);
+          line1.setAttribute("stroke", "#A78BFA"); line1.setAttribute("stroke-width", "1");
+          line1.setAttribute("opacity", "0.5"); line1.style.pointerEvents = "none";
+          editSvg.appendChild(line1);
+
+          const c1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          c1.setAttribute("cx", `${h1x}`); c1.setAttribute("cy", `${h1y}`);
+          c1.setAttribute("r", "3"); c1.setAttribute("fill", "#F59E0B");
+          c1.setAttribute("stroke", "#fff"); c1.setAttribute("stroke-width", "1");
+          c1.style.cursor = "move"; c1.style.pointerEvents = "auto";
+          c1.setAttribute("data-pe-cmd", `${ci}`);
+          c1.setAttribute("data-pe-ctrl", "cp1");
+          editSvg.appendChild(c1);
+
+          // Handle 2 (outgoing)
+          const h2x = cmd.cx2 + svgLeft - vbX;
+          const h2y = cmd.cy2 + svgTop - vbY;
+          const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line2.setAttribute("x1", `${px}`); line2.setAttribute("y1", `${py}`);
+          line2.setAttribute("x2", `${h2x}`); line2.setAttribute("y2", `${h2y}`);
+          line2.setAttribute("stroke", "#8B5CF6"); line2.setAttribute("stroke-width", "1");
+          line2.setAttribute("opacity", "0.5"); line2.style.pointerEvents = "none";
+          editSvg.appendChild(line2);
+
+          const c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          c2.setAttribute("cx", `${h2x}`); c2.setAttribute("cy", `${h2y}`);
+          c2.setAttribute("r", "3"); c2.setAttribute("fill", "#8B5CF6");
+          c2.setAttribute("stroke", "#fff"); c2.setAttribute("stroke-width", "1");
+          c2.style.cursor = "move"; c2.style.pointerEvents = "auto";
+          c2.setAttribute("data-pe-cmd", `${ci}`);
+          c2.setAttribute("data-pe-ctrl", "cp2");
+          editSvg.appendChild(c2);
+        }
+      }
+
+      // Attach point editing mouse handlers
+      editSvg.addEventListener("mousedown", (e: Event) => {
+        const me = e as MouseEvent;
+        const target = me.target as SVGElement;
+        const cmdIdx = target.getAttribute("data-pe-cmd");
+        const ctrl = target.getAttribute("data-pe-ctrl");
+        if (cmdIdx == null) return;
         e.stopPropagation();
         e.preventDefault();
-        startResize(el, e as MouseEvent, cursor, x, y, w, h);
+        const ci = parseInt(cmdIdx);
+        const editData = pointEditPathRef.current;
+        if (!editData) return;
+
+        const svgEl2 = targetPath.closest("svg");
+        const svgRect2 = svgEl2?.getBoundingClientRect();
+        const cRect2 = content.getBoundingClientRect();
+        const svgLeft2 = svgRect2 ? (svgRect2.left - cRect2.left) / z : x;
+        const svgTop2 = svgRect2 ? (svgRect2.top - cRect2.top) / z : y;
+        const svgVbStr2 = svgEl2?.getAttribute("viewBox");
+        let vbX2 = 0, vbY2 = 0;
+        if (svgVbStr2) {
+          const vbp = svgVbStr2.split(/\s+/);
+          vbX2 = parseFloat(vbp[0]) || 0;
+          vbY2 = parseFloat(vbp[1]) || 0;
+        }
+
+        const onPeMove = (ev: MouseEvent) => {
+          const cx = (ev.clientX - cRect.left) / z - svgLeft2 + vbX2;
+          const cy = (ev.clientY - cRect.top) / z - svgTop2 + vbY2;
+          const cmd = editData.commands[ci];
+          if (!cmd) return;
+
+          if (ctrl === "anchor") {
+            const dx = cx - cmd.x;
+            const dy = cy - cmd.y;
+            cmd.x = Math.round(cx);
+            cmd.y = Math.round(cy);
+            if (cmd.type === "C") {
+              cmd.cx1 = Math.round(cmd.cx1 + dx);
+              cmd.cy1 = Math.round(cmd.cy1 + dy);
+              cmd.cx2 = Math.round(cmd.cx2 + dx);
+              cmd.cy2 = Math.round(cmd.cy2 + dy);
+            }
+          } else if (ctrl === "cp1" && cmd.type === "C") {
+            cmd.cx1 = Math.round(cx);
+            cmd.cy1 = Math.round(cy);
+            // If not Alt, mirror cp2
+            if (!(ev.altKey || (ev as any).altKey)) {
+              cmd.cx2 = Math.round(cmd.x + (cmd.x - cx));
+              cmd.cy2 = Math.round(cmd.y + (cmd.y - cy));
+            }
+          } else if (ctrl === "cp2" && cmd.type === "C") {
+            cmd.cx2 = Math.round(cx);
+            cmd.cy2 = Math.round(cy);
+            if (!(ev.altKey || (ev as any).altKey)) {
+              cmd.cx1 = Math.round(cmd.x + (cmd.x - cx));
+              cmd.cy1 = Math.round(cmd.y + (cmd.y - cy));
+            }
+          }
+
+          // Update the path element's d attribute live
+          const newD = buildPathFromCommands(editData.commands);
+          targetPath.setAttribute("d", newD);
+
+          // Refresh overlay to show updated handles
+          refreshOverlay(el);
+        };
+
+        const onPeUp = () => {
+          document.removeEventListener("mousemove", onPeMove);
+          document.removeEventListener("mouseup", onPeUp);
+          // Persist the path data change
+          const newD = buildPathFromCommands(editData.commands);
+          const lid = editData.layerId;
+          if (lid && onEditPathPointsRef.current) {
+            onEditPathPointsRef.current(lid, newD);
+          }
+        };
+
+        document.addEventListener("mousemove", onPeMove);
+        document.addEventListener("mouseup", onPeUp);
       });
+    } else {
+      // Rotation handle (above selection box)
+      const rotHandleY = y - 24;
+      // Dashed line from top-center to rotation handle
+      const rotLine = document.createElement("div");
+      Object.assign(rotLine.style, {
+        position: "absolute",
+        left: `${x + w / 2 - 0.5}px`,
+        top: `${rotHandleY + 8}px`,
+        width: "1px", height: `${y - rotHandleY - 8}px`,
+        borderLeft: "1px dashed rgba(59,130,246,0.4)",
+        pointerEvents: "none",
+      });
+      overlay.appendChild(rotLine);
+
+      const rotHandle = document.createElement("div");
+      Object.assign(rotHandle.style, {
+        position: "absolute",
+        left: `${x + w / 2 - 7}px`,
+        top: `${rotHandleY}px`,
+        width: "14px", height: "14px",
+        borderRadius: "50%",
+        border: "2px solid #3B82F6",
+        background: "rgba(59,130,246,0.15)",
+        cursor: "grab",
+        pointerEvents: "auto",
+        boxSizing: "border-box",
+      });
+      overlay.appendChild(rotHandle);
+
+      rotHandle.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const centerX = x + w / 2;
+        const centerY = y + h / 2;
+        const startAngle = Math.atan2(
+          (e as MouseEvent).clientY - cRect.top - centerY * z,
+          (e as MouseEvent).clientX - cRect.left - centerX * z
+        );
+        let currentRotation = 0;
+        const existingTransform = (el as HTMLElement).style.transform || "";
+        const rotMatch = existingTransform.match(/rotate\(([^)]+)deg\)/);
+        const baseRotation = rotMatch ? parseFloat(rotMatch[1]) : 0;
+
+        const onRotMove = (ev: MouseEvent) => {
+          const angle = Math.atan2(
+            ev.clientY - cRect.top - centerY * z,
+            ev.clientX - cRect.left - centerX * z
+          );
+          currentRotation = baseRotation + (angle - startAngle) * (180 / Math.PI);
+          (el as HTMLElement).style.transform = `rotate(${Math.round(currentRotation)}deg)`;
+        };
+
+        const onRotUp = () => {
+          document.removeEventListener("mousemove", onRotMove);
+          document.removeEventListener("mouseup", onRotUp);
+          const sel = getSelector(el);
+          if (Math.abs(currentRotation) < 0.5) {
+            // Remove rotation if near zero
+            (el as HTMLElement).style.transform = "";
+            const updated = updateCssRule(cssRef.current, sel, { transform: "none" });
+            cssRef.current = updated;
+            lastEmittedCssRef.current = updated;
+            onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
+          } else {
+            const updated = updateCssRule(cssRef.current, sel, { transform: `rotate(${Math.round(currentRotation)}deg)` });
+            cssRef.current = updated;
+            lastEmittedCssRef.current = updated;
+            onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
+          }
+        };
+
+        document.addEventListener("mousemove", onRotMove);
+        document.addEventListener("mouseup", onRotUp);
+      });
+
+      // Standard resize handles (only for non-path elements)
+      const handles: [number, number, string][] = [
+        [0, 0, "nwse-resize"], [0.5, 0, "ns-resize"], [1, 0, "nesw-resize"],
+        [0, 0.5, "ew-resize"], [1, 0.5, "ew-resize"],
+        [0, 1, "nesw-resize"], [0.5, 1, "ns-resize"], [1, 1, "nwse-resize"],
+      ];
+      for (const [cx, cy, cursor] of handles) {
+        const handle = document.createElement("div");
+        Object.assign(handle.style, {
+          position: "absolute",
+          left: `${x + cx * w - HANDLE / 2}px`,
+          top: `${y + cy * h - HANDLE / 2}px`,
+          width: `${HANDLE}px`, height: `${HANDLE}px`,
+          background: SEL, border: "1px solid #fff",
+          cursor, pointerEvents: "auto", boxSizing: "border-box",
+        });
+        overlay.appendChild(handle);
+        handle.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          startResize(el, e as MouseEvent, cursor, x, y, w, h);
+        });
+      }
     }
   }
 
-  const penPointsRef = useRef<{x: number; y: number}[]>([]);
+  const penPointsRef = useRef<(any)[]>([]);
   const penSvgRef = useRef<SVGElement | null>(null);
+  // Bezier pen drag state
+  const penDragStartRef = useRef<{x: number; y: number} | null>(null);
+  const penDragActiveRef = useRef(false);
+  const penDragPreviewRef = useRef<SVGElement | null>(null);
+  // Point editing state
+  const pointEditPathRef = useRef<{ layerId: string; commands: any[] } | null>(null);
+  const pointEditOverlayRef = useRef<SVGElement | null>(null);
+  const pointEditDragRef = useRef<{ cmdIndex: number; isControl: boolean; controlIndex: number } | null>(null);
+
+  // ── Pen preview renderer (supports bezier curves) ──
+  function drawPenPreview(content: HTMLElement, pts: any[], dragAnchor?: {x:number;y:number}, dragControl?: {x:number;y:number}, alt?: boolean) {
+    // Ensure SVG container
+    if (!penSvgRef.current) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      Object.assign(svg.style, {
+        position: "absolute", top: "0", left: "0",
+        width: "100%", height: "100%",
+        pointerEvents: "none", zIndex: "9998",
+        overflow: "visible",
+      });
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      content.appendChild(svg);
+      penSvgRef.current = svg;
+    }
+    const svg = penSvgRef.current;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    // Build path data from points (including bezier info)
+    if (pts.length >= 1) {
+      let pathD = `M ${pts[0].x} ${pts[0].y}`;
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i - 1];
+        const curr = pts[i];
+        if (curr.cx1 !== undefined || curr.cx2 !== undefined) {
+          // Bezier curve: use C command
+          const cx1 = curr.cx1 ?? prev.x;
+          const cy1 = curr.cy1 ?? prev.y;
+          const cx2 = curr.cx2 ?? curr.x;
+          const cy2 = curr.cy2 ?? curr.y;
+          pathD += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${curr.x} ${curr.y}`;
+        } else {
+          pathD += ` L ${curr.x} ${curr.y}`;
+        }
+      }
+
+      // Add preview segment for active drag
+      if (dragAnchor && dragControl) {
+        const lastPt = pts[pts.length - 1];
+        if (alt) {
+          pathD += ` C ${dragAnchor.x} ${dragAnchor.y}, ${dragControl.x} ${dragControl.y}, ${dragAnchor.x} ${dragAnchor.y}`;
+        } else {
+          // Symmetric: mirror on both sides
+          const mdx = dragAnchor.x - (dragControl.x - dragAnchor.x) * 0.5;
+          const mdy = dragAnchor.y - (dragControl.y - dragAnchor.y) * 0.5;
+          const cpx = dragAnchor.x + (dragControl.x - dragAnchor.x) * 0.5;
+          const cpy = dragAnchor.y + (dragControl.y - dragAnchor.y) * 0.5;
+          pathD += ` C ${mdx} ${mdy}, ${cpx} ${cpy}, ${dragAnchor.x} ${dragAnchor.y}`;
+        }
+      }
+
+      const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      pathEl.setAttribute("d", pathD);
+      pathEl.setAttribute("fill", "none");
+      pathEl.setAttribute("stroke", "#8B5CF6");
+      pathEl.setAttribute("stroke-width", "2");
+      pathEl.setAttribute("stroke-dasharray", "6,3");
+      pathEl.setAttribute("stroke-linecap", "round");
+      svg.appendChild(pathEl);
+    }
+
+    // Draw anchor points
+    for (const p of pts) {
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", `${p.x}`);
+      circle.setAttribute("cy", `${p.y}`);
+      circle.setAttribute("r", p.cx1 !== undefined ? "5" : "4");
+      circle.setAttribute("fill", p.cx1 !== undefined ? "#A78BFA" : "#8B5CF6");
+      circle.setAttribute("stroke", "#fff");
+      circle.setAttribute("stroke-width", "1.5");
+      svg.appendChild(circle);
+
+      // Draw control handles for bezier points
+      if (p.cx1 !== undefined && p.cy1 !== undefined) {
+        const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line1.setAttribute("x1", `${p.x}`);
+        line1.setAttribute("y1", `${p.y}`);
+        line1.setAttribute("x2", `${p.cx1}`);
+        line1.setAttribute("y2", `${p.cy1}`);
+        line1.setAttribute("stroke", "#A78BFA");
+        line1.setAttribute("stroke-width", "1");
+        line1.setAttribute("opacity", "0.5");
+        svg.appendChild(line1);
+
+        const c1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c1.setAttribute("cx", `${p.cx1}`); c1.setAttribute("cy", `${p.cy1}`);
+        c1.setAttribute("r", "3"); c1.setAttribute("fill", "#F59E0B");
+        c1.setAttribute("stroke", "#fff"); c1.setAttribute("stroke-width", "1");
+        svg.appendChild(c1);
+      }
+      if (p.cx2 !== undefined && p.cy2 !== undefined) {
+        const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line2.setAttribute("x1", `${p.x}`);
+        line2.setAttribute("y1", `${p.y}`);
+        line2.setAttribute("x2", `${p.cx2}`);
+        line2.setAttribute("y2", `${p.cy2}`);
+        line2.setAttribute("stroke", "#8B5CF6");
+        line2.setAttribute("stroke-width", "1");
+        line2.setAttribute("opacity", "0.5");
+        svg.appendChild(line2);
+
+        const c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c2.setAttribute("cx", `${p.cx2}`); c2.setAttribute("cy", `${p.cy2}`);
+        c2.setAttribute("r", "3"); c2.setAttribute("fill", "#8B5CF6");
+        c2.setAttribute("stroke", "#fff"); c2.setAttribute("stroke-width", "1");
+        svg.appendChild(c2);
+      }
+    }
+
+    // Draw drag preview anchor + control lines
+    if (dragAnchor && dragControl) {
+      // Anchor dot
+      const a = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      a.setAttribute("cx", `${dragAnchor.x}`); a.setAttribute("cy", `${dragAnchor.y}`);
+      a.setAttribute("r", "5"); a.setAttribute("fill", "#A78BFA");
+      a.setAttribute("stroke", "#fff"); a.setAttribute("stroke-width", "1.5");
+      svg.appendChild(a);
+
+      // Handle lines
+      if (alt) {
+        const hl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        hl.setAttribute("x1", `${dragAnchor.x}`); hl.setAttribute("y1", `${dragAnchor.y}`);
+        hl.setAttribute("x2", `${dragControl.x}`); hl.setAttribute("y2", `${dragControl.y}`);
+        hl.setAttribute("stroke", "#8B5CF6"); hl.setAttribute("stroke-width", "1");
+        hl.setAttribute("opacity", "0.5");
+        svg.appendChild(hl);
+      } else {
+        const mdx = dragAnchor.x - (dragControl.x - dragAnchor.x) * 0.5;
+        const mdy = dragAnchor.y - (dragControl.y - dragAnchor.y) * 0.5;
+        const hl1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        hl1.setAttribute("x1", `${dragAnchor.x}`); hl1.setAttribute("y1", `${dragAnchor.y}`);
+        hl1.setAttribute("x2", `${mdx}`); hl1.setAttribute("y2", `${mdy}`);
+        hl1.setAttribute("stroke", "#A78BFA"); hl1.setAttribute("stroke-width", "1");
+        hl1.setAttribute("opacity", "0.5");
+        svg.appendChild(hl1);
+      }
+      const hl2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      hl2.setAttribute("x1", `${dragAnchor.x}`); hl2.setAttribute("y1", `${dragAnchor.y}`);
+      hl2.setAttribute("x2", `${dragControl.x}`); hl2.setAttribute("y2", `${dragControl.y}`);
+      hl2.setAttribute("stroke", "#8B5CF6"); hl2.setAttribute("stroke-width", "1");
+      hl2.setAttribute("opacity", "0.5");
+      svg.appendChild(hl2);
+
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", `${dragControl.x}`); c.setAttribute("cy", `${dragControl.y}`);
+      c.setAttribute("r", "3"); c.setAttribute("fill", "#F59E0B");
+      c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", "1");
+      svg.appendChild(c);
+    }
+  }
+
+  // ── Path parsing helpers for point editing ──
+  function parsePathCommands(pathData: string): any[] {
+    const tokens = pathData.match(/[a-zA-Z]|[-+]?\d*\.?\d+/g) || [];
+    const cmds: any[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      const c = tokens[i];
+      if (c === "M" || c === "m") {
+        cmds.push({ type: "M", x: parseFloat(tokens[i+1]) || 0, y: parseFloat(tokens[i+2]) || 0 });
+        i += 3;
+      } else if (c === "L" || c === "l") {
+        cmds.push({ type: "L", x: parseFloat(tokens[i+1]) || 0, y: parseFloat(tokens[i+2]) || 0 });
+        i += 3;
+      } else if (c === "C" || c === "c") {
+        cmds.push({ type: "C", cx1: parseFloat(tokens[i+1]) || 0, cy1: parseFloat(tokens[i+2]) || 0, cx2: parseFloat(tokens[i+3]) || 0, cy2: parseFloat(tokens[i+4]) || 0, x: parseFloat(tokens[i+5]) || 0, y: parseFloat(tokens[i+6]) || 0 });
+        i += 7;
+      } else if (c === "Z" || c === "z") {
+        cmds.push({ type: "Z" });
+        i++;
+      } else if (c === "H" || c === "h") {
+        cmds.push({ type: "H", x: parseFloat(tokens[i+1]) || 0 });
+        i += 2;
+      } else if (c === "V" || c === "v") {
+        cmds.push({ type: "V", y: parseFloat(tokens[i+1]) || 0 });
+        i += 2;
+      } else { i++; }
+    }
+    return cmds;
+  }
+
+  function buildPathFromCommands(cmds: any[]): string {
+    const parts: string[] = [];
+    for (const cmd of cmds) {
+      if (cmd.type === "M") parts.push(`M ${cmd.x} ${cmd.y}`);
+      else if (cmd.type === "L") parts.push(`L ${cmd.x} ${cmd.y}`);
+      else if (cmd.type === "C") parts.push(`C ${cmd.cx1} ${cmd.cy1}, ${cmd.cx2} ${cmd.cy2}, ${cmd.x} ${cmd.y}`);
+      else if (cmd.type === "Z") parts.push("Z");
+      else if (cmd.type === "H") parts.push(`H ${cmd.x}`);
+      else if (cmd.type === "V") parts.push(`V ${cmd.y}`);
+    }
+    return parts.join(" ");
+  }
 
   function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
     const DRAG_THRESHOLD = 4;
@@ -396,56 +893,80 @@ export function DesignFrame({
         return;
       }
 
-      // ── Pen tool: click to add points ──
+      // ── Pen tool: click to add points, drag for bezier handles ──
       if (tool === "pen") {
         e.stopPropagation();
         e.preventDefault();
         onActivate(frame.id);
 
         const point = { x: Math.round(mx), y: Math.round(my) };
-        penPointsRef.current.push(point);
-
-        // Draw/update SVG polyline in shadow DOM
-        if (!penSvgRef.current) {
-          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          Object.assign(svg.style, {
-            position: "absolute", top: "0", left: "0",
-            width: "100%", height: "100%",
-            pointerEvents: "none", zIndex: "9998",
-            overflow: "visible",
-          });
-          svg.setAttribute("width", "100%");
-          svg.setAttribute("height", "100%");
-          content.appendChild(svg);
-          penSvgRef.current = svg;
-        }
-        const svg = penSvgRef.current;
-        // Clear and redraw
-        while (svg.firstChild) svg.removeChild(svg.firstChild);
         const pts = penPointsRef.current;
 
-        // Draw polyline
-        if (pts.length > 1) {
-          const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-          polyline.setAttribute("points", pts.map(p => `${p.x},${p.y}`).join(" "));
-          polyline.setAttribute("fill", "none");
-          polyline.setAttribute("stroke", "#8B5CF6");
-          polyline.setAttribute("stroke-width", "2");
-          polyline.setAttribute("stroke-dasharray", "6,3");
-          svg.appendChild(polyline);
+        // E0: Check if clicking near first point to close path
+        if (pts.length >= 2) {
+          const firstPt = pts[0];
+          const dist = Math.hypot(point.x - firstPt.x, point.y - firstPt.y);
+          if (dist < 12) {
+            finalizePenPath(content, true);
+            return;
+          }
         }
 
-        // Draw point dots
-        for (const p of pts) {
-          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          circle.setAttribute("cx", `${p.x}`);
-          circle.setAttribute("cy", `${p.y}`);
-          circle.setAttribute("r", "4");
-          circle.setAttribute("fill", "#8B5CF6");
-          circle.setAttribute("stroke", "#fff");
-          circle.setAttribute("stroke-width", "1.5");
-          svg.appendChild(circle);
-        }
+        // Start bezier drag tracking
+        penDragStartRef.current = { x: point.x, y: point.y };
+        penDragActiveRef.current = false;
+        let dragged = false;
+
+        const onPenMove = (ev: MouseEvent) => {
+          const cx = ev.clientX - rect.left;
+          const cy = ev.clientY - rect.top;
+          const dx = cx - point.x;
+          const dy = cy - point.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist >= DRAG_THRESHOLD) {
+            dragged = true;
+            penDragActiveRef.current = true;
+            // Update preview showing bezier handles
+            drawPenPreview(content, pts, point, { x: Math.round(cx), y: Math.round(cy) }, ev.altKey || (ev as any).altKey);
+          }
+        };
+
+        const onPenUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onPenMove);
+          document.removeEventListener("mouseup", onPenUp);
+
+          if (!dragged) {
+            // Click: add straight line point
+            pts.push(point);
+            drawPenPreview(content, pts);
+          } else {
+            // Drag: add bezier point
+            const cx = ev.clientX - rect.left;
+            const cy = ev.clientY - rect.top;
+            const alt = ev.altKey || (ev as any).altKey;
+
+            // Create bezier point with control handles
+            // The anchor is at mousedown position, control points extend in drag direction
+            const dx = cx - point.x;
+            const dy = cy - point.y;
+
+            // Incoming control: mirror of outgoing (unless Alt breaks symmetry)
+            const cp1x = alt ? point.x : point.x - dx * 0.5;
+            const cp1y = alt ? point.y : point.y - dy * 0.5;
+            const cp2x = point.x + dx * 0.5;
+            const cp2y = point.y + dy * 0.5;
+
+            pts.push({ x: point.x, y: point.y, cx1: cp1x, cy1: cp1y, cx2: cp2x, cy2: cp2y } as any);
+            drawPenPreview(content, pts);
+          }
+
+          penDragStartRef.current = null;
+          penDragActiveRef.current = false;
+        };
+
+        document.addEventListener("mousemove", onPenMove);
+        document.addEventListener("mouseup", onPenUp);
         return;
       }
 
@@ -485,30 +1006,135 @@ export function DesignFrame({
       const props: Record<string, string> = {};
       for (const p of TRACKED_PROPS) props[p] = computed.getPropertyValue(p);
 
+      const elTag = target.tagName.toLowerCase();
+      const parentSvg = target.closest?.("svg");
+      const isSvg = elTag === "svg" || !!parentSvg;
+      const svgChildTag = isSvg ? (elTag === "svg" ? undefined : elTag) : undefined;
+
       onElementSelect?.({
         layerId: target.getAttribute("data-layer-id") || target.tagName.toLowerCase() + "_" + Math.random().toString(36).slice(2, 6),
-        tag: target.tagName.toLowerCase(),
+        tag: elTag,
         selector: getSelector(target),
         computedStyles: props,
         frameId: frame.id,
+        isSvg,
+        svgChildTag,
       });
 
-      // ── Drag to move ──
+      // ── Drag to move (with snap/guides) ──
+      const SNAP = 8; // snap threshold in pixels
       const startDragX = me.clientX;
       const startDragY = me.clientY;
       const origLeft = parseInt(computed.left) || target.offsetLeft || 0;
       const origTop = parseInt(computed.top) || target.offsetTop || 0;
       let moved = false;
+      let guideLines: HTMLElement[] = [];
+
+      // Collect snap guides from other elements in the frame
+      function collectGuides(excludeEl: HTMLElement): { x: number; y: number; w: number; h: number }[] {
+        const guides: { x: number; y: number; w: number; h: number }[] = [];
+        const zz = zoomRef.current || 1;
+        const allEls = content.querySelectorAll("[data-layer-id]");
+        const cr = content.getBoundingClientRect();
+        for (const el of allEls) {
+          if (el === excludeEl) continue;
+          const gr = el.getBoundingClientRect();
+          guides.push({
+            x: (gr.left - cr.left) / zz,
+            y: (gr.top - cr.top) / zz,
+            w: gr.width / zz,
+            h: gr.height / zz,
+          });
+        }
+        // Add frame edges as guides
+        guides.push({ x: 0, y: 0, w: 0, h: frame.height }); // left edge
+        guides.push({ x: frame.width, y: 0, w: 0, h: frame.height }); // right edge
+        guides.push({ x: 0, y: 0, w: frame.width, h: 0 }); // top edge
+        guides.push({ x: 0, y: frame.height, w: frame.width, h: 0 }); // bottom edge
+        return guides;
+      }
 
       const onDragMove = (ev: MouseEvent) => {
         if (!moved) console.error("[DRAG] onDragMove first move", { frameId: frame.id });
         moved = true;
         const z = zoomRef.current || 1;
-        const dx = (ev.clientX - startDragX) / z;
-        const dy = (ev.clientY - startDragY) / z;
+        let dx = (ev.clientX - startDragX) / z;
+        let dy = (ev.clientY - startDragY) / z;
+
+        // Snap to guides
+        const guides = collectGuides(target);
+        let snapX = origLeft + dx;
+        let snapY = origTop + dy;
+        const tw = target.offsetWidth;
+        const th = target.offsetHeight;
+        const cr = content.getBoundingClientRect();
+        const elRect = target.getBoundingClientRect();
+        const elW = elRect.width / z;
+        const elH = elRect.height / z;
+
+        let snappedX = false, snappedY = false;
+        for (const g of guides) {
+          // Snap left edge to guide left/right
+          if (!snappedX && Math.abs(snapX - g.x) < SNAP) { snapX = g.x; snappedX = true; }
+          if (!snappedX && Math.abs(snapX - (g.x + g.w)) < SNAP) { snapX = g.x + g.w; snappedX = true; }
+          // Snap right edge to guide left/right
+          if (!snappedX && Math.abs(snapX + elW - g.x) < SNAP) { snapX = g.x - elW; snappedX = true; }
+          if (!snappedX && Math.abs(snapX + elW - (g.x + g.w)) < SNAP) { snapX = g.x + g.w - elW; snappedX = true; }
+          // Snap center to guide center
+          if (!snappedX && Math.abs(snapX + elW / 2 - (g.x + g.w / 2)) < SNAP) { snapX = g.x + g.w / 2 - elW / 2; snappedX = true; }
+          // Snap top edge to guide top/bottom
+          if (!snappedY && Math.abs(snapY - g.y) < SNAP) { snapY = g.y; snappedY = true; }
+          if (!snappedY && Math.abs(snapY - (g.y + g.h)) < SNAP) { snapY = g.y + g.h; snappedY = true; }
+          // Snap bottom edge to guide top/bottom
+          if (!snappedY && Math.abs(snapY + elH - g.y) < SNAP) { snapY = g.y - elH; snappedY = true; }
+          if (!snappedY && Math.abs(snapY + elH - (g.y + g.h)) < SNAP) { snapY = g.y + g.h - elH; snappedY = true; }
+          // Snap middle to guide middle
+          if (!snappedY && Math.abs(snapY + elH / 2 - (g.y + g.h / 2)) < SNAP) { snapY = g.y + g.h / 2 - elH / 2; snappedY = true; }
+        }
+
+        // Show visual guide lines
+        guideLines.forEach(l => l.remove());
+        guideLines = [];
+        if (snappedX || snappedY) {
+          // Create guide indicator in overlay
+          const guideDiv = document.createElement("div");
+          Object.assign(guideDiv.style, {
+            position: "absolute",
+            left: "0", top: "0",
+            width: "100%", height: "100%",
+            pointerEvents: "none",
+            zIndex: "9997",
+          });
+          overlay.appendChild(guideDiv);
+          guideLines.push(guideDiv);
+
+          if (snappedX) {
+            const gLine = document.createElement("div");
+            Object.assign(gLine.style, {
+              position: "absolute",
+              left: `${snapX}px`, top: "0",
+              width: "1px", height: "100%",
+              background: "#EF4444",
+              opacity: "0.5",
+            });
+            guideDiv.appendChild(gLine);
+          }
+          if (snappedY) {
+            const gLine = document.createElement("div");
+            Object.assign(gLine.style, {
+              position: "absolute",
+              left: "0", top: `${snapY}px`,
+              width: "100%", height: "1px",
+              background: "#EF4444",
+              opacity: "0.5",
+            });
+            guideDiv.appendChild(gLine);
+          }
+        }
+
         target.style.position = "absolute";
-        target.style.left = `${origLeft + dx}px`;
-        target.style.top = `${origTop + dy}px`;
+        target.style.left = `${snapX}px`;
+        target.style.top = `${snapY}px`;
         refreshOverlay(target);
       };
 
@@ -605,27 +1231,43 @@ export function DesignFrame({
     });
   }
 
-  function finalizePenPath(content: HTMLElement) {
+  function finalizePenPath(content: HTMLElement, closed = false) {
     const pts = penPointsRef.current;
     if (pts.length < 2) return;
 
-    // Build SVG path data
+    // Build SVG path data (supports bezier curves)
     let pathData = `M ${pts[0].x} ${pts[0].y}`;
     for (let i = 1; i < pts.length; i++) {
-      pathData += ` L ${pts[i].x} ${pts[i].y}`;
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      if (curr.cx1 !== undefined || curr.cx2 !== undefined) {
+        const cx1 = curr.cx1 ?? prev.x;
+        const cy1 = curr.cy1 ?? prev.y;
+        const cx2 = curr.cx2 ?? curr.x;
+        const cy2 = curr.cy2 ?? curr.y;
+        pathData += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${curr.x} ${curr.y}`;
+      } else {
+        pathData += ` L ${curr.x} ${curr.y}`;
+      }
     }
+    if (closed) pathData += " Z";
 
-    // Calculate bounding box
-    const xs = pts.map(p => p.x);
-    const ys = pts.map(p => p.y);
+    // Calculate bounding box (include control points for bezier)
+    const allXs: number[] = [];
+    const allYs: number[] = [];
+    for (const p of pts) {
+      allXs.push(p.x); allYs.push(p.y);
+      if (p.cx1 !== undefined) { allXs.push(p.cx1); allYs.push(p.cy1); }
+      if (p.cx2 !== undefined) { allXs.push(p.cx2); allYs.push(p.cy2); }
+    }
     const bounds = {
-      x: Math.min(...xs),
-      y: Math.min(...ys),
-      width: Math.max(...xs) - Math.min(...xs),
-      height: Math.max(...ys) - Math.min(...ys),
+      x: Math.min(...allXs),
+      y: Math.min(...allYs),
+      width: Math.max(...allXs) - Math.min(...allXs),
+      height: Math.max(...allYs) - Math.min(...allYs),
     };
 
-    onAddPenPathRef.current?.(pathData, bounds);
+    onAddPenPathRef.current?.(pathData, bounds, closed);
 
     // Clean up SVG preview
     penPointsRef.current = [];

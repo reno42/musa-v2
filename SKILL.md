@@ -177,7 +177,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **122 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, and iterative change attribution.
+AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -186,11 +186,11 @@ Agent (Claude / Cursor / Custom)
   │
   ├─ GET  /mcp                          → SSE init (event: endpoint)
   ├─ POST /mcp  { method: "initialize" } → capabilities + server info
-  ├─ POST /mcp  { method: "tools/list" } → discover 122 tools
+  ├─ POST /mcp  { method: "tools/list" } → discover 135+ tools
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
-**Auth:** Pass `x-api-key: your-key` or `Authorization: Bearer your-token` header on POST requests.
+**Auth:** Pass `x-api-key: your-key` or `Authorization: Bearer your-token` header on POST requests. Supabase Auth JWTs are also supported for team features.
 
 ### Key MCP Tool Categories
 
@@ -201,17 +201,23 @@ Agent (Claude / Cursor / Custom)
 | Frames | `create_frame`, `create_html_frame`, `update_html_frame`, `update_frame_content` | 8 |
 | HTML/CSS | `set_html`, `set_css`, `add_element`, `update_element`, `remove_element` | 12 |
 | Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
-| Drawing | `draw_shape`, `draw_path`, `transform_element`, `group_elements`, `align_elements` | 5 |
+| Drawing | `draw_shape`, `draw_path`, `draw_bezier`, `edit_path_points`, `edit_path_point`, `transform_element`, `group_elements`, `align_elements` | 9 |
+| SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point` | 6 |
+| SVG Styling | `set_stroke_style`, `set_gradient`, `set_blend_mode`, `outline_stroke`, `offset_path` | 5 |
+| Templates+ | `rename_template` | 1 |
 | Fonts | `list_fonts`, `search_google_fonts`, `add_font_to_template` | 4 |
 | AI | `ai_generate_text`, `ai_generate_image`, `ai_palette`, `ai_suggest_layout` | 5 |
 | Brand | `register_brand`, `validate_brand`, `check_contrast`, `auto_fix_brand` | 6 |
+| Brand Guidelines | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
 | Batch | `batch_update`, `render_batch`, `batch_create_variants`, `batch_render_html` | 7 |
 | Variables | `create_variable`, `create_collection`, `link_variable`, `apply_variables` | 6 |
 | Version | `list_versions`, `restore_version` | 2 |
 | Collaboration | `share_template`, `claim_section`, `get_active_agents`, `broadcast_section_change` | 8 |
+| Teams | `create_team`, `list_teams`, `get_team`, `invite_to_team`, `list_team_members`, `remove_team_member`, `update_team_member_role`, `share_workspace_with_team` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
-| Design System | `generate_design_artifacts`, `get_design_artifacts`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 8 |
+| Design System | `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 10 |
+| Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
 ### Agent Workflow Patterns (via MCP)
@@ -243,9 +249,9 @@ tools/call: batch_export({ batchId: "..." })
 ```
 tools/call: generate_design_artifacts({ templateId: tplId, action: "generate" })
   → { designMd, tokensJson, sharedCss, sourceHash, frameCount, _deterministic: true }
-// Optionally publish to template metadata:
-tools/call: generate_design_artifacts({ templateId: tplId, action: "publish" })
-  → { designMd, tokensJson, sharedCss, _published: true }
+// Publish to template metadata + optionally to brand_guidelines table:
+tools/call: generate_design_artifacts({ templateId: tplId, action: "publish", brandName: "Acme Corp" })
+  → { designMd, tokensJson, sharedCss, _published: true, brandId: "brand_abc123" }
 ```
 
 **Pattern 5: Retrieve + check staleness of stored artifacts**
@@ -305,12 +311,185 @@ tools/call: apply_csv_to_frames({
   → { outputTemplateId: "tpl_new", generatedFrames: 28, skippedRows: 2, report: [...] }
 ```
 
+**Pattern 9: Create and manage reusable brand guidelines**
+```
+// Step 1: Publish design system as a brand guideline (creates brand_guidelines row)
+tools/call: generate_design_artifacts({ templateId: tplId, action: "publish", brandName: "Acme Corp" })
+  → { brandId, designMd, tokensJson, sharedCss, _published: true }
+
+// Step 2: Apply the brand to other templates in the workspace
+tools/call: apply_brand_to_template({ templateId: tplId2, brandId: "brand_abc123" })
+  → { success: true, brandName: "Acme Corp", appliedArtifacts: { hasTokens: true, ... } }
+
+// Step 3: Retrieve brand-aware artifacts (prefers brand_guidelines data)
+tools/call: get_design_artifacts({ templateId: tplId2 })
+  → { brandId: "brand_abc123", brandName: "Acme Corp", designMd, tokensJson, ... }
+
+// Step 4: Discover all brands in a workspace
+tools/call: list_brand_guidelines({ workspaceId: wsId })
+  → { brands: [{ id, name, description, sourceTemplateIds, ... }], count: N }
+
+// Step 5: Update a brand when the design system evolves
+tools/call: update_brand_guideline({ brandId: "brand_abc123", tokensJson: "...", designMd: "..." })
+  → { success: true, brand: { ... } }
+
+// Step 6: Fetch a specific brand directly
+tools/call: get_brand_guideline({ brandId: "brand_abc123" })
+  → { success: true, brand: { id, name, tokensJson, designMd, sharedCss, ... } }
+
+// Step 7: Remove a brand (templates retain their snapshots)
+tools/call: delete_brand_guideline({ brandId: "brand_abc123" })
+  → { success: true, deleted: "brand_abc123" }
+```
+
 **Key guarantees:**
 - The AI never touches content — system profiles templates deterministically, generates CSV template, human fills it
 - `_template` column uses immutable templateId (not mutable frame name) — templates are listed in CSV comments
 - Output goes to a NEW template, never modifying source templates
 - Slot overflow is handled deterministically: truncate, skip_row, or continue_warn
 - `data-slot` attribute on HTML elements overrides auto-detected slot names for precise CSV column naming
+
+**Pattern 9: Import SVG and convert to design elements**
+```
+tools/call: import_svg({
+  workspaceId: "ws_123",
+  svg: "<svg>...</svg>",
+  name: "Imported Icon"
+})
+  → { templateId, frameId, elements: [{ layerName, tag, type }] }
+// Elements created: rect→div, circle→div, line→div, polygon→SVG, path→SVG, text→div
+```
+
+**Pattern 10: Draw bezier curves + edit path points**
+```
+tools/call: draw_bezier({ templateId: "tpl_123", frameId: "f1", x: 100, y: 100, width: 200, height: 200, pathData: "M50,0 C50,55 100,55 100,100 C100,145 150,145 150,200", fill: "#8B5CF6", stroke: "#6D28D9", strokeWidth: 2, closed: false })
+  → { layerName: "el_abc", type: "bezier", pathData: "..." }
+tools/call: edit_path_points({ templateId: "tpl_123", frameId: "f1", elementId: "el_abc", newPathData: "M50,0 C50,80 150,80 150,200" })
+  → { success: true, elementId: "el_abc", newPathData: "..." }
+```
+
+**Pattern 11: Pathfinder boolean operations**
+```
+tools/call: pathfinder({ templateId: "tpl_123", frameId: "f1", elementIdA: "el_a", elementIdB: "el_b", operation: "union" })
+  → { newElementId: "el_new", bbox: { x, y, width, height } }
+// Operations: union (combine), subtract (A minus B), intersect (overlap only), exclude (XOR)
+```
+
+**Pattern 12: Team collaboration setup**
+```
+tools/call: create_team({ name: "Design Team", description: "Core design team" })
+  → { id: "team_abc", name, ownerId }
+tools/call: invite_to_team({ teamId: "team_abc", email: "designer@example.com", role: "member" })
+  → { invitationId, teamId, email }
+tools/call: share_workspace_with_team({ workspaceId: "ws_123", teamId: "team_abc" })
+  → { shared: true }
+tools/call: list_team_members({ teamId: "team_abc" })
+  → { members: [...], total: 3 }
+```
+
+**Pattern 13: Generate brand identity manual**
+```
+tools/call: generate_brand_manual({ templateId: "tpl_123", brandName: "Acme Corp", tagline: "Building the future" })
+  → { brandManualHtml: "<html>...", sourceHash: "...", summary: { colorCount: 8, fontCount: 2, ... } }
+// Returns a complete, self-contained HTML document with:
+// - Cover page, color palette swatches, typography showcase, spacing scale,
+//   border radius, shadows, components, CSS custom properties reference
+```
+
+**Pattern 14: Verify design system consistency**
+```
+tools/call: verify_design_system({ templateId: "tpl_123" })
+  → { status: "healthy", healthScore: 95, issues: [...], recommendation: "..." }
+// Verifies that extracted tokens match actual CSS usage
+// Detects orphan tokens, missing colors, font mismatches
+```
+
+**Pattern 15: SVG vector editing — draw bezier + edit points**
+```
+// Draw a bezier curve with control points
+tools/call: draw_bezier({
+  templateId: "tpl_123", frameId: "f1",
+  x: 100, y: 100, width: 200, height: 200,
+  pathData: "M50,0 C50,55 100,55 100,100 C100,145 150,145 150,200",
+  fill: "none", stroke: "#8B5CF6", strokeWidth: 2, closed: false
+})
+  → { layerName: "el_abc", type: "bezier", pathData: "..." }
+
+// Edit a single point incrementally
+tools/call: edit_path_point({
+  templateId: "tpl_123", frameId: "f1",
+  elementId: "el_abc", pointIndex: 2, x: 120, y: 80
+})
+  → { success: true, updatedPathData: "..." }
+
+// Replace entire path data
+tools/call: edit_path_points({
+  templateId: "tpl_123", frameId: "f1",
+  elementId: "el_abc", newPathData: "M50,0 C50,80 150,80 150,200"
+})
+  → { success: true, elementId: "el_abc", newPathData: "..." }
+```
+
+**Pattern 16: SVG path styling — stroke, gradient, blend, outline, offset**
+```
+// Set stroke style (color, width, linecap, linejoin, dasharray)
+tools/call: set_stroke_style({
+  templateId: "tpl_123", frameId: "f1",
+  layerId: "el_abc",
+  strokeColor: "#6D28D9", strokeWidth: 3,
+  linecap: "round", linejoin: "round", dasharray: "8 4"
+})
+  → { success: true, layerId: "el_abc" }
+
+// Apply a gradient fill
+tools/call: set_gradient({
+  templateId: "tpl_123", frameId: "f1",
+  layerId: "el_div", gradientType: "linear", angle: 135,
+  stops: [
+    { color: "#8B5CF6", position: 0 },
+    { color: "#EC4899", position: 100 }
+  ]
+})
+  → { success: true, gradientValue: "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)" }
+
+// Set blend mode
+tools/call: set_blend_mode({
+  templateId: "tpl_123", frameId: "f1",
+  layerId: "el_abc", blendMode: "multiply"
+})
+  → { success: true, blendMode: "multiply" }
+
+// Convert stroke to filled outline (expands path by stroke width)
+tools/call: outline_stroke({
+  templateId: "tpl_123", frameId: "f1",
+  layerId: "el_abc", fillColor: "#6D28D9"
+})
+  → { success: true, outlined: true, expandedBy: "1px" }
+
+// Offset path (positive=expand, negative=shrink)
+tools/call: offset_path({
+  templateId: "tpl_123", frameId: "f1",
+  layerId: "el_abc", offset: 8
+})
+  → { success: true, offset: 8, appliedScale: 1.05 }
+```
+
+**Pattern 17: Convert element to SVG path**
+```
+// Convert any HTML element (div, shape) to an SVG <path>
+tools/call: shape_to_path({
+  templateId: "tpl_123", frameId: "f1", elementId: "el_div"
+})
+  → { success: true, newElementId: "el_new", pathData: "M..." }
+```
+
+**Pattern 18: Rename workspace/template**
+```
+tools/call: rename_template({
+  templateId: "tpl_123", name: "Updated Design Name"
+})
+  → { success: true, templateId: "tpl_123", name: "Updated Design Name" }
+```
 
 ### Error Reference
 
@@ -379,6 +558,8 @@ tools/call: apply_csv_to_frames({
 | `T` | Text |
 | `F` | Frame |
 | `I` | Image |
+| `P` | Pen (bezier curves) |
+| `O` | Circle/Ellipse |
 
 ## Coding Standards
 
@@ -1179,7 +1360,7 @@ npm run preview
 | `api/src/services/store.ts` | — | In-memory store (fallback) |
 | `api/src/services/supabase.ts` | — | Supabase admin client |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~337 | MCP server (122 tools) |
+| `netlify/functions/mcp.mjs` | ~3600 | MCP server (135+ tools) |
 | `netlify.toml` | 22 | Build config + redirects |
 | `package.json` | 36 | Config + react-doctor ignore rules |
 | `vite.config.ts` | 12 | Vite + React plugin + alias |

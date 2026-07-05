@@ -24,6 +24,11 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
   const [contrast, setContrast] = useState<any>(null);
   const [a11y, setA11y] = useState<any>(null);
   const [loading, setLoading] = useState("");
+  const [saveBrandName, setSaveBrandName] = useState("");
+  const [showSaveBrand, setShowSaveBrand] = useState(false);
+  const [savedBrands, setSavedBrands] = useState<any[]>([]);
+  const [brandsLoaded, setBrandsLoaded] = useState(false);
+  const [applyMsg, setApplyMsg] = useState("");
 
   const runCheck = useCallback(async (method: string) => {
     setLoading(method);
@@ -47,9 +52,129 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
     setLoading("");
   }, [templateId]);
 
+  const loadBrands = useCallback(async () => {
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "get_brands",
+          params: {},
+          id: 0,
+        }),
+      });
+      const text = res?.result?.content?.[0]?.text;
+      const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+      setSavedBrands(data?.brands || []);
+    } catch { setSavedBrands([]); }
+    setBrandsLoaded(true);
+  }, []);
+
+  const handleSaveBrand = useCallback(async () => {
+    const name = saveBrandName.trim();
+    if (!name) return;
+    setLoading("save");
+    try {
+      await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "register_brand",
+          params: { templateId, name, brandId: "brand_" + Date.now() },
+          id: 0,
+        }),
+      });
+      setSaveBrandName("");
+      setShowSaveBrand(false);
+      setApplyMsg("✓ Brand saved!");
+      setTimeout(() => setApplyMsg(""), 2000);
+    } catch { setApplyMsg("✗ Save failed"); }
+    setLoading("");
+  }, [saveBrandName, templateId]);
+
+  const handleApplyBrand = useCallback(async (brandId: string) => {
+    setLoading("apply_" + brandId);
+    setApplyMsg("");
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "apply_brand",
+          params: { templateId, brandId },
+          id: 0,
+        }),
+      });
+      const text = res?.result?.content?.[0]?.text;
+      const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+      if (data?.css) {
+        onCssUpdated(data.css);
+        setApplyMsg("✓ Brand applied!");
+        setTimeout(() => setApplyMsg(""), 2000);
+      }
+    } catch { setApplyMsg("✗ Apply failed"); }
+    setLoading("");
+  }, [templateId, onCssUpdated]);
+
   return (
     <div style={panelStyle}>
       <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Brand & A11y</div>
+
+      {applyMsg && (
+        <div style={{ fontSize: 11, marginBottom: 4, color: applyMsg.startsWith("✓") ? "#4ade80" : "#f87171" }}>
+          {applyMsg}
+        </div>
+      )}
+
+      {/* Save Brand */}
+      {showSaveBrand ? (
+        <div style={{ marginBottom: 4 }}>
+          <input
+            value={saveBrandName}
+            onChange={e => setSaveBrandName(e.target.value)}
+            placeholder="Brand name..."
+            onKeyDown={e => { if (e.key === "Enter") handleSaveBrand(); if (e.key === "Escape") setShowSaveBrand(false); }}
+            style={{
+              width: "100%", padding: "4px 8px", background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4,
+              color: "#e0e0e0", fontSize: 11, outline: "none", marginBottom: 4,
+            }}
+            autoFocus
+          />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={handleSaveBrand} disabled={loading === "save"} style={{ ...btnStyle, width: "auto", flex: 1, fontSize: 10 }}>
+              {loading === "save" ? "..." : "Save"}
+            </button>
+            <button onClick={() => setShowSaveBrand(false)} style={{ ...btnStyle, width: "auto", flex: 1, fontSize: 10 }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowSaveBrand(true)} style={btnStyle} title="Save current CSS as a reusable brand system">
+          💾 Save as Brand
+        </button>
+      )}
+
+      {/* Load/Apply Brands */}
+      {!brandsLoaded ? (
+        <button onClick={loadBrands} style={{ ...btnStyle, marginTop: 4 }}>
+          📂 Load Brands
+        </button>
+      ) : savedBrands.length > 0 ? (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 10, color: "#888", marginBottom: 2 }}>Apply brand:</div>
+          {savedBrands.slice(0, 5).map((b: any) => (
+            <button
+              key={b.id || b.brandId}
+              onClick={() => handleApplyBrand(b.id || b.brandId)}
+              disabled={loading === "apply_" + (b.id || b.brandId)}
+              style={{ ...btnStyle, fontSize: 10, padding: "4px 8px", marginBottom: 2 }}
+            >
+              {loading === "apply_" + (b.id || b.brandId) ? "..." : "🎨"} {b.name || "Brand"}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: "#888", marginTop: 4 }}>No brands saved yet.</div>
+      )}
 
       <button onClick={() => runCheck("check_contrast")} disabled={loading !== ""} style={btnStyle}>
         {loading === "check_contrast" ? "..." : "Check Contrast"}
@@ -91,6 +216,72 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
           Score: {brandCheck.score}% · {brandCheck.passed ? "Passed" : "Issues found"}
         </div>
       )}
+
+      {/* Auto-fix brand */}
+      <button onClick={async () => {
+        setLoading("autofix");
+        try {
+          await apiFetch<any>("/mcp", {
+            method: "POST",
+            body: JSON.stringify({ jsonrpc: "2.0", method: "auto_fix_brand", params: { templateId, brandId: "default" }, id: 0 }),
+          });
+          setApplyMsg("✓ Auto-fix applied!");
+          setTimeout(() => setApplyMsg(""), 2000);
+        } catch { setApplyMsg("✗ Auto-fix failed"); }
+        setLoading("");
+      }} disabled={loading !== ""} style={{ ...btnStyle, marginTop: 4 }}>
+        {loading === "autofix" ? "..." : "🔧 Auto-Fix Brand"}
+      </button>
+
+      {/* Generate brand manual */}
+      <button onClick={async () => {
+        setLoading("manual");
+        try {
+          const res = await apiFetch<any>("/mcp", {
+            method: "POST",
+            body: JSON.stringify({ jsonrpc: "2.0", method: "generate_brand_manual", params: { templateId }, id: 0 }),
+          });
+          const text = res?.result?.content?.[0]?.text;
+          const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+          if (data?.manual || data?.markdown) {
+            const md = data.manual || data.markdown;
+            const blob = new Blob([md], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = "brand_manual.md"; a.click();
+            URL.revokeObjectURL(url);
+            setApplyMsg("✓ Manual downloaded!");
+          }
+          setTimeout(() => setApplyMsg(""), 2000);
+        } catch { setApplyMsg("✗ Manual failed"); }
+        setLoading("");
+      }} disabled={loading !== ""} style={{ ...btnStyle, marginTop: 4 }}>
+        {loading === "manual" ? "..." : "📖 Brand Manual"}
+      </button>
+
+      {/* Suggest color palette */}
+      <button onClick={async () => {
+        setLoading("palette");
+        try {
+          const res = await apiFetch<any>("/mcp", {
+            method: "POST",
+            body: JSON.stringify({ jsonrpc: "2.0", method: "suggest_color_palette", params: { templateId, mode: "complementary" }, id: 0 }),
+          });
+          const text = res?.result?.content?.[0]?.text;
+          const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+          const palette = data?.palette || data?.colors || [];
+          if (palette.length > 0) {
+            const swatches = palette.map((c: any) => typeof c === "string" ? c : c.hex || "").filter(Boolean).join(", ");
+            setApplyMsg(`✓ Palette: ${swatches}`);
+          } else {
+            setApplyMsg("✓ Palette generated");
+          }
+          setTimeout(() => setApplyMsg(""), 3000);
+        } catch { setApplyMsg("✗ Palette failed"); }
+        setLoading("");
+      }} disabled={loading !== ""} style={{ ...btnStyle, marginTop: 4 }}>
+        {loading === "palette" ? "..." : "🎨 Suggest Palette"}
+      </button>
     </div>
   );
 }

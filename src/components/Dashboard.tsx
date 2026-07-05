@@ -10,6 +10,7 @@ interface Template {
   engine?: "html";
   workspaceId: string;
   metadata: { createdAt: string; updatedAt: string };
+  frames?: Array<{ html?: string; css?: string; background?: string }>;
 }
 
 interface Recipe {
@@ -54,6 +55,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
+  const [editingWsId, setEditingWsId] = useState<string | null>(null);
+  const [editingWsName, setEditingWsName] = useState("");
   const [editingTplId, setEditingTplId] = useState<string | null>(null);
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
@@ -174,6 +177,26 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     } catch { /* ignore */ }
   };
 
+  const startWsRename = (id: string, name: string) => {
+    setEditingWsId(id);
+    setEditingWsName(name);
+    setTimeout(() => editInputRef.current?.focus(), 50);
+  };
+
+  const commitWsRename = async () => {
+    const id = editingWsId;
+    const name = editingWsName.trim();
+    if (!id || !name) { setEditingWsId(null); return; }
+    try {
+      await apiFetch('/workspaces/' + id, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      });
+      setWorkspaces(prev => prev.map(w => w.id === id ? { ...w, name } : w));
+    } catch { /* ignore */ }
+    setEditingWsId(null);
+  };
+
   const startRename = (id: string, name: string) => {
     setEditingTplId(id);
     setEditingTplName(name);
@@ -245,10 +268,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           >
             <option value=""><IconFolder size={14} style={{ marginRight: 4 }} />All Templates</option>
             {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
-            {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            {workspaces.map(w => {
+              if (editingWsId === w.id) {
+                return (
+                  <option key={w.id} value={w.id} disabled>
+                    Renaming...
+                  </option>
+                );
+              }
+              return <option key={w.id} value={w.id} onDoubleClick={() => startWsRename(w.id, w.name)} title="Double-click to rename">{w.name}</option>;
+            })}
           </select>
         )}
-        {!creatingWs && (
+        {editingWsId && (
+          <input
+            ref={editInputRef}
+            value={editingWsName}
+            onChange={e => setEditingWsName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commitWsRename(); if (e.key === "Escape") setEditingWsId(null); }}
+            onBlur={commitWsRename}
+            style={{ ...inputStyle, width: 160 }}
+            autoFocus
+          />
+        )}
+        {!creatingWs && !editingWsId && (
           <button type="button" onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }} style={btnSecondary}>
             + Workspace
           </button>
