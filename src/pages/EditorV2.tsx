@@ -546,6 +546,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Zoom helpers ──
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + 0.1)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(MIN_ZOOM, z - 0.1)), []);
+  const handleZoomSet = useCallback((val: number) => setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, val))), []);
   const handleZoomToFit = useCallback(() => {
     const el = document.getElementById("canvas-container");
     if (!el || frames.length === 0) return;
@@ -797,6 +798,32 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setActiveTool("select");
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
+  // ── Text on Path: write text along an existing SVG path ──
+  const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => {
+    if (!selectedFrameId) return;
+    const layerId = `el_${Date.now().toString(36)}`;
+    const pathId = `tp_${Date.now().toString(36)}`;
+    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
+    const css = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: ${bounds.x}px;
+  top: ${bounds.y}px;
+  width: ${Math.max(bounds.width, 1)}px;
+  height: ${Math.max(bounds.height, 1)}px;
+  overflow: visible;
+}
+`;
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + svgHtml, css: f.css + "\n" + css }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setActiveTool("select");
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
   // ── Phase F: Pathfinder boolean operations ──
   const handlePathfinder = useCallback(async (op: "union" | "subtract" | "intersect" | "exclude") => {
     if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
@@ -1008,7 +1035,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           case "h": setActiveTool("hand"); break;
           case "r": setActiveTool("rect"); break;
           case "o": setActiveTool("circle"); break;
-          case "t": setActiveTool("text"); break;
+          case "t":
+            if (e.shiftKey) { setActiveTool("text-path"); }
+            else { setActiveTool("text"); }
+            break;
           case "p": setActiveTool("pen"); break;
           case "b": setActiveTool("pencil"); break;
           case "delete":
@@ -2265,6 +2295,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onDrawShape={handleDrawShape}
             onTextChange={handleTextChange}
             onAddPenPath={handleAddPenPath}
+            onAddTextPath={handleAddTextPath}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
           />
@@ -2305,6 +2336,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onZoomToFit={handleZoomToFit}
+          onZoomSet={handleZoomSet}
           zoom={zoom}
           canUndo={canUndo}
           canRedo={canRedo}

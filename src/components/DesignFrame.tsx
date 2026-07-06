@@ -46,6 +46,7 @@ interface DesignFrameProps {
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
+  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
@@ -89,7 +90,7 @@ const TRACKED_PROPS = [
 
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
-  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -112,6 +113,8 @@ export function DesignFrame({
   onTextChangeRef.current = onTextChange;
   const onAddPenPathRef = useRef(onAddPenPath);
   onAddPenPathRef.current = onAddPenPath;
+  const onAddTextPathRef = useRef(onAddTextPath);
+  onAddTextPathRef.current = onAddTextPath;
   const onElementDeleteRef = useRef(onElementDelete);
   onElementDeleteRef.current = onElementDelete;
   const onElementDuplicateRef = useRef(onElementDuplicate);
@@ -1172,6 +1175,62 @@ export function DesignFrame({
         return;
       }
 
+      // ── Text-on-path: click on a path to write text along it ──
+      if (tool === "text-path") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pathEls = content.querySelectorAll("svg path[d]");
+        let bestPath: SVGPathElement | null = null;
+        let bestDist = Infinity;
+        let bestStartOffset = 0;
+
+        for (const pathEl of Array.from(pathEls)) {
+          const svgPathEl = pathEl as SVGPathElement;
+          const d = svgPathEl.getAttribute("d");
+          if (!d) continue;
+
+          try {
+            const totalLen = svgPathEl.getTotalLength();
+            if (totalLen <= 0) continue;
+
+            // Sample the path at high resolution to find the closest point to the click
+            const samples = Math.max(100, Math.ceil(totalLen / 2));
+            let closestDist = Infinity;
+            let closestIdx = 0;
+            for (let i = 0; i <= samples; i++) {
+              const pt = svgPathEl.getPointAtLength((i / samples) * totalLen);
+              const d2 = Math.hypot(mx - pt.x, my - pt.y);
+              if (d2 < closestDist) { closestDist = d2; closestIdx = i; }
+            }
+
+            if (closestDist < 16 && closestDist < bestDist) {
+              bestDist = closestDist;
+              bestPath = svgPathEl;
+              bestStartOffset = (closestIdx / samples) * 100;
+            }
+          } catch (_) { /* skip unmeasurable paths */ }
+        }
+
+        if (bestPath && bestDist < 16) {
+          const pathD = bestPath.getAttribute("d")!;
+          // Get SVG bounding box
+          const svgEl = bestPath.closest("svg");
+          const svgRect = svgEl ? svgEl.getBoundingClientRect() : null;
+          const bounds = {
+            x: svgRect ? (svgRect.left - rect.left) / z : mx - 50,
+            y: svgRect ? (svgRect.top - rect.top) / z : my - 20,
+            width: svgRect ? svgRect.width / z : 300,
+            height: svgRect ? svgRect.height / z : 40,
+          };
+          onAddTextPathRef.current?.(pathD, bounds, Math.round(mx), Math.round(my), Math.round(bestStartOffset));
+          return;
+        }
+        // No path found nearby — ignore click
+        return;
+      }
+
       // ── Text tool: click to place text ──
       if (tool === "text") {
         if (target === content) {
@@ -1559,7 +1618,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Label above frame */}

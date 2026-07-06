@@ -409,3 +409,11 @@ export const IconPenEdit = (p: React.ComponentProps<typeof Icon>) => (
 export const IconPencil = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><circle cx="11" cy="11" r="1" /></Icon>
 );
+
+// ── Text on Path ──────────────────────────────────────────
+export const IconTextPath = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <path d="M4 19c0-4.418 3.582-8 8-8s8 3.582 8 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <path d="M9 4v6M15 4v6M7 4h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </Icon>
+);

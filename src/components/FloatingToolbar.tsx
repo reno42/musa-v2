@@ -6,6 +6,7 @@ import {
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
   IconLayout,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
+  IconTextPath,
 } from "../shared/icons";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomToFit: () => void;
+  onZoomSet?: (val: number) => void;
   zoom: number;
   canUndo: boolean;
   canRedo: boolean;
@@ -49,6 +51,11 @@ const PEN_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; t
   { key: "pencil",    icon: <IconPencil size={16} />,    shortcut: "B", title: "Pencil — freehand draw (hold and drag)" },
 ];
 
+const TEXT_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
+  { key: "text",       icon: <IconType size={16} />,        shortcut: "T", title: "Text — click to place a text block" },
+  { key: "text-path",  icon: <IconTextPath size={16} />,    shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
+];
+
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
   bottom: 1,
@@ -61,15 +68,17 @@ const shortcutLabel: React.CSSProperties = {
 
 export function FloatingToolbar({
   tool, onToolChange, onAddFrame,
-  onZoomIn, onZoomOut, onZoomToFit, zoom,
+  onZoomIn, onZoomOut, onZoomToFit, onZoomSet, zoom,
   canUndo, canRedo, onUndo, onRedo,
   multiSelectCount, onPathfinder, onSvgImport,
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | "pen" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | "pen" | "text" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
+  const [defaultText, setDefaultText] = useState<string>("text");
+  const [editingZoom, setEditingZoom] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -99,7 +108,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "zoom" | "pen") => {
+  const hoverOpen = useCallback((which: "shapes" | "zoom" | "pen" | "text") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -110,7 +119,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "zoom" | "pen") => {
+  const chevronToggle = useCallback((which: "shapes" | "zoom" | "pen" | "text") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -124,6 +133,11 @@ export function FloatingToolbar({
   const displayPenKey = activePenKey || (defaultPen as HtmlToolName);
   const displayPen = PEN_TOOLS.find(p => p.key === displayPenKey) || PEN_TOOLS[0];
 
+  // Which text icon to show on the main button (last selected or default)
+  const activeTextKey = TEXT_TOOLS.find(tx => tx.key === tool)?.key;
+  const displayTextKey = activeTextKey || (defaultText as HtmlToolName);
+  const displayText = TEXT_TOOLS.find(tx => tx.key === displayTextKey) || TEXT_TOOLS[0];
+
   // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
     <button
@@ -131,7 +145,7 @@ export function FloatingToolbar({
       onClick={() => onToolChange(name)}
       title={`${title} (${shortcut})`}
       style={{
-        width: 36, height: 36,
+        width: 46, height: 36,
         display: "flex", alignItems: "center", justifyContent: "center",
         borderRadius: 8, cursor: "pointer",
         background: tool === name ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
@@ -154,7 +168,7 @@ export function FloatingToolbar({
       disabled={disabled}
       title={title}
       style={{
-        width: 36, height: 36,
+        width: 46, height: 36,
         display: "flex", alignItems: "center", justifyContent: "center",
         borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
         background: "transparent", border: "1px solid transparent",
@@ -199,7 +213,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "zoom" | "pen";
+    which: "shapes" | "zoom" | "pen" | "text";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -338,8 +352,38 @@ export function FloatingToolbar({
         ))}
       </SplitButton>
 
-      {/* ── Text ── */}
-      {toolBtn("text", <IconType size={16} />, "T", "Text — click to place")}
+      {/* ── Text split button + flyout ── */}
+      <SplitButton
+        which="text"
+        mainIcon={displayText.icon}
+        mainShortcut={displayText.shortcut}
+        mainTitle={displayText.title}
+        onMainClick={() => onToolChange(displayText.key)}
+        isActive={!!activeTextKey}
+      >
+        {TEXT_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultText(item.key);
+              setOpenFlyout(null);
+            }}
+            title={item.title}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutLabel}>{item.shortcut}</span>
+          </button>
+        ))}
+      </SplitButton>
 
       {/* ── Pen split button + flyout ── */}
       <SplitButton
@@ -383,7 +427,7 @@ export function FloatingToolbar({
           onClick={() => setShowFrameMenu(!showFrameMenu)}
           title="Add Frame"
           style={{
-            width: 36, height: 36,
+            width: 46, height: 36,
             display: "flex", alignItems: "center", justifyContent: "center",
             borderRadius: 8, cursor: "pointer",
             background: showFrameMenu ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
@@ -433,13 +477,7 @@ export function FloatingToolbar({
               disabled={(multiSelectCount || 0) < 2}
               onClick={() => setShowPathfinder(!showPathfinder)}
               style={{
-                width: 36, height: 36,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: 8, cursor: (multiSelectCount || 0) >= 2 ? "pointer" : "not-allowed",
-                background: showPathfinder ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-                border: showPathfinder ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-                color: "var(--text-muted, #7a7668)", opacity: (multiSelectCount || 0) >= 2 ? 1 : 0.4,
-                transition: "all 0.15s ease",
+                width: 46, height: 36,
               }}
             >
               <IconLayout size={14} />
@@ -536,22 +574,62 @@ export function FloatingToolbar({
           ))}
         </SplitButton>
 
-        {/* Zoom % label */}
-        <button
-          type="button"
-          onClick={onZoomToFit}
-          title="Zoom to fit all frames"
-          style={{
-            width: 46, height: 16,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: 4, cursor: "pointer",
-            background: "transparent", border: "1px solid transparent",
-            color: "var(--text-muted, #7a7668)", fontSize: 9,
-            fontFamily: "SF Mono, monospace",
-          }}
-        >
-          {Math.round(zoom * 100)}%
-        </button>
+        {/* Zoom % label / editable input */}
+        {editingZoom ? (
+          <input
+            type="number"
+            step={5}
+            min={5}
+            max={500}
+            autoFocus
+            defaultValue={Math.round(zoom * 100)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const v = parseInt((e.target as HTMLInputElement).value) || 100;
+                const pct = Math.min(500, Math.max(5, v));
+                onZoomSet?.(pct / 100);
+                setEditingZoom(false);
+              }
+              if (e.key === "Escape") {
+                setEditingZoom(false);
+              }
+            }}
+            onBlur={(e) => {
+              const raw = parseInt((e.target as HTMLInputElement).value);
+              if (!isNaN(raw)) {
+                const pct = Math.min(500, Math.max(5, raw));
+                onZoomSet?.(pct / 100);
+              }
+              setEditingZoom(false);
+            }}
+            style={{
+              width: 46, height: 16,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              borderRadius: 4, cursor: "text",
+              background: "var(--accent-dim, rgba(200,184,152,0.08))",
+              border: "1px solid var(--accent, #c8b898)",
+              color: "var(--accent, #c8b898)", fontSize: 9,
+              fontFamily: "SF Mono, monospace",
+              textAlign: "center", padding: 0, outline: "none",
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditingZoom(true)}
+            title="Click to edit zoom %"
+            style={{
+              width: 46, height: 16,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              borderRadius: 4, cursor: "pointer",
+              background: "transparent", border: "1px solid transparent",
+              color: "var(--text-muted, #7a7668)", fontSize: 9,
+              fontFamily: "SF Mono, monospace",
+            }}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+        )}
       </div>
     </div>
   );

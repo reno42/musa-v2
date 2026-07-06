@@ -11,7 +11,7 @@ import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignF
  *  - Middle-click: always pans regardless of active tool
  */
 
-export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
+export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -28,6 +28,7 @@ interface InfiniteHtmlCanvasProps {
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
+  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
 }
@@ -40,7 +41,7 @@ export function InfiniteHtmlCanvas({
   frames, selectedFrameId, activeTool, zoom,
   onSelectFrame, onZoomChange, onFrameMove,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
-  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onElementDelete, onElementDuplicate,
+  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -211,6 +212,7 @@ export function InfiniteHtmlCanvas({
               onDrawShape={onDrawShape}
               onTextChange={onTextChange}
               onAddPenPath={onAddPenPath}
+              onAddTextPath={onAddTextPath}
               onElementDelete={onElementDelete}
               onElementDuplicate={onElementDuplicate}
             />
