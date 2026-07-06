@@ -805,8 +805,9 @@ export function DesignFrame({
       console.error("[DRAG] mousedown on content", { frameId: frame.id, target: target.tagName, tool: activeToolRef.current });
       const tool = activeToolRef.current;
       const rect = content.getBoundingClientRect();
-      const mx = me.clientX - rect.left;
-      const my = me.clientY - rect.top;
+      const z = zoomRef.current || 1;
+      const mx = (me.clientX - rect.left) / z;
+      const my = (me.clientY - rect.top) / z;
 
       // ── Drawing tools: rect / circle / triangle / star / polygon → drag-to-draw ──
       if (tool === "rect" || tool === "circle" || tool === "triangle" || tool === "star" || tool === "polygon") {
@@ -835,8 +836,8 @@ export function DesignFrame({
 
         const onMove = (ev: MouseEvent) => {
           drawing = true;
-          const cx = ev.clientX - rect.left;
-          const cy = ev.clientY - rect.top;
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
           let w = cx - startX;
           let h = cy - startY;
 
@@ -869,8 +870,8 @@ export function DesignFrame({
             return;
           }
 
-          const cx = ev.clientX - rect.left;
-          const cy = ev.clientY - rect.top;
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
           let w = cx - startX;
           let h = cy - startY;
           if (ev.shiftKey) {
@@ -918,8 +919,8 @@ export function DesignFrame({
         let dragged = false;
 
         const onPenMove = (ev: MouseEvent) => {
-          const cx = ev.clientX - rect.left;
-          const cy = ev.clientY - rect.top;
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
           const dx = cx - point.x;
           const dy = cy - point.y;
           const dist = Math.hypot(dx, dy);
@@ -942,8 +943,8 @@ export function DesignFrame({
             drawPenPreview(content, pts);
           } else {
             // Drag: add bezier point
-            const cx = ev.clientX - rect.left;
-            const cy = ev.clientY - rect.top;
+            const cx = (ev.clientX - rect.left) / z;
+            const cy = (ev.clientY - rect.top) / z;
             const alt = ev.altKey || (ev as any).altKey;
 
             // Create bezier point with control handles
