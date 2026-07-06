@@ -1738,6 +1738,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const layersDock = useDockablePanel(0, 56, null);
   const toolbarDock = useDockablePanel(20, 80, "left");
 
+  // Toolbar pushes right when code/layers panels are open
+  const toolbarLeft = (toolbarDock.state.isDocked ? (showCodePanel ? 380 : 0) + (showLayersPanel ? 260 : 0) : undefined) as number | undefined;
+
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
   // When jobs are found, renders each frame offscreen via html2canvas
@@ -2303,7 +2306,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div style={toolbarDock.panelStyle(56)}>
+      <div style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
