@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
@@ -32,6 +32,24 @@ const FRAME_PRESETS = [
   { name: "Twitter", width: 1200, height: 628, label: "1200×628" },
 ];
 
+const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
+  { key: "rect",     icon: <IconRectangle size={16} />,    shortcut: "R", title: "Rectangle" },
+  { key: "circle",   icon: <IconCircleOutline size={16} />, shortcut: "O", title: "Circle" },
+  { key: "triangle", icon: <IconTriangle size={16} />,     shortcut: "G", title: "Triangle" },
+  { key: "star",     icon: <IconStar size={16} />,         shortcut: "S", title: "Star" },
+  { key: "polygon",  icon: <IconHexagon size={16} />,      shortcut: "N", title: "Polygon (Shift for sides)" },
+];
+
+const shortcutLabel: React.CSSProperties = {
+  position: "absolute",
+  bottom: 1,
+  right: 2,
+  fontSize: 8,
+  fontFamily: "SF Mono, monospace",
+  color: "var(--text-muted, #7a7668)",
+  opacity: 0.6,
+};
+
 export function FloatingToolbar({
   tool, onToolChange, onAddFrame,
   onZoomIn, onZoomOut, onZoomToFit, zoom,
@@ -40,20 +58,58 @@ export function FloatingToolbar({
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | null>(null);
+  const [defaultShape, setDefaultShape] = useState<string>("rect");
 
-  // Close frame menu on outside click
+  const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | undefined>(undefined);
+
+  // Close everything on outside click / touch
   useEffect(() => {
-    if (!showFrameMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const t = e.target as Node;
+      if (rootRef.current && !rootRef.current.contains(t)) {
+        setOpenFlyout(null);
         setShowFrameMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showFrameMenu]);
+    document.addEventListener("touchstart", handler, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
+  }, []);
 
+  // Cleanup timer on unmount
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
+
+  // ── Desktop hover helpers (200ms close delay) ──
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
+  }, []);
+
+  const hoverOpen = useCallback((which: "shapes" | "zoom") => {
+    cancelClose();
+    setOpenFlyout(which);
+  }, [cancelClose]);
+
+  const hoverScheduleClose = useCallback(() => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setOpenFlyout(null), 200);
+  }, [cancelClose]);
+
+  // Chevron click — explicit toggle (works on all devices)
+  const chevronToggle = useCallback((which: "shapes" | "zoom") => {
+    setOpenFlyout(prev => prev === which ? null : which);
+  }, []);
+
+  // Which shape icon to show on the main button (last selected or default)
+  const activeShapeKey = SHAPE_TOOLS.find(s => s.key === tool)?.key;
+  const displayShapeKey = activeShapeKey || (defaultShape as HtmlToolName);
+  const displayShape = SHAPE_TOOLS.find(s => s.key === displayShapeKey) || SHAPE_TOOLS[0];
+
+  // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
     <button
       type="button"
@@ -71,14 +127,11 @@ export function FloatingToolbar({
       }}
     >
       {icon}
-      <span style={{
-        position: "absolute", bottom: 1, right: 2,
-        fontSize: 8, fontFamily: "SF Mono, monospace",
-        color: "var(--text-muted, #7a7668)", opacity: 0.6,
-      }}>{shortcut}</span>
+      <span style={shortcutLabel}>{shortcut}</span>
     </button>
   );
 
+  // ── Action button (zoom, undo, etc.) ──
   const actionBtn = (icon: React.ReactNode, onClick: () => void, title: string, disabled?: boolean) => (
     <button
       type="button"
@@ -102,8 +155,126 @@ export function FloatingToolbar({
     <div style={{ width: 28, height: 1, background: "var(--border-color, rgba(255,255,255,0.06))", margin: "4px auto" }} />
   );
 
+  // ── Flyout panel (vertical column to the right of the button) ──
+  const flyoutStyle: React.CSSProperties = {
+    position: "absolute",
+    left: "100%",
+    marginLeft: 6,
+    top: 0,
+    zIndex: 30,
+    background: "var(--glass-bg, rgba(12,12,12,0.85))",
+    backdropFilter: "blur(20px) saturate(180%)",
+    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+    border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
+    borderRadius: 10,
+    padding: 4,
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+  };
+
+  // ── Split button (main + chevron) ──
+  const SplitButton = ({
+    which,
+    mainIcon,
+    mainShortcut,
+    mainTitle,
+    onMainClick,
+    isActive,
+    children,
+  }: {
+    which: "shapes" | "zoom";
+    mainIcon: React.ReactNode;
+    mainShortcut: string | null;
+    mainTitle: string;
+    onMainClick: () => void;
+    isActive: boolean;
+    children?: React.ReactNode;
+  }) => {
+    const isOpen = openFlyout === which;
+    return (
+      <div
+        style={{ position: "relative" }}
+        onMouseEnter={() => hoverOpen(which)}
+        onMouseLeave={hoverScheduleClose}
+      >
+        {/* Split button row */}
+        <div style={{
+          display: "flex",
+          borderRadius: 8,
+          background: isOpen ? "var(--accent-dim, rgba(200,184,152,0.06))" : "transparent",
+        }}>
+          {/* Main button area */}
+          <button
+            type="button"
+            onClick={onMainClick}
+            title={mainTitle}
+            style={{
+              width: 32, height: 36,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+              background: isActive ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+              border: isActive ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+              borderRadius: "8px 0 0 8px",
+              color: isActive ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+              transition: "all 0.15s ease",
+              position: "relative",
+            }}
+          >
+            {mainIcon}
+            {mainShortcut && <span style={shortcutLabel}>{mainShortcut}</span>}
+          </button>
+
+          {/* Chevron toggle area */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); chevronToggle(which); }}
+            title="More options"
+            aria-label="More options"
+            aria-expanded={isOpen}
+            style={{
+              width: 14, height: 36,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+              background: "transparent",
+              border: "1px solid transparent",
+              borderLeft: "1px solid var(--border-color, rgba(255,255,255,0.06))",
+              borderRadius: "0 8px 8px 0",
+              color: "var(--text-muted, #7a7668)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <IconChevronDown size={9} style={{
+              transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
+              transition: "transform 0.15s ease",
+              opacity: isOpen ? 0.9 : 0.45,
+            }} />
+          </button>
+        </div>
+
+        {/* Flyout panel (child of positioned container) */}
+        {isOpen && children && (
+          <div style={flyoutStyle}>{children}</div>
+        )}
+      </div>
+    );
+  };
+
+  // Flyout item button
+  const flyoutItem = (active: boolean): React.CSSProperties => ({
+    width: 36, height: 36,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    borderRadius: 6, cursor: "pointer",
+    background: active ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+    border: active ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+    color: active ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+    transition: "all 0.15s ease",
+    position: "relative",
+  });
+
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       background: "var(--glass-bg, rgba(12,12,12,0.65))",
       backdropFilter: "blur(20px) saturate(180%)",
       WebkitBackdropFilter: "blur(20px) saturate(180%)",
@@ -113,28 +284,57 @@ export function FloatingToolbar({
       padding: "8px 6px",
       display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
     }}>
-      {/* Tools */}
-      {toolBtn("select", <IconPointer size={16} />, "V", "Select — click to select, drag to move")}
-      {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan the canvas")}
+      {/* ── Selection tools ── */}
+      {toolBtn("select", <IconPointer size={16} />, "V", "Select")}
+      {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
 
       {divider}
 
-      {toolBtn("rect", <IconRectangle size={16} />, "R", "Rectangle — click-drag to draw")}
-      {toolBtn("circle", <IconCircleOutline size={16} />, "O", "Circle — click-drag to draw")}
-      {toolBtn("triangle", <IconTriangle size={16} />, "G", "Triangle — click-drag to draw")}
-      {toolBtn("star", <IconStar size={16} />, "S", "Star — click-drag to draw")}
-      {toolBtn("polygon", <IconHexagon size={16} />, "N", "Polygon — click-drag to draw (Shift for sides)")}
-      {toolBtn("text", <IconType size={16} />, "T", "Text — click to place text block")}
-      {toolBtn("pen", <IconPen size={16} />, "P", "Pen — click to add points, Enter to finalize")}
+      {/* ── Shape split button + flyout ── */}
+      <SplitButton
+        which="shapes"
+        mainIcon={displayShape.icon}
+        mainShortcut={displayShape.shortcut}
+        mainTitle={`${displayShape.title} (${displayShape.shortcut})`}
+        onMainClick={() => onToolChange(displayShape.key)}
+        isActive={!!activeShapeKey}
+      >
+        {SHAPE_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultShape(item.key);
+              setOpenFlyout(null);
+            }}
+            title={`${item.title} (${item.shortcut})`}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutLabel}>{item.shortcut}</span>
+          </button>
+        ))}
+      </SplitButton>
+
+      {/* ── Text & Pen ── */}
+      {toolBtn("text", <IconType size={16} />, "T", "Text — click to place")}
+      {toolBtn("pen", <IconPen size={16} />, "P", "Pen — click to add points")}
 
       {divider}
 
-      {/* Frame presets dropdown */}
-      <div ref={menuRef} style={{ position: "relative" }}>
+      {/* ── Frame presets ── */}
+      <div style={{ position: "relative" }}>
         <button
           type="button"
           onClick={() => setShowFrameMenu(!showFrameMenu)}
-          title="Add Frame — choose preset size"
+          title="Add Frame"
           style={{
             width: 36, height: 36,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -148,16 +348,8 @@ export function FloatingToolbar({
           <IconFrame size={16} />
           <IconChevronDown size={8} style={{ position: "absolute", bottom: 2, right: 2, opacity: 0.5 }} />
         </button>
-
         {showFrameMenu && (
-          <div style={{
-            position: "absolute", left: 44, top: 0, zIndex: 30,
-            background: "var(--glass-bg, rgba(12,12,12,0.85))",
-            backdropFilter: "blur(20px) saturate(180%)",
-            border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-            borderRadius: 10, padding: 6, minWidth: 180,
-            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          }}>
+          <div style={{ ...flyoutStyle, minWidth: 180, padding: 6, gap: 0 }}>
             {FRAME_PRESETS.map(p => (
               <button
                 key={p.name}
@@ -171,12 +363,8 @@ export function FloatingToolbar({
                   cursor: "pointer", fontSize: 12, fontFamily: "inherit",
                   transition: "all 0.1s",
                 }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
               >
                 <span>{p.name}</span>
                 <span style={{ fontSize: 10, color: "var(--text-muted, #7a7668)", fontFamily: "SF Mono, monospace" }}>{p.label}</span>
@@ -188,7 +376,7 @@ export function FloatingToolbar({
 
       {divider}
 
-      {/* Pathfinder */}
+      {/* ── Pathfinder ── */}
       {onPathfinder && (
         <>
           <div style={{ position: "relative" }}>
@@ -212,14 +400,7 @@ export function FloatingToolbar({
             {showPathfinder && (
               <>
                 <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setShowPathfinder(false)} />
-                <div style={{
-                  position: "absolute", left: 44, top: 0, zIndex: 30,
-                  background: "var(--glass-bg, rgba(12,12,12,0.85))",
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-                  borderRadius: 10, padding: 6, minWidth: 150,
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-                }}>
+                <div style={{ ...flyoutStyle, minWidth: 150, padding: 6, gap: 0 }}>
                   <div style={{ fontSize: 10, color: "#7a7668", padding: "2px 8px 4px", textTransform: "uppercase", letterSpacing: 1 }}>Pathfinder</div>
                   {([
                     { op: "union", label: "Union", icon: "∪" },
@@ -256,7 +437,7 @@ export function FloatingToolbar({
         </>
       )}
 
-      {/* SVG Import */}
+      {/* ── SVG Import ── */}
       {onSvgImport && (
         <>
           {actionBtn(
@@ -267,7 +448,7 @@ export function FloatingToolbar({
         </>
       )}
 
-      {/* Undo / Redo */}
+      {/* ── Undo / Redo ── */}
       {actionBtn(
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1.04-6.83 2.73L3 8v9h9l-3.62-3.62C9.89 12.02 11.12 11.5 12.5 11.5c2.28 0 4.22 1.52 4.84 3.58l2.87-.78C19.36 11.38 16.21 8 12.5 8z"/></svg>,
         onUndo, "Undo (Ctrl+Z)", !canUndo,
@@ -279,25 +460,52 @@ export function FloatingToolbar({
 
       {divider}
 
-      {/* Zoom */}
-      {actionBtn(<IconZoomOut size={16} />, onZoomOut, "Zoom Out")}
-      <button
-        type="button"
-        onClick={onZoomToFit}
-        title="Zoom to fit all frames"
-        style={{
-          width: 36, height: 24,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          borderRadius: 6, cursor: "pointer",
-          background: "transparent", border: "1px solid transparent",
-          color: "var(--text-muted, #7a7668)", fontSize: 10,
-          fontFamily: "SF Mono, monospace",
-        }}
-      >
-        {Math.round(zoom * 100)}%
-      </button>
-      {actionBtn(<IconZoomIn size={16} />, onZoomIn, "Zoom In")}
-      {actionBtn(<IconMaximize size={14} />, onZoomToFit, "Fit All")}
+      {/* ── Zoom split button + flyout ── */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+        <SplitButton
+          which="zoom"
+          mainIcon={<IconZoomIn size={16} />}
+          mainShortcut={null}
+          mainTitle="Zoom In"
+          onMainClick={onZoomIn}
+          isActive={false}
+        >
+          {[
+            { icon: <IconZoomIn size={16} />,   title: "Zoom In",  action: onZoomIn },
+            { icon: <IconZoomOut size={16} />,  title: "Zoom Out", action: onZoomOut },
+            { icon: <IconMaximize size={14} />, title: "Fit All",  action: onZoomToFit },
+          ].map((item, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { item.action(); setOpenFlyout(null); }}
+              title={item.title}
+              style={flyoutItem(false)}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >
+              {item.icon}
+            </button>
+          ))}
+        </SplitButton>
+
+        {/* Zoom % label */}
+        <button
+          type="button"
+          onClick={onZoomToFit}
+          title="Zoom to fit all frames"
+          style={{
+            width: 46, height: 16,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 4, cursor: "pointer",
+            background: "transparent", border: "1px solid transparent",
+            color: "var(--text-muted, #7a7668)", fontSize: 9,
+            fontFamily: "SF Mono, monospace",
+          }}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+      </div>
     </div>
   );
 }
