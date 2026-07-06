@@ -5,6 +5,7 @@ import {
   IconFrame, IconZoomIn, IconZoomOut, IconMaximize,
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
   IconLayout,
+  IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
 } from "../shared/icons";
 
 interface Props {
@@ -40,6 +41,14 @@ const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string;
   { key: "polygon",  icon: <IconHexagon size={16} />,      shortcut: "N", title: "Polygon (Shift for sides)" },
 ];
 
+const PEN_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
+  { key: "pen",       icon: <IconPen size={16} />,       shortcut: "P", title: "Pen — click to add points, drag for bezier" },
+  { key: "pen-plus",  icon: <IconPenPlus size={16} />,   shortcut: "+", title: "Pen + — click a segment to add a point" },
+  { key: "pen-minus", icon: <IconPenMinus size={16} />,  shortcut: "−", title: "Pen − — click a point to delete it" },
+  { key: "pen-edit",  icon: <IconPenEdit size={16} />,   shortcut: "C", title: "Convert — click a point to show bezier handles" },
+  { key: "pencil",    icon: <IconPencil size={16} />,    shortcut: "B", title: "Pencil — freehand draw (hold and drag)" },
+];
+
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
   bottom: 1,
@@ -58,8 +67,9 @@ export function FloatingToolbar({
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | "pen" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
+  const [defaultPen, setDefaultPen] = useState<string>("pen");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -89,7 +99,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "zoom") => {
+  const hoverOpen = useCallback((which: "shapes" | "zoom" | "pen") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -100,7 +110,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "zoom") => {
+  const chevronToggle = useCallback((which: "shapes" | "zoom" | "pen") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -108,6 +118,11 @@ export function FloatingToolbar({
   const activeShapeKey = SHAPE_TOOLS.find(s => s.key === tool)?.key;
   const displayShapeKey = activeShapeKey || (defaultShape as HtmlToolName);
   const displayShape = SHAPE_TOOLS.find(s => s.key === displayShapeKey) || SHAPE_TOOLS[0];
+
+  // Which pen icon to show on the main button (last selected or default)
+  const activePenKey = PEN_TOOLS.find(p => p.key === tool)?.key;
+  const displayPenKey = activePenKey || (defaultPen as HtmlToolName);
+  const displayPen = PEN_TOOLS.find(p => p.key === displayPenKey) || PEN_TOOLS[0];
 
   // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
@@ -184,7 +199,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "zoom";
+    which: "shapes" | "zoom" | "pen";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -323,9 +338,41 @@ export function FloatingToolbar({
         ))}
       </SplitButton>
 
-      {/* ── Text & Pen ── */}
+      {/* ── Text ── */}
       {toolBtn("text", <IconType size={16} />, "T", "Text — click to place")}
-      {toolBtn("pen", <IconPen size={16} />, "P", "Pen — click to add points")}
+
+      {/* ── Pen split button + flyout ── */}
+      <SplitButton
+        which="pen"
+        mainIcon={displayPen.icon}
+        mainShortcut={displayPen.shortcut}
+        mainTitle={displayPen.title}
+        onMainClick={() => onToolChange(displayPen.key)}
+        isActive={!!activePenKey}
+      >
+        {PEN_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultPen(item.key);
+              setOpenFlyout(null);
+            }}
+            title={item.title}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutLabel}>{item.shortcut}</span>
+          </button>
+        ))}
+      </SplitButton>
 
       {divider}
 

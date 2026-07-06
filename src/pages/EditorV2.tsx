@@ -1010,6 +1010,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           case "o": setActiveTool("circle"); break;
           case "t": setActiveTool("text"); break;
           case "p": setActiveTool("pen"); break;
+          case "b": setActiveTool("pencil"); break;
           case "delete":
           case "backspace":
             if (selectedElement) {

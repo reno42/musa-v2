@@ -11,7 +11,7 @@ import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignF
  *  - Middle-click: always pans regardless of active tool
  */
 
-export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "pen";
+export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];

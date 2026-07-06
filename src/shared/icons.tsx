@@ -389,3 +389,23 @@ export const IconRefresh = (p: React.ComponentProps<typeof Icon>) => (
 export const IconUpload = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></Icon>
 );
+
+// ── Pen Plus (add point to segment) ───────────────────────
+export const IconPenPlus = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /><line x1="12" y1="5" x2="12" y2="11" /><line x1="9" y1="8" x2="15" y2="8" /></Icon>
+);
+
+// ── Pen Minus (remove point) ──────────────────────────────
+export const IconPenMinus = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /><line x1="9" y1="8" x2="15" y2="8" /></Icon>
+);
+
+// ── Pen Edit (convert / show handles) ─────────────────────
+export const IconPenEdit = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /><circle cx="6" cy="6" r="2" /><line x1="6" y1="4" x2="6" y2="2" /><line x1="6" y1="8" x2="6" y2="10" /><line x1="4" y1="6" x2="2" y2="6" /><line x1="8" y1="6" x2="10" y2="6" /></Icon>
+);
+
+// ── Pencil (freehand draw) ────────────────────────────────
+export const IconPencil = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><circle cx="11" cy="11" r="1" /></Icon>
+);

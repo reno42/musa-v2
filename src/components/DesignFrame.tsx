@@ -971,6 +971,207 @@ export function DesignFrame({
         return;
       }
 
+      // ── Pen +: add point on an existing path segment ──
+      if (tool === "pen-plus") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pathEls = content.querySelectorAll("svg path[d]");
+        for (const pathEl of Array.from(pathEls)) {
+          const d = pathEl.getAttribute("d");
+          if (!d) continue;
+          const cmds = parsePathCommands(d);
+
+          // Collect anchor points to check segment midpoints
+          const anchors: { cmdIdx: number; x: number; y: number }[] = [];
+          for (let i = 0; i < cmds.length; i++) {
+            if (cmds[i].type === "M" || cmds[i].type === "L" || cmds[i].type === "C") {
+              anchors.push({ cmdIdx: i, x: cmds[i].x, y: cmds[i].y });
+            }
+          }
+
+          // Find closest segment midpoint
+          let bestInsertIdx = -1;
+          let bestDist = Infinity;
+          let bestMid: { x: number; y: number } | null = null;
+
+          for (let i = 0; i < anchors.length - 1; i++) {
+            const a = anchors[i];
+            const b = anchors[i + 1];
+            const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+            const dist = Math.hypot(mx - mid.x, my - mid.y);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestInsertIdx = anchors[i + 1].cmdIdx;
+              bestMid = mid;
+            }
+          }
+
+          if (bestDist < 20 && bestMid && bestInsertIdx >= 0) {
+            cmds.splice(bestInsertIdx, 0, { type: "L", x: Math.round(bestMid.x), y: Math.round(bestMid.y) });
+            pathEl.setAttribute("d", buildPathFromCommands(cmds));
+            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            return;
+          }
+        }
+        return;
+      }
+
+      // ── Pen -: remove point from an existing path ──
+      if (tool === "pen-minus") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pathEls = content.querySelectorAll("svg path[d]");
+        for (const pathEl of Array.from(pathEls)) {
+          const d = pathEl.getAttribute("d");
+          if (!d) continue;
+          const cmds = parsePathCommands(d);
+
+          // Find closest anchor point
+          let bestIdx = -1;
+          let bestDist = Infinity;
+          for (let i = 1; i < cmds.length; i++) {
+            const cmd = cmds[i];
+            if (cmd.type === "L" || cmd.type === "C") {
+              const dist = Math.hypot(mx - cmd.x, my - cmd.y);
+              if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+            }
+          }
+
+          const anchorCount = cmds.filter(c => c.type !== "Z").length;
+          if (bestDist < 12 && bestIdx >= 0 && anchorCount > 2) {
+            cmds.splice(bestIdx, 1);
+            pathEl.setAttribute("d", buildPathFromCommands(cmds));
+            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            return;
+          }
+        }
+        return;
+      }
+
+      // ── Pen edit: convert straight segments to curves with handles ──
+      if (tool === "pen-edit") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pathEls = content.querySelectorAll("svg path[d]");
+        for (const pathEl of Array.from(pathEls)) {
+          const d = pathEl.getAttribute("d");
+          if (!d) continue;
+          const cmds = parsePathCommands(d);
+
+          // Find closest anchor point
+          let bestIdx = -1;
+          let bestDist = Infinity;
+          for (let i = 0; i < cmds.length; i++) {
+            const cmd = cmds[i];
+            let px: number | null = null, py: number | null = null;
+            if (cmd.type === "M" || cmd.type === "L" || cmd.type === "C") { px = cmd.x; py = cmd.y; }
+            if (px === null || py === null) continue;
+            const dist = Math.hypot(mx - px, my - py);
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+          }
+
+          if (bestDist < 12 && bestIdx >= 0) {
+            const cmd = cmds[bestIdx];
+            const prev = bestIdx > 0 ? cmds[bestIdx - 1] : null;
+            const next = bestIdx < cmds.length - 1 ? cmds[bestIdx + 1] : null;
+
+            // Get previous point coords
+            let prevX = cmd.x, prevY = cmd.y;
+            if (prev && (prev.type === "M" || prev.type === "L" || prev.type === "C")) { prevX = prev.x; prevY = prev.y; }
+
+            // Convert this point's incoming segment from L to C
+            if (cmd.type === "L") {
+              const dx = cmd.x - prevX;
+              const dy = cmd.y - prevY;
+              cmds[bestIdx] = { type: "C", cx1: Math.round(prevX + dx * 0.33), cy1: Math.round(prevY + dy * 0.33), cx2: Math.round(prevX + dx * 0.67), cy2: Math.round(prevY + dy * 0.67), x: cmd.x, y: cmd.y };
+            }
+
+            // Convert next segment from L to C
+            if (next && next.type === "L") {
+              const dx = next.x - cmd.x;
+              const dy = next.y - cmd.y;
+              cmds[bestIdx + 1] = { type: "C", cx1: Math.round(cmd.x + dx * 0.33), cy1: Math.round(cmd.y + dy * 0.33), cx2: Math.round(cmd.x + dx * 0.67), cy2: Math.round(cmd.y + dy * 0.67), x: next.x, y: next.y };
+            }
+
+            pathEl.setAttribute("d", buildPathFromCommands(cmds));
+            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            return;
+          }
+        }
+        return;
+      }
+
+      // ── Pencil: freehand drawing ──
+      if (tool === "pencil") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        const pencilPoints: { x: number; y: number }[] = [{ x: Math.round(mx), y: Math.round(my) }];
+
+        // Ensure preview SVG exists
+        if (!penSvgRef.current) {
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          Object.assign(svg.style, {
+            position: "absolute", top: "0", left: "0",
+            width: "100%", height: "100%",
+            pointerEvents: "none", zIndex: "9998",
+            overflow: "visible",
+          });
+          svg.setAttribute("width", "100%");
+          svg.setAttribute("height", "100%");
+          content.appendChild(svg);
+          penSvgRef.current = svg;
+        }
+
+        const drawPencilPreview = () => {
+          const svg = penSvgRef.current;
+          if (!svg || pencilPoints.length < 2) return;
+          while (svg.firstChild) svg.removeChild(svg.firstChild);
+          let pd = `M ${pencilPoints[0].x} ${pencilPoints[0].y}`;
+          for (let i = 1; i < pencilPoints.length; i++) {
+            pd += ` L ${pencilPoints[i].x} ${pencilPoints[i].y}`;
+          }
+          const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          pathEl.setAttribute("d", pd);
+          pathEl.setAttribute("fill", "none");
+          pathEl.setAttribute("stroke", "#8B5CF6");
+          pathEl.setAttribute("stroke-width", "2");
+          pathEl.setAttribute("stroke-linecap", "round");
+          pathEl.setAttribute("stroke-linejoin", "round");
+          svg.appendChild(pathEl);
+        };
+
+        const onPencilMove = (ev: MouseEvent) => {
+          const cx = Math.round((ev.clientX - rect.left) / z);
+          const cy = Math.round((ev.clientY - rect.top) / z);
+          const last = pencilPoints[pencilPoints.length - 1];
+          if (Math.hypot(cx - last.x, cy - last.y) >= 3) {
+            pencilPoints.push({ x: cx, y: cy });
+            drawPencilPreview();
+          }
+        };
+
+        const onPencilUp = () => {
+          document.removeEventListener("mousemove", onPencilMove);
+          document.removeEventListener("mouseup", onPencilUp);
+          if (pencilPoints.length >= 2) {
+            penPointsRef.current = pencilPoints.map(p => ({ x: p.x, y: p.y }));
+            finalizePenPath(content, false);
+          }
+        };
+
+        document.addEventListener("mousemove", onPencilMove);
+        document.addEventListener("mouseup", onPencilUp);
+        return;
+      }
+
       // ── Text tool: click to place text ──
       if (tool === "text") {
         if (target === content) {
@@ -1358,7 +1559,7 @@ export function DesignFrame({
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "pen"].includes(activeTool) ? "crosshair" : "default",
+        cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
       {/* Label above frame */}
