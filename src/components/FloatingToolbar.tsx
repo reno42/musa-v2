@@ -6,7 +6,7 @@ import {
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
   IconLayout,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
-  IconTextPath,
+  IconTextPath, IconCode,
 } from "../shared/icons";
 
 interface Props {
@@ -25,6 +25,10 @@ interface Props {
   multiSelectCount?: number;
   onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
   onSvgImport?: () => void;
+  showCode?: boolean;
+  showLayers?: boolean;
+  onToggleCode?: () => void;
+  onToggleLayers?: () => void;
 }
 
 const FRAME_PRESETS = [
@@ -71,6 +75,7 @@ export function FloatingToolbar({
   onZoomIn, onZoomOut, onZoomToFit, onZoomSet, zoom,
   canUndo, canRedo, onUndo, onRedo,
   multiSelectCount, onPathfinder, onSvgImport,
+  showCode, showLayers, onToggleCode, onToggleLayers,
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
@@ -542,6 +547,49 @@ export function FloatingToolbar({
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.16 0-7.74 2.42-9.44 5.93l2.57 1.11C5.9 12.55 8.47 11 11.5 11c2.09 0 3.99.75 5.47 1.98L13 17h9V8l-3.6 2.6z"/></svg>,
         onRedo, "Redo (Ctrl+Shift+Z)", !canRedo,
       )}
+
+      {(onToggleCode || onToggleLayers) && <>
+        {divider}
+        {/* ── Code Panel Toggle ── */}
+        {onToggleCode && (
+          <button
+            type="button"
+            onClick={onToggleCode}
+            title={showCode ? "Hide Code (Ctrl+/)" : "Show Code (Ctrl+/)"}
+            style={{
+              width: 46, height: 36,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              borderRadius: 8, cursor: "pointer",
+              background: showCode ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+              border: showCode ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+              color: showCode ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <IconCode size={14} />
+            <span style={{ ...shortcutLabel, fontSize: 7 }}>⌘/</span>
+          </button>
+        )}
+        {/* ── Layers Panel Toggle ── */}
+        {onToggleLayers && (
+          <button
+            type="button"
+            onClick={onToggleLayers}
+            title={showLayers ? "Hide Layers" : "Show Layers"}
+            style={{
+              width: 46, height: 36,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              borderRadius: 8, cursor: "pointer",
+              background: showLayers ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+              border: showLayers ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+              color: showLayers ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <IconLayout size={14} />
+          </button>
+        )}
+      </>}
 
       {divider}
 

@@ -23,9 +23,9 @@ import { apiFetch } from "../lib/supabase";
 import { mcpCall } from "../lib/mcpClient";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
-  IconArrowLeft, IconCode, IconSliders, IconLayout, IconDna, IconPalette,
+  IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
   IconFile, IconBot, IconType, IconImage, IconCopy, IconTrash,
-  IconDownload, IconChevronLeft, IconChevronRight, IconFrame, IconTag,
+  IconDownload, IconTag,
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
@@ -2302,28 +2302,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         </div>
       </div>
 
-      {/* ═══ Code Panel Toggle ═══ */}
-      <button
-        type="button"
-        className="editor-v2-code-toggle"
-        onClick={() => setShowCodePanel(!showCodePanel)}
-        title={showCodePanel ? "Hide Code (Ctrl+/)" : "Show Code (Ctrl+/)"}
-      >
-        <IconCode size={14} />
-        {showCodePanel ? <IconChevronLeft size={10} /> : <IconChevronRight size={10} />}
-      </button>
-
-      {/* ═══ Layers Panel Toggle ═══ */}
-      <button
-        type="button"
-        className="editor-v2-layers-toggle"
-        onClick={() => setShowLayersPanel(!showLayersPanel)}
-        title={showLayersPanel ? "Hide Layers" : "Show Layers"}
-      >
-        <IconLayout size={14} />
-        {showLayersPanel ? <IconChevronLeft size={10} /> : <IconChevronRight size={10} />}
-      </button>
-
       {/* ═══ Floating Left Toolbar ═══ */}
       <div style={toolbarDock.panelStyle(56)}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
@@ -2345,6 +2323,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           multiSelectCount={multiSelectLayerIds.length}
           onPathfinder={handlePathfinder}
           onSvgImport={handleSvgImportOpen}
+          showCode={showCodePanel}
+          showLayers={showLayersPanel}
+          onToggleCode={() => setShowCodePanel(v => !v)}
+          onToggleLayers={() => setShowLayersPanel(v => !v)}
         />
       </div>
 
