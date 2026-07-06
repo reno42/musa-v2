@@ -1102,7 +1102,7 @@ const MCP_TOOLS = [
   },
   {
     name: "add_element",
-    description: "Add a new HTML element to a template",
+    description: "Add a new HTML element to a template. REQUIRES a frameId for HTML-engine templates — call create_html_frame first if no frames exist.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1113,7 +1113,7 @@ const MCP_TOOLS = [
         css: { type: "string", description: "Inline CSS styles for the element" },
         position: { type: "string", enum: ["prepend", "append", "before", "after"], description: "Insertion position relative to parent (default append)" },
         layerName: { type: "string", description: "Unique data-layer-id for the element" },
-        frameId: { type: "string", description: "Frame ID to add to (for multi-frame HTML templates). If omitted, adds to template-level html." },
+        frameId: { type: "string", description: "REQUIRED for HTML-engine templates. Frame ID to add to. Call create_html_frame first if no frames exist." },
       },
       required: ["templateId", "tag"],
     },
@@ -1521,7 +1521,7 @@ const MCP_TOOLS = [
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
-    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. Use for multi-frame designs like Instagram carousels.",
+    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. ALWAYS create a frame BEFORE adding any content (add_element, add_primitive, update_frame_content will fail without one). For multi-design sets (carousels, ad variants), create one frame per design. For web pages, use frameStrategy='single-web' to create one tall frame.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1534,6 +1534,7 @@ const MCP_TOOLS = [
         background: { type: "string", description: "Background color (default '#ffffff')" },
         x: { type: "number", description: "X position on canvas (auto-placed if omitted)" },
         y: { type: "number", description: "Y position on canvas (default 0)" },
+        frameStrategy: { type: "string", enum: ["multi", "single-web"], description: "'multi' = one design per frame (social, print, ads). 'single-web' = one long frame for a web page with sections inside. Auto-detected from dimensions if omitted." },
       },
       required: ["templateId", "name"],
     },
@@ -2309,6 +2310,60 @@ async function handleMethod(method, params, userId) {
         store.snapshotAuto(templateId, "ia", trigger);
       }
     } catch { /* non-blocking */ }
+  };
+
+  // ═══ FRAME-FIRST ENFORCEMENT GATE ═══
+  // Prevents AI from adding content to a template that has no frames.
+  // This is a HARD gate — it throws an error the AI must handle.
+  const requireFrames = (tpl) => {
+    if (tpl.engine === "html" || (!tpl.engine && tpl.frames)) {
+      if (!tpl.frames || tpl.frames.length === 0) {
+        throw {
+          code: -32000,
+          message: "NO_FRAMES_ERROR: This template has no frames. " +
+                  "You MUST call create_html_frame first to create a design surface. " +
+                  "Example: create_html_frame({templateId, name: 'Design 1', width: 1080, height: 1080}). " +
+                  "Then add content to that frame using its returned frameId."
+        };
+      }
+    }
+  };
+
+  // Helper: auto-create a default frame if template has none (safety net)
+  const ensureDefaultFrame = async (tpl, templateId) => {
+    if ((!tpl.frames || tpl.frames.length === 0) && (tpl.engine === "html" || !tpl.engine)) {
+      if (!tpl.frames) tpl.frames = [];
+      if (!tpl.engine) tpl.engine = "html";
+      const defaultFrame = {
+        id: `frame_${uuid().slice(0, 12)}`,
+        name: "Frame 1",
+        x: 0, y: 0,
+        width: 1080, height: 1080,
+        html: "", css: "", background: "#ffffff",
+      };
+      tpl.frames.push(defaultFrame);
+      await templates.updateTemplate(templateId, { engine: "html", frames: tpl.frames });
+      return defaultFrame;
+    }
+    return null;
+  };
+
+  // Helper: check for element overlap in a frame (returns warning or null)
+  const checkOverlap = (frame, x, y, width, height) => {
+    if (!frame.css || x === undefined || y === undefined) return null;
+    // Parse existing element positions from CSS
+    const posRe = /\[data-layer-id="[^"]+"\]\s*\{[^}]*?left:\s*(\d+)px;[^}]*?top:\s*(\d+)px;[^}]*?width:\s*(\d+)px;[^}]*?height:\s*(\d+)px/gi;
+    let match;
+    while ((match = posRe.exec(frame.css)) !== null) {
+      const ex = parseInt(match[1]), ey = parseInt(match[2]);
+      const ew = parseInt(match[3]), eh = parseInt(match[4]);
+      // AABB overlap check
+      if (x < ex + ew && x + width > ex && y < ey + eh && y + height > ey) {
+        return `OVERLAP_WARNING: New element at (${x},${y}) ${width}x${height} overlaps existing element at (${ex},${ey}) ${ew}x${eh}. ` +
+               `Consider offsetting to (${ex + ew + 20},${y}) or creating a new frame for a separate design.`;
+      }
+    }
+    return null;
   };
 
   switch (method) {
@@ -3882,6 +3937,10 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      requireFrames(tpl);
+      if (!params.frameId && tpl.engine === "html") {
+        throw { code: -32000, message: "frameId is required for HTML-engine templates. Call create_html_frame first, then use the returned frameId. Existing frames: " + (tpl.frames || []).map(f => `${f.id} (${f.name})`).join(", ") };
+      }
       const layerId = params.layerName || `el_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const styleAttr = params.css ? ` style="${params.css}"` : "";
       const voidTags = ["img", "br", "hr", "input"];
@@ -3938,7 +3997,7 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
-      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      requireFrames(tpl);
       const frame = tpl.frames.find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
 
@@ -3946,6 +4005,7 @@ async function handleMethod(method, params, userId) {
       const x = params.x || 0;
       const y = params.y || 0;
       const type = params.type;
+      const overlapWarn = checkOverlap(frame, x, y, params.width || 200, params.height || 150);
 
       let elHtml, cssRule;
       if (type === "rect") {
@@ -3973,7 +4033,7 @@ async function handleMethod(method, params, userId) {
       frame.html = (frame.html || "") + "\n" + elHtml;
       frame.css = (frame.css || "") + "\n" + cssRule + "\n";
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type };
+      return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type, ...(overlapWarn ? { warning: overlapWarn } : {}) };
     }
 
     // ── change_element_tag (Phase B: semantic tagging) ──
@@ -4788,6 +4848,11 @@ async function handleMethod(method, params, userId) {
       };
       if (!tpl.frames) tpl.frames = [];
       tpl.frames.push(frame);
+      // Set frameStrategy if provided (or default based on dimensions)
+      if (params.frameStrategy) {
+        tpl.metadata = tpl.metadata || {};
+        tpl.metadata.frameStrategy = params.frameStrategy;
+      }
       tpl.metadata.updatedAt = new Date().toISOString();
       // Persist
       await templates.updateTemplate(params.templateId, {
@@ -4796,12 +4861,17 @@ async function handleMethod(method, params, userId) {
         css: tpl.css,
       });
       autoSnapshot(params.templateId, "create_html_frame");
-      return frame;
+      const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
+      return { ...frame, frameStrategy: strategy, hint: strategy === "single-web"
+        ? "Web mode: add sections (<header>, <section>, <footer>) inside this frame. Do NOT create additional frames for the same page."
+        : "Design mode: create a new frame for each separate design variant (e.g. carousel slides, ad sizes)."
+      };
     }
 
     case "update_html_frame": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      requireFrames(tpl);
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
       // Apply updates
@@ -6195,6 +6265,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "update_frame_content": {
       var tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found" };
+      requireFrames(tpl);
       var frame = (tpl.frames || []).find(function (f) { return f.id === params.frameId; });
       if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
 

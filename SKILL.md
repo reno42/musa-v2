@@ -231,6 +231,41 @@ tools/call: set_html({ templateId: tplId, frameId, html: "<div>..." })
 tools/call: set_css({ templateId: tplId, frameId, css: "div { ... }" })
 ```
 
+### ⚠️ CRITICAL RULE: Frame-First Enforcement (System-Enforced)
+
+**The system will REJECT any attempt to add content without a frame.** This is not a recommendation — it is a hard server-side gate.
+
+**Tools that require an existing frame:**
+- `add_element` — throws `NO_FRAMES_ERROR` if no frames exist
+- `add_primitive` — throws `NO_FRAMES_ERROR` if no frames exist
+- `update_frame_content` — throws `NO_FRAMES_ERROR` if no frames exist
+- `update_html_frame` — throws `NO_FRAMES_ERROR` if no frames exist
+- `add_element` also requires `frameId` as a mandatory parameter for HTML-engine templates
+
+**Correct workflow (ALWAYS follow this order):**
+```
+1. create_template({ ..., engine: "html" })     → tplId
+2. create_html_frame({ templateId: tplId, ... }) → frameId  ← MUST DO FIRST
+3. add_element({ templateId: tplId, frameId, ... })         ← now works
+4. add_primitive({ templateId: tplId, frameId, ... })      ← now works
+```
+
+**Frame Strategy — two modes:**
+
+| Strategy | When to use | Behavior |
+|----------|-------------|----------|
+| `multi` (default) | Social posts, print, ads, carousels | One frame per design variant. Each frame is independent. |
+| `single-web` | Landing pages, web apps, long-scroll pages | One tall frame (e.g. 1440×5000). Add `<section>`, `<header>`, `<footer>` inside. Do NOT create separate frames for page sections. |
+
+**Auto-detection:** If `frameStrategy` is omitted, the system infers it from dimensions:
+- `height > width × 2` → `single-web`
+- Otherwise → `multi`
+
+**Overlap detection:** When `add_primitive` is called with coordinates that overlap an existing element in the same frame, the response includes an `OVERLAP_WARNING` with a suggested offset. This is a warning, not an error — but you should adjust coordinates or create a new frame.
+
+**For separate designs:** Each design variant MUST go in its own frame. Do NOT stack multiple designs in the same frame at position (0,0).
+```
+
 **Pattern 2: Add visual elements to a frame**
 ```
 tools/call: add_element({ templateId: tplId, frameId, tag: "h1", content: "Hello", ... })
