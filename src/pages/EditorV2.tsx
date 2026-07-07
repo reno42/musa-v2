@@ -172,6 +172,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
   const [showSvgImport, setShowSvgImport] = useState(false);
 
+  // ── Figma-style selection state ──
+  const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
+  const [contentFrameId, setContentFrameId] = useState<string | null>(null);
+
   // ── Derived: active frame ──
   const selectedFrame = frames.find(f => f.id === selectedFrameId) ?? null;
   const activeHtml = selectedFrame?.html ?? DEFAULT_HTML;
@@ -488,6 +492,60 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [frames, autoSave, pushUndo]);
 
+  // ── Figma-style frame selection handlers ──
+  const handleSelectFrame = useCallback((id: string | null) => {
+    setSelectedFrameId(id);
+    setSelectedFrameIds(id ? new Set([id]) : new Set());
+    setContentFrameId(null);
+    if (id === null) setSelectedElement(null);
+  }, []);
+
+  const handleActivateFrame = useCallback((frameId: string) => {
+    setSelectedFrameId(frameId);
+  }, []);
+
+  const handleFrameShiftClick = useCallback((frameId: string) => {
+    setSelectedFrameIds(prev => {
+      const next = new Set(prev);
+      if (next.has(frameId)) next.delete(frameId);
+      else next.add(frameId);
+      if (next.size === 1) setSelectedFrameId(Array.from(next)[0]);
+      else if (next.size === 0) setSelectedFrameId(null);
+      return next;
+    });
+    setContentFrameId(null);
+  }, []);
+
+  const handleMarqueeSelect = useCallback((ids: Set<string>) => {
+    setSelectedFrameIds(ids);
+    if (ids.size > 0) setSelectedFrameId(Array.from(ids)[0]);
+    else setSelectedFrameId(null);
+    setContentFrameId(null);
+  }, []);
+
+  const handleEnterContentMode = useCallback((frameId: string) => {
+    setContentFrameId(frameId);
+    setSelectedFrameId(frameId);
+    setSelectedFrameIds(new Set([frameId]));
+  }, []);
+
+  const handleRenameFrame = useCallback((frameId: string, newName: string) => {
+    pushUndo(frames);
+    const updated = frames.map(f => f.id === frameId ? { ...f, name: newName } : f);
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
+  const handleMultiFrameMove = useCallback((moves: { id: string; x: number; y: number }[]) => {
+    pushUndo(frames);
+    const moveMap = new Map(moves.map(m => [m.id, { x: m.x, y: m.y }]));
+    const updated = frames.map(f =>
+      moveMap.has(f.id) ? { ...f, x: moveMap.get(f.id)!.x, y: moveMap.get(f.id)!.y } : f
+    );
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
   // ── Frame operations ──
   const addFrame = useCallback((preset: { name: string; width: number; height: number }) => {
     const lastFrame = frames[frames.length - 1];
@@ -495,7 +553,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const newY = lastFrame ? lastFrame.y : 0;
     const newFrame: FrameData = {
       id: `frame_${Date.now()}`,
-      name: preset.name,
+      name: `Frame ${frames.length + 1}`,
       x: newX, y: newY,
       width: preset.width, height: preset.height,
       html: `<div class="card">\n  <h1 data-layer-id="title">${preset.name}</h1>\n  <p data-layer-id="desc">Start designing...</p>\n</div>`,
@@ -506,6 +564,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = [...frames, newFrame];
     setFrames(updated);
     setSelectedFrameId(newFrame.id);
+    setSelectedFrameIds(new Set([newFrame.id]));
     autoSave(updated);
   }, [frames, autoSave, pushUndo]);
 
@@ -524,6 +583,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = frames.filter(f => f.id !== selectedFrameId);
     setFrames(updated);
     setSelectedFrameId(updated[0]?.id ?? null);
+    setSelectedFrameIds(updated[0]?.id ? new Set([updated[0].id]) : new Set());
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
@@ -540,6 +600,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const updated = [...frames, clone];
     setFrames(updated);
     setSelectedFrameId(clone.id);
+    setSelectedFrameIds(new Set([clone.id]));
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
@@ -2286,11 +2347,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           <InfiniteHtmlCanvas
             frames={frames}
             selectedFrameId={selectedFrameId}
+            selectedFrameIds={selectedFrameIds}
+            contentFrameId={contentFrameId}
             activeTool={activeTool}
             zoom={zoom}
-            onSelectFrame={setSelectedFrameId}
+            onSelectFrame={handleSelectFrame}
+            onActivateFrame={handleActivateFrame}
+            onFrameShiftClick={handleFrameShiftClick}
+            onMarqueeSelect={handleMarqueeSelect}
+            onEnterContentMode={handleEnterContentMode}
             onZoomChange={setZoom}
             onFrameMove={handleFrameMove}
+            onMultiFrameMove={handleMultiFrameMove}
+            onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
             onFrameCssChange={handleFrameCssChange}
             onFrameHtmlChange={handleFrameHtmlChange}

@@ -6,9 +6,19 @@ import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignF
  * DesignFrame containers (the "desk" holding "papers").
  *
  * Tools:
- *  - Select (V): click frame to select, drag frame to move on desk
+ *  - Select (V): click frame to select, drag frame/label to move,
+ *    double-click frame to enter content mode, marquee drag on empty canvas
  *  - Hand (H): drag canvas to pan, scroll to zoom
  *  - Middle-click: always pans regardless of active tool
+ *
+ * Selection model (Figma-style):
+ *  - Single click: select one frame (solid blue border)
+ *  - Shift+click: toggle frame in/out of multi-selection
+ *  - Drag empty canvas: marquee select intersecting frames
+ *  - Double-click frame body: enter content mode (dashed border)
+ *  - Click outside frame: exit content mode
+ *  - Drag label: move frame (works in both modes)
+ *  - Double-click label: rename inline
  */
 
 export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
@@ -16,11 +26,19 @@ export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
   selectedFrameId: string | null;
+  selectedFrameIds: Set<string>;
+  contentFrameId: string | null;
   activeTool: HtmlToolName;
   zoom: number;
   onSelectFrame: (id: string | null) => void;
+  onActivateFrame?: (frameId: string) => void;
+  onFrameShiftClick?: (frameId: string) => void;
+  onMarqueeSelect?: (ids: Set<string>) => void;
+  onEnterContentMode?: (frameId: string) => void;
   onZoomChange: (z: number) => void;
   onFrameMove?: (id: string, x: number, y: number) => void;
+  onMultiFrameMove?: (moves: { id: string; x: number; y: number }[]) => void;
+  onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
@@ -38,8 +56,9 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
 export function InfiniteHtmlCanvas({
-  frames, selectedFrameId, activeTool, zoom,
-  onSelectFrame, onZoomChange, onFrameMove,
+  frames, selectedFrameId, selectedFrameIds, contentFrameId, activeTool, zoom,
+  onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
+  onZoomChange, onFrameMove, onMultiFrameMove, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
 }: InfiniteHtmlCanvasProps) {
@@ -51,6 +70,17 @@ export function InfiniteHtmlCanvas({
   const lastMouse = useRef({ x: 0, y: 0 });
   const [isDraggingFrame, setIsDraggingFrame] = useState(false);
   const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  // Multi-frame drag state (Phase 4)
+  const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[] } | null>(null);
+
+  // Marquee selection state (Phase 3)
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  // Label rename state (Phase 1)
+  const [renamingFrameId, setRenamingFrameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   // Auto-center all frames on first mount
   useEffect(() => {
@@ -68,7 +98,41 @@ export function InfiniteHtmlCanvas({
     });
   }, []); // eslint-disable-line
 
-  // Pan handlers
+  // Convert screen coords to canvas coords
+  const screenToCanvas = useCallback((clientX: number, clientY: number) => {
+    const rect = viewportRef.current!.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - panRef.current.x) / zoom,
+      y: (clientY - rect.top - panRef.current.y) / zoom,
+    };
+  }, [zoom]);
+
+  // Start frame drag — multi-frame aware (Phase 4)
+  const startFrameDrag = useCallback((frameId: string, e: React.MouseEvent) => {
+    const f = frames.find(fr => fr.id === frameId);
+    if (!f) return;
+    const inSelection = selectedFrameIds.has(frameId);
+    if (inSelection && selectedFrameIds.size > 1) {
+      // Multi-frame drag: track all selected frames
+      const selectedFrames = frames.filter(fr => selectedFrameIds.has(fr.id));
+      multiDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        frames: selectedFrames.map(fr => ({ id: fr.id, origX: fr.x, origY: fr.y })),
+      };
+    } else {
+      dragFrameRef.current = {
+        id: frameId,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: f.x,
+        origY: f.y,
+      };
+    }
+    setIsDraggingFrame(true);
+  }, [frames, selectedFrameIds]);
+
+  // Canvas-level mousedown — handles pan, marquee start, deselection
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Middle-click always pans
     if (e.button === 1) {
@@ -83,16 +147,20 @@ export function InfiniteHtmlCanvas({
       lastMouse.current = { x: e.clientX, y: e.clientY };
       return;
     }
-    // Select tool: click on empty canvas deselects
+    // Select tool: click on empty canvas deselects + starts marquee (Phase 3)
     if (activeTool === "select" && e.button === 0 && e.target === viewportRef.current) {
       onSelectFrame(null);
       onElementSelect?.(null);
+      // Start marquee
+      const pt = screenToCanvas(e.clientX, e.clientY);
+      marqueeStartRef.current = pt;
+      setMarqueeRect(null);
     }
     // Primitive tools: don't deselect the frame when clicking canvas background
     if (["rect", "circle", "text", "pen"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
       // Keep frame selected so primitive can be added
     }
-  }, [activeTool, onSelectFrame, onElementSelect]);
+  }, [activeTool, onSelectFrame, onElementSelect, screenToCanvas]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isPanning.current) {
@@ -102,34 +170,90 @@ export function InfiniteHtmlCanvas({
       setPan(p => ({ x: p.x + dx, y: p.y + dy }));
       return;
     }
-    // Frame dragging
+    // Single frame dragging
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
       const dx = (e.clientX - df.startX) / zoom;
       const dy = (e.clientY - df.startY) / zoom;
-      // Update frame position via direct DOM manipulation for performance
       const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement;
       if (frameEl) {
         frameEl.style.left = `${df.origX + dx}px`;
         frameEl.style.top = `${df.origY + dy}px`;
       }
+      return;
     }
-  }, [zoom]);
+    // Multi-frame dragging (Phase 4)
+    if (multiDragRef.current) {
+      const md = multiDragRef.current;
+      const dx = (e.clientX - md.startX) / zoom;
+      const dy = (e.clientY - md.startY) / zoom;
+      for (const f of md.frames) {
+        const el = document.querySelector(`[data-frame-id="${f.id}"]`) as HTMLElement;
+        if (el) {
+          el.style.left = `${f.origX + dx}px`;
+          el.style.top = `${f.origY + dy}px`;
+        }
+      }
+      return;
+    }
+    // Marquee selection (Phase 3)
+    if (marqueeStartRef.current) {
+      const pt = screenToCanvas(e.clientX, e.clientY);
+      const start = marqueeStartRef.current;
+      setMarqueeRect({
+        x: Math.min(start.x, pt.x),
+        y: Math.min(start.y, pt.y),
+        w: Math.abs(pt.x - start.x),
+        h: Math.abs(pt.y - start.y),
+      });
+    }
+  }, [zoom, screenToCanvas]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     isPanning.current = false;
+    // Single frame drag commit
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
       const dx = (e.clientX - df.startX) / zoom;
       const dy = (e.clientY - df.startY) / zoom;
-      onFrameMove?.(df.id, df.origX + dx, df.origY + dy);
+      onFrameMove?.(df.id, Math.round(df.origX + dx), Math.round(df.origY + dy));
       dragFrameRef.current = null;
       setIsDraggingFrame(false);
     }
-  }, [zoom, onFrameMove]);
+    // Multi-frame drag commit (Phase 4)
+    if (multiDragRef.current) {
+      const md = multiDragRef.current;
+      const dx = (e.clientX - md.startX) / zoom;
+      const dy = (e.clientY - md.startY) / zoom;
+      const moves = md.frames.map(f => ({
+        id: f.id,
+        x: Math.round(f.origX + dx),
+        y: Math.round(f.origY + dy),
+      }));
+      onMultiFrameMove?.(moves);
+      multiDragRef.current = null;
+      setIsDraggingFrame(false);
+    }
+    // Marquee selection commit (Phase 3) — AABB intersection
+    if (marqueeStartRef.current && marqueeRect) {
+      const ids = new Set<string>();
+      for (const f of frames) {
+        if (
+          f.x < marqueeRect.x + marqueeRect.w &&
+          f.x + f.width > marqueeRect.x &&
+          f.y < marqueeRect.y + marqueeRect.h &&
+          f.y + f.height > marqueeRect.y
+        ) {
+          ids.add(f.id);
+        }
+      }
+      if (ids.size > 0) onMarqueeSelect?.(ids);
+    }
+    marqueeStartRef.current = null;
+    setMarqueeRect(null);
+  }, [zoom, onFrameMove, onMultiFrameMove, onMarqueeSelect, frames, marqueeRect]);
 
   // Zoom with wheel — must use native listener with { passive: false }
-  // because React attaches wheel as passive, making preventDefault() fail.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -151,26 +275,82 @@ export function InfiniteHtmlCanvas({
     return () => el.removeEventListener("wheel", handler);
   }, [zoom, onZoomChange]);
 
-  // Frame drag start (only in select mode)
+  // Frame body mousedown — single/shift/multi drag logic (Phase 2 + 4)
   const handleFrameMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
     if (activeTool !== "select" || e.button !== 0) return;
+    // Don't intercept clicks in content mode — let Shadow DOM handle them
+    if (contentFrameId === frameId) return;
+
+    // Shift+click: toggle in/out of selection (Phase 2)
+    if (e.shiftKey) {
+      onFrameShiftClick?.(frameId);
+      e.stopPropagation();
+      return;
+    }
+
+    // If already in multi-selection, start group drag
+    if (selectedFrameIds.has(frameId) && selectedFrameIds.size > 1) {
+      startFrameDrag(frameId, e);
+    } else {
+      onSelectFrame(frameId);
+      startFrameDrag(frameId, e);
+    }
+    e.stopPropagation();
+  }, [activeTool, contentFrameId, selectedFrameIds, onSelectFrame, onFrameShiftClick, startFrameDrag]);
+
+  // Label mousedown — starts drag from label (Phase 1)
+  const handleLabelMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    // Shift+click on label also toggles selection
+    if (e.shiftKey) {
+      onFrameShiftClick?.(frameId);
+      return;
+    }
+
+    // Start drag (multi-aware)
+    if (selectedFrameIds.has(frameId) && selectedFrameIds.size > 1) {
+      startFrameDrag(frameId, e);
+    } else {
+      onSelectFrame(frameId);
+      startFrameDrag(frameId, e);
+    }
+  }, [selectedFrameIds, onSelectFrame, onFrameShiftClick, startFrameDrag]);
+
+  // Label double-click — start inline rename (Phase 1)
+  const handleLabelDoubleClick = useCallback((frameId: string) => {
     const f = frames.find(fr => fr.id === frameId);
     if (!f) return;
-    onSelectFrame(frameId);
-    dragFrameRef.current = {
-      id: frameId,
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: f.x,
-      origY: f.y,
-    };
-    setIsDraggingFrame(true);
-    e.stopPropagation();
-  }, [activeTool, frames, onSelectFrame]);
+    setRenamingFrameId(frameId);
+    setRenameValue(f.name);
+  }, [frames]);
+
+  // Rename commit / cancel (Phase 1)
+  const handleRenameCommit = useCallback(() => {
+    if (renamingFrameId && renameValue.trim()) {
+      onRenameFrame?.(renamingFrameId, renameValue.trim());
+    }
+    setRenamingFrameId(null);
+    setRenameValue("");
+  }, [renamingFrameId, renameValue, onRenameFrame]);
+
+  const handleRenameCancel = useCallback(() => {
+    setRenamingFrameId(null);
+    setRenameValue("");
+  }, []);
+
+  // Frame body double-click — enter content mode (Phase 2)
+  const handleFrameDoubleClick = useCallback((frameId: string, e: React.MouseEvent) => {
+    if (activeTool === "select" && contentFrameId !== frameId) {
+      e.stopPropagation();
+      onEnterContentMode?.(frameId);
+    }
+  }, [activeTool, contentFrameId, onEnterContentMode]);
 
   const cursor = activeTool === "hand"
     ? (isPanning.current ? "grabbing" : "grab")
-    : (isDraggingFrame ? "move" : "default");
+    : (isDraggingFrame ? "move" : marqueeRect ? "crosshair" : "default");
 
   return (
     <div
@@ -198,12 +378,15 @@ export function InfiniteHtmlCanvas({
             key={frame.id}
             data-frame-id={frame.id}
             onMouseDown={(e) => handleFrameMouseDown(frame.id, e)}
+            onDoubleClick={(e) => handleFrameDoubleClick(frame.id, e)}
           >
             <DesignFrame
               frame={frame}
               isActive={frame.id === selectedFrameId}
+              inMultiSelect={selectedFrameIds.has(frame.id) && selectedFrameIds.size > 1}
+              contentMode={contentFrameId === frame.id}
               zoom={zoom}
-              onActivate={onSelectFrame}
+              onActivate={onActivateFrame ?? onSelectFrame}
               onElementSelect={onElementSelect}
               onCssChange={onFrameCssChange}
               onHtmlChange={onFrameHtmlChange}
@@ -215,12 +398,35 @@ export function InfiniteHtmlCanvas({
               onAddTextPath={onAddTextPath}
               onElementDelete={onElementDelete}
               onElementDuplicate={onElementDuplicate}
+              onLabelMouseDown={handleLabelMouseDown}
+              onLabelDoubleClick={handleLabelDoubleClick}
+              onEnterContentMode={onEnterContentMode}
+              isRenaming={renamingFrameId === frame.id}
+              renameValue={renameValue}
+              onRenameChange={setRenameValue}
+              onRenameCommit={handleRenameCommit}
+              onRenameCancel={handleRenameCancel}
             />
           </div>
         ))}
+
+        {/* Marquee selection rectangle (Phase 3) */}
+        {marqueeRect && (
+          <div style={{
+            position: "absolute",
+            left: marqueeRect.x,
+            top: marqueeRect.y,
+            width: marqueeRect.w,
+            height: marqueeRect.h,
+            background: "rgba(59,130,246,0.1)",
+            border: "1px solid rgba(59,130,246,0.6)",
+            pointerEvents: "none",
+            zIndex: 10000,
+          }} />
+        )}
       </div>
 
-      {/* Zoom badge */}
+      {/* Zoom + selection badge */}
       <div style={{
         position: "absolute", bottom: 12, right: 12,
         background: "rgba(0,0,0,0.65)", color: "#fff",
@@ -229,6 +435,7 @@ export function InfiniteHtmlCanvas({
         backdropFilter: "blur(6px)",
       }}>
         {Math.round(zoom * 100)}% &middot; {frames.length} frame{frames.length !== 1 ? "s" : ""}
+        {selectedFrameIds.size > 1 && ` &middot; ${selectedFrameIds.size} selected`}
       </div>
     </div>
   );

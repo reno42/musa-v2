@@ -50,6 +50,17 @@ interface DesignFrameProps {
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
+  // ── Phase 1-2: Frame-level interactions ──
+  contentMode?: boolean;
+  inMultiSelect?: boolean;
+  isRenaming?: boolean;
+  renameValue?: string;
+  onLabelMouseDown?: (frameId: string, e: React.MouseEvent) => void;
+  onLabelDoubleClick?: (frameId: string) => void;
+  onRenameChange?: (value: string) => void;
+  onRenameCommit?: () => void;
+  onRenameCancel?: () => void;
+  onEnterContentMode?: (frameId: string) => void;
 }
 
 const SEL = "#3B82F6";
@@ -91,6 +102,7 @@ const TRACKED_PROPS = [
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -1621,34 +1633,70 @@ export function DesignFrame({
         cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
-      {/* Label above frame */}
-      <div style={{
-        position: "absolute", bottom: "100%", left: 0,
-        padding: "2px 8px", marginBottom: 4,
-        fontSize: 11, fontFamily: "Inter, system-ui, sans-serif",
-        color: isActive ? "#60a5fa" : "#666",
-        whiteSpace: "nowrap", pointerEvents: "none",
-      }}>
-        {frame.name}
-        <span style={{ marginLeft: 6, fontSize: 10, color: "#555" }}>
-          {frame.width}x{frame.height}
-        </span>
+      {/* Label above frame — interactive: draggable + double-click to rename (Phase 1) */}
+      <div
+        style={{
+          position: "absolute", bottom: "100%", left: 0,
+          padding: "2px 8px", marginBottom: 4,
+          fontSize: 11, fontFamily: "Inter, system-ui, sans-serif",
+          color: isActive ? "#60a5fa" : "#999",
+          whiteSpace: "nowrap",
+          pointerEvents: "auto",
+          cursor: "grab",
+          userSelect: "none",
+          background: isActive ? "rgba(59,130,246,0.12)" : "rgba(30,30,30,0.6)",
+          backdropFilter: "blur(8px)",
+          borderRadius: 4,
+          border: isActive ? "1px solid rgba(59,130,246,0.3)" : "1px solid rgba(255,255,255,0.06)",
+        }}
+        onMouseDown={(e) => onLabelMouseDown?.(frame.id, e)}
+        onDoubleClick={(e) => { e.stopPropagation(); onLabelDoubleClick?.(frame.id); }}
+      >
+        {isRenaming ? (
+          <input
+            autoFocus
+            value={renameValue ?? ""}
+            onChange={(e) => onRenameChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); onRenameCommit?.(); }
+              if (e.key === "Escape") { e.preventDefault(); onRenameCancel?.(); }
+            }}
+            onBlur={() => onRenameCommit?.()}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              fontSize: 11, fontFamily: "Inter, system-ui, sans-serif",
+              background: "rgba(30,30,30,0.95)", color: "#fff",
+              border: "1px solid #3B82F6", borderRadius: 3,
+              padding: "1px 6px", outline: "none", width: 120,
+            }}
+          />
+        ) : (
+          <>
+            {frame.name}
+            <span style={{ marginLeft: 6, fontSize: 10, color: "#555" }}>
+              {frame.width}×{frame.height}
+            </span>
+          </>
+        )}
       </div>
-      {/* Visual border */}
+      {/* Visual border — solid for frame-level, dashed for content mode (Phase 2) */}
       <div style={{
         position: "absolute", inset: 0,
-        border: isActive ? `2px solid ${SEL}` : "1px solid rgba(255,255,255,0.1)",
+        border: isActive
+          ? (contentMode ? `2px dashed ${SEL}` : `2px solid ${SEL}`)
+          : (inMultiSelect ? `2px solid ${SEL}80` : "1px solid rgba(255,255,255,0.1)"),
         borderRadius: 2, pointerEvents: "none", zIndex: 2,
         boxShadow: isActive
           ? `0 0 0 1px ${SEL}, 0 8px 32px rgba(59,130,246,0.15)`
           : "0 4px 16px rgba(0,0,0,0.25)",
       }} />
-      {/* Background — pointerEvents:none so clicks pass through to Shadow DOM */}
+      {/* Background — blocks Shadow DOM clicks in frame-level mode (Phase 2) */}
       <div style={{
         position: "absolute", inset: 0,
         background: frame.background,
         borderRadius: 2,
-        pointerEvents: "none",
+        pointerEvents: (!contentMode && activeTool === "select") ? "auto" : "none",
       }} />
     </div>
   );

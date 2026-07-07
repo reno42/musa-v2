@@ -299,6 +299,28 @@ tools/call: add_primitive({ templateId: tplId, frameId, type: "rect", x: 50, y: 
 **For separate designs:** Each design variant MUST go in its own frame. Do NOT stack multiple designs in the same frame at position (0,0).
 
 **Deterministic frame placement:** Frame positions are auto-calculated using a cascade-grid algorithm (left-to-right, wrapping to new row at 4000px). The AI does NOT control x/y — the system guarantees no two frames ever overlap. Do not pass `x` or `y` parameters (they are not accepted).
+
+### Canvas Interaction Model (Figma-Style)
+
+The editor implements a two-level selection model matching Figma's behavior:
+
+| Action | Result |
+|--------|--------|
+| Click frame body | Selects frame (solid blue border). Frame is draggable. |
+| Double-click frame body | Enters **content mode** (dashed blue border). Elements inside become clickable. |
+| Click outside frame (empty canvas) | Exits content mode. Returns to frame-level selection. |
+| Drag on empty canvas | **Marquee selection** — draws rectangle, selects all intersecting frames. |
+| Shift+click frame | Adds/removes frame from multi-selection. |
+| Drag frame label (top-left corner) | Moves frame. Works in both frame-level and content mode. |
+| Double-click frame label | **Inline rename** — Enter to commit, Escape to cancel. |
+
+**Multi-frame drag:** When 2+ frames are selected (marquee or shift+click), dragging any selected frame moves ALL selected frames together.
+
+**Frame auto-naming:** New frames are deterministically named "Frame 1", "Frame 2", etc. Users can rename via double-click on the label.
+
+**Frame-level vs Content-level:**
+- **Frame level** (default): Background intercepts clicks → frame selects/moves. Elements inside are NOT clickable. Drawing tools (rect, circle, text, pen) bypass this restriction.
+- **Content level** (double-click to enter): Background is click-through → elements inside ARE clickable/selectable. Use the label to move the frame. Click outside to exit.
 ```
 
 **Pattern 2: Add visual elements to a frame**
