@@ -133,14 +133,14 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
       const text = res?.result?.content?.[0]?.text;
       const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
       if (data?.content) {
-        const blob = new Blob([data.content], { type: "text/markdown" });
+        const blob = new Blob([data.content], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = data.filename || "style-template.md";
+        a.download = data.filename || "tokens-template.json";
         a.click();
         URL.revokeObjectURL(url);
-        onToast?.("Template downloaded! Fill it with Gemini and upload back.", "success");
+        onToast?.("tokens-template.json downloaded! Fill it with Gemini and upload back.", "success");
       }
     } catch {
       onToast?.("Failed to download template", "error");
@@ -347,7 +347,7 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
               {/* Download template button */}
               <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
                 <button onClick={downloadTemplate} style={btnStyle}>
-                  📄 Download Template for Gemini
+                  📄 Download tokens-template.json
                 </button>
               </div>
 
@@ -437,13 +437,13 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
               <div style={{ marginBottom: 16, padding: 12, background: "rgba(99,102,241,0.05)", borderRadius: 8, border: "1px solid rgba(99,102,241,0.15)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>💡 How it works</div>
                 <div style={{ fontSize: 11, color: "#999", lineHeight: 1.5 }}>
-                  1. Download the template below<br/>
-                  2. Paste it into Gemini/ChatGPT with your design images<br/>
-                  3. Ask the AI to fill the template based on the images<br/>
-                  4. Upload the filled result here
+                  1. Download <code>tokens-template.json</code> below<br/>
+                  2. Paste its content into Gemini/ChatGPT with your design images<br/>
+                  3. Ask the AI to fill each <code>$value</code> field based on the images<br/>
+                  4. Save the result as a <code>.json</code> file and drag-drop it here
                 </div>
                 <button onClick={downloadTemplate} style={{ ...btnStyle, marginTop: 8, fontSize: 11 }}>
-                  📄 Download Template
+                  📄 Download tokens-template.json
                 </button>
               </div>
 

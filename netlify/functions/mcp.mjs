@@ -2154,7 +2154,7 @@ const MCP_TOOLS = [
   },
   {
     name: "download_style_template",
-    description: "Returns an empty style template in markdown format for external AI tools (Gemini, ChatGPT). The human fills it with style data from images/screenshots, then uploads the result via the Style Library UI or create_brand_guideline MCP tool.",
+    description: "Returns a DTCG-format tokens JSON template for external AI tools (Gemini, ChatGPT). The human fills each $value with data from images/screenshots, then uploads the .json via Style Library → Upload or create_brand_guideline MCP tool. The format is identical to what generateTokensJson() produces, ensuring fingerprint compatibility.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -7468,14 +7468,22 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
-    // ── download_style_template: return empty template for external AI ──
+    // ── download_style_template: return DTCG tokens.json template for external AI ──
     case "download_style_template": {
       var templateContent = generateStyleTemplate();
       return {
-        format: "markdown",
-        filename: "style-template.md",
+        format: "json",
+        filename: "tokens-template.json",
         content: templateContent,
-        instructions: "1. Copy this template. 2. Paste into Gemini/ChatGPT with your design images. 3. Ask the AI to fill it. 4. Upload the result via Style Library → Upload or create_brand_guideline.",
+        schema: "DTCG (Design Tokens Community Group) — same format as generateTokensJson() output",
+        instructions: [
+          "1. Download this tokens-template.json file.",
+          "2. Open it in any editor and paste the content into Gemini/ChatGPT.",
+          "3. Provide your design images/screenshots and ask the AI to fill each $value.",
+          "4. Save the filled result as a .json file.",
+          "5. Upload it via Style Library → Upload (drag-drop the .json file).",
+          "The uploaded JSON will pass fingerprint deduplication automatically.",
+        ].join("\n"),
       };
     }
 

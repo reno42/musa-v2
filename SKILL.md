@@ -468,20 +468,23 @@ tools/call: merge_brand_guidelines({
 })
   → { success: true, mergedCount: 2, totalTemplateIds: 15 }
 
-// ── DOWNLOAD template for external AI (Gemini, ChatGPT) ──
+// ── DOWNLOAD tokens template for external AI (Gemini, ChatGPT) ──
 tools/call: download_style_template()
-  → { format: "markdown", content: "# Style Name — Design System Template..." }
-  → Human fills it with AI help, then uploads via UI or create_brand_guideline.
+  → { format: "json", filename: "tokens-template.json", content: "{...DTCG...}" }
+  → Returns DTCG-format tokens.json — IDENTICAL structure to generateTokensJson() output.
+  → Human downloads .json, pastes into Gemini with images, AI fills $value fields,
+    then uploads the result via Style Library → Upload or create_brand_guideline.
 
 // ── UPLOAD a style from external AI output ──
 tools/call: create_brand_guideline({
   workspaceId: wsId,
   name: "Glassmorphism Dark",
-  tokensJson: '{ "...": "..." }',  // From Gemini/ChatGPT
-  designMd: "# Glassmorphism Dark...",
-  sharedCss: ":root { ... }"
+  tokensJson: '{ "$schema": "...", "color": { "canvas": { "$value": "#0a0a0f", "$description": "primary background" }, ... } }',
 })
   → { id: "brand_xyz", name: "Glassmorphism Dark" }
+  → The uploaded tokensJson must be DTCG format (same as tokens-template.json).
+  → Fingerprint is auto-computed from tokens for deduplication.
+  → designMd and sharedCss are optional — they can be auto-generated from tokens.
 ```
 
 **Style Fingerprint Technology:**
