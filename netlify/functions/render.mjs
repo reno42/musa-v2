@@ -172,7 +172,7 @@ export const handler = async (event) => {
   const jsonHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
-    "Content-Type": "application/json",
+    "Content-Type": "application/json; charset=utf-8",
   };
   const htmlHeaders = {
     ...jsonHeaders,

@@ -315,7 +315,7 @@ templateRoutes.get("/:id/export", async (req, res) => {
       },
     };
 
-    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${tpl.name}.futuraria.json"`);
     res.json(exportData);
   } catch (err: any) {

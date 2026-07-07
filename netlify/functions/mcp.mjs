@@ -7735,7 +7735,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 }
 
 export const handler = async (event) => {
-  const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
+  const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" };
 
   // Rate limiting
   const clientIp = event.headers["x-forwarded-for"] || event.headers["client-ip"] || "unknown";
