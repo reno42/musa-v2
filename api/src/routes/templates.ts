@@ -52,11 +52,41 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
   try {
     const { name, width, height, canvas, workspaceId, engine, html, css } = req.body;
     const tpl = await templates.createTemplate(name || "Untitled", width || 1080, height || 1080, canvas, req.auth!.userId, workspaceId);
-    if (engine) tpl.engine = engine;
-    if (html !== undefined) tpl.html = html;
-    if (css !== undefined) tpl.css = css;
-    // Persist engine/html/css if set
-    if (engine || html !== undefined || css !== undefined) {
+    if (!tpl.id) {
+      return res.status(500).json({ success: false, error: "Template creation failed: no ID returned" });
+    }
+    // HTML engine: create initial frame with content (consistent with MCP handler)
+    if (engine === "html") {
+      tpl.engine = "html";
+      tpl.html = html || "";
+      tpl.css = css || "";
+      const defaultFrame = {
+        id: `frame_${uuid().slice(0, 12)}`,
+        templateId: tpl.id,
+        name: name || "Frame 1",
+        x: 0, y: 0,
+        width: width || 1080, height: height || 1080,
+        order: 0,
+        objects: [],
+        layoutMode: "NONE" as const,
+        clipsContent: true,
+        constraints: {},
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        html: html || "",
+        css: css || "",
+        background: "#ffffff",
+      };
+      tpl.frames = [defaultFrame as any];
+      await templates.updateTemplate(tpl.id, {
+        engine: "html",
+        html: tpl.html,
+        css: tpl.css,
+        frames: tpl.frames,
+      });
+    } else if (engine || html !== undefined || css !== undefined) {
+      if (engine) tpl.engine = engine;
+      if (html !== undefined) tpl.html = html;
+      if (css !== undefined) tpl.css = css;
       await templates.updateTemplate(tpl.id, {
         engine: tpl.engine,
         html: tpl.html,

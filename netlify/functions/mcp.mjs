@@ -529,7 +529,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace (HTML engine). Pass engine='html' with optional html/css content.",
+    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. If you pass html/css, an initial frame is created automatically with that content. Returns template with .id and .frames[0].id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1521,7 +1521,7 @@ const MCP_TOOLS = [
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
-    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. ALWAYS create a frame BEFORE adding any content (add_element, add_primitive, update_frame_content will fail without one). For multi-design sets (carousels, ad variants), create one frame per design. For web pages, use frameStrategy='single-web' to create one tall frame.",
+    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. ALWAYS create a frame BEFORE adding any content (add_element, add_primitive, update_frame_content will fail without one). Position is AUTO-CALCULATED by a cascade-grid algorithm — frames NEVER overlap. For multi-design sets (carousels, ad variants), create one frame per design. For web pages, use frameStrategy='single-web'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1532,8 +1532,6 @@ const MCP_TOOLS = [
         html: { type: "string", description: "HTML content inside the frame" },
         css: { type: "string", description: "CSS styles for this frame" },
         background: { type: "string", description: "Background color (default '#ffffff')" },
-        x: { type: "number", description: "X position on canvas (auto-placed if omitted)" },
-        y: { type: "number", description: "Y position on canvas (default 0)" },
         frameStrategy: { type: "string", enum: ["multi", "single-web"], description: "'multi' = one design per frame (social, print, ads). 'single-web' = one long frame for a web page with sections inside. Auto-detected from dimensions if omitted." },
       },
       required: ["templateId", "name"],
@@ -2366,6 +2364,26 @@ async function handleMethod(method, params, userId) {
     return null;
   };
 
+  // ═══ DETERMINISTIC FRAME PLACEMENT ═══
+  // Cascade-grid algorithm: lays frames left-to-right, wrapping to new row
+  // when exceeding MAX_ROW_WIDTH. Guarantees no two frames ever overlap.
+  const computeFramePosition = (existingFrames, frameWidth, frameHeight) => {
+    const GAP = 100;
+    const MAX_ROW_WIDTH = 4000;
+    if (!existingFrames || existingFrames.length === 0) return { x: 0, y: 0 };
+    // Find the rightmost frame in the last occupied row
+    const sorted = [...existingFrames].sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
+    const lastFrame = sorted[sorted.length - 1];
+    const sameRow = sorted.filter(f => Math.abs(f.y - lastFrame.y) < 10);
+    const rowRightEdge = sameRow.length > 0 ? Math.max(...sameRow.map(f => f.x + f.width)) : 0;
+    // If adding this frame would exceed row width, wrap to new row
+    if (rowRightEdge + GAP + frameWidth > MAX_ROW_WIDTH) {
+      const tallestInRow = Math.max(...sameRow.map(f => f.height));
+      return { x: 0, y: lastFrame.y + tallestInRow + GAP };
+    }
+    return { x: rowRightEdge + GAP, y: lastFrame.y };
+  };
+
   switch (method) {
     // ── Workspaces ──
     case "list_workspaces": {
@@ -2435,8 +2453,10 @@ async function handleMethod(method, params, userId) {
         tplName, tplWidth, tplHeight,
         undefined, userId, params.workspaceId,
       );
+      if (!tpl.id) throw { code: -32000, message: "Template creation failed: no ID returned from store" };
       // HTML engine support: set engine/html/css and create initial frame
-      if (params.engine === "html") {
+      const useEngine = params.engine || "html";
+      if (useEngine === "html") {
         tpl.engine = "html";
         tpl.html = params.html || "";
         tpl.css = params.css || "";
@@ -2451,6 +2471,13 @@ async function handleMethod(method, params, userId) {
           background: "#ffffff",
         };
         tpl.frames = [defaultFrame];
+        // CRITICAL FIX: persist engine/html/css/frames — previously missing!
+        await templates.updateTemplate(tpl.id, {
+          engine: "html",
+          html: tpl.html,
+          css: tpl.css,
+          frames: tpl.frames,
+        });
       }
       autoSnapshot(tpl.id, "create_template");
       return tpl;
@@ -4830,17 +4857,15 @@ async function handleMethod(method, params, userId) {
         await templates.updateTemplate(params.templateId, { engine: "html", frames: tpl.frames || [] });
         tpl.engine = "html";
       }
-      const FRAME_GAP = 100;
       const existingFrames = tpl.frames || [];
-      const lastFrame = existingFrames[existingFrames.length - 1];
       const frameWidth = params.width || 1080;
       const frameHeight = params.height || 1080;
-      const newX = params.x !== undefined ? params.x : (lastFrame ? lastFrame.x + lastFrame.width + FRAME_GAP : 0);
-      const newY = params.y !== undefined ? params.y : (lastFrame ? lastFrame.y : 0);
+      // DETERMINISTIC AUTO-PLACEMENT: cascade grid, never overlaps
+      const pos = computeFramePosition(existingFrames, frameWidth, frameHeight);
       const frame = {
         id: `frame_${uuid().slice(0, 12)}`,
         name: params.name || `Frame ${existingFrames.length + 1}`,
-        x: newX, y: newY,
+        x: pos.x, y: pos.y,
         width: frameWidth, height: frameHeight,
         html: params.html || "",
         css: params.css || "",

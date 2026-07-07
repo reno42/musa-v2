@@ -220,16 +220,49 @@ Agent (Claude / Cursor / Custom)
 | Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
+### Quick Tool Reference (No need to read source code)
+
+**Most-used tools with required/optional parameters:**
+
+| Tool | Required | Optional | Returns |
+|------|----------|----------|---------|
+| `create_workspace` | `name` | — | `{ id }` |
+| `create_template` | `name`, `workspaceId` | `engine` (default "html"), `width` (1080), `height` (1080), `html`, `css` | `{ id, frames: [{ id }] }` |
+| `create_html_frame` | `templateId`, `name` | `width` (1080), `height` (1080), `html`, `css`, `background` ("#ffffff"), `frameStrategy` | `{ id, x, y, width, height, frameStrategy, hint }` |
+| `update_html_frame` | `templateId`, `frameId` | `name`, `html`, `css`, `width`, `height`, `background` | `{ id, ...frame }` |
+| `update_frame_content` | `templateId`, `frameId`, `selector` | `patch: { text, html, src, href, className, style, backgroundImage, attr, remove }` | `{ matched, applied, contentHash }` |
+| `add_element` | `templateId`, `tag`, `frameId` | `html`, `css`, `parentSelector`, `position` ("append"), `layerName` | `{ layerName }` |
+| `add_primitive` | `templateId`, `frameId`, `type` | `x` (0), `y` (0), `width`, `height`, `color`, `content`, `fontSize`, `borderRadius` | `{ layerName, type, warning? }` |
+| `draw_shape` | `templateId`, `frameId`, `type` | `x`, `y`, `width`, `height`, `color`, `borderRadius`, `sides` | `{ layerName }` |
+| `set_html` | `templateId`, `frameId` | `html` | `{ success }` |
+| `set_css` | `templateId`, `frameId` | `css` | `{ success }` |
+| `get_template` | `templateId` | — | `{ id, frames, html, css, metadata }` |
+| `duplicate_frame` | `templateId`, `sourceFrameId` | `newName` | `{ frameId, contentHash }` |
+| `delete_html_frame` | `templateId`, `frameId` | — | `{ success }` |
+| `remove_element` | `templateId`, `elementId` | — | `{ success }` |
+| `transform_element` | `templateId`, `elementId` | `x`, `y`, `width`, `height`, `rotation` | `{ success }` |
+| `generate_design_artifacts` | `templateId` | `action` ("generate"/"publish"), `brandName` | `{ designMd, tokensJson, sharedCss, sourceHash }` |
+| `export_batch` | `templateId` | `frameIds`, `format` ("png"/"svg"/"pdf") | `{ urls }` |
+
+**Important constants:**
+- `create_template` with `engine: "html"` auto-creates Frame 1 and persists it
+- `create_html_frame` auto-calculates position (cascade-grid, never overlaps)
+- `add_element` requires `frameId` — will throw if omitted
+- `add_primitive` returns `OVERLAP_WARNING` if coordinates collide with existing elements
+- All content tools throw `NO_FRAMES_ERROR` if the template has zero frames
+
 ### Agent Workflow Patterns (via MCP)
 
 **Pattern 1: Create an HTML design from scratch**
 ```
-tools/call: create_workspace({ name: "Client Project" })              → wsId
-tools/call: create_template({ name: "Hero", workspaceId: wsId })      → tplId
-tools/call: create_html_frame({ templateId: tplId, name: "Main" })    → frameId
-tools/call: set_html({ templateId: tplId, frameId, html: "<div>..." })
-tools/call: set_css({ templateId: tplId, frameId, css: "div { ... }" })
+tools/call: create_workspace({ name: "Client Project" })                    → wsId
+tools/call: create_template({ name: "Hero", workspaceId: wsId, engine: "html" })  → tplId, tpl.frames[0].id
+tools/call: create_html_frame({ templateId: tplId, name: "Slide 2" })       → frameId (auto-placed)
+tools/call: add_element({ templateId: tplId, frameId, tag: "h1", html: "Hello" })
+tools/call: add_primitive({ templateId: tplId, frameId, type: "rect", x: 50, y: 50, width: 200, height: 100, color: "#3B82F6" })
 ```
+
+**Note:** `create_template({ engine: "html" })` already creates Frame 1 with an auto-generated ID. You can use that frameId directly or create additional frames with `create_html_frame`. Frame positions are auto-calculated (never overlap).
 
 ### ⚠️ CRITICAL RULE: Frame-First Enforcement (System-Enforced)
 
@@ -244,8 +277,8 @@ tools/call: set_css({ templateId: tplId, frameId, css: "div { ... }" })
 
 **Correct workflow (ALWAYS follow this order):**
 ```
-1. create_template({ ..., engine: "html" })     → tplId
-2. create_html_frame({ templateId: tplId, ... }) → frameId  ← MUST DO FIRST
+1. create_template({ ..., engine: "html" })     → tplId (+ Frame 1 auto-created)
+2. create_html_frame({ templateId: tplId, ... }) → frameId  (position auto-calculated)
 3. add_element({ templateId: tplId, frameId, ... })         ← now works
 4. add_primitive({ templateId: tplId, frameId, ... })      ← now works
 ```
@@ -264,6 +297,8 @@ tools/call: set_css({ templateId: tplId, frameId, css: "div { ... }" })
 **Overlap detection:** When `add_primitive` is called with coordinates that overlap an existing element in the same frame, the response includes an `OVERLAP_WARNING` with a suggested offset. This is a warning, not an error — but you should adjust coordinates or create a new frame.
 
 **For separate designs:** Each design variant MUST go in its own frame. Do NOT stack multiple designs in the same frame at position (0,0).
+
+**Deterministic frame placement:** Frame positions are auto-calculated using a cascade-grid algorithm (left-to-right, wrapping to new row at 4000px). The AI does NOT control x/y — the system guarantees no two frames ever overlap. Do not pass `x` or `y` parameters (they are not accepted).
 ```
 
 **Pattern 2: Add visual elements to a frame**
