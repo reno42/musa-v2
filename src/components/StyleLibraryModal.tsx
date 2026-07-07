@@ -258,12 +258,13 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
     }
   }, [workspaceId, onToast, loadStyles, findDuplicates]);
 
-  // ── Extract colors from tokens for preview ──
+  // ── Extract colors from tokens for preview (v1 + v2 compat) ──
   const extractColors = useCallback((tokensJson?: string): string[] => {
     if (!tokensJson) return [];
     try {
       const parsed = JSON.parse(tokensJson);
       const colors: string[] = [];
+      // Both v1 and v2 use color.NAME.$value
       if (parsed.color) {
         Object.values(parsed.color).forEach((v: any) => {
           const hex = v?.$value || v;
@@ -274,19 +275,28 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
     } catch { return []; }
   }, []);
 
-  // ── Extract fonts from tokens for preview ──
+  // ── Extract fonts from tokens for preview (v1 + v2 compat) ──
   const extractFonts = useCallback((tokensJson?: string): string[] => {
     if (!tokensJson) return [];
     try {
       const parsed = JSON.parse(tokensJson);
       const fonts: string[] = [];
-      if (parsed.typography?.fontFamily) {
-        Object.values(parsed.typography.fontFamily).forEach((v: any) => {
-          const name = v?.$value || v;
-          if (typeof name === "string") fonts.push(name);
-        });
+      if (parsed.typography) {
+        // V2 format: families is an array of {name, ...}
+        if (Array.isArray(parsed.typography.families)) {
+          parsed.typography.families.forEach((f: any) => {
+            if (f?.name && !fonts.includes(f.name)) fonts.push(f.name);
+          });
+        }
+        // V1 format: fontFamily is an object of {key: {$value: "..."}}
+        if (parsed.typography.fontFamily) {
+          Object.values(parsed.typography.fontFamily).forEach((v: any) => {
+            const name = v?.$value || v;
+            if (typeof name === "string" && !fonts.includes(name)) fonts.push(name);
+          });
+        }
       }
-      return fonts.slice(0, 2);
+      return fonts.slice(0, 4);
     } catch { return []; }
   }, []);
 

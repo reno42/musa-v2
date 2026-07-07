@@ -21,6 +21,7 @@
 
 import * as cheerio from "cheerio";
 import crypto from "crypto";
+import { STYLE_TEMPLATE_V2 } from "./style-template-v2.mjs";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -100,80 +101,142 @@ export function computeStyleFingerprint(extraction) {
 }
 
 /**
- * Generate the empty style template for external AI tools (Gemini, ChatGPT, etc).
- * Returns a DTCG-format tokens JSON string — IDENTICAL structure to what
- * generateTokensJson() produces from real extractions.
+ * Compute a style fingerprint from a stored tokensJson string.
+ * Handles BOTH v1 (flat DTCG) and v2 (rich format with families as array) formats.
  *
- * This ensures: fingerprint computation works on uploaded styles,
- * the format matches the system's canonical output, and LLMs can
- * fill structured JSON easily.
+ * V1 format: typography.fontFamily.primary.$value, typography.fontSize.*.$value
+ * V2 format: typography.families[{name,...}], typography.scale[{size,...}]
+ *
+ * Returns hex fingerprint or null if parsing fails.
+ */
+export function computeFingerprintFromTokensJson(tokensJson) {
+  try {
+    var parsed = JSON.parse(tokensJson);
+
+    // ── Colors: both v1 and v2 use color.NAME.$value ──
+    var colors = [];
+    if (parsed.color && typeof parsed.color === "object") {
+      Object.keys(parsed.color).forEach(function (k) {
+        var c = parsed.color[k];
+        if (c && c.$value) colors.push({ role: k, value: c.$value });
+      });
+    }
+
+    // ── Fonts: v1 uses typography.fontFamily.NAME.$value, v2 uses typography.families[{name}] ──
+    var families = [];
+    var typeScale = [];
+    var weights = [];
+
+    if (parsed.typography) {
+      // V2 format: families is an array
+      if (Array.isArray(parsed.typography.families)) {
+        parsed.typography.families.forEach(function (f) {
+          if (f && f.name) families.push({ name: f.name.toLowerCase() });
+          // Collect weights from each family
+          if (f && Array.isArray(f.weights)) {
+            f.weights.forEach(function (w) { weights.push(w); });
+          }
+        });
+      }
+      // V1 format: fontFamily is an object
+      if (parsed.typography.fontFamily && typeof parsed.typography.fontFamily === "object") {
+        Object.keys(parsed.typography.fontFamily).forEach(function (k) {
+          var f = parsed.typography.fontFamily[k];
+          if (f && f.$value) families.push({ name: String(f.$value).toLowerCase() });
+        });
+      }
+
+      // V2 format: scale is an array of {size, ...}
+      if (Array.isArray(parsed.typography.scale)) {
+        parsed.typography.scale.forEach(function (s) {
+          if (s && s.size) {
+            var px = parseFloat(s.size);
+            if (!isNaN(px)) typeScale.push(px);
+          }
+          if (s && s.weight) weights.push(s.weight);
+        });
+      }
+      // V1 format: fontSize is an object
+      if (parsed.typography.fontSize && typeof parsed.typography.fontSize === "object") {
+        Object.keys(parsed.typography.fontSize).forEach(function (k) {
+          var s = parsed.typography.fontSize[k];
+          if (s && s.$value) {
+            var px = parseFloat(s.$value);
+            if (!isNaN(px)) typeScale.push(px);
+          }
+        });
+      }
+      // V1 format: fontWeight is an object
+      if (parsed.typography.fontWeight && typeof parsed.typography.fontWeight === "object") {
+        Object.keys(parsed.typography.fontWeight).forEach(function (k) {
+          var w = parsed.typography.fontWeight[k];
+          if (w && w.$value) weights.push(w.$value);
+        });
+      }
+    }
+
+    // ── Spacing: v1 uses spacing.NAME.$value, v2 uses spacing.scale.NAME.$value ──
+    var spacing = [];
+    var spacingSource = (parsed.spacing && parsed.spacing.scale) || parsed.spacing || {};
+    if (typeof spacingSource === "object") {
+      Object.keys(spacingSource).forEach(function (k) {
+        var s = spacingSource[k];
+        if (s && s.$value) {
+          var px = parseFloat(s.$value);
+          if (!isNaN(px)) spacing.push(px);
+        }
+      });
+    }
+
+    // ── Radii: both formats use radius.NAME.$value ──
+    var radii = [];
+    if (parsed.radius && typeof parsed.radius === "object") {
+      Object.keys(parsed.radius).forEach(function (k) {
+        var r = parsed.radius[k];
+        if (r && r.$value) radii.push({ value: r.$value });
+      });
+    }
+
+    // ── Shadows: both formats use shadow[s].NAME.$value ──
+    var shadows = [];
+    var shadowSource = parsed.shadows || parsed.shadow || {};
+    if (typeof shadowSource === "object") {
+      Object.keys(shadowSource).forEach(function (k) {
+        var s = shadowSource[k];
+        if (s && s.$value) shadows.push({ value: s.$value });
+      });
+    }
+
+    return computeStyleFingerprint({
+      colors: colors,
+      typography: {
+        families: families,
+        typeScale: typeScale,
+        weights: weights,
+      },
+      spacing: spacing,
+      radii: radii,
+      shadows: shadows,
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Generate the v2 rich style template for external AI tools (Gemini, ChatGPT, etc).
+ *
+ * V2 format includes: meta, color (with role/description/constraints), typography
+ * (families as array + scale as array), spacing (scale + semantic), radius (per-element),
+ * shadows (with constraints), surfaces, layout, components (with CSS), decoration,
+ * imagery, rules (do/dont), cssCustomProperties, promptExamples, adaptationGuide.
+ *
+ * This ensures: fingerprint computation works on uploaded styles (backwards-compat
+ * with both v1 and v2 formats), the format matches the system's canonical rich output,
+ * and LLMs can produce complete, consistent design systems.
  */
 export function generateStyleTemplate() {
-  var template = {
-    "$schema": "https://design-tokens.org/format",
-    "$instructions": [
-      "Fill each $value with the exact value from the design you want to replicate.",
-      "Colors must be hex (e.g. #FF6B00). Sizes in px (e.g. 16px). Weights as numbers.",
-      "Keep the $description fields — they power fingerprint deduplication.",
-      "Upload the result via Style Library → Upload or create_brand_guideline MCP tool.",
-    ],
-    "color": {
-      "canvas": { "$value": "", "$description": "primary background color" },
-      "surface-2": { "$value": "", "$description": "secondary background / card color" },
-      "ink": { "$value": "", "$description": "primary text color" },
-      "ink-2": { "$value": "", "$description": "secondary text color" },
-      "accent": { "$value": "", "$description": "accent / CTA color" },
-      "accent-2": { "$value": "", "$description": "secondary accent / link color" },
-      "border": { "$value": "", "$description": "border / divider color" },
-      "success": { "$value": "", "$description": "success state color" },
-      "warning": { "$value": "", "$description": "warning state color" },
-      "error": { "$value": "", "$description": "error state color" },
-    },
-    "typography": {
-      "fontFamily": {
-        "primary": { "$value": "", "$description": "primary font (headings)" },
-        "secondary": { "$value": "", "$description": "secondary font (body)" },
-      },
-      "fontSize": {
-        "caption": { "$value": "px" },
-        "body-sm": { "$value": "px" },
-        "body": { "$value": "px" },
-        "subheading": { "$value": "px" },
-        "heading-sm": { "$value": "px" },
-        "heading": { "$value": "px" },
-        "heading-lg": { "$value": "px" },
-        "display": { "$value": "px" },
-      },
-      "fontWeight": {
-        "weight-400": { "$value": 400 },
-        "weight-500": { "$value": 500 },
-        "weight-600": { "$value": 600 },
-        "weight-700": { "$value": 700 },
-      },
-    },
-    "spacing": {
-      "space-4": { "$value": "4px" },
-      "space-8": { "$value": "8px" },
-      "space-12": { "$value": "12px" },
-      "space-16": { "$value": "16px" },
-      "space-20": { "$value": "20px" },
-      "space-24": { "$value": "24px" },
-      "space-32": { "$value": "32px" },
-      "space-40": { "$value": "40px" },
-      "space-60": { "$value": "60px" },
-      "space-80": { "$value": "80px" },
-    },
-    "radius": {
-      "default": { "$value": "" },
-      "radius-2": { "$value": "" },
-      "radius-3": { "$value": "" },
-    },
-    "shadow": {
-      "default": { "$value": "" },
-      "shadow-2": { "$value": "" },
-    },
-  };
-  return JSON.stringify(template, null, 2);
+  return STYLE_TEMPLATE_V2;
 }
 
 // ─── Color Utilities ────────────────────────────────────────────

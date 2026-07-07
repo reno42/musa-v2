@@ -468,22 +468,27 @@ tools/call: merge_brand_guidelines({
 })
   → { success: true, mergedCount: 2, totalTemplateIds: 15 }
 
-// ── DOWNLOAD tokens template for external AI (Gemini, ChatGPT) ──
+// ── DOWNLOAD v2 rich tokens template for external AI (Gemini, ChatGPT) ──
 tools/call: download_style_template()
-  → { format: "json", filename: "tokens-template.json", content: "{...DTCG...}" }
-  → Returns DTCG-format tokens.json — IDENTICAL structure to generateTokensJson() output.
-  → Human downloads .json, pastes into Gemini with images, AI fills $value fields,
-    then uploads the result via Style Library → Upload or create_brand_guideline.
+  → { format: "json", filename: "tokens-template.json", content: "{...v2 rich DTCG format...}" }
+  → Returns COMPLETE v2 design system template with ALL sections:
+    meta, color (role/description/constraints), typography (families[] + scale[]),
+    spacing (scale + semantic), radius (per-element), shadows, surfaces, layout,
+    components (22 with CSS), decoration, imagery, rules (do/dont),
+    cssCustomProperties, promptExamples, adaptationGuide.
+  → Human downloads .json, pastes into Gemini/ChatGPT with reference images,
+    AI fills token values preserving the structure, then uploads via
+    Style Library → Upload or create_brand_guideline.
 
-// ── UPLOAD a style from external AI output ──
+// ── UPLOAD a style from external AI output (v1 or v2 format) ──
 tools/call: create_brand_guideline({
   workspaceId: wsId,
   name: "Glassmorphism Dark",
-  tokensJson: '{ "$schema": "...", "color": { "canvas": { "$value": "#0a0a0f", "$description": "primary background" }, ... } }',
+  tokensJson: '{ "$schema": "...", "color": { "canvas": { "$value": "#0a0a0f" } }, ... }',
 })
   → { id: "brand_xyz", name: "Glassmorphism Dark" }
-  → The uploaded tokensJson must be DTCG format (same as tokens-template.json).
-  → Fingerprint is auto-computed from tokens for deduplication.
+  → Accepts BOTH v1 (flat DTCG) and v2 (rich format with families[] + scale[]).
+  → Fingerprint is auto-computed from tokens (backwards-compat with both formats).
   → designMd and sharedCss are optional — they can be auto-generated from tokens.
 ```
 
@@ -493,6 +498,7 @@ tools/call: create_brand_guideline({
 - Two templates with the same visual style but different text → SAME fingerprint
 - When you `publish` a design, the system auto-merges if a matching fingerprint exists
 - This prevents duplicate styles when publishing 20 posts with the same brand
+- **v2 Format Support:** Fingerprint computation handles BOTH v1 (flat DTCG with `typography.fontFamily`) and v2 (rich format with `typography.families[]` + `typography.scale[]`) — backwards-compatible with all existing stored tokens
 
 **Pattern 9: Import SVG and convert to design elements**
 ```

@@ -4,7 +4,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
-import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, generateStyleTemplate } from "./design-extractor.mjs";
+import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -5874,25 +5874,8 @@ async function handleMethod(method, params, userId) {
             // Compare fingerprints if available
             var ebFp = eb.styleFingerprint;
             if (!ebFp && eb.tokensJson) {
-              // Backwards-compat: compute fingerprint from stored tokens
-              try {
-                var ebParsed = JSON.parse(eb.tokensJson);
-                ebFp = computeStyleFingerprint({
-                  colors: Object.keys(ebParsed.color || {}).map(function (k) {
-                    return { role: k, value: ebParsed.color[k].$value || ebParsed.color[k] };
-                  }),
-                  typography: {
-                    families: Object.keys(ebParsed.typography && ebParsed.typography.fontFamily || {}).map(function (k) {
-                      return { name: (ebParsed.typography.fontFamily[k].$value || ebParsed.typography.fontFamily[k] || "").toString() };
-                    }),
-                    typeScale: [],
-                    weights: [],
-                  },
-                  spacing: [],
-                  radii: [],
-                  shadows: [],
-                });
-              } catch (e2) { /* skip */ }
+              // Backwards-compat: compute fingerprint from stored tokens (handles v1 and v2)
+              ebFp = computeFingerprintFromTokensJson(eb.tokensJson);
             }
             if (ebFp && ebFp === artifacts.styleFingerprint && eb.id !== tpl.brandId) {
               fingerprintMatch = eb;
@@ -7370,26 +7353,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (b.styleFingerprint) {
           fp = b.styleFingerprint;
         } else if (b.tokensJson) {
-          try {
-            var parsed = JSON.parse(b.tokensJson);
-            fp = computeStyleFingerprint({
-              colors: Object.keys(parsed.color || {}).map(function (k) {
-                return { role: k, value: parsed.color[k].$value || parsed.color[k] };
-              }),
-              typography: {
-                families: Object.keys(parsed.typography && parsed.typography.fontFamily || {}).map(function (k) {
-                  return { name: (parsed.typography.fontFamily[k].$value || parsed.typography.fontFamily[k] || "").toString() };
-                }),
-                typeScale: [],
-                weights: [],
-              },
-              spacing: [],
-              radii: [],
-              shadows: [],
-            });
-          } catch (e) {
-            fp = b.sourceHash || "unknown";
-          }
+          fp = computeFingerprintFromTokensJson(b.tokensJson);
+          if (!fp) fp = b.sourceHash || "unknown";
         } else {
           fp = b.sourceHash || "unknown";
         }
