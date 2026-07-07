@@ -1,6 +1,7 @@
 import { useReducer, useEffect } from "react";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
+import { useToast } from "./components/Toast";
 
 type ViewMode = "dashboard" | "editor-v2";
 
@@ -29,6 +30,7 @@ const initialAppState: AppState = {
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const { addToast } = useToast();
 
   const { view, templateId } = state;
 
@@ -44,8 +46,12 @@ function App() {
       if (json.success && json.data) {
         dispatch({ type: "OPEN_TEMPLATE_V2", id: json.data.id });
         window.history.replaceState(null, '', `/?template=${json.data.id}&v=2`);
+      } else {
+        addToast("No se pudo crear la plantilla. Intenta de nuevo.", "error");
       }
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al crear la plantilla. Verifica tu conexión.", "error");
+    }
   };
 
   // Open template — always uses EditorV2

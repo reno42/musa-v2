@@ -22,6 +22,7 @@ import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { mcpCall } from "../lib/mcpClient";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
+import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
   IconFile, IconBot, IconType, IconImage, IconCopy, IconTrash,
@@ -127,6 +128,7 @@ function injectFontIntoShadowDOMs(fontUrl: string) {
 }
 
 export function EditorV2({ templateId, onBack }: EditorV2Props) {
+  const { addToast } = useToast();
   // ── Multi-frame state ──
   const [frames, setFrames] = useState<FrameData[]>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
@@ -316,6 +318,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       console.error("[SAVE] ✓ localStorage IMMEDIATE save OK", { templateId, framesLen: updatedFrames.length });
     } catch (localErr) {
       console.error("[SAVE] ✗ localStorage FAILED:", localErr);
+      addToast("Error crítico: no se pudo guardar localmente. Verifica el espacio disponible.", "error", true);
     }
 
     // ✅ Mark as dirty so polling won't overwrite our state
@@ -350,13 +353,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             await new Promise(r => setTimeout(r, delay));
           } else {
             console.warn("[EditorV2] Auto-save exhausted retries (cached in localStorage):", err);
+            addToast("No se pudieron sincronizar los cambios con el servidor. Guardados localmente.", "error");
           }
         }
       }
       setSaving(false);
       console.error("[SAVE] ═══ API SYNC COMPLETE ═══");
     }, 2000);
-  }, [templateId, selectedFrameId, templateName]);
+  }, [templateId, selectedFrameId, templateName, addToast]);
 
   // Keep autoSaveRef in sync so undo/redo can call the latest version
   autoSaveRef.current = autoSave;
@@ -1491,9 +1495,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       }
     } catch (e: any) {
       console.error("[Extract DS]", e);
-      alert("Failed to extract design system: " + (e?.message || e));
+      addToast("Error al extraer el design system: " + (e?.message || "Error desconocido"), "error");
     }
-  }, [templateId, templateName]);
+  }, [templateId, templateName, addToast]);
 
   // ── Frame rename (double-click in top bar) ──
   const commitFrameRename = useCallback(() => {
@@ -1518,12 +1522,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       const result = await mcpCall("rename_template", { templateId, name: trimmed });
       if (result?.success) {
         setTemplateName(trimmed);
+      } else {
+        addToast("No se pudo renombrar el template.", "error");
       }
     } catch (err) {
       console.error("[TemplateRename] Error:", err);
+      addToast("Error al renombrar el template.", "error");
     }
     setEditingTemplateName(null);
-  }, [templateId, editingTemplateName, templateName]);
+  }, [templateId, editingTemplateName, templateName, addToast]);
 
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
@@ -2465,7 +2472,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <ImageUploadModal
           onClose={() => setShowImageUpload(false)}
           onAssetUploaded={(asset) => {
-            console.log("[EditorV2] Asset uploaded:", asset);
+            if (asset) {
+              addToast("✓ Imagen subida correctamente.", "success");
+            } else {
+              addToast("Error al subir la imagen.", "error");
+            }
           }}
         />
       )}

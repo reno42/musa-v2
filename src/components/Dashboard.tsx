@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { mcpCall } from "../lib/mcpClient";
+import { useToast } from "./Toast";
 
 interface Template {
   id: string;
@@ -49,6 +50,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
 }
 
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
+  const { addToast } = useToast();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
@@ -86,9 +88,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
       setTemplates(res.data || []);
-    } catch { setTemplates([]); }
+    } catch {
+      setTemplates([]);
+      addToast("Error al cargar las plantillas.", "error");
+    }
     setLoading(false);
-  }, [setLoading]);
+  }, [setLoading, addToast]);
 
   loadTemplatesRef.current = loadTemplates;
 
@@ -97,9 +102,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try {
       const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/recipes");
       setRecipes(res.data || []);
-    } catch { setRecipes([]); }
+    } catch {
+      setRecipes([]);
+      addToast("Error al cargar los Key Visuals.", "error");
+    }
     setLoadingRecipes(false);
-  }, []);
+  }, [addToast]);
 
   // Load recipes when tab switches to recipes
   useEffect(() => {
@@ -129,8 +137,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           loadTemplatesRef.current();
         }
       })
-      .catch(() => loadTemplatesRef.current());
-  }, []);
+      .catch(() => {
+        addToast("Error al cargar los workspaces.", "error");
+        loadTemplatesRef.current();
+      });
+  }, [addToast]);
 
   const loading = loadingRef.current;
 
@@ -149,21 +160,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         setCreatingWs(false);
         loadTemplatesRef.current(res.data.id);
       }
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al crear el workspace.", "error");
+    }
   };
 
   const handleDelete = async (id: string) => {
     try {
       await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
       setTemplates(prev => prev.filter(t => t.id !== id));
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al eliminar la plantilla.", "error");
+    }
   };
 
   const handleDuplicate = async (id: string) => {
     try {
       const res = await apiFetch<{ success: boolean; data: Template }>(`/templates/${id}/duplicate`, { method: "POST", body: "{}" });
       if (res.data) setTemplates(prev => [res.data, ...prev]);
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al duplicar la plantilla.", "error");
+    }
   };
 
   const handleExport = async (id: string, name: string) => {
@@ -174,7 +191,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const a = document.createElement("a");
       a.href = url; a.download = `${name}.futuraria.json`;
       a.click(); URL.revokeObjectURL(url);
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al exportar la plantilla.", "error");
+    }
   };
 
   const startWsRename = (id: string, name: string) => {
@@ -193,7 +212,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         body: JSON.stringify({ name }),
       });
       setWorkspaces(prev => prev.map(w => w.id === id ? { ...w, name } : w));
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al renombrar el workspace.", "error");
+    }
     setEditingWsId(null);
   };
 
@@ -210,7 +231,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try {
       await mcpCall("update_html_frame", { templateId: id, name });
       setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al renombrar la plantilla.", "error");
+    }
     setEditingTplId(null);
   };
 
@@ -226,7 +249,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try {
       await apiFetch(`/recipes/${id}`, { method: "DELETE" });
       setRecipes(prev => prev.filter(r => r.id !== id));
-    } catch { /* ignore */ }
+    } catch {
+      addToast("Error al eliminar el Key Visual.", "error");
+    }
   };
 
   const handleCreateFromRecipe = async (recipeId: string, recipeName: string) => {
@@ -238,7 +263,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       if (res.data) {
         onSelectTemplate(res.data.templateId);
       }
-    } catch { /* ignore */ }
+    } catch {
+      addToast(`Error al crear desde "${recipeName}". Intenta de nuevo.`, "error");
+    }
   };
 
   return (
