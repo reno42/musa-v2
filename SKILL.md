@@ -209,6 +209,7 @@ Agent (Claude / Cursor / Custom)
 | AI | `ai_generate_text`, `ai_generate_image`, `ai_palette`, `ai_suggest_layout` | 5 |
 | Brand | `register_brand`, `validate_brand`, `check_contrast`, `auto_fix_brand` | 6 |
 | Brand Guidelines | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
+| Style Library | `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 5 |
 | Batch | `batch_update`, `render_batch`, `batch_create_variants`, `batch_render_html` | 7 |
 | Variables | `create_variable`, `create_collection`, `link_variable`, `apply_variables` | 6 |
 | Version | `list_versions`, `restore_version` | 2 |
@@ -217,7 +218,7 @@ Agent (Claude / Cursor / Custom)
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
 | Design System | `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 10 |
-| Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template` | 6 |
+| Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template`, `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 11 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
 ### Quick Tool Reference (No need to read source code)
@@ -434,12 +435,61 @@ tools/call: delete_brand_guideline({ brandId: "brand_abc123" })
   → { success: true, deleted: "brand_abc123" }
 ```
 
-**Key guarantees:**
-- The AI never touches content — system profiles templates deterministically, generates CSV template, human fills it
-- `_template` column uses immutable templateId (not mutable frame name) — templates are listed in CSV comments
-- Output goes to a NEW template, never modifying source templates
-- Slot overflow is handled deterministically: truncate, skip_row, or continue_warn
-- `data-slot` attribute on HTML elements overrides auto-detected slot names for precise CSV column naming
+**Pattern 10: Style Library — Lock, Discover, Merge, and Upload Styles**
+```
+// ── STYLE PROTOCOL (AI agents MUST follow) ──
+// Before designing ANYTHING in a workspace, check for locked styles:
+tools/call: get_active_styles({ workspaceId: wsId })
+  → If hasLockedStyles === true:
+      You MUST use the returned tokens/designMd/sharedCss for all design work.
+      Do NOT invent your own colors, fonts, or spacing.
+      Apply the locked style's tokens to every frame you create.
+  → If hasLockedStyles === false:
+      You may design freely, but check list_brand_guidelines first.
+
+// ── LOCK a style (human or AI can do this) ──
+tools/call: set_style_lock({ workspaceId: wsId, brandId: "brand_abc", locked: true })
+  → { success: true, locked: true, totalLockedStyles: 1 }
+
+// ── UNLOCK a style ──
+tools/call: set_style_lock({ workspaceId: wsId, brandId: "brand_abc", locked: false })
+  → { success: true, locked: false, totalLockedStyles: 0 }
+
+// ── FIND duplicate styles (20 posts with same visual style) ──
+tools/call: find_duplicate_styles({ workspaceId: wsId })
+  → { duplicateGroups: 2, groups: [{ fingerprint: "a1b2c3...", count: 5, brands: [...] }] }
+  → Recommendation: "Found 2 group(s) of duplicate styles. Use merge_brand_guidelines to consolidate."
+
+// ── MERGE duplicates into one canonical style ──
+tools/call: merge_brand_guidelines({
+  workspaceId: wsId,
+  targetBrandId: "brand_abc",       // The one to keep
+  sourceBrandIds: ["brand_def", "brand_ghi"]  // Merge these into target, then delete
+})
+  → { success: true, mergedCount: 2, totalTemplateIds: 15 }
+
+// ── DOWNLOAD template for external AI (Gemini, ChatGPT) ──
+tools/call: download_style_template()
+  → { format: "markdown", content: "# Style Name — Design System Template..." }
+  → Human fills it with AI help, then uploads via UI or create_brand_guideline.
+
+// ── UPLOAD a style from external AI output ──
+tools/call: create_brand_guideline({
+  workspaceId: wsId,
+  name: "Glassmorphism Dark",
+  tokensJson: '{ "...": "..." }',  // From Gemini/ChatGPT
+  designMd: "# Glassmorphism Dark...",
+  sharedCss: ":root { ... }"
+})
+  → { id: "brand_xyz", name: "Glassmorphism Dark" }
+```
+
+**Style Fingerprint Technology:**
+- Each style gets a `styleFingerprint` — SHA-256 hash of sorted design tokens ONLY (colors, fonts, spacing, radii, shadows)
+- Ignores text content, images, and layout
+- Two templates with the same visual style but different text → SAME fingerprint
+- When you `publish` a design, the system auto-merges if a matching fingerprint exists
+- This prevents duplicate styles when publishing 20 posts with the same brand
 
 **Pattern 9: Import SVG and convert to design elements**
 ```

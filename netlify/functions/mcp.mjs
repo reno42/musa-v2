@@ -4,7 +4,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
-import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash } from "./design-extractor.mjs";
+import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, generateStyleTemplate } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -2102,6 +2102,63 @@ const MCP_TOOLS = [
         brandId: { type: "string", description: "Brand Guideline ID to apply" },
       },
       required: ["templateId", "brandId"],
+    },
+  },
+  {
+    name: "get_active_styles",
+    description: "Retrieve the active (locked) styles for a workspace. When styles are locked, AI agents MUST use these styles for all design work. Returns the locked brand guidelines with their tokens. Call this BEFORE designing anything.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "set_style_lock",
+    description: "Toggle the lock state of a style (brand guideline) in a workspace. When locked, AI agents are instructed to use only that style for designing. Multiple styles can be locked simultaneously.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand Guideline ID to lock/unlock" },
+        locked: { type: "boolean", description: "true = lock this style, false = unlock" },
+      },
+      required: ["workspaceId", "brandId", "locked"],
+    },
+  },
+  {
+    name: "find_duplicate_styles",
+    description: "Scan brand guidelines in a workspace and group them by style fingerprint. Returns groups of visually identical styles that can be merged. Use this to detect when multiple brand guidelines share the same design tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "merge_brand_guidelines",
+    description: "Merge multiple brand guidelines into one canonical record. Transfers all sourceTemplateIds from the source brands to the target, then deletes the sources. The target brand retains its ID and gets the combined template references.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        targetBrandId: { type: "string", description: "The brand ID to keep (receives merged data)" },
+        sourceBrandIds: { type: "array", items: { type: "string" }, description: "Brand IDs to merge into target and then delete" },
+      },
+      required: ["workspaceId", "targetBrandId", "sourceBrandIds"],
+    },
+  },
+  {
+    name: "download_style_template",
+    description: "Returns an empty style template in markdown format for external AI tools (Gemini, ChatGPT). The human fills it with style data from images/screenshots, then uploads the result via the Style Library UI or create_brand_guideline MCP tool.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
     },
   },
   {
@@ -5792,6 +5849,7 @@ async function handleMethod(method, params, userId) {
           designMd: artifacts.designMd,
           sharedCss: artifacts.sharedCss,
           generatedFromHash: artifacts.sourceHash,
+          styleFingerprint: artifacts.styleFingerprint,
           generatedAt: artifacts.generatedAt,
         };
         tpl.designArtifacts = designArtifacts;
@@ -5804,16 +5862,71 @@ async function handleMethod(method, params, userId) {
 
         // Publish to brand_guidelines table if brandName provided
         var brandRecord = null;
+        var autoMerged = false;
         if (params.brandName) {
           var workspaceId = tpl.workspaceId || "default";
-          // Check if template already has a brandId
-          if (tpl.brandId) {
+
+          // AUTO-MERGE: Check if a brand with the same fingerprint already exists
+          var existingBrands = await brands.listBrandsByWorkspace(workspaceId);
+          var fingerprintMatch = null;
+          for (var bi = 0; bi < existingBrands.length; bi++) {
+            var eb = existingBrands[bi];
+            // Compare fingerprints if available
+            var ebFp = eb.styleFingerprint;
+            if (!ebFp && eb.tokensJson) {
+              // Backwards-compat: compute fingerprint from stored tokens
+              try {
+                var ebParsed = JSON.parse(eb.tokensJson);
+                ebFp = computeStyleFingerprint({
+                  colors: Object.keys(ebParsed.color || {}).map(function (k) {
+                    return { role: k, value: ebParsed.color[k].$value || ebParsed.color[k] };
+                  }),
+                  typography: {
+                    families: Object.keys(ebParsed.typography && ebParsed.typography.fontFamily || {}).map(function (k) {
+                      return { name: (ebParsed.typography.fontFamily[k].$value || ebParsed.typography.fontFamily[k] || "").toString() };
+                    }),
+                    typeScale: [],
+                    weights: [],
+                  },
+                  spacing: [],
+                  radii: [],
+                  shadows: [],
+                });
+              } catch (e2) { /* skip */ }
+            }
+            if (ebFp && ebFp === artifacts.styleFingerprint && eb.id !== tpl.brandId) {
+              fingerprintMatch = eb;
+              break;
+            }
+          }
+
+          if (fingerprintMatch) {
+            // Auto-merge: add this template to the existing brand's sourceTemplateIds
+            autoMerged = true;
+            var mergedIds = (fingerprintMatch.sourceTemplateIds || []).slice();
+            if (mergedIds.indexOf(params.templateId) === -1) {
+              mergedIds.push(params.templateId);
+            }
+            await brands.updateBrand(fingerprintMatch.id, {
+              sourceTemplateIds: mergedIds,
+              tokensJson: artifacts.tokensJson,
+              designMd: artifacts.designMd,
+              sharedCss: artifacts.sharedCss,
+              sourceHash: artifacts.sourceHash,
+              styleFingerprint: artifacts.styleFingerprint,
+            });
+            brandRecord = await brands.getBrand(fingerprintMatch.id);
+            // Link template to the merged brand
+            tpl.brandId = brandRecord.id;
+            await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
+          } else if (tpl.brandId) {
             await brands.updateBrand(tpl.brandId, {
               name: params.brandName,
               tokensJson: artifacts.tokensJson,
               designMd: artifacts.designMd,
               sharedCss: artifacts.sharedCss,
               sourceHash: artifacts.sourceHash,
+              styleFingerprint: artifacts.styleFingerprint,
               sourceTemplateIds: [params.templateId],
             });
             brandRecord = await brands.getBrand(tpl.brandId);
@@ -5825,6 +5938,7 @@ async function handleMethod(method, params, userId) {
               designMd: artifacts.designMd,
               sharedCss: artifacts.sharedCss,
               sourceHash: artifacts.sourceHash,
+              styleFingerprint: artifacts.styleFingerprint,
               sourceTemplateIds: [params.templateId],
             });
             // Link template to the brand
@@ -5838,6 +5952,9 @@ async function handleMethod(method, params, userId) {
           action: "publish",
           _published: true,
           sourceHash: artifacts.sourceHash,
+          styleFingerprint: artifacts.styleFingerprint,
+          autoMerged: autoMerged,
+          mergedIntoBrand: autoMerged ? (brandRecord ? brandRecord.name : null) : null,
           designMd: artifacts.designMd,
           tokensJson: artifacts.tokensJson,
           sharedCss: artifacts.sharedCss,
@@ -7184,6 +7301,181 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           hasDesignMd: !!brand.designMd,
           hasSharedCss: !!brand.sharedCss,
         },
+      };
+    }
+
+    // ── get_active_styles: return locked styles for a workspace ──
+    case "get_active_styles": {
+      var allBrands = await brands.listBrandsByWorkspace(params.workspaceId);
+      // Read styleLocks from workspace metadata via store
+      var ws = store.getWorkspace(params.workspaceId);
+      var locks = (ws && ws.metadata && ws.metadata.styleLocks) || {};
+      var lockedIds = Object.keys(locks).filter(function (id) { return locks[id] === true; });
+      var activeStyles = allBrands.filter(function (b) { return lockedIds.indexOf(b.id) !== -1; });
+      return {
+        workspaceId: params.workspaceId,
+        hasLockedStyles: activeStyles.length > 0,
+        lockedCount: activeStyles.length,
+        styles: activeStyles.map(function (b) {
+          return {
+            id: b.id,
+            name: b.name,
+            tokensJson: b.tokensJson,
+            designMd: b.designMd ? b.designMd.substring(0, 2000) : null,
+            sharedCss: b.sharedCss,
+            sourceTemplateIds: b.sourceTemplateIds || [],
+          };
+        }),
+        instruction: activeStyles.length > 0
+          ? "DESIGN RESTRICTION: You MUST use the above style(s) for all design work in this workspace. Apply their tokens."
+          : "No styles are locked. You may design freely, but consider using existing brand guidelines.",
+      };
+    }
+
+    // ── set_style_lock: toggle lock on a brand ──
+    case "set_style_lock": {
+      var lockBrand = await brands.getBrand(params.brandId);
+      if (!lockBrand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+
+      var lockWs = store.getWorkspace(params.workspaceId);
+      if (!lockWs) throw { code: -32000, message: "Workspace not found: " + params.workspaceId };
+
+      var wsMeta = lockWs.metadata || {};
+      wsMeta.styleLocks = wsMeta.styleLocks || {};
+      wsMeta.styleLocks[params.brandId] = params.locked;
+
+      store.updateWorkspace(params.workspaceId, { metadata: wsMeta });
+
+      // Return list of currently locked styles
+      var lockedNow = Object.keys(wsMeta.styleLocks).filter(function (id) { return wsMeta.styleLocks[id] === true; });
+
+      return {
+        success: true,
+        workspaceId: params.workspaceId,
+        brandId: params.brandId,
+        brandName: lockBrand.name,
+        locked: params.locked,
+        totalLockedStyles: lockedNow.length,
+        currentlyLocked: lockedNow,
+      };
+    }
+
+    // ── find_duplicate_styles: group brands by fingerprint ──
+    case "find_duplicate_styles": {
+      var dupBrands = await brands.listBrandsByWorkspace(params.workspaceId);
+      var groups = {};
+      dupBrands.forEach(function (b) {
+        // Try to compute fingerprint from stored tokens, or use sourceHash as fallback
+        var fp = null;
+        if (b.styleFingerprint) {
+          fp = b.styleFingerprint;
+        } else if (b.tokensJson) {
+          try {
+            var parsed = JSON.parse(b.tokensJson);
+            fp = computeStyleFingerprint({
+              colors: Object.keys(parsed.color || {}).map(function (k) {
+                return { role: k, value: parsed.color[k].$value || parsed.color[k] };
+              }),
+              typography: {
+                families: Object.keys(parsed.typography && parsed.typography.fontFamily || {}).map(function (k) {
+                  return { name: (parsed.typography.fontFamily[k].$value || parsed.typography.fontFamily[k] || "").toString() };
+                }),
+                typeScale: [],
+                weights: [],
+              },
+              spacing: [],
+              radii: [],
+              shadows: [],
+            });
+          } catch (e) {
+            fp = b.sourceHash || "unknown";
+          }
+        } else {
+          fp = b.sourceHash || "unknown";
+        }
+        if (!groups[fp]) groups[fp] = [];
+        groups[fp].push({ id: b.id, name: b.name, sourceTemplateIds: b.sourceTemplateIds || [] });
+      });
+
+      var duplicateGroups = Object.keys(groups)
+        .filter(function (fp) { return groups[fp].length > 1; })
+        .map(function (fp) {
+          return {
+            fingerprint: fp,
+            count: groups[fp].length,
+            brands: groups[fp],
+            canMerge: true,
+          };
+        });
+
+      return {
+        workspaceId: params.workspaceId,
+        totalBrands: dupBrands.length,
+        duplicateGroups: duplicateGroups.length,
+        groups: duplicateGroups,
+        uniqueStyles: Object.keys(groups).length - duplicateGroups.length,
+        recommendation: duplicateGroups.length > 0
+          ? "Found " + duplicateGroups.length + " group(s) of duplicate styles. Use merge_brand_guidelines to consolidate."
+          : "No duplicate styles found. All brand guidelines are visually unique.",
+      };
+    }
+
+    // ── merge_brand_guidelines: merge N brands into 1 ──
+    case "merge_brand_guidelines": {
+      var targetBrand = await brands.getBrand(params.targetBrandId);
+      if (!targetBrand) throw { code: -32000, message: "Target brand not found: " + params.targetBrandId };
+
+      // Collect all sourceTemplateIds from sources
+      var allTemplateIds = (targetBrand.sourceTemplateIds || []).slice();
+      var mergedNames = [];
+
+      for (var mi = 0; mi < params.sourceBrandIds.length; mi++) {
+        var srcId = params.sourceBrandIds[mi];
+        if (srcId === params.targetBrandId) continue; // skip self
+        var srcBrand = await brands.getBrand(srcId);
+        if (!srcBrand) continue;
+        // Collect template IDs
+        (srcBrand.sourceTemplateIds || []).forEach(function (tid) {
+          if (allTemplateIds.indexOf(tid) === -1) allTemplateIds.push(tid);
+        });
+        mergedNames.push(srcBrand.name);
+        // Re-point templates from src to target
+        if (srcBrand.sourceTemplateIds) {
+          for (var ti = 0; ti < srcBrand.sourceTemplateIds.length; ti++) {
+            var srcTpl = await templates.getTemplate(srcBrand.sourceTemplateIds[ti]);
+            if (srcTpl && srcTpl.brandId === srcId) {
+              await templates.updateTemplate(srcBrand.sourceTemplateIds[ti], { brandId: params.targetBrandId });
+            }
+          }
+        }
+        // Delete the source brand
+        await brands.deleteBrand(srcId);
+      }
+
+      // Update target brand with combined template IDs
+      await brands.updateBrand(params.targetBrandId, {
+        sourceTemplateIds: allTemplateIds,
+      });
+
+      return {
+        success: true,
+        targetBrandId: params.targetBrandId,
+        targetBrandName: targetBrand.name,
+        mergedFrom: mergedNames,
+        mergedCount: mergedNames.length,
+        totalTemplateIds: allTemplateIds.length,
+        sourceTemplateIds: allTemplateIds,
+      };
+    }
+
+    // ── download_style_template: return empty template for external AI ──
+    case "download_style_template": {
+      var templateContent = generateStyleTemplate();
+      return {
+        format: "markdown",
+        filename: "style-template.md",
+        content: templateContent,
+        instructions: "1. Copy this template. 2. Paste into Gemini/ChatGPT with your design images. 3. Ask the AI to fill it. 4. Upload the result via Style Library → Upload or create_brand_guideline.",
       };
     }
 

@@ -8,6 +8,7 @@ export interface Workspace {
   memberIds: string[];
   createdAt: string;
   updatedAt: string;
+  metadata?: Record<string, any>;
 }
 
 export interface Frame {
@@ -162,6 +163,7 @@ export interface BrandGuideline {
   designMd?: string;
   sharedCss?: string;
   sourceHash?: string;
+  styleFingerprint?: string;
   sourceTemplateIds?: string[];
   createdAt: string;
   updatedAt: string;

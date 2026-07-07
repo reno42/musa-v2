@@ -59,6 +59,7 @@ export async function createBrand(params: {
   designMd?: string;
   sharedCss?: string;
   sourceHash?: string;
+  styleFingerprint?: string;
   sourceTemplateIds?: string[];
 }): Promise<BrandGuideline> {
   const now = new Date().toISOString();
@@ -71,6 +72,7 @@ export async function createBrand(params: {
     designMd: params.designMd,
     sharedCss: params.sharedCss,
     sourceHash: params.sourceHash,
+    styleFingerprint: params.styleFingerprint,
     sourceTemplateIds: params.sourceTemplateIds,
     createdAt: now,
     updatedAt: now,

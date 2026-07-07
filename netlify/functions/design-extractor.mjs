@@ -46,6 +46,149 @@ export function computeFrameHash(html, css) {
     .substring(0, 16);
 }
 
+/**
+ * Style Fingerprint — hash of ONLY design tokens (colors, fonts, spacing, radii, shadows).
+ * Ignores text content, images, and layout — two templates with the same visual style
+ * but different content will produce the SAME fingerprint.
+ *
+ * This enables auto-merge: detect that 20 posts share one style.
+ */
+export function computeStyleFingerprint(extraction) {
+  // Extract only token-level data, sorted for determinism
+  var colors = (extraction.colors || [])
+    .filter(function (c) { return c.role; })
+    .map(function (c) { return c.value; })
+    .sort();
+
+  var fonts = (extraction.typography && extraction.typography.families || [])
+    .map(function (f) { return f.name.toLowerCase(); })
+    .sort();
+
+  var typeScale = (extraction.typography && extraction.typography.typeScale || [])
+    .slice()
+    .sort(function (a, b) { return a - b; });
+
+  var weights = (extraction.typography && extraction.typography.weights || [])
+    .slice()
+    .sort(function (a, b) { return a - b; });
+
+  var spacing = (extraction.spacing || [])
+    .slice()
+    .sort(function (a, b) { return a - b; });
+
+  var radii = (extraction.radii || [])
+    .map(function (r) { return r.value; })
+    .sort();
+
+  var shadows = (extraction.shadows || [])
+    .map(function (s) { return s.value; })
+    .sort();
+
+  // Build canonical string: C=colors|F=fonts|S=sizes|W=weights|P=spacing|R=radii|H=shadows
+  var parts = [
+    "C=" + colors.join(","),
+    "F=" + fonts.join(","),
+    "S=" + typeScale.join(","),
+    "W=" + weights.join(","),
+    "P=" + spacing.join(","),
+    "R=" + radii.join(","),
+    "H=" + shadows.join(","),
+  ];
+  var canonical = parts.join("|");
+
+  return crypto.createHash("sha256").update(canonical).digest("hex").substring(0, 16);
+}
+
+/**
+ * Generate the empty style template for external AI tools (Gemini, ChatGPT, etc).
+ * Returns a markdown string that the human can paste into a chat.
+ */
+export function generateStyleTemplate() {
+  return [
+    "# Style Name — Design System Template",
+    "",
+    "> Fill each section based on the design you want to replicate.",
+    "> An AI (Gemini, ChatGPT) can analyze images and fill this format.",
+    "> Upload the result via Style Library → Upload.",
+    "",
+    "## Colors",
+    "| Name | Hex | Role | Usage |",
+    "|------|-----|------|-------|",
+    "| | | primary background | |",
+    "| | | primary text | |",
+    "| | | accent / CTA | |",
+    "| | | secondary text | |",
+    "| | | border / divider | |",
+    "",
+    "## Typography",
+    "### Font Families",
+    "| Family | Role | Weights |",
+    "|--------|------|---------|",
+    "| | primary (headings) | |",
+    "| | secondary (body) | |",
+    "",
+    "### Type Scale",
+    "| Role | Size | Line Height | Letter Spacing |",
+    "|------|------|-------------|----------------|",
+    "| caption | | | |",
+    "| body-sm | | | |",
+    "| body | | | |",
+    "| subheading | | | |",
+    "| heading-sm | | | |",
+    "| heading | | | |",
+    "| heading-lg | | | |",
+    "| display | | | |",
+    "",
+    "## Spacing Scale",
+    "List values in px (comma-separated): e.g. 4, 8, 12, 16, 20, 24, 32, 40, 60, 80",
+    "",
+    "## Border Radius",
+    "| Element | Value |",
+    "|---------|-------|",
+    "| buttons | |",
+    "| cards | |",
+    "| images | |",
+    "| inputs | |",
+    "",
+    "## Shadows",
+    "| Name | Value |",
+    "|------|-------|",
+    "| default | |",
+    "| elevated | |",
+    "",
+    "## Do's and Don'ts",
+    "List 5-8 rules that define this style's visual identity.",
+    "",
+    "## CSS Custom Properties",
+    "```css",
+    ":root {",
+    "  --color-canvas: ;",
+    "  --color-ink: ;",
+    "  --color-accent: ;",
+    "  --font-primary: ;",
+    "  --font-secondary: ;",
+    "}",
+    "```",
+    "",
+    "---",
+    "## tokens.json (fill if you want machine-readable output)",
+    "```json",
+    "{",
+    "  \"$schema\": \"https://design-tokens.org/format\",",
+    "  \"color\": {},",
+    "  \"typography\": {}",
+    "}",
+    "```",
+    "",
+    "## shared.css (fill if you want CSS variables)",
+    "```css",
+    ":root {",
+    "  /* Fill with your CSS custom properties */",
+    "}",
+    "```",
+  ].join("\n");
+}
+
 // ─── Color Utilities ────────────────────────────────────────────
 
 function hexToRgb(hex) {
@@ -1053,8 +1196,10 @@ export function generateSharedCss(extraction) {
  */
 export function generateAllArtifacts(frames, templateMeta) {
   var extraction = extractDesignSystem(frames);
+  var fingerprint = computeStyleFingerprint(extraction);
   return {
     sourceHash: extraction.sourceHash,
+    styleFingerprint: fingerprint,
     tokensJson: generateTokensJson(extraction, templateMeta),
     designMd: generateDesignMd(extraction, templateMeta),
     sharedCss: generateSharedCss(extraction),

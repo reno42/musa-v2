@@ -48,7 +48,7 @@ class Store {
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
-  updateWorkspace(id: string, data: Partial<Pick<Workspace, "name" | "description">>): Workspace | undefined {
+  updateWorkspace(id: string, data: Partial<Pick<Workspace, "name" | "description" | "metadata">>): Workspace | undefined {
     const ws = this.workspaces.get(id);
     if (!ws) return undefined;
     Object.assign(ws, data, { updatedAt: new Date().toISOString() });

@@ -7,6 +7,7 @@ import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { StructurePanel } from "../components/StructurePanel";
 import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
+import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
@@ -173,6 +174,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [rightPanelTab, setRightPanelTab] = useState<string>("contextual");
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
   const [showSvgImport, setShowSvgImport] = useState(false);
+  const [showStyleLibrary, setShowStyleLibrary] = useState(false);
 
   // ── Figma-style selection state ──
   const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
@@ -2060,6 +2062,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
         <div className="editor-v2-topbar-sep" />
 
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
+          <IconPalette size={14} />
+          <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
+        </button>
+
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowFontPicker(!showFontPicker)} title="Fonts">
           <IconType size={14} />
         </button>
@@ -2506,6 +2513,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         }}>
           {mcpMsg}
         </div>
+      )}
+
+      {/* ═══ Style Library Modal ═══ */}
+      {showStyleLibrary && (
+        <StyleLibraryModal
+          workspaceId={templateWorkspaceId || "default"}
+          onClose={() => setShowStyleLibrary(false)}
+          onToast={(msg, type) => addToast(msg, type || "info")}
+        />
       )}
     </div>
   );
