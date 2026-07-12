@@ -187,7 +187,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Undo/Redo helpers ──
   const pushUndo = useCallback((current: FrameData[]) => {
-    console.error("[UNDO] pushUndo called", { stackSize: undoStack.current.length, frameCount: current.length });
     undoStack.current.push(JSON.parse(JSON.stringify(current)));
     if (undoStack.current.length > 50) undoStack.current.shift();
     redoStack.current = [];
@@ -196,9 +195,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   const handleUndo = useCallback(() => {
-    console.error("[UNDO] Ctrl+Z FIRED", { stackSize: undoStack.current.length });
     if (undoStack.current.length === 0) {
-      console.error("[UNDO] Undo stack EMPTY — nothing to undo");
       return;
     }
     const prev = undoStack.current.pop()!;
@@ -228,11 +225,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     let cancelled = false;
     async function load() {
       try {
-        console.error("[LOAD] FETCHING TEMPLATE", { templateId, BUILD_VERSION });
         const tpl = await getTemplate(templateId);
-        console.error("[LOAD] getTemplate returned:", { hasTpl: !!tpl, framesLen: (tpl as any)?.frames?.length, hasHtml: !!(tpl as any)?.html, hasCss: !!(tpl as any)?.css, metadata: (tpl as any)?.metadata });
         if (cancelled) return;
-        if (!tpl) { setError("Template not found"); setLoading(false); console.error("[LOAD] ✗ Template not found"); return; }
+        if (!tpl) { setError("Template not found"); setLoading(false); return; }
         const t = tpl as any;
         if (t.engine && t.engine !== "html") {
           setError("This template uses an unsupported engine. Only HTML templates are supported.");
@@ -263,7 +258,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           undoStack.current.push(JSON.parse(JSON.stringify(loaded)));
           setCanUndo(false);
           setCanRedo(false);
-          console.error("[LOAD] ✓ Parsed frames:", { count: loaded.length, ids: loaded.map(f => f.id), firstHtmlLen: loaded[0]?.html?.length, firstCssLen: loaded[0]?.css?.length });
         } else {
           // Legacy: single template → one frame
           const single: FrameData = {
@@ -317,9 +311,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     // ✅ Immediate localStorage write (synchronous — survives refresh/tab close)
     try {
       saveLocal(templateId, payload);
-      console.error("[SAVE] ✓ localStorage IMMEDIATE save OK", { templateId, framesLen: updatedFrames.length });
     } catch (localErr) {
-      console.error("[SAVE] ✗ localStorage FAILED:", localErr);
+      console.error("[SAVE] localStorage FAILED:", localErr);
       addToast("Error crítico: no se pudo guardar localmente. Verifica el espacio disponible.", "error", true);
     }
 
@@ -330,7 +323,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       setSaving(true);
-      console.error("[SAVE] ═══ API SYNC FIRED ═══", { templateId, frameCount: updatedFrames.length });
 
       // Sync to API + Supabase with exponential-backoff retry (max 3 attempts)
       const MAX_RETRIES = 3;
@@ -340,27 +332,24 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             method: "PUT",
             body: JSON.stringify(payload),
           });
-          console.error("[SAVE] ✓ API PUT OK", { attempt, responseHasFrames: !!(putRes as any)?.data?.frames });
           broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
-          isDirtyRef.current = false; // clear dirty flag after successful sync
+          isDirtyRef.current = false;
           break;
         } catch (err) {
-          console.error(`[SAVE] ✗ API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
+          console.error(`[SAVE] API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
           retryCountRef.current = attempt + 1;
           if (attempt < MAX_RETRIES) {
             const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[EditorV2] Auto-save retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`);
             await new Promise(r => setTimeout(r, delay));
           } else {
-            console.warn("[EditorV2] Auto-save exhausted retries (cached in localStorage):", err);
+            console.error("[SAVE] Auto-save exhausted retries (cached in localStorage):", err);
             addToast("No se pudieron sincronizar los cambios con el servidor. Guardados localmente.", "error");
           }
         }
       }
       setSaving(false);
-      console.error("[SAVE] ═══ API SYNC COMPLETE ═══");
     }, 2000);
   }, [templateId, selectedFrameId, templateName, addToast]);
 
@@ -402,7 +391,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       pollingRef.current = setInterval(async () => {
         // ✅ Guard: skip polling entirely if we have unsaved local changes
         if (isDirtyRef.current) {
-          console.warn("[POLL] Skipping — local changes pending API sync");
           return;
         }
         try {
@@ -418,12 +406,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
                 const localJson = JSON.stringify(framesRef.current);
                 const remoteJson = JSON.stringify(t.frames);
                 if (localJson !== remoteJson) {
-                  console.warn("[POLL] Remote frames differ from local — updating");
                   setFrames(t.frames);
                 }
               } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
                 // Remote has no frames but we do → re-save our frames as recovery
-                console.warn("[EditorV2] Polling returned empty frames, re-saving local frames");
                 autoSave(framesRef.current);
               } else if (t.html !== undefined || t.css !== undefined) {
                 setFrames(prev => prev.map(f =>
@@ -464,8 +450,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   const handleCssChange = useCallback((newCss: string) => {
-    console.warn("[CSS STATE] handleCssChange entry", { selectedFrameId, newCssLen: newCss.length, frameCount: frames.length, hasImport: newCss.startsWith("@import") });
-    if (!selectedFrameId) { console.warn("[CSS STATE] ABORTED — no selectedFrameId"); return; }
+    if (!selectedFrameId) return;
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, css: newCss } : f
     );
@@ -480,7 +465,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Frame CSS (+ optional HTML) change from DesignFrame (drag/resize) ──
   const handleFrameCssChange = useCallback((frameId: string, newCss: string, newHtml?: string) => {
-    console.error("[FRAME-CSS] handleFrameCssChange entry", { frameId, cssLen: newCss.length, hasHtml: !!newHtml });
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, css: newCss, ...(newHtml ? { html: newHtml } : {}) } : f
     );
@@ -1099,7 +1083,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       }
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === "z" && !e.shiftKey) { console.error("[KEY] Ctrl+Z captured (target:", (e.target as HTMLElement).tagName, ")"); e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
+      if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
@@ -1899,7 +1883,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           body: JSON.stringify({ pngDataUrl: dataUrl }),
         });
         const json = await res.json();
-        console.warn("[RenderWorker] Job complete", { jobId: job.jobId, status: json.status });
 
         // Cleanup font links
         fontLinks.forEach(l => l.remove());

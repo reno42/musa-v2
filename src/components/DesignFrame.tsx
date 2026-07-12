@@ -794,7 +794,6 @@ export function DesignFrame({
       const me = e as MouseEvent;
       if (me.button !== 0) return;
       const target = me.target as HTMLElement;
-      console.error("[DRAG] mousedown on content", { frameId: frame.id, target: target.tagName, tool: activeToolRef.current });
       const tool = activeToolRef.current;
       const rect = content.getBoundingClientRect();
       const z = zoomRef.current || 1;
@@ -1314,7 +1313,6 @@ export function DesignFrame({
       }
 
       const onDragMove = (ev: MouseEvent) => {
-        if (!moved) console.error("[DRAG] onDragMove first move", { frameId: frame.id });
         moved = true;
         const z = zoomRef.current || 1;
         let dx = (ev.clientX - startDragX) / z;
@@ -1400,7 +1398,6 @@ export function DesignFrame({
       const onDragUp = () => {
         document.removeEventListener("mousemove", onDragMove);
         document.removeEventListener("mouseup", onDragUp);
-        console.error("[DRAG] onDragUp fired", { frameId: frame.id, moved });
         if (!moved) return;
         const sel = getSelector(dragTarget);
         const dt = dragTarget as HTMLElement;

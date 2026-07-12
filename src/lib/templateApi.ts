@@ -23,15 +23,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const res = await apiFetch<{ data: TemplateFull }>(`/api/templates/${id}`);
     const apiData = res.data;
     const localData = getLocalTemplate(id);
-    console.error("[getTemplate] ═══ DECISION ═══", {
-      id,
-      apiHasFrames: !!(apiData as any)?.frames?.length,
-      apiUpdated: (apiData as any)?.metadata?.updatedAt,
-      localExists: !!localData,
-      localHasFrames: localData?.frames?.length,
-      localUpdated: localData?.updatedAt,
-      localNewer: localData?.updatedAt > ((apiData as any)?.metadata?.updatedAt || ""),
-    });
 
     // Helper: check if data has meaningful content (V2: html/css/frames)
     const hasContent = (d: any) =>
@@ -49,7 +40,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
       const GRACE_MS = 5000;
       const localIsNewer = (localMs > apiMs) || (Math.abs(localMs - apiMs) < GRACE_MS);
       if (localIsNewer && hasContent(localData)) {
-        console.error("[getTemplate] ✓ Using LOCAL (newer or within grace)", { apiMs, localMs, diff: localMs - apiMs, grace: GRACE_MS });
         return {
           ...apiData,
           ...localData,
@@ -65,7 +55,6 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
 
     // If API returned empty data but localStorage has content
     if (apiData && !hasContent(apiData) && hasContent(localData)) {
-      console.error("[getTemplate] ✓ Using LOCAL (API empty)");
       return {
         ...apiData,
         ...localData,

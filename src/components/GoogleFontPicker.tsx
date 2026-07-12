@@ -71,7 +71,6 @@ export function GoogleFontPicker({ value, onChange }: Props) {
   const categories = [...new Set(catalog.map(f => f.category))];
 
   const select = (f: FontEntry) => {
-    console.warn("[PICKER select] font chosen", { family: f.family, variants: f.variants, onChangeType: typeof onChange });
     loadFont(f.family, f.variants);
     onChange(f.family);
     setOpen(false);
