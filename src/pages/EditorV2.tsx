@@ -562,8 +562,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       name: `Frame ${frames.length + 1}`,
       x: newX, y: newY,
       width: preset.width, height: preset.height,
-      html: `<div class="card">\n  <h1 data-layer-id="title">${preset.name}</h1>\n  <p data-layer-id="desc">Start designing...</p>\n</div>`,
-      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: ${preset.width}px;\n  height: ${preset.height}px;\n  margin: 0;\n  background: #ffffff;\n}\n.card {\n  text-align: center;\n  padding: 40px;\n}\nh1 {\n  font-size: 48px;\n  font-weight: 700;\n  color: #1a1a2e;\n  margin: 0 0 16px;\n}\np {\n  font-size: 20px;\n  color: #666;\n  margin: 0;\n}`,
+      html: `<div class="card" data-layer-id="card">\n  <h1 data-layer-id="title">${preset.name}</h1>\n  <p data-layer-id="desc">Start designing...</p>\n</div>`,
+      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${preset.width}px;\n  height: ${preset.height}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n.card {\n  position: absolute;\n  left: 50%;\n  top: 50%;\n  transform: translate(-50%, -50%);\n  text-align: center;\n  padding: 40px;\n}\nh1 {\n  font-size: 48px;\n  font-weight: 700;\n  color: #1a1a2e;\n  margin: 0 0 16px;\n}\np {\n  font-size: 20px;\n  color: #666;\n  margin: 0;\n}`,
       background: "#ffffff",
     };
     pushUndo(frames);
@@ -834,11 +834,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!selectedFrameId) return;
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
-    // Replace the text content of the element with the given layer-id
-    const elRe = new RegExp(`(<[^>]*data-layer-id="${layerId.replace(/[[\]"\\]/g, "\\$&")}"[^>]*>)([\\s\\S]*?)(<\\/[a-zA-Z0-9]+>)`, "i");
+    // Replace the text content of the element with the given layer-id.
+    // Uses backreference to capture the opening tag name and match the EXACT
+    // corresponding closing tag, preventing corruption when child elements
+    // have their own closing tags that would match a generic pattern.
+    // Groups: 1=opening tag, 2=tag name (backref), 3=content, 4=closing tag
+    const layerIdEsc = layerId.replace(/[[\]"\\]/g, "\\$&");
+    const elRe = new RegExp(
+      `(<([a-zA-Z0-9]+)[^>]*data-layer-id="${layerIdEsc}"[^>]*>)([\\s\\S]*?)(<\\/\\2>)`,
+      "i"
+    );
     const match = elRe.exec(frame.html);
     if (!match) return;
-    const newHtml = frame.html.replace(elRe, `${match[1]}${newText}${match[3]}`);
+    const newHtml = frame.html.replace(elRe, `${match[1]}${newText}${match[4]}`);
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml } : f
     );

@@ -97,6 +97,10 @@ const TRACKED_PROPS = [
   "filter", "backdrop-filter",
   "mix-blend-mode", "background-blend-mode",
   "transition",
+  // SVG-specific (for paths, shapes, etc.)
+  "fill", "fill-opacity", "fill-rule",
+  "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin",
+  "stroke-dasharray", "stroke-dashoffset", "stroke-opacity",
 ];
 
 export function DesignFrame({
@@ -169,6 +173,11 @@ export function DesignFrame({
     content.id = "__df_content";
     content.innerHTML = frame.html;
     shadow.appendChild(content);
+
+    // Slot — distributes light DOM chrome (background, border, label) into shadow tree
+    // Without this, light DOM children of the shadow host are invisible per Shadow DOM spec.
+    const slot = document.createElement("slot");
+    shadow.appendChild(slot);
 
     // Overlay layer
     const overlay = document.createElement("div");
@@ -1272,22 +1281,31 @@ export function DesignFrame({
         finalizePenPath(content);
       }
 
-      selectedRef.current = target;
-      refreshOverlay(target);
+      // If target is an SVG child element (path, circle, rect, etc.), walk up
+      // to the <svg data-layer-id="..."> wrapper so we operate on the whole
+      // SVG object — dragging, CSS changes, and selection should target the
+      // wrapper, not the individual path child.
+      let dragTarget: Element = target as Element;
+      const parentSvg = target.closest?.("svg");
+      if (parentSvg && parentSvg !== (target as Element)) {
+        dragTarget = parentSvg;
+      }
 
-      const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(target);
+      selectedRef.current = dragTarget;
+      refreshOverlay(dragTarget);
+
+      const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
       const props: Record<string, string> = {};
       for (const p of TRACKED_PROPS) props[p] = computed.getPropertyValue(p);
 
-      const elTag = target.tagName.toLowerCase();
-      const parentSvg = target.closest?.("svg");
+      const elTag = dragTarget.tagName.toLowerCase();
       const isSvg = elTag === "svg" || !!parentSvg;
-      const svgChildTag = isSvg ? (elTag === "svg" ? undefined : elTag) : undefined;
+      const svgChildTag = isSvg ? (elTag === "svg" ? undefined : target.tagName.toLowerCase()) : undefined;
 
       onElementSelect?.({
-        layerId: target.getAttribute("data-layer-id") || target.tagName.toLowerCase() + "_" + Math.random().toString(36).slice(2, 6),
+        layerId: dragTarget.getAttribute("data-layer-id") || dragTarget.tagName.toLowerCase() + "_" + Math.random().toString(36).slice(2, 6),
         tag: elTag,
-        selector: getSelector(target),
+        selector: getSelector(dragTarget),
         computedStyles: props,
         frameId: frame.id,
         isSvg,
@@ -1298,13 +1316,13 @@ export function DesignFrame({
       const SNAP = 8; // snap threshold in pixels
       const startDragX = me.clientX;
       const startDragY = me.clientY;
-      const origLeft = parseInt(computed.left) || target.offsetLeft || 0;
-      const origTop = parseInt(computed.top) || target.offsetTop || 0;
+      const origLeft = parseInt(computed.left) || (dragTarget as HTMLElement).offsetLeft || 0;
+      const origTop = parseInt(computed.top) || (dragTarget as HTMLElement).offsetTop || 0;
       let moved = false;
       let guideLines: HTMLElement[] = [];
 
       // Collect snap guides from other elements in the frame
-      function collectGuides(excludeEl: HTMLElement): { x: number; y: number; w: number; h: number }[] {
+      function collectGuides(excludeEl: Element): { x: number; y: number; w: number; h: number }[] {
         const guides: { x: number; y: number; w: number; h: number }[] = [];
         const zz = zoomRef.current || 1;
         const allEls = content.querySelectorAll("[data-layer-id]");
@@ -1335,13 +1353,13 @@ export function DesignFrame({
         let dy = (ev.clientY - startDragY) / z;
 
         // Snap to guides
-        const guides = collectGuides(target);
+        const guides = collectGuides(dragTarget);
         let snapX = origLeft + dx;
         let snapY = origTop + dy;
-        const tw = target.offsetWidth;
-        const th = target.offsetHeight;
+        const tw = (dragTarget as HTMLElement).offsetWidth;
+        const th = (dragTarget as HTMLElement).offsetHeight;
         const cr = content.getBoundingClientRect();
-        const elRect = target.getBoundingClientRect();
+        const elRect = dragTarget.getBoundingClientRect();
         const elW = elRect.width / z;
         const elH = elRect.height / z;
 
@@ -1405,10 +1423,10 @@ export function DesignFrame({
           }
         }
 
-        target.style.position = "absolute";
-        target.style.left = `${snapX}px`;
-        target.style.top = `${snapY}px`;
-        refreshOverlay(target);
+        (dragTarget as HTMLElement).style.position = "absolute";
+        (dragTarget as HTMLElement).style.left = `${snapX}px`;
+        (dragTarget as HTMLElement).style.top = `${snapY}px`;
+        refreshOverlay(dragTarget);
       };
 
       const onDragUp = () => {
@@ -1416,11 +1434,12 @@ export function DesignFrame({
         document.removeEventListener("mouseup", onDragUp);
         console.error("[DRAG] onDragUp fired", { frameId: frame.id, moved });
         if (!moved) return;
-        const sel = getSelector(target);
+        const sel = getSelector(dragTarget);
+        const dt = dragTarget as HTMLElement;
         const updated = updateCssRule(cssRef.current, sel, {
           position: "absolute",
-          left: target.style.left,
-          top: target.style.top,
+          left: dt.style.left,
+          top: dt.style.top,
         });
         cssRef.current = updated;
         // Record the CSS we're about to emit so the echo-suppression check
@@ -1633,7 +1652,30 @@ export function DesignFrame({
         cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
-      {/* Label above frame — interactive: draggable + double-click to rename (Phase 1) */}
+      {/* Background — blocks Shadow DOM clicks in frame-level mode (Phase 2).
+          Must be first light DOM child so slot distributes it at the bottom of the stack.
+          zIndex: 1 keeps it above shadow content but below border and label. */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: frame.background,
+        borderRadius: 2,
+        pointerEvents: (!contentMode && activeTool === "select") ? "auto" : "none",
+        zIndex: 1,
+      }} />
+      {/* Visual border — solid for frame-level, dashed for content mode (Phase 2).
+          zIndex: 2 sits above background. */}
+      <div style={{
+        position: "absolute", inset: 0,
+        border: isActive
+          ? (contentMode ? `2px dashed ${SEL}` : `2px solid ${SEL}`)
+          : (inMultiSelect ? `2px solid ${SEL}80` : "1px solid rgba(255,255,255,0.1)"),
+        borderRadius: 2, pointerEvents: "none", zIndex: 2,
+        boxShadow: isActive
+          ? `0 0 0 1px ${SEL}, 0 8px 32px rgba(59,130,246,0.15)`
+          : "0 4px 16px rgba(0,0,0,0.25)",
+      }} />
+      {/* Label above frame — interactive: draggable + double-click to rename (Phase 1).
+          Rendered last so it's on top. bottom: 100% places it visually above the frame. */}
       <div
         style={{
           position: "absolute", bottom: "100%", left: 0,
@@ -1648,6 +1690,7 @@ export function DesignFrame({
           backdropFilter: "blur(8px)",
           borderRadius: 4,
           border: isActive ? "1px solid rgba(59,130,246,0.3)" : "1px solid rgba(255,255,255,0.06)",
+          zIndex: 3,
         }}
         onMouseDown={(e) => onLabelMouseDown?.(frame.id, e)}
         onDoubleClick={(e) => { e.stopPropagation(); onLabelDoubleClick?.(frame.id); }}
@@ -1680,24 +1723,6 @@ export function DesignFrame({
           </>
         )}
       </div>
-      {/* Visual border — solid for frame-level, dashed for content mode (Phase 2) */}
-      <div style={{
-        position: "absolute", inset: 0,
-        border: isActive
-          ? (contentMode ? `2px dashed ${SEL}` : `2px solid ${SEL}`)
-          : (inMultiSelect ? `2px solid ${SEL}80` : "1px solid rgba(255,255,255,0.1)"),
-        borderRadius: 2, pointerEvents: "none", zIndex: 2,
-        boxShadow: isActive
-          ? `0 0 0 1px ${SEL}, 0 8px 32px rgba(59,130,246,0.15)`
-          : "0 4px 16px rgba(0,0,0,0.25)",
-      }} />
-      {/* Background — blocks Shadow DOM clicks in frame-level mode (Phase 2) */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: frame.background,
-        borderRadius: 2,
-        pointerEvents: (!contentMode && activeTool === "select") ? "auto" : "none",
-      }} />
     </div>
   );
 }
@@ -1709,8 +1734,10 @@ function getSelector(el: Element): string {
   if (lid) return `[data-layer-id="${lid}"]`;
   const id = el.id;
   if (id) return `#${id}`;
-  const cls = el.className;
-  if (typeof cls === "string" && cls.trim()) return `.${cls.trim().split(/\s+/)[0]}`;
+  // SVG elements have SVGAnimatedString for className, not a plain string
+  const cls: any = el.className;
+  const clsStr = typeof cls === "string" ? cls : (cls?.baseVal ?? "");
+  if (clsStr.trim()) return `.${clsStr.trim().split(/\s+/)[0]}`;
   return el.tagName.toLowerCase();
 }
 
