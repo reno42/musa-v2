@@ -1825,8 +1825,16 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // and uploads the resulting PNG to the server for AI agent retrieval.
   const renderWorkerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const renderingRef = useRef(false);
+  // Only poll when a render job has been explicitly requested.
+  // Without this gate, the worker fires every 10s on every template load,
+  // hitting a non-existent endpoint (/api/render/queue/pending) and generating 400s.
+  const renderPollEnabledRef = useRef(false);
 
   useEffect(() => {
+    // Skip entirely if no render job has been queued — prevents the constant
+    // stream of 400 errors from polling a non-existent endpoint.
+    if (!renderPollEnabledRef.current) return;
+
     const API_BASE = window.location.origin;
     const POLL_INTERVAL = 10000; // 10 seconds
 

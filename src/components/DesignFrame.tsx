@@ -172,6 +172,13 @@ export function DesignFrame({
     const content = document.createElement("div");
     content.id = "__df_content";
     content.innerHTML = frame.html;
+    // Content must be positioned with z-index above background (1) but below border (3).
+    // Without this, static content paints beneath all positioned elements (white frame bug).
+    content.style.position = "relative";
+    content.style.zIndex = "2";
+    // Inverse of background: when background captures clicks (frame select mode),
+    // content lets them pass through. In content mode, content is interactive.
+    content.style.pointerEvents = (!contentMode && activeTool === "select") ? "none" : "auto";
     shadow.appendChild(content);
 
     // Slot — distributes light DOM chrome (background, border, label) into shadow tree
@@ -192,58 +199,6 @@ export function DesignFrame({
 
     // Attach interaction handlers
     setupInteraction(shadow, content, overlay);
-
-    // ═══ DIAGNOSTIC: Shadow init state ═══
-    requestAnimationFrame(() => {
-      const contentRect = content.getBoundingClientRect();
-      const overlayPE = overlay.style.pointerEvents;
-      const overlayComputedPE = getComputedStyle(overlay).pointerEvents;
-
-      // Scan all content children for pointer-events issues
-      const allEls = content.querySelectorAll("*");
-      const peIssues: { tag: string; selector: string; computedPE: string }[] = [];
-      allEls.forEach((child) => {
-        const cpe = getComputedStyle(child).pointerEvents;
-        if (cpe === "none") {
-          peIssues.push({
-            tag: child.tagName,
-            selector: getSelector(child as HTMLElement),
-            computedPE: cpe,
-          });
-        }
-      });
-
-      console.error("[SHADOW-INIT]", {
-        frameId: frame.id,
-        hasShadow: !!shadowRef.current,
-        hostW: el.offsetWidth,
-        hostH: el.offsetHeight,
-        contentW: contentRect.width,
-        contentH: contentRect.height,
-        contentChildren: content.children.length,
-        cssHasPointerEvents: /pointer-events\s*:/i.test(frame.css),
-        overlayStylePE: overlayPE,
-        overlayComputedPE,
-        peDisabledCount: peIssues.length,
-        peIssues: peIssues.slice(0, 20),
-      });
-    });
-
-    // ═══ DIAGNOSTIC: Capture-phase host listener ═══
-    // Fires BEFORE the shadow tree listener — tells us if events reach the host at all
-    el.addEventListener("mousedown", (ev: MouseEvent) => {
-      const path = ev.composedPath();
-      const inShadow = path.includes(content);
-      console.error("[HOST-MDOWN]", {
-        frameId: frame.id,
-        button: ev.button,
-        target: (ev.target as Element)?.tagName,
-        targetInShadow: inShadow,
-        composedPath: path.slice(0, 10).map((p: any) =>
-          p.tagName || (p === shadow ? "#shadow-root" : p.nodeName?.toLowerCase?.() || "unknown"),
-        ),
-      });
-    }, true); // capture = true
   }, []);
 
   // ── Code → DOM: CSS update ──
@@ -258,7 +213,7 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!shadow) return;
     const style = shadow.querySelector("style");
-    if (style) { style.textContent = frame.css; console.warn("[SHADOW CSS] POST set textContent", { styleLen: style.textContent.length, hasMontserrat: style.textContent.includes("Montserrat"), linkCount: shadow.querySelectorAll("link").length }); }
+    if (style) style.textContent = frame.css;
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
     const newHrefs = extractFontImports(frame.css);
@@ -273,6 +228,19 @@ export function DesignFrame({
     }
     if (selectedRef.current) refreshOverlay(selectedRef.current);
   }, [frame.css]);
+
+  // ── Sync content pointer-events with interaction mode ──
+  // In frame-level select mode, content is click-through so the background div
+  // captures clicks for frame selection. In content mode (or non-select tools),
+  // content is interactive. Inverse of the background div's pointerEvents logic.
+  useEffect(() => {
+    const shadow = shadowRef.current;
+    if (!shadow) return;
+    const content = shadow.getElementById("__df_content");
+    if (content) {
+      content.style.pointerEvents = (!contentMode && activeTool === "select") ? "none" : "auto";
+    }
+  }, [contentMode, activeTool]);
 
   // ── Code → DOM: HTML update ──
   useEffect(() => {
@@ -1663,13 +1631,13 @@ export function DesignFrame({
         zIndex: 1,
       }} />
       {/* Visual border — solid for frame-level, dashed for content mode (Phase 2).
-          zIndex: 2 sits above background. */}
+          zIndex: 3 sits above content (2) and background (1). */}
       <div style={{
         position: "absolute", inset: 0,
         border: isActive
           ? (contentMode ? `2px dashed ${SEL}` : `2px solid ${SEL}`)
           : (inMultiSelect ? `2px solid ${SEL}80` : "1px solid rgba(255,255,255,0.1)"),
-        borderRadius: 2, pointerEvents: "none", zIndex: 2,
+        borderRadius: 2, pointerEvents: "none", zIndex: 3,
         boxShadow: isActive
           ? `0 0 0 1px ${SEL}, 0 8px 32px rgba(59,130,246,0.15)`
           : "0 4px 16px rgba(0,0,0,0.25)",
@@ -1690,7 +1658,7 @@ export function DesignFrame({
           backdropFilter: "blur(8px)",
           borderRadius: 4,
           border: isActive ? "1px solid rgba(59,130,246,0.3)" : "1px solid rgba(255,255,255,0.06)",
-          zIndex: 3,
+          zIndex: 4,
         }}
         onMouseDown={(e) => onLabelMouseDown?.(frame.id, e)}
         onDoubleClick={(e) => { e.stopPropagation(); onLabelDoubleClick?.(frame.id); }}
