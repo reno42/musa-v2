@@ -1980,9 +1980,13 @@ html, body, #root { height: 100%; width: 100%; }
 .layers-tree-row {
   display: flex;
   align-items: center;
+  min-height: 40px;
   min-width: 0;
   border-radius: 7px;
   color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .layers-tree-frame {
@@ -2009,8 +2013,17 @@ html, body, #root { height: 100%; width: 100%; }
   box-shadow: inset 2px 0 var(--accent);
 }
 
+.layers-tree-frame.is-dragging,
 .layers-tree-row.is-dragging {
   opacity: 0.45;
+  cursor: grabbing;
+}
+
+.layers-tree-frame.is-drop-inside,
+.layers-tree-row.is-drop-inside {
+  color: var(--text-primary);
+  background: rgba(200, 184, 152, 0.12);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .layers-tree-disclosure,
@@ -2026,22 +2039,22 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .layers-tree-disclosure {
-  width: 30px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   font-size: 18px;
   line-height: 1;
 }
 
 .layers-tree-disclosure-spacer {
-  width: 30px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
 }
 
 .layers-tree-frame-select,
 .layers-tree-select {
   min-width: 0;
-  min-height: 34px;
+  min-height: 40px;
   flex: 1;
   display: flex;
   align-items: center;
@@ -2092,8 +2105,8 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .layers-tree-action {
-  width: 26px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   font-size: 11px;
 }
 
@@ -2131,7 +2144,7 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .layers-context-menu-item {
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 10px;
   border-radius: 6px;
   font-size: 11px;

@@ -160,6 +160,10 @@ function replaceLayerIdsInSelector(selector: string, idMap: Map<string, string>)
   });
 }
 
+export function remapLayerCss(css: string, idMap: Map<string, string>): string {
+  return idMap.size > 0 ? replaceLayerIdsInSelector(css, idMap) : css;
+}
+
 function setDeclaration(block: string, property: string, value: string): string {
   const matches = parseCssDeclarations(block).filter(decl => decl.property.toLowerCase() === property.toLowerCase());
   const match = matches[matches.length - 1];
@@ -281,6 +285,159 @@ export function cloneLayerCss(css: string, idMap: Map<string, string>, positionO
       }
     }
   }
+  return updated;
+}
+
+/** Extracts only selectors that reference one of the requested layer ids. */
+export function extractLayerCss(css: string, layerIds: Iterable<string>): string {
+  const ids = new Set(layerIds);
+  const extracted: string[] = [];
+  for (const rule of collectRules(css)) {
+    const selectors = rule.selectors.filter(selector => layerIdsFromSelector(selector).some(id => ids.has(id)));
+    if (selectors.length === 0) continue;
+    extracted.push(`${selectors.join(", ")} {${css.slice(rule.blockStart, rule.blockEnd)}}`);
+  }
+  return extracted.join("\n\n");
+}
+
+const INHERITED_ROOT_PROPERTIES = new Set([
+  "color",
+  "cursor",
+  "direction",
+  "font",
+  "font-family",
+  "font-size",
+  "font-style",
+  "font-weight",
+  "letter-spacing",
+  "line-height",
+  "quotes",
+  "text-align",
+  "text-indent",
+  "text-transform",
+  "visibility",
+  "white-space",
+  "word-spacing",
+]);
+
+function matchableSelector(selector: string): string {
+  return selector
+    .replace(/::[a-z-]+(?:\([^)]*\))?/gi, "")
+    .replace(/:(?:active|focus|focus-visible|focus-within|hover|target|visited)\b/gi, "")
+    .trim();
+}
+
+/**
+ * Extracts the rules needed by a moved layer subtree, including class-based
+ * styling, font imports, inherited typography, and referenced CSS variables.
+ */
+export function extractLayerTreeCss(css: string, layerHtml: string, layerIds: Iterable<string>): string {
+  const ids = new Set(layerIds);
+  const fallback = extractLayerCss(css, ids);
+  if (typeof DOMParser === "undefined") return fallback;
+
+  const document = new DOMParser().parseFromString(layerHtml, "text/html");
+  const root = document.body.firstElementChild;
+  if (!root) return fallback;
+
+  const elements = [root, ...root.querySelectorAll("*")];
+  const rootId = root.getAttribute("data-layer-id");
+  const rootSelector = rootId
+    ? `[data-layer-id="${rootId.replace(/["\\]/g, "\\$&")}"]`
+    : "";
+  const extracted: string[] = [];
+
+  for (const rule of collectRules(css)) {
+    const selectors = rule.selectors.flatMap(selector => {
+      if (layerIdsFromSelector(selector).some(id => ids.has(id))) return [selector];
+
+      const matchable = matchableSelector(selector);
+      if (!matchable || /^(?::root|html|body)$/.test(matchable)) return [];
+      let matches = false;
+      try {
+        matches = elements.some(element => element.matches(matchable));
+      } catch {
+        return [];
+      }
+      if (!matches) return [];
+
+      if (rootSelector && matchable === "*") return [`${rootSelector}, ${rootSelector} *`];
+      if (rootSelector && /^[a-z][a-z0-9-]*$/i.test(matchable)) {
+        return [root.matches(matchable) ? rootSelector : `${rootSelector} ${selector}`];
+      }
+      return [selector];
+    });
+    if (selectors.length === 0) continue;
+    extracted.push(`${[...new Set(selectors)].join(", ")} {${css.slice(rule.blockStart, rule.blockEnd)}}`);
+  }
+
+  const usedVariables = new Set<string>();
+  const addUsedVariables = (value: string) => {
+    for (const match of value.matchAll(/var\(\s*(--[\w-]+)/g)) usedVariables.add(match[1]);
+  };
+  for (const rule of extracted) addUsedVariables(rule);
+
+  const rootDeclarations = new Map<string, string>();
+  for (const rule of collectRules(css)) {
+    const declarations = parseCssDeclarations(css.slice(rule.blockStart, rule.blockEnd));
+    const isGlobalRoot = rule.selectors.some(selector => /^(?::root|html|body)$/.test(selector.trim()));
+    for (const declaration of declarations) {
+      const property = declaration.property.toLowerCase();
+      if (isGlobalRoot && INHERITED_ROOT_PROPERTIES.has(property)) {
+        rootDeclarations.set(declaration.property, declaration.value);
+      }
+    }
+  }
+
+  let variableCount = -1;
+  while (variableCount !== usedVariables.size) {
+    variableCount = usedVariables.size;
+    for (const rule of collectRules(css)) {
+      for (const declaration of parseCssDeclarations(css.slice(rule.blockStart, rule.blockEnd))) {
+        if (!usedVariables.has(declaration.property)) continue;
+        rootDeclarations.set(declaration.property, declaration.value);
+        addUsedVariables(declaration.value);
+      }
+    }
+  }
+
+  const imports = css.match(/@import\s+(?:url\([^;]+\)|["'][^"']+["'])[^;]*;/gi) || [];
+  const scopedRoot = rootSelector && rootDeclarations.size > 0
+    ? `${rootSelector} {\n${[...rootDeclarations].map(([property, value]) => `  ${property}: ${value};`).join("\n")}\n}`
+    : "";
+  return [...imports, scopedRoot, ...extracted].filter(Boolean).join("\n\n");
+}
+
+function normalizedCss(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/** Adds rules once and keeps any transferred @imports at the top of the stylesheet. */
+export function mergeCssRules(css: string, additions: string): string {
+  if (!additions.trim()) return css;
+
+  const importPattern = /@import\s+(?:url\([^;]+\)|["'][^"']+["'])[^;]*;/gi;
+  const existingImports = new Set((css.match(importPattern) || []).map(normalizedCss));
+  const newImports = (additions.match(importPattern) || [])
+    .filter(rule => !existingImports.has(normalizedCss(rule)));
+  let merged = [...newImports, css.trim()].filter(Boolean).join("\n");
+
+  const signatures = new Set(collectRules(merged).map(rule => normalizedCss(
+    `${rule.selectors.join(",")} {${merged.slice(rule.blockStart, rule.blockEnd)}}`,
+  )));
+  for (const rule of collectRules(additions)) {
+    const block = additions.slice(rule.blockStart, rule.blockEnd);
+    const signature = normalizedCss(`${rule.selectors.join(",")} {${block}}`);
+    if (signatures.has(signature)) continue;
+    merged = `${merged.trimEnd()}\n\n${rule.selectors.join(", ")} {${block}}`;
+    signatures.add(signature);
+  }
+  return merged;
+}
+
+export function removeLayersCss(css: string, layerIds: Iterable<string>): string {
+  let updated = css;
+  for (const layerId of layerIds) updated = removeLayerCss(updated, layerId);
   return updated;
 }
 

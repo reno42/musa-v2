@@ -45,6 +45,24 @@ export function ensureLayerIds(html: string, createId: () => string): string {
   if (!html.trim()) return html;
   const document = parseFragment(html);
   let changed = false;
+
+  // A mixed text/element container is a semantic group. Wrap its direct text
+  // nodes so every visible text run can be selected, resized, and reordered.
+  const containers = [document.body, ...document.body.querySelectorAll("*")];
+  for (const container of containers) {
+    if (container.closest("svg, style, script") || container.children.length === 0) continue;
+    for (const child of [...container.childNodes]) {
+      if (child.nodeType !== Node.TEXT_NODE || !child.textContent?.trim()) continue;
+      const textLayer = document.createElement("span");
+      textLayer.setAttribute("data-layer-id", createId());
+      textLayer.setAttribute("data-layer-kind", "text");
+      textLayer.setAttribute("data-layer-name", child.textContent.trim());
+      textLayer.textContent = child.textContent;
+      child.replaceWith(textLayer);
+      changed = true;
+    }
+  }
+
   for (const element of document.body.querySelectorAll("*")) {
     if (!element.hasAttribute("data-layer-id")) {
       element.setAttribute("data-layer-id", createId());
@@ -149,11 +167,23 @@ export function moveLayerBefore(html: string, layerId: string, targetLayerId: st
 
 export type LayerStackPlacement = "above" | "below";
 export type LayerStackDirection = "forward" | "backward";
+export type LayerDropPlacement = LayerStackPlacement | "inside";
 
 export interface LayerStackChange {
   html: string;
   /** Layer ids ordered from the back of the canvas to the front. */
   siblingLayerIds: string[];
+}
+
+export interface ExtractedLayer {
+  html: string;
+  layerHtml: string;
+  layerIds: string[];
+}
+
+export interface RemappedLayerTree {
+  html: string;
+  idMap: Map<string, string>;
 }
 
 function stackChange(document: Document, parent: Element): LayerStackChange {
@@ -207,10 +237,143 @@ export function reorderLayerInStack(
   return stackChange(document, parent);
 }
 
+/** Reparents a layer inside the same frame, including into semantic groups. */
+export function reparentLayerInHtml(
+  html: string,
+  layerId: string,
+  targetLayerId: string | null,
+  placement: LayerDropPlacement,
+): LayerStackChange | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  if (!element) return null;
+
+  if (targetLayerId === null) {
+    if (placement !== "inside") return null;
+    document.body.appendChild(element);
+    return stackChange(document, document.body);
+  }
+
+  const target = findLayer(document, targetLayerId);
+  if (!target || target === element || element.contains(target)) return null;
+
+  if (placement === "inside") {
+    target.appendChild(element);
+    return stackChange(document, target);
+  }
+
+  const parent = target.parentElement;
+  if (!parent) return null;
+  if (placement === "above") target.after(element);
+  else target.before(element);
+  return stackChange(document, parent);
+}
+
+/** Removes a whole layer subtree while preserving the markup for insertion elsewhere. */
+export function extractLayerFromHtml(html: string, layerId: string): ExtractedLayer | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  if (!element) return null;
+
+  const layerIds = [element, ...element.querySelectorAll("[data-layer-id]")]
+    .map(item => item.getAttribute("data-layer-id"))
+    .filter((id): id is string => Boolean(id));
+  const layerHtml = element.outerHTML;
+  element.remove();
+  return { html: serializeFragment(document), layerHtml, layerIds };
+}
+
+/** Remaps only ids that would collide with layers already present in the target frame. */
+export function remapLayerTreeForTarget(
+  layerHtml: string,
+  targetHtml: string,
+  createId: () => string,
+): RemappedLayerTree | null {
+  const sourceDocument = parseFragment(layerHtml);
+  const root = sourceDocument.body.firstElementChild;
+  if (!root) return null;
+
+  const targetDocument = parseFragment(targetHtml);
+  const occupied = new Set(
+    [...targetDocument.body.querySelectorAll("[data-layer-id]")]
+      .map(element => element.getAttribute("data-layer-id"))
+      .filter((id): id is string => Boolean(id)),
+  );
+  const idMap = new Map<string, string>();
+  for (const element of [root, ...root.querySelectorAll("[data-layer-id]")]) {
+    const oldId = element.getAttribute("data-layer-id");
+    if (!oldId) continue;
+    if (!occupied.has(oldId)) {
+      occupied.add(oldId);
+      continue;
+    }
+
+    let newId = createId();
+    while (occupied.has(newId)) newId = createId();
+    element.setAttribute("data-layer-id", newId);
+    occupied.add(newId);
+    idMap.set(oldId, newId);
+  }
+  return { html: root.outerHTML, idMap };
+}
+
+/** Inserts a previously extracted subtree into a frame or semantic group. */
+export function insertLayerIntoHtml(
+  html: string,
+  layerHtml: string,
+  targetLayerId: string | null,
+  placement: LayerDropPlacement,
+): LayerStackChange | null {
+  const document = parseFragment(html);
+  const fragment = parseFragment(layerHtml);
+  const element = fragment.body.firstElementChild;
+  if (!element) return null;
+
+  const movedIds = [element, ...element.querySelectorAll("[data-layer-id]")]
+    .map(item => item.getAttribute("data-layer-id"))
+    .filter((id): id is string => Boolean(id));
+  if (movedIds.some(id => findLayer(document, id))) return null;
+
+  const imported = document.importNode(element, true);
+  if (targetLayerId === null) {
+    if (placement !== "inside") return null;
+    document.body.appendChild(imported);
+    return stackChange(document, document.body);
+  }
+
+  const target = findLayer(document, targetLayerId);
+  if (!target) return null;
+  if (placement === "inside") {
+    target.appendChild(imported);
+    return stackChange(document, target);
+  }
+
+  const parent = target.parentElement;
+  if (!parent) return null;
+  if (placement === "above") target.after(imported);
+  else target.before(imported);
+  return stackChange(document, parent);
+}
+
+function nextGroupName(document: Document): string {
+  let highest = 0;
+  let groupCount = 0;
+  for (const element of document.body.querySelectorAll("*")) {
+    const isGroup = element.getAttribute("data-layer-kind") === "group"
+      || (element.tagName.toLowerCase() !== "svg" && element.children.length > 0);
+    if (!isGroup) continue;
+    groupCount++;
+    const match = /^Group\s+(\d+)$/i.exec(element.getAttribute("data-layer-name") || "");
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `Group ${Math.max(highest, groupCount) + 1}`;
+}
+
 export function groupLayersInHtml(
   html: string,
   layerIds: string[],
   groupId: string,
+  groupName?: string,
 ): string | null {
   if (layerIds.length < 2) return null;
   const document = parseFragment(html);
@@ -225,6 +388,8 @@ export function groupLayersInHtml(
   const ordered = [...parent.children].filter(child => selected.has(child));
   const group = document.createElement("div");
   group.setAttribute("data-layer-id", groupId);
+  group.setAttribute("data-layer-kind", "group");
+  group.setAttribute("data-layer-name", groupName || nextGroupName(document));
   group.style.display = "contents";
   ordered[0].before(group);
   for (const layer of ordered) group.appendChild(layer);

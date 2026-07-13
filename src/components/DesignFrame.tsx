@@ -39,6 +39,14 @@ export interface SelectedElementInfo {
   frameId: string;
   isSvg: boolean;
   svgChildTag?: string;
+  movableLayers: Array<{
+    layerId: string;
+    position: string;
+    left: string;
+    top: string;
+    translate: string;
+    display: string;
+  }>;
 }
 
 interface DesignFrameProps {
@@ -298,6 +306,19 @@ export function DesignFrame({
     const tag = element.tagName.toLowerCase();
     const parentSvg = source.closest?.("svg");
     const isSvg = tag === "svg" || !!parentSvg;
+    const movableLayers = collectMovableElements(element).flatMap(item => {
+      const layerId = item.getAttribute("data-layer-id");
+      if (!layerId) return [];
+      const layout = item.ownerDocument.defaultView!.getComputedStyle(item);
+      return [{
+        layerId,
+        position: layout.position,
+        left: layout.left,
+        top: layout.top,
+        translate: layout.translate,
+        display: layout.display,
+      }];
+    });
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
       tag,
@@ -306,7 +327,35 @@ export function DesignFrame({
       frameId: frame.id,
       isSvg,
       svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
+      movableLayers,
     });
+  }
+
+  function isSemanticGroup(element: Element): boolean {
+    if (element.getAttribute("data-layer-kind") === "group") return true;
+    return element.tagName.toLowerCase() !== "svg" && element.children.length > 0;
+  }
+
+  function collectMovableElements(element: Element): Element[] {
+    if (!isSemanticGroup(element)) return [element];
+    const layout = element.ownerDocument.defaultView!.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    if (layout.display !== "contents" && (rect.width > 0 || rect.height > 0)) return [element];
+    return [...element.children].flatMap(child => collectMovableElements(child));
+  }
+
+  function getVisualRect(element: Element): DOMRect {
+    const ownRect = element.getBoundingClientRect();
+    if (ownRect.width > 0 || ownRect.height > 0) return ownRect;
+    const rects = collectMovableElements(element)
+      .map(item => item.getBoundingClientRect())
+      .filter(rect => rect.width > 0 || rect.height > 0);
+    if (rects.length === 0) return ownRect;
+    const left = Math.min(...rects.map(rect => rect.left));
+    const top = Math.min(...rects.map(rect => rect.top));
+    const right = Math.max(...rects.map(rect => rect.right));
+    const bottom = Math.max(...rects.map(rect => rect.bottom));
+    return new DOMRect(left, top, right - left, bottom - top);
   }
 
   function clearOverlay() {
@@ -324,7 +373,7 @@ export function DesignFrame({
     pointEditOverlayRef.current = null;
 
     const content = shadow.getElementById("__df_content")!;
-    const elRect = el.getBoundingClientRect();
+    const elRect = getVisualRect(el);
     const cRect = content.getBoundingClientRect();
     const z = zoomRef.current || 1;
     const x = (elRect.left - cRect.left) / z;
@@ -1330,7 +1379,7 @@ export function DesignFrame({
       const startDragX = me.clientX;
       const startDragY = me.clientY;
       const contentRect = content.getBoundingClientRect();
-      const initialRect = dragTarget.getBoundingClientRect();
+      const initialRect = getVisualRect(dragTarget);
       const origVisualX = (initialRect.left - contentRect.left) / z;
       const origVisualY = (initialRect.top - contentRect.top) / z;
       let origLeft = parseFloat(computed.left) || (dragTarget as HTMLElement).offsetLeft || 0;
@@ -1647,6 +1696,7 @@ export function DesignFrame({
     const affectsTop = direction.includes("n");
     const affectsBottom = direction.includes("s");
     const isCorner = (affectsLeft || affectsRight) && (affectsTop || affectsBottom);
+    const resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
 
     const onMove = (ev: MouseEvent) => {
       const z = zoomRef.current || 1;
@@ -1672,7 +1722,10 @@ export function DesignFrame({
         newH = Math.max(10, oh + dy);
       }
 
-      if (preservesFlow) {
+      if (resizesFlowText) {
+        const scale = Math.sqrt((newW / Math.max(ow, 1)) * (newH / Math.max(oh, 1)));
+        target.style.fontSize = `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`;
+      } else if (preservesFlow) {
         const scaleX = baseScale.x * (newW / Math.max(ow, 1));
         const scaleY = baseScale.y * (newH / Math.max(oh, 1));
         const originX = affectsLeft ? "right" : affectsRight ? "left" : "center";
@@ -1698,9 +1751,14 @@ export function DesignFrame({
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       const sel = getSelector(target);
-      const props: Record<string, string> = preservesFlow
-        ? { scale: target.style.scale, "transform-origin": target.style.transformOrigin }
-        : { width: target.style.width, height: target.style.height };
+      let props: Record<string, string>;
+      if (resizesFlowText) {
+        props = { "font-size": target.style.fontSize };
+      } else if (preservesFlow) {
+        props = { scale: target.style.scale, "transform-origin": target.style.transformOrigin };
+      } else {
+        props = { width: target.style.width, height: target.style.height };
+      }
       if (!preservesFlow) {
         if (scalesText && isCorner && target.style.fontSize) props["font-size"] = target.style.fontSize;
         if (affectsLeft || affectsTop) {

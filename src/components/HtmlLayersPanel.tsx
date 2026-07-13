@@ -4,20 +4,28 @@ import type { LayerKind, LayerNode } from "../hooks/useLayerTree";
 import { parseLayerTree } from "../hooks/useLayerTree";
 import {
   groupLayersInHtml,
-  moveLayerInStack,
   reorderLayerInStack,
   ungroupLayerInHtml,
 } from "../lib/htmlMutations";
-import type { LayerStackChange, LayerStackDirection, LayerStackPlacement } from "../lib/htmlMutations";
+import type { LayerDropPlacement, LayerStackChange, LayerStackDirection, LayerStackPlacement } from "../lib/htmlMutations";
 
 interface Props {
   frames: FrameData[];
   selectedFrameId: string | null;
+  selectedFrameIds: Set<string>;
   selectedElementId: string | null;
   onSelectFrame: (frameId: string) => void;
   onSelectElement: (frameId: string, layerId: string, path?: number[]) => void;
   onHtmlChange: (frameId: string, newHtml: string) => void;
   onLayerStackChange: (frameId: string, change: LayerStackChange) => void;
+  onLayerDrop: (
+    sourceFrameId: string,
+    layerId: string,
+    targetFrameId: string,
+    targetLayerId: string | null,
+    placement: LayerDropPlacement,
+  ) => void;
+  onFrameReorder: (sourceFrameId: string, targetFrameId: string, placement: LayerStackPlacement) => void;
   onLayerDelete?: (frameId: string, layerId: string) => void;
   onLayerDuplicate?: (frameId: string, layerId: string) => void;
   onMultiSelectChange?: (ids: string[]) => void;
@@ -34,21 +42,36 @@ interface FrameTree {
   roots: LayerNode[];
 }
 
-interface LayerReference {
+interface LayerDragSource {
+  kind: "layer";
   frameId: string;
   layerId: string;
-  parentId: string | null;
 }
 
-interface DropTarget extends LayerReference {
-  placement: LayerStackPlacement;
+interface FrameDragSource {
+  kind: "frame";
+  frameId: string;
 }
 
-interface ContextMenuState {
+type DragSource = LayerDragSource | FrameDragSource;
+
+type DropTarget =
+  | { kind: "layer"; frameId: string; layerId: string; placement: LayerDropPlacement }
+  | { kind: "frame"; frameId: string; placement: LayerDropPlacement };
+
+interface ActionMenuState {
   x: number;
   y: number;
   frameId: string;
   layerId: string;
+}
+
+interface PointerDragState {
+  source: DragSource;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -89,14 +112,63 @@ function buildFrameTree(frame: FrameData): FrameTree {
   return { frame, nodes, byId, roots: nodes.filter(node => node.parentId === null) };
 }
 
+function buildFrameTrees(frames: FrameData[]): FrameTree[] {
+  const trees = frames.map(buildFrameTree);
+  const usedNumbers = new Set<number>();
+  for (const tree of trees) {
+    for (const node of tree.nodes) {
+      if (node.kind !== "group" || node.autoNamed) continue;
+      const match = /^Group\s+(\d+)$/i.exec(node.name);
+      if (match) usedNumbers.add(Number(match[1]));
+    }
+  }
+
+  let groupNumber = 1;
+  for (const tree of trees) {
+    for (const node of tree.nodes) {
+      if (!node.autoNamed) continue;
+      while (usedNumbers.has(groupNumber)) groupNumber++;
+      node.name = `Group ${groupNumber}`;
+      usedNumbers.add(groupNumber++);
+    }
+  }
+  return trees;
+}
+
+function nextGroupName(frameTrees: FrameTree[]): string {
+  let highest = 0;
+  for (const tree of frameTrees) {
+    for (const node of tree.nodes) {
+      if (node.kind !== "group") continue;
+      const match = /^Group\s+(\d+)$/i.exec(node.name);
+      if (match) highest = Math.max(highest, Number(match[1]));
+    }
+  }
+  return `Group ${highest + 1}`;
+}
+
+function getLayerDropPlacement(bounds: DOMRect, clientY: number, canContain: boolean): LayerDropPlacement {
+  const ratio = (clientY - bounds.top) / bounds.height;
+  if (canContain && ratio >= 0.25 && ratio <= 0.75) return "inside";
+  return ratio < 0.5 ? "above" : "below";
+}
+
+function getFrameDropPlacement(bounds: DOMRect, clientY: number, source: DragSource): LayerDropPlacement {
+  if (source.kind === "layer") return "inside";
+  return clientY < bounds.top + bounds.height / 2 ? "above" : "below";
+}
+
 export function HtmlLayersPanel({
   frames,
   selectedFrameId,
+  selectedFrameIds,
   selectedElementId,
   onSelectFrame,
   onSelectElement,
   onHtmlChange,
   onLayerStackChange,
+  onLayerDrop,
+  onFrameReorder,
   onLayerDelete,
   onLayerDuplicate,
   onMultiSelectChange,
@@ -105,17 +177,22 @@ export function HtmlLayersPanel({
   lockedLayersByFrame,
   hiddenLayersByFrame,
 }: Props) {
-  const frameTrees = useMemo(() => frames.map(buildFrameTree), [frames]);
+  const frameTrees = useMemo(() => buildFrameTrees(frames), [frames]);
   const totalLayers = useMemo(
     () => frameTrees.reduce((total, tree) => total + tree.nodes.length, 0),
     [frameTrees],
   );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set());
-  const [dragging, setDragging] = useState<LayerReference | null>(null);
-  const draggingRef = useRef<LayerReference | null>(null);
+  const [dragging, setDragging] = useState<DragSource | null>(null);
+  const draggingRef = useRef<DragSource | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const dropTargetRef = useRef<DropTarget | null>(null);
+  const pointerDragRef = useRef<PointerDragState | null>(null);
+  const suppressLayerClickRef = useRef(false);
+  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
+  const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -125,6 +202,27 @@ export function HtmlLayersPanel({
   useEffect(() => {
     setMultiSelect(new Set());
   }, [selectedFrameId]);
+
+  useEffect(() => {
+    if (!actionMenu) return;
+    actionMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setActionMenu(null);
+      actionMenuTriggerRef.current?.focus();
+    };
+    const closeOnOutsidePointer = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (actionMenuRef.current?.contains(target) || actionMenuTriggerRef.current?.contains(target)) return;
+      setActionMenu(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("mousedown", closeOnOutsidePointer);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("mousedown", closeOnOutsidePointer);
+    };
+  }, [actionMenu]);
 
   const toggleCollapsed = useCallback((key: string) => {
     setCollapsed(current => {
@@ -147,7 +245,7 @@ export function HtmlLayersPanel({
       setMultiSelect(new Set([layer.layerId]));
     }
     onSelectElement(frameId, layer.layerId, layer.path);
-    setContextMenu(null);
+    setActionMenu(null);
   }, [onSelectElement]);
 
   const applyStackChange = useCallback((frameId: string, change: LayerStackChange | null) => {
@@ -163,48 +261,146 @@ export function HtmlLayersPanel({
     const frame = frames.find(item => item.id === frameId);
     if (!frame) return;
     applyStackChange(frameId, reorderLayerInStack(frame.html, layerId, direction));
-    setContextMenu(null);
+    setActionMenu(null);
   }, [frames, applyStackChange]);
+
+  const clearDragState = useCallback(() => {
+    draggingRef.current = null;
+    dropTargetRef.current = null;
+    pointerDragRef.current = null;
+    setDragging(null);
+    setDropTarget(null);
+  }, []);
 
   const handleDrop = useCallback((target: DropTarget) => {
     const source = draggingRef.current;
-    if (!source || source.frameId !== target.frameId || source.layerId === target.layerId) return;
-    if (source.parentId !== target.parentId) {
-      setStatus("Only layers inside the same group can be reordered.");
-      draggingRef.current = null;
-      setDragging(null);
-      setDropTarget(null);
-      return;
+    if (!source) return;
+
+    if (source.kind === "frame") {
+      if (target.kind === "frame" && source.frameId !== target.frameId && target.placement !== "inside") {
+        onFrameReorder(source.frameId, target.frameId, target.placement);
+        setStatus("");
+      }
+    } else {
+      const targetLayerId = target.kind === "layer" ? target.layerId : null;
+      if (source.frameId !== target.frameId || source.layerId !== targetLayerId) {
+        onLayerDrop(source.frameId, source.layerId, target.frameId, targetLayerId, target.placement);
+        setStatus("");
+      }
     }
-    const frame = frames.find(item => item.id === target.frameId);
-    if (frame) {
-      applyStackChange(
-        target.frameId,
-        moveLayerInStack(frame.html, source.layerId, target.layerId, target.placement),
-      );
-    }
-    draggingRef.current = null;
-    setDragging(null);
-    setDropTarget(null);
-  }, [frames, applyStackChange]);
+    clearDragState();
+  }, [onFrameReorder, onLayerDrop, clearDragState]);
 
   const handleGroup = useCallback(() => {
     if (!selectedFrameId || multiSelect.size < 2) return;
     const frame = frames.find(item => item.id === selectedFrameId);
     if (!frame) return;
-    const result = groupLayersInHtml(frame.html, [...multiSelect], `grp_${Date.now().toString(36)}`);
+    const result = groupLayersInHtml(
+      frame.html,
+      [...multiSelect],
+      `grp_${Date.now().toString(36)}`,
+      nextGroupName(frameTrees),
+    );
     if (result) onHtmlChange(frame.id, result);
     setMultiSelect(new Set());
-    setContextMenu(null);
-  }, [selectedFrameId, multiSelect, frames, onHtmlChange]);
+    setActionMenu(null);
+  }, [selectedFrameId, multiSelect, frames, frameTrees, onHtmlChange]);
 
   const handleUngroup = useCallback((frameId: string, groupId: string) => {
     const frame = frames.find(item => item.id === frameId);
     if (!frame) return;
     const result = ungroupLayerInHtml(frame.html, groupId);
     if (result) onHtmlChange(frame.id, result);
-    setContextMenu(null);
+    setActionMenu(null);
   }, [frames, onHtmlChange]);
+
+  const openActionMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>, frameId: string, layerId: string) => {
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    actionMenuTriggerRef.current = event.currentTarget;
+    setActionMenu({
+      x: Math.min(window.innerWidth - 182, Math.max(8, bounds.right - 170)),
+      y: Math.min(window.innerHeight - 230, bounds.bottom + 4),
+      frameId,
+      layerId,
+    });
+  }, []);
+
+  const beginPointerDrag = useCallback((event: React.PointerEvent<HTMLDivElement>, source: DragSource) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest(".layers-tree-action, .layers-tree-disclosure")) return;
+    pointerDragRef.current = {
+      source,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const updatePointerDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const state = pointerDragRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    if (!state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 4) return;
+
+    event.preventDefault();
+    state.moved = true;
+    draggingRef.current = state.source;
+    setDragging(state.source);
+
+    const targetElement = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-layer-drop-kind]");
+    if (!targetElement) {
+      dropTargetRef.current = null;
+      setDropTarget(null);
+      return;
+    }
+
+    const frameId = targetElement.dataset.layerFrameId;
+    const targetKind = targetElement.dataset.layerDropKind;
+    if (!frameId) return;
+
+    let target: DropTarget | null = null;
+    const bounds = targetElement.getBoundingClientRect();
+    if (targetKind === "frame") {
+      target = {
+        kind: "frame",
+        frameId,
+        placement: getFrameDropPlacement(bounds, event.clientY, state.source),
+      };
+    } else if (targetKind === "layer" && state.source.kind === "layer") {
+      const layerId = targetElement.dataset.dropLayerId;
+      if (layerId) {
+        target = {
+          kind: "layer",
+          frameId,
+          layerId,
+          placement: getLayerDropPlacement(bounds, event.clientY, targetElement.dataset.layerKind === "group"),
+        };
+      }
+    }
+    dropTargetRef.current = target;
+    setDropTarget(target);
+  }, []);
+
+  const finishPointerDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const state = pointerDragRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (state.moved) {
+      suppressLayerClickRef.current = true;
+      const target = dropTargetRef.current;
+      if (target) handleDrop(target);
+      else clearDragState();
+      window.setTimeout(() => { suppressLayerClickRef.current = false; }, 0);
+    } else {
+      clearDragState();
+    }
+  }, [handleDrop, clearDragState]);
 
   const renderLayer = (tree: FrameTree, layer: LayerNode): React.ReactNode => {
     const key = layerKey(tree.frame.id, layer.layerId);
@@ -216,7 +412,9 @@ export function HtmlLayersPanel({
     const isHidden = hiddenLayersByFrame?.get(tree.frame.id)?.has(layer.layerId) || false;
     const isAutoLayer = layer.layerId.startsWith("auto_");
     const meta = KIND_META[layer.kind];
-    const currentDrop = dropTarget?.frameId === tree.frame.id && dropTarget.layerId === layer.layerId
+    const currentDrop = dropTarget?.kind === "layer"
+      && dropTarget.frameId === tree.frame.id
+      && dropTarget.layerId === layer.layerId
       ? dropTarget
       : null;
     const childLayers = [...layer.children]
@@ -227,41 +425,21 @@ export function HtmlLayersPanel({
     return (
       <div key={key} role="treeitem" aria-level={layer.depth + 2} aria-selected={isSelected}>
         <div
-          className={`layers-tree-row${isSelected ? " is-selected" : ""}${dragging?.layerId === layer.layerId ? " is-dragging" : ""}`}
-          draggable={!isAutoLayer}
-          onDragStart={event => {
-            if (isAutoLayer) return;
-            const reference = { frameId: tree.frame.id, layerId: layer.layerId, parentId: layer.parentId };
-            draggingRef.current = reference;
-            setDragging(reference);
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", key);
-          }}
-          onDragEnd={() => {
-            draggingRef.current = null;
-            setDragging(null);
-            setDropTarget(null);
-          }}
-          onDragOver={event => {
-            const source = draggingRef.current;
-            if (!source || source.frameId !== tree.frame.id || source.parentId !== layer.parentId) return;
-            event.preventDefault();
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const placement: LayerStackPlacement = event.clientY < bounds.top + bounds.height / 2 ? "above" : "below";
-            event.dataTransfer.dropEffect = "move";
-            setDropTarget({ frameId: tree.frame.id, layerId: layer.layerId, parentId: layer.parentId, placement });
-          }}
-          onDrop={event => {
-            event.preventDefault();
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const placement: LayerStackPlacement = event.clientY < bounds.top + bounds.height / 2 ? "above" : "below";
-            handleDrop({
+          className={`layers-tree-row${isSelected ? " is-selected" : ""}${dragging?.kind === "layer" && dragging.layerId === layer.layerId ? " is-dragging" : ""}${currentDrop?.placement === "inside" ? " is-drop-inside" : ""}`}
+          data-layer-drop-kind="layer"
+          data-layer-frame-id={tree.frame.id}
+          data-drop-layer-id={layer.layerId}
+          data-layer-kind={layer.kind}
+          onPointerDown={event => {
+            if (!isAutoLayer) beginPointerDrag(event, {
+              kind: "layer",
               frameId: tree.frame.id,
               layerId: layer.layerId,
-              parentId: layer.parentId,
-              placement,
             });
           }}
+          onPointerMove={updatePointerDrag}
+          onPointerUp={finishPointerDrag}
+          onPointerCancel={clearDragState}
           style={{
             paddingLeft: 8 + layer.depth * 14,
             borderTop: currentDrop?.placement === "above" ? "2px solid var(--accent, #c8b898)" : "2px solid transparent",
@@ -287,11 +465,9 @@ export function HtmlLayersPanel({
             type="button"
             className="layers-tree-select"
             aria-label={`Select ${layer.name}`}
-            onClick={event => selectLayer(tree.frame.id, layer, event)}
-            onContextMenu={event => {
-              event.preventDefault();
-              onSelectElement(tree.frame.id, layer.layerId, layer.path);
-              setContextMenu({ x: event.clientX, y: event.clientY, frameId: tree.frame.id, layerId: layer.layerId });
+            onClick={event => {
+              if (suppressLayerClickRef.current) return;
+              selectLayer(tree.frame.id, layer, event);
             }}
             onKeyDown={event => {
               if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
@@ -330,20 +506,13 @@ export function HtmlLayersPanel({
               <button
                 type="button"
                 className="layers-tree-action"
-                aria-label={`Bring ${layer.name} forward`}
-                title="Bring forward"
-                onClick={() => reorderLayer(tree.frame.id, layer.layerId, "forward")}
+                aria-label={`More actions for ${layer.name}`}
+                aria-haspopup="menu"
+                aria-expanded={actionMenu?.frameId === tree.frame.id && actionMenu.layerId === layer.layerId}
+                title="More actions"
+                onClick={event => openActionMenu(event, tree.frame.id, layer.layerId)}
               >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="layers-tree-action"
-                aria-label={`Send ${layer.name} backward`}
-                title="Send backward"
-                onClick={() => reorderLayer(tree.frame.id, layer.layerId, "backward")}
-              >
-                ↓
+                •••
               </button>
             </span>
           )}
@@ -357,7 +526,7 @@ export function HtmlLayersPanel({
   };
 
   return (
-    <div style={panelStyle} onClick={() => setContextMenu(null)}>
+    <div style={panelStyle} onClick={() => setActionMenu(null)}>
       <div className="layers-tree-header">
         <span>Layers · {frames.length} frames · {totalLayers} objects</span>
         {multiSelect.size > 1 && (
@@ -375,11 +544,26 @@ export function HtmlLayersPanel({
         ) : frameTrees.map(tree => {
           const frameCollapseKey = collapseKey(tree.frame.id);
           const isCollapsed = collapsed.has(frameCollapseKey);
-          const isSelected = selectedFrameId === tree.frame.id;
+          const isSelected = selectedFrameIds.has(tree.frame.id);
           const roots = [...tree.roots].reverse();
+          const currentFrameDrop = dropTarget?.kind === "frame" && dropTarget.frameId === tree.frame.id
+            ? dropTarget
+            : null;
           return (
             <div key={tree.frame.id} role="treeitem" aria-level={1} aria-expanded={!isCollapsed} aria-selected={isSelected}>
-              <div className={`layers-tree-frame${isSelected ? " is-selected" : ""}`}>
+              <div
+                className={`layers-tree-frame${isSelected ? " is-selected" : ""}${dragging?.kind === "frame" && dragging.frameId === tree.frame.id ? " is-dragging" : ""}${currentFrameDrop?.placement === "inside" ? " is-drop-inside" : ""}`}
+                data-layer-drop-kind="frame"
+                data-layer-frame-id={tree.frame.id}
+                onPointerDown={event => beginPointerDrag(event, { kind: "frame", frameId: tree.frame.id })}
+                onPointerMove={updatePointerDrag}
+                onPointerUp={finishPointerDrag}
+                onPointerCancel={clearDragState}
+                style={{
+                  borderTop: currentFrameDrop?.placement === "above" ? "2px solid var(--accent, #c8b898)" : "2px solid transparent",
+                  borderBottom: currentFrameDrop?.placement === "below" ? "2px solid var(--accent, #c8b898)" : "2px solid transparent",
+                }}
+              >
                 <button
                   type="button"
                   className="layers-tree-disclosure"
@@ -393,6 +577,7 @@ export function HtmlLayersPanel({
                   type="button"
                   className="layers-tree-frame-select"
                   onClick={() => {
+                    if (suppressLayerClickRef.current) return;
                     setMultiSelect(new Set());
                     onSelectFrame(tree.frame.id);
                   }}
@@ -410,27 +595,30 @@ export function HtmlLayersPanel({
         })}
       </div>
 
-      {contextMenu && (
+      {actionMenu && (
         <div
+          ref={actionMenuRef}
           className="layers-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          role="menu"
+          aria-label="Layer actions"
+          style={{ left: actionMenu.x, top: actionMenu.y }}
           onClick={event => event.stopPropagation()}
         >
-          <ContextMenuItem onClick={() => { onLayerDuplicate?.(contextMenu.frameId, contextMenu.layerId); setContextMenu(null); }}>
+          <ActionMenuItem onClick={() => { onLayerDuplicate?.(actionMenu.frameId, actionMenu.layerId); setActionMenu(null); }}>
             Duplicate
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => { onLayerDelete?.(contextMenu.frameId, contextMenu.layerId); setContextMenu(null); }}>
+          </ActionMenuItem>
+          <ActionMenuItem onClick={() => { onLayerDelete?.(actionMenu.frameId, actionMenu.layerId); setActionMenu(null); }}>
             Delete
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => reorderLayer(contextMenu.frameId, contextMenu.layerId, "forward")}>
+          </ActionMenuItem>
+          <ActionMenuItem onClick={() => reorderLayer(actionMenu.frameId, actionMenu.layerId, "forward")}>
             Bring forward
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => reorderLayer(contextMenu.frameId, contextMenu.layerId, "backward")}>
+          </ActionMenuItem>
+          <ActionMenuItem onClick={() => reorderLayer(actionMenu.frameId, actionMenu.layerId, "backward")}>
             Send backward
-          </ContextMenuItem>
-          {multiSelect.size > 1 && <ContextMenuItem onClick={handleGroup}>Group ({multiSelect.size})</ContextMenuItem>}
-          {frameTrees.some(tree => tree.frame.id === contextMenu.frameId && tree.byId.get(contextMenu.layerId)?.kind === "group") && (
-            <ContextMenuItem onClick={() => handleUngroup(contextMenu.frameId, contextMenu.layerId)}>Ungroup</ContextMenuItem>
+          </ActionMenuItem>
+          {multiSelect.size > 1 && <ActionMenuItem onClick={handleGroup}>Group ({multiSelect.size})</ActionMenuItem>}
+          {frameTrees.some(tree => tree.frame.id === actionMenu.frameId && tree.byId.get(actionMenu.layerId)?.kind === "group") && (
+            <ActionMenuItem onClick={() => handleUngroup(actionMenu.frameId, actionMenu.layerId)}>Ungroup</ActionMenuItem>
           )}
         </div>
       )}
@@ -438,9 +626,9 @@ export function HtmlLayersPanel({
   );
 }
 
-function ContextMenuItem({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function ActionMenuItem({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" className="layers-context-menu-item" onClick={onClick}>
+    <button type="button" role="menuitem" className="layers-context-menu-item" onClick={onClick}>
       {children}
     </button>
   );

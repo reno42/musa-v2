@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   appendCssOverride,
   cloneLayerCss,
+  extractLayerCss,
   getCssPropertyValue,
+  mergeCssRules,
+  remapLayerCss,
   removeLayerCss,
+  removeLayersCss,
   removeCssOverride,
   removeTransformFunction,
   setTransformFunction,
@@ -71,4 +75,39 @@ test("removes root and descendant CSS when deleting an SVG layer", () => {
   assert.doesNotMatch(updated, /data-layer-id=["']path/);
   assert.match(updated, /\.keep\s*\{\s*fill:\s*red/);
   assert.equal(getCssPropertyValue(updated, ".keep", "color"), "white");
+});
+
+test("transfers only CSS selectors owned by a moved layer subtree", () => {
+  const source = `.shared { color: black; }\n[data-layer-id="group"] { display: contents; }\n.shared, [data-layer-id="child"] { color: green; }\n[data-layer-id="child"] span { font-size: 24px; }`;
+  const extracted = extractLayerCss(source, ["group", "child"]);
+  const remaining = removeLayersCss(source, ["group", "child"]);
+
+  assert.match(extracted, /data-layer-id="group"/);
+  assert.match(extracted, /data-layer-id="child"/);
+  assert.doesNotMatch(extracted, /^\.shared/m);
+  assert.doesNotMatch(remaining, /data-layer-id="(?:group|child)"/);
+  assert.equal(getCssPropertyValue(remaining, ".shared", "color"), "green");
+});
+
+test("merges transferred CSS without duplicating rules or misplacing imports", () => {
+  const base = `.card { color: black; }`;
+  const addition = `@import url("https://fonts.example.test/inter.css");\n.card { color: black; }\n.moved { font-family: Inter; }`;
+  const merged = mergeCssRules(base, addition);
+  const mergedTwice = mergeCssRules(merged, addition);
+
+  assert.match(merged, /^@import/);
+  assert.equal((mergedTwice.match(/\.card\s*\{/g) || []).length, 1);
+  assert.equal((mergedTwice.match(/\.moved\s*\{/g) || []).length, 1);
+  assert.equal((mergedTwice.match(/@import/g) || []).length, 1);
+});
+
+test("remaps layer selectors when a cross-frame move resolves id collisions", () => {
+  const remapped = remapLayerCss(
+    `[data-layer-id="group"] .title, [data-layer-id='child'] { color: red; }`,
+    new Map([["group", "group_2"], ["child", "child_2"]]),
+  );
+
+  assert.match(remapped, /data-layer-id="group_2"/);
+  assert.match(remapped, /data-layer-id='child_2'/);
+  assert.doesNotMatch(remapped, /data-layer-id=["'](?:group|child)["']/);
 });

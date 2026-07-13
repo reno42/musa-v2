@@ -17,6 +17,7 @@ export interface LayerNode {
   depth: number;
   parentId: string | null;
   children: string[];
+  autoNamed: boolean;
   /** DOM child-index path from body to this element. Used to locate layers without ids. */
   path: number[];
 }
@@ -60,17 +61,25 @@ function inferLayerKind(element: Element, text: string): LayerKind {
   const tag = element.tagName.toLowerCase();
   if (tag === "img" || tag === "picture") return "image";
   if (tag === "svg") return "svg";
+  if (element.children.length > 0) return "group";
   if (TEXT_TAGS.has(tag) || text) return "text";
   if (["input", "select", "textarea", "form"].includes(tag)) return "component";
-  if (element.children.length > 0) return "group";
   return "shape";
 }
 
-function inferLayerName(element: Element, layerId: string, kind: LayerKind, text: string): string {
+function inferLayerName(
+  element: Element,
+  layerId: string,
+  kind: LayerKind,
+  text: string,
+  groupNumber: number,
+): string {
   const explicitName = element.getAttribute("data-layer-name")
     || element.getAttribute("aria-label")
     || element.getAttribute("title");
   if (explicitName?.trim()) return compactText(explicitName.trim());
+
+  if (kind === "group") return `Group ${groupNumber}`;
 
   if (kind === "text") {
     const readableText = text || element.textContent?.replace(/\s+/g, " ").trim() || "";
@@ -95,11 +104,6 @@ function inferLayerName(element: Element, layerId: string, kind: LayerKind, text
     if (identifierName) return compactText(identifierName);
   }
 
-  if (kind === "group") {
-    const className = element.getAttribute("class")?.split(/\s+/).find(Boolean);
-    if (className) return compactText(humanizeIdentifier(className));
-    return "Group";
-  }
   if (kind === "component") return "Component";
 
   const style = element.getAttribute("style") || "";
@@ -114,6 +118,7 @@ export function parseLayerTree(html: string): LayerNode[] {
   const document = new DOMParser().parseFromString(html, "text/html");
   const nodes: LayerNode[] = [];
   const byId = new Map<string, LayerNode>();
+  let groupCount = 0;
 
   function walk(element: Element, path: number[], parentId: string | null, depth: number): void {
     const text = directText(element);
@@ -126,14 +131,21 @@ export function parseLayerTree(html: string): LayerNode[] {
 
     if (!isStructuralWrapper) {
       const kind = inferLayerKind(element, text);
+      const groupNumber = kind === "group" ? ++groupCount : 0;
+      const hasExplicitName = Boolean((
+        element.getAttribute("data-layer-name")
+        || element.getAttribute("aria-label")
+        || element.getAttribute("title")
+      )?.trim());
       const node: LayerNode = {
         layerId,
         tag,
         kind,
-        name: inferLayerName(element, layerId, kind, text),
+        name: inferLayerName(element, layerId, kind, text, groupNumber),
         depth,
         parentId,
         children: [],
+        autoNamed: kind === "group" && !hasExplicitName,
         path,
       };
       nodes.push(node);

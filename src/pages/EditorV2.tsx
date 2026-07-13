@@ -26,12 +26,16 @@ import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/su
 import {
   appendCssOverride,
   cloneLayerCss,
+  extractLayerTreeCss,
   filterCssDeclarations,
   getCssPropertyValue,
   getExactRuleDeclarations,
   getLayerIdsWithDeclaration,
+  mergeCssRules,
   parseCssDeclarations,
+  remapLayerCss,
   removeLayerCss,
+  removeLayersCss,
   removeCssOverride,
   updateCssProperty,
 } from "../lib/cssMutations";
@@ -41,9 +45,15 @@ import {
   deleteLayerFromHtml,
   duplicateLayerInHtml,
   ensureLayerIds,
+  extractLayerFromHtml,
+  insertLayerIntoHtml,
   pasteLayerFromHtml,
+  remapLayerTreeForTarget,
+  reparentLayerInHtml,
   replaceLayerText,
+  type LayerDropPlacement,
   type LayerStackChange,
+  type LayerStackPlacement,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { useToast } from "../components/Toast";
@@ -86,14 +96,36 @@ function createFrameId(): string {
   return `frame_${Date.now().toString(36)}_${generatedFrameSequence.toString(36)}`;
 }
 
-function cloneFrame(source: FrameData, x: number, y: number): FrameData {
+function nextFrameNumber(frames: FrameData[]): number {
+  return frames.reduce((highest, frame) => {
+    const match = /^Frame\s+(\d+)$/i.exec(frame.name.trim());
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0) + 1;
+}
+
+function cloneFrame(source: FrameData, x: number, y: number, name: string): FrameData {
   return {
     ...source,
     id: createFrameId(),
-    name: `${source.name} (copy)`,
+    name,
     x: Math.round(x),
     y: Math.round(y),
   };
+}
+
+function applyLayerStack(css: string, siblingLayerIds: string[]): string {
+  return siblingLayerIds.reduce((updated, layerId, index) => updateCssProperty(
+    updated,
+    `[data-layer-id="${layerId}"]`,
+    "z-index",
+    `${index + 1} !important`,
+  ), css);
+}
+
+function parseTranslate(value: string): { x: number; y: number } {
+  if (!value || value === "none") return { x: 0, y: 0 };
+  const parts = value.split(/\s+/).map(part => parseFloat(part) || 0);
+  return { x: parts[0] || 0, y: parts[1] || 0 };
 }
 
 function snapshotFrames(frames: FrameData[]): FrameData[] {
@@ -631,7 +663,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const newY = lastFrame ? lastFrame.y : 0;
     const newFrame: FrameData = {
       id: createFrameId(),
-      name: `Frame ${frames.length + 1}`,
+      name: `Frame ${nextFrameNumber(frames)}`,
       x: newX, y: newY,
       width: preset.width, height: preset.height,
       html: `<div class="card" data-layer-id="card">\n  <h1 data-layer-id="title">${preset.name}</h1>\n  <p data-layer-id="desc">Start designing...</p>\n</div>`,
@@ -677,7 +709,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const duplicateFrame = useCallback(() => {
     const src = frames.find(f => f.id === selectedFrameId);
     if (!src) return;
-    const clone = cloneFrame(src, src.x + src.width + FRAME_GAP, src.y);
+    const clone = cloneFrame(src, src.x + src.width + FRAME_GAP, src.y, `Frame ${nextFrameNumber(frames)}`);
     pushUndo(frames);
     const updated = [...frames, clone];
     setFrames(updated);
@@ -690,10 +722,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   const handleDuplicateFramesAtPositions = useCallback((copies: { sourceId: string; x: number; y: number }[]) => {
     if (copies.length === 0) return;
+    let frameNumber = nextFrameNumber(frames);
     const clones = copies.flatMap(({ sourceId, x, y }) => {
       const source = frames.find(frame => frame.id === sourceId);
       if (!source) return [];
-      return [cloneFrame(source, x, y)];
+      return [cloneFrame(source, x, y, `Frame ${frameNumber++}`)];
     });
     if (clones.length === 0) return;
 
@@ -710,21 +743,90 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const frame = frames.find(item => item.id === frameId);
     if (!frame) return;
 
-    let stackedCss = frame.css;
-    change.siblingLayerIds.forEach((layerId, index) => {
-      stackedCss = updateCssProperty(
-        stackedCss,
-        `[data-layer-id="${layerId}"]`,
-        "z-index",
-        `${index + 1} !important`,
-      );
-    });
+    const stackedCss = applyLayerStack(frame.css, change.siblingLayerIds);
     const updated = frames.map(item => item.id === frameId
       ? { ...item, html: change.html, css: stackedCss }
       : item);
     pushUndo(frames);
     setFrames(updated);
     autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
+  const handleLayerDrop = useCallback((
+    sourceFrameId: string,
+    layerId: string,
+    targetFrameId: string,
+    targetLayerId: string | null,
+    placement: LayerDropPlacement,
+  ) => {
+    const sourceFrame = frames.find(frame => frame.id === sourceFrameId);
+    const targetFrame = frames.find(frame => frame.id === targetFrameId);
+    if (!sourceFrame || !targetFrame) return;
+
+    if (sourceFrameId === targetFrameId) {
+      const change = reparentLayerInHtml(sourceFrame.html, layerId, targetLayerId, placement);
+      if (!change) {
+        addToast("No se puede mover una capa dentro de sí misma.", "error");
+        return;
+      }
+      const updated = frames.map(frame => frame.id === sourceFrameId
+        ? { ...frame, html: change.html, css: applyLayerStack(frame.css, change.siblingLayerIds) }
+        : frame);
+      pushUndo(frames);
+      setFrames(updated);
+      setSelectedElement(null);
+      autoSave(updated);
+      return;
+    }
+
+    const extracted = extractLayerFromHtml(sourceFrame.html, layerId);
+    if (!extracted) return;
+    const remapped = remapLayerTreeForTarget(extracted.layerHtml, targetFrame.html, createLayerId);
+    if (!remapped) return;
+    const inserted = insertLayerIntoHtml(targetFrame.html, remapped.html, targetLayerId, placement);
+    if (!inserted) {
+      addToast("No se pudo insertar la capa en el destino.", "error");
+      return;
+    }
+
+    const transferredCss = remapLayerCss(
+      extractLayerTreeCss(sourceFrame.css, extracted.layerHtml, extracted.layerIds),
+      remapped.idMap,
+    );
+    const sourceCss = removeLayersCss(sourceFrame.css, extracted.layerIds);
+    const combinedTargetCss = mergeCssRules(targetFrame.css, transferredCss);
+    const targetCss = applyLayerStack(combinedTargetCss, inserted.siblingLayerIds);
+    const updated = frames.map(frame => {
+      if (frame.id === sourceFrameId) return { ...frame, html: extracted.html, css: sourceCss };
+      if (frame.id === targetFrameId) return { ...frame, html: inserted.html, css: targetCss };
+      return frame;
+    });
+
+    pushUndo(frames);
+    setFrames(updated);
+    setSelectedFrameId(targetFrameId);
+    setSelectedFrameIds(new Set());
+    setContentFrameId(targetFrameId);
+    setSelectedElement(null);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo, addToast]);
+
+  const handleFrameReorder = useCallback((
+    sourceFrameId: string,
+    targetFrameId: string,
+    placement: LayerStackPlacement,
+  ) => {
+    if (sourceFrameId === targetFrameId) return;
+    const reordered = [...frames];
+    const sourceIndex = reordered.findIndex(frame => frame.id === sourceFrameId);
+    if (sourceIndex < 0) return;
+    const [source] = reordered.splice(sourceIndex, 1);
+    const targetIndex = reordered.findIndex(frame => frame.id === targetFrameId);
+    if (targetIndex < 0) return;
+    reordered.splice(placement === "above" ? targetIndex : targetIndex + 1, 0, source);
+    pushUndo(frames);
+    setFrames(reordered);
+    autoSave(reordered);
   }, [frames, autoSave, pushUndo]);
 
   // ── Zoom helpers ──
@@ -765,6 +867,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
     setSelectedElement(info);
     if (info) {
+      setSelectedFrameId(info.frameId);
+      setSelectedFrameIds(new Set());
+      setContentFrameId(info.frameId);
       setShowRightPanel(true);
       if (info.isSvg && info.svgChildTag === "path") {
         lastPenStyleRef.current = {
@@ -779,10 +884,40 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     }
   }, []);
 
+  const handleElementNudge = useCallback((info: SelectedElementInfo, deltaX: number, deltaY: number) => {
+    const frame = frames.find(item => item.id === info.frameId);
+    if (!frame || info.movableLayers.length === 0) return;
+
+    let updatedCss = frame.css;
+    for (const layer of info.movableLayers) {
+      const selector = `[data-layer-id="${layer.layerId}"]`;
+      const currentLeft = getCssPropertyValue(updatedCss, selector, "left") || layer.left;
+      const currentTop = getCssPropertyValue(updatedCss, selector, "top") || layer.top;
+      const hasPixelPosition = /^-?\d+(?:\.\d+)?px/.test(currentLeft)
+        || /^-?\d+(?:\.\d+)?px/.test(currentTop);
+      if (layer.position === "static" || !hasPixelPosition) {
+        const translate = parseTranslate(getCssPropertyValue(updatedCss, selector, "translate") || layer.translate);
+        updatedCss = updateCssProperty(
+          updatedCss,
+          selector,
+          "translate",
+          `${translate.x + deltaX}px ${translate.y + deltaY}px !important`,
+        );
+        if (layer.display === "inline") {
+          updatedCss = updateCssProperty(updatedCss, selector, "display", "inline-block !important");
+        }
+      } else {
+        updatedCss = updateCssProperty(updatedCss, selector, "left", `${(parseFloat(currentLeft) || 0) + deltaX}px !important`);
+        updatedCss = updateCssProperty(updatedCss, selector, "top", `${(parseFloat(currentTop) || 0) + deltaY}px !important`);
+      }
+    }
+    handleFrameCssChange(info.frameId, updatedCss);
+  }, [frames, handleFrameCssChange]);
+
   // ── Layer selection from Layers Panel → click element in canvas ──
   const handleSelectLayerElement = useCallback((frameId: string, layerId: string, path?: number[]) => {
     setSelectedFrameId(frameId);
-    setSelectedFrameIds(new Set([frameId]));
+    setSelectedFrameIds(new Set());
     setContentFrameId(frameId);
     const frameEl = document.querySelector(`[data-frame-id="${frameId}"]`);
     if (!frameEl) return;
@@ -1137,7 +1272,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       return;
     }
 
-    const clones = clipboard.frames.map(source => cloneFrame(source, source.x + offset, source.y + offset));
+    let frameNumber = nextFrameNumber(frames);
+    const clones = clipboard.frames.map(source => cloneFrame(
+      source,
+      source.x + offset,
+      source.y + offset,
+      `Frame ${frameNumber++}`,
+    ));
     pushUndo(frames);
     const updated = [...frames, ...clones];
     setFrames(updated);
@@ -1264,7 +1405,17 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           case "arrowright":
           case "arrowup":
           case "arrowdown":
-            if (selectedFrameId && !contentFrameId) {
+            if (selectedElement) {
+              e.preventDefault();
+              const step = e.shiftKey ? 10 : 1;
+              let deltaX = 0;
+              let deltaY = 0;
+              if (e.key === "ArrowLeft") deltaX = -step;
+              if (e.key === "ArrowRight") deltaX = step;
+              if (e.key === "ArrowUp") deltaY = -step;
+              if (e.key === "ArrowDown") deltaY = step;
+              handleElementNudge(selectedElement, deltaX, deltaY);
+            } else if (selectedFrameId && !contentFrameId) {
               e.preventDefault();
               const f = frames.find(fr => fr.id === selectedFrameId);
               if (f) {
@@ -1304,7 +1455,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       window.removeEventListener("copy", handleNativeCopy, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
+  }, [handleUndo, handleRedo, copySelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2464,11 +2615,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             <HtmlLayersPanel
               frames={frames}
               selectedFrameId={selectedFrameId}
+              selectedFrameIds={selectedFrameIds}
               selectedElementId={selectedElement?.layerId || null}
               onSelectFrame={handleSelectFrame}
               onSelectElement={handleSelectLayerElement}
               onHtmlChange={handleFrameHtmlChange}
               onLayerStackChange={handleLayerStackChange}
+              onLayerDrop={handleLayerDrop}
+              onFrameReorder={handleFrameReorder}
               onLayerDelete={(frameId, layerId) => handleDeleteElement(layerId, frameId)}
               onLayerDuplicate={(frameId, layerId) => handleDuplicateElement(layerId, frameId)}
               onMultiSelectChange={setMultiSelectLayerIds}
