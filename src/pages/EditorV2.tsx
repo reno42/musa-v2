@@ -567,6 +567,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [frames, autoSave, pushUndo]);
 
+  const handleFrameResize = useCallback((id: string, width: number, height: number, x: number, y: number) => {
+    const updated = frames.map(f =>
+      f.id === id ? { ...f, x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) } : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
   const deleteSelectedFrame = useCallback(() => {
     if (!selectedFrameId || frames.length <= 1) return;
     pushUndo(frames);
@@ -1108,12 +1117,30 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               deleteSelectedFrame();
             }
             break;
+          case "arrowleft":
+          case "arrowright":
+          case "arrowup":
+          case "arrowdown":
+            if (selectedFrameId && !contentFrameId) {
+              e.preventDefault();
+              const f = frames.find(fr => fr.id === selectedFrameId);
+              if (f) {
+                const step = e.shiftKey ? 10 : 1;
+                let nx = f.x, ny = f.y;
+                if (e.key === "ArrowLeft") nx -= step;
+                if (e.key === "ArrowRight") nx += step;
+                if (e.key === "ArrowUp") ny -= step;
+                if (e.key === "ArrowDown") ny += step;
+                handleFrameMove(f.id, nx, ny);
+              }
+            }
+            break;
         }
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length]);
+  }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length, contentFrameId, handleFrameMove, frames]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2383,6 +2410,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onAddTextPath={handleAddTextPath}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
+            onFrameResize={handleFrameResize}
           />
         </div>
       </div>

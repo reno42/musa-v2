@@ -61,6 +61,8 @@ interface DesignFrameProps {
   onRenameCommit?: () => void;
   onRenameCancel?: () => void;
   onEnterContentMode?: (frameId: string) => void;
+  // ── Phase 5: Frame resize handles ──
+  onFrameResize?: (frameId: string, width: number, height: number, x: number, y: number) => void;
 }
 
 const SEL = "#3B82F6";
@@ -107,6 +109,7 @@ export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
+  onFrameResize,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -144,6 +147,8 @@ export function DesignFrame({
   const editingTextRef = useRef<Element | null>(null);
   const zoomRef = useRef(zoom || 1);
   zoomRef.current = zoom || 1;
+  const onFrameResizeRef = useRef(onFrameResize);
+  onFrameResizeRef.current = onFrameResize;
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -168,6 +173,13 @@ export function DesignFrame({
     style.textContent = frame.css;
     shadow.appendChild(style);
 
+    // Editor interaction CSS: content wrapper is transparent to pointer events,
+    // but individual children capture them. Click on empty space passes through
+    // content → hits background div (frame select/drag). Click on element → element.
+    const peStyle = document.createElement("style");
+    peStyle.textContent = `#__df_content { pointer-events: none; } #__df_content * { pointer-events: auto; }`;
+    shadow.appendChild(peStyle);
+
     // Content container
     const content = document.createElement("div");
     content.id = "__df_content";
@@ -176,9 +188,6 @@ export function DesignFrame({
     // Without this, static content paints beneath all positioned elements (white frame bug).
     content.style.position = "relative";
     content.style.zIndex = "2";
-    // Inverse of background: when background captures clicks (frame select mode),
-    // content lets them pass through. In content mode, content is interactive.
-    content.style.pointerEvents = (!contentMode && activeTool === "select") ? "none" : "auto";
     shadow.appendChild(content);
 
     // Slot — distributes light DOM chrome (background, border, label) into shadow tree
@@ -229,17 +238,17 @@ export function DesignFrame({
     if (selectedRef.current) refreshOverlay(selectedRef.current);
   }, [frame.css]);
 
-  // ── Sync content pointer-events with interaction mode ──
-  // In frame-level select mode, content is click-through so the background div
-  // captures clicks for frame selection. In content mode (or non-select tools),
-  // content is interactive. Inverse of the background div's pointerEvents logic.
+  // ── Override content pointer-events for interactive modes ──
+  // Static peStyle sets #__df_content { pointer-events: none } by default,
+  // creating click-through gaps for frame-level selection/drag.
+  // Override to "auto" only when the user is editing content directly.
   useEffect(() => {
     const shadow = shadowRef.current;
     if (!shadow) return;
     const content = shadow.getElementById("__df_content");
-    if (content) {
-      content.style.pointerEvents = (!contentMode && activeTool === "select") ? "none" : "auto";
-    }
+    if (!content) return;
+    const needsInteractive = contentMode || (activeTool && activeTool !== "select" && activeTool !== "hand");
+    content.style.pointerEvents = needsInteractive ? "auto" : "";
   }, [contentMode, activeTool]);
 
   // ── Code → DOM: HTML update ──
@@ -1604,6 +1613,91 @@ export function DesignFrame({
     document.addEventListener("mouseup", onUp);
   }
 
+  // ── Frame-level resize (handles on frame borders/corners) ──
+  function startFrameResize(handle: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origW = frame.width;
+    const origH = frame.height;
+    const origX = frame.x;
+    const origY = frame.y;
+    const aspect = origW / origH;
+
+    const affectsLeft = handle.includes("w");
+    const affectsRight = handle.includes("e");
+    const affectsTop = handle.includes("n");
+    const affectsBottom = handle.includes("s");
+    const isCorner = (affectsLeft || affectsRight) && (affectsTop || affectsBottom);
+
+    const onMove = (ev: MouseEvent) => {
+      const z = zoomRef.current || 1;
+      const dx = (ev.clientX - startX) / z;
+      const dy = (ev.clientY - startY) / z;
+      const shift = ev.shiftKey;
+
+      let newW = origW, newH = origH, newX = origX, newY = origY;
+
+      if (shift && isCorner) {
+        // Proportional resize: maintain aspect ratio
+        const maxDim = Math.max(Math.abs(dx), Math.abs(dy));
+        const signX = dx >= 0 ? 1 : -1;
+        const signY = dy >= 0 ? 1 : -1;
+        if (affectsRight) newW = Math.max(20, origW + maxDim * signX);
+        if (affectsBottom) newH = Math.max(20, origH + maxDim * signY);
+        if (affectsLeft) { newW = Math.max(20, origW - maxDim * signX); newX = origX + (origW - newW); }
+        if (affectsTop) { newH = Math.max(20, origH - maxDim * signY); newY = origY + (origH - newH); }
+        // Recalculate to maintain aspect
+        if (affectsLeft || affectsRight) newH = Math.round(newW / aspect);
+        if (affectsTop || affectsBottom) newW = Math.round(newH * aspect);
+      } else if (shift && !isCorner) {
+        // Edge resize with shift: snap to maintain aspect via the other dimension
+        if (affectsLeft || affectsRight) {
+          newW = Math.max(20, origW + dx);
+          newH = Math.round(newW / aspect);
+        } else {
+          newH = Math.max(20, origH + dy);
+          newW = Math.round(newH * aspect);
+        }
+      } else {
+        if (affectsLeft) {
+          newW = Math.max(20, origW - dx);
+          newX = origX + origW - newW;
+        }
+        if (affectsRight) newW = Math.max(20, origW + dx);
+        if (affectsTop) {
+          newH = Math.max(20, origH - dy);
+          newY = origY + origH - newH;
+        }
+        if (affectsBottom) newH = Math.max(20, origH + dy);
+      }
+
+      const el = containerRef.current;
+      if (el) {
+        el.style.left = `${Math.round(newX)}px`;
+        el.style.top = `${Math.round(newY)}px`;
+        el.style.width = `${Math.round(newW)}px`;
+        el.style.height = `${Math.round(newH)}px`;
+      }
+    };
+
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const el = containerRef.current;
+      if (!el) return;
+      const finalW = parseInt(el.style.width) || origW;
+      const finalH = parseInt(el.style.height) || origH;
+      const finalX = parseInt(el.style.left) || origX;
+      const finalY = parseInt(el.style.top) || origY;
+      onFrameResizeRef.current?.(frame.id, finalW, finalH, finalX, finalY);
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
   return (
     <div
       ref={containerRef}
@@ -1617,14 +1711,15 @@ export function DesignFrame({
         cursor: activeTool && ["rect", "circle", "triangle", "star", "polygon", "text", "text-path", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil"].includes(activeTool) ? "crosshair" : "default",
       }}
     >
-      {/* Background — blocks Shadow DOM clicks in frame-level mode (Phase 2).
-          Must be first light DOM child so slot distributes it at the bottom of the stack.
-          zIndex: 1 keeps it above shadow content but below border and label. */}
+      {/* Background — click-through receiver for frame-level selection/drag.
+          With #__df_content { pointer-events: none }, clicks on empty areas
+          inside the frame fall through to this div.
+          Disabled in content mode or when using drawing tools. */}
       <div style={{
         position: "absolute", inset: 0,
         background: frame.background,
         borderRadius: 2,
-        pointerEvents: (!contentMode && activeTool === "select") ? "auto" : "none",
+        pointerEvents: (contentMode || (activeTool && activeTool !== "select" && activeTool !== "hand")) ? "none" : "auto",
         zIndex: 1,
       }} />
       {/* Visual border — solid for frame-level, dashed for content mode (Phase 2).
@@ -1688,6 +1783,43 @@ export function DesignFrame({
           </>
         )}
       </div>
+      {/* ── Frame resize handles (Phase 5) — only for active frame in select/hand tool, not content mode ── */}
+      {isActive && !contentMode && activeTool && (activeTool === "select" || activeTool === "hand") && (
+        <>
+          {([
+            ["nw", 0, 0, "nwse-resize"],
+            ["n", 0.5, 0, "ns-resize"],
+            ["ne", 1, 0, "nesw-resize"],
+            ["e", 1, 0.5, "ew-resize"],
+            ["se", 1, 1, "nwse-resize"],
+            ["s", 0.5, 1, "ns-resize"],
+            ["sw", 0, 1, "nesw-resize"],
+            ["w", 0, 0.5, "ew-resize"],
+          ] as const).map(([pos, fx, fy, cursor]) => (
+            <div
+              key={pos}
+              onMouseDown={(e) => startFrameResize(pos, e)}
+              style={{
+                position: "absolute",
+                left: fx === 0.5 ? "50%" : fx === 0 ? -4 : undefined,
+                right: fx === 1 ? -4 : undefined,
+                top: fy === 0.5 ? "50%" : fy === 0 ? -4 : undefined,
+                bottom: fy === 1 ? -4 : undefined,
+                width: 8, height: 8,
+                marginLeft: fx === 0.5 ? -4 : undefined,
+                marginTop: fy === 0.5 ? -4 : undefined,
+                background: SEL,
+                border: "1.5px solid #fff",
+                borderRadius: 1,
+                cursor,
+                pointerEvents: "auto",
+                boxSizing: "border-box",
+                zIndex: 5,
+              }}
+            />
+          ))}
+        </>
+      )}
     </div>
   );
 }

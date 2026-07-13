@@ -49,6 +49,7 @@ interface InfiniteHtmlCanvasProps {
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
+  onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -61,6 +62,7 @@ export function InfiniteHtmlCanvas({
   onZoomChange, onFrameMove, onMultiFrameMove, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
+  onFrameResize,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -406,6 +408,7 @@ export function InfiniteHtmlCanvas({
               onRenameChange={setRenameValue}
               onRenameCommit={handleRenameCommit}
               onRenameCancel={handleRenameCancel}
+              onFrameResize={onFrameResize}
             />
           </div>
         ))}
