@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:regression": "node --experimental-strip-types --test QA/css-mutations.test.mjs",
+    "test:regression": "node --experimental-strip-types --test QA/css-mutations.test.mjs QA/bezier-math.test.mjs",
     "preview": "vite preview",
     "build:functions": "cd api && npm install && npx tsc"
   },

@@ -49,6 +49,7 @@ import {
   pasteLayerFromHtml,
   remapLayerTreeForTarget,
   reparentLayerInHtml,
+  replaceLayerPathData,
   replaceLayerText,
   type LayerDropPlacement,
   type LayerStackChange,
@@ -60,6 +61,7 @@ import {
   readDesignClipboard,
   type DesignClipboard,
 } from "../lib/designClipboard";
+import { analyzePathData } from "../lib/pathData";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -1071,13 +1073,31 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
+  const handleEditPathPoints = useCallback((frameId: string, layerId: string, newPathD: string) => {
+    const frame = frames.find(candidate => candidate.id === frameId);
+    if (!frame) return;
+    const analysis = analyzePathData(newPathD);
+    const newHtml = replaceLayerPathData(frame.html, layerId, newPathD, {
+      "data-bezier-model": "chained-cubic",
+      "data-bezier-degeneracy": analysis.degeneracy,
+      "data-bezier-self-intersections": String(analysis.selfIntersections),
+      "data-bezier-singularities": String(analysis.singularities),
+    });
+    if (newHtml === null || newHtml === frame.html) return;
+    const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
     if (!selectedFrameId) return;
     const layerId = createLayerId();
     const style = lastPenStyleRef.current;
     const fill = closed && style.fill === "none" ? "#3B82F6" : style.fill;
-    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Bezier" data-layer-kind="bezier" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}"/></svg>`;
+    const analysis = analyzePathData(pathData, Boolean(closed));
+    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Bezier" data-layer-kind="bezier" data-bezier-model="chained-cubic" data-bezier-degeneracy="${analysis.degeneracy}" data-bezier-self-intersections="${analysis.selfIntersections}" data-bezier-singularities="${analysis.singularities}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}"/></svg>`;
     const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n[data-layer-id="${layerId}"] path {\n  fill: ${fill};\n  stroke: ${style.stroke};\n  stroke-width: ${style.strokeWidth};\n  stroke-linecap: ${style.strokeLinecap};\n  stroke-linejoin: ${style.strokeLinejoin};\n  stroke-dasharray: ${style.strokeDasharray};\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
@@ -1088,7 +1108,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setFrames(updated);
     autoSave(updated);
     setActiveTool("select");
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+    if (analysis.degeneracy === "point") {
+      addToast("El trazado degeneró en un punto. Se conservó para que puedas corregir sus anclas.", "error");
+    } else if (analysis.selfIntersections > 0 || analysis.singularities > 0) {
+      addToast(`Trazado creado con ${analysis.selfIntersections} auto-intersección(es) y ${analysis.singularities} punto(s) singular(es).`, "info");
+    }
+  }, [selectedFrameId, frames, autoSave, pushUndo, addToast]);
 
   // ── Text on Path: write text along an existing SVG path ──
   const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => {
@@ -2848,6 +2873,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onTextChange={handleTextChange}
             onAddPenPath={handleAddPenPath}
             onAddTextPath={handleAddTextPath}
+            onEditPathPoints={handleEditPathPoints}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
             onFrameResize={handleFrameResize}

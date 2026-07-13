@@ -8,6 +8,21 @@ import {
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml } from "../lib/htmlMutations";
+import {
+  computeBounds,
+  createSmoothPoint,
+  deletePoint as deletePathPoint,
+  findClosestPathSegment,
+  isPathClosed,
+  movePathHandle,
+  movePathPoint,
+  parsePathData,
+  serializePathData,
+  splitPathSegment,
+  toggleSmoothCorner,
+  type PathPoint,
+  type Point,
+} from "../lib/pathData";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -452,9 +467,10 @@ export function DesignFrame({
 
     // If this is an SVG path, render point editing overlay
     if (hasPath && pathData && targetPath) {
-      const cmds = parsePathCommands(pathData);
+      const points = parsePathData(pathData);
+      const closed = isPathClosed(pathData);
       const layerId = el.getAttribute("data-layer-id") || targetPath.getAttribute("data-layer-id");
-      pointEditPathRef.current = { layerId: layerId || "", commands: cmds };
+      pointEditPathRef.current = { layerId: layerId || "", points, closed };
 
       // Create point edit SVG overlay
       const editSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -488,154 +504,133 @@ export function DesignFrame({
       const svgScaleY = svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1;
 
       // Render anchor points and control handles
-      for (let ci = 0; ci < cmds.length; ci++) {
-        const cmd = cmds[ci];
-        if (cmd.type === "Z") continue;
-
-        const px = (cmd.x - vbX) * svgScaleX + svgLeft;
-        const py = (cmd.y - vbY) * svgScaleY + svgTop;
+      for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
+        const point = points[pointIndex];
+        const px = (point.x - vbX) * svgScaleX + svgLeft;
+        const py = (point.y - vbY) * svgScaleY + svgTop;
 
         // Anchor point
         const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         anchor.setAttribute("cx", `${px}`);
         anchor.setAttribute("cy", `${py}`);
-        anchor.setAttribute("r", cmd.type === "C" ? "5" : "4");
-        anchor.setAttribute("fill", cmd.type === "M" ? "#10B981" : cmd.type === "C" ? "#A78BFA" : "#3B82F6");
+        anchor.setAttribute("r", point.type === "smooth" ? "5" : "4");
+        anchor.setAttribute("fill", pointIndex === 0 ? "#10B981" : point.type === "smooth" ? "#A78BFA" : "#3B82F6");
         anchor.setAttribute("stroke", "#fff");
         anchor.setAttribute("stroke-width", "1.5");
         anchor.style.cursor = "move";
         anchor.style.pointerEvents = "auto";
-        anchor.setAttribute("data-pe-cmd", `${ci}`);
-        anchor.setAttribute("data-pe-ctrl", "anchor");
+        anchor.setAttribute("data-pe-point", `${pointIndex}`);
+        anchor.setAttribute("data-pe-handle", "anchor");
+        anchor.setAttribute("tabindex", "0");
+        anchor.setAttribute("role", "button");
+        anchor.setAttribute("aria-label", `Anchor ${pointIndex + 1}: ${point.type === "smooth" ? "curved" : "corner"}`);
         editSvg.appendChild(anchor);
 
-        // Control handles for bezier
-        if (cmd.type === "C") {
-          // Handle 1 (incoming)
-          const h1x = (cmd.cx1 - vbX) * svgScaleX + svgLeft;
-          const h1y = (cmd.cy1 - vbY) * svgScaleY + svgTop;
-          const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-          line1.setAttribute("x1", `${px}`); line1.setAttribute("y1", `${py}`);
-          line1.setAttribute("x2", `${h1x}`); line1.setAttribute("y2", `${h1y}`);
-          line1.setAttribute("stroke", "#A78BFA"); line1.setAttribute("stroke-width", "1");
-          line1.setAttribute("opacity", "0.5"); line1.style.pointerEvents = "none";
-          editSvg.appendChild(line1);
+        for (const handleName of ["cpIn", "cpOut"] as const) {
+          const handle = point[handleName];
+          if (!handle) continue;
+          const handleX = (handle.x - vbX) * svgScaleX + svgLeft;
+          const handleY = (handle.y - vbY) * svgScaleY + svgTop;
+          const color = handleName === "cpIn" ? "#F59E0B" : "#8B5CF6";
 
-          const c1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          c1.setAttribute("cx", `${h1x}`); c1.setAttribute("cy", `${h1y}`);
-          c1.setAttribute("r", "3"); c1.setAttribute("fill", "#F59E0B");
-          c1.setAttribute("stroke", "#fff"); c1.setAttribute("stroke-width", "1");
-          c1.style.cursor = "move"; c1.style.pointerEvents = "auto";
-          c1.setAttribute("data-pe-cmd", `${ci}`);
-          c1.setAttribute("data-pe-ctrl", "cp1");
-          editSvg.appendChild(c1);
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", `${px}`); line.setAttribute("y1", `${py}`);
+          line.setAttribute("x2", `${handleX}`); line.setAttribute("y2", `${handleY}`);
+          line.setAttribute("stroke", color); line.setAttribute("stroke-width", "1");
+          line.setAttribute("opacity", "0.55"); line.style.pointerEvents = "none";
+          editSvg.appendChild(line);
 
-          // Handle 2 (outgoing)
-          const h2x = (cmd.cx2 - vbX) * svgScaleX + svgLeft;
-          const h2y = (cmd.cy2 - vbY) * svgScaleY + svgTop;
-          const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-          line2.setAttribute("x1", `${px}`); line2.setAttribute("y1", `${py}`);
-          line2.setAttribute("x2", `${h2x}`); line2.setAttribute("y2", `${h2y}`);
-          line2.setAttribute("stroke", "#8B5CF6"); line2.setAttribute("stroke-width", "1");
-          line2.setAttribute("opacity", "0.5"); line2.style.pointerEvents = "none";
-          editSvg.appendChild(line2);
-
-          const c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          c2.setAttribute("cx", `${h2x}`); c2.setAttribute("cy", `${h2y}`);
-          c2.setAttribute("r", "3"); c2.setAttribute("fill", "#8B5CF6");
-          c2.setAttribute("stroke", "#fff"); c2.setAttribute("stroke-width", "1");
-          c2.style.cursor = "move"; c2.style.pointerEvents = "auto";
-          c2.setAttribute("data-pe-cmd", `${ci}`);
-          c2.setAttribute("data-pe-ctrl", "cp2");
-          editSvg.appendChild(c2);
+          const control = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          control.setAttribute("cx", `${handleX}`); control.setAttribute("cy", `${handleY}`);
+          control.setAttribute("r", "3.5"); control.setAttribute("fill", color);
+          control.setAttribute("stroke", "#fff"); control.setAttribute("stroke-width", "1");
+          control.style.cursor = "move"; control.style.pointerEvents = "auto";
+          control.setAttribute("data-pe-point", `${pointIndex}`);
+          control.setAttribute("data-pe-handle", handleName);
+          control.setAttribute("aria-label", `${handleName === "cpIn" ? "Incoming" : "Outgoing"} handle for anchor ${pointIndex + 1}`);
+          editSvg.appendChild(control);
         }
       }
 
-      // Attach point editing mouse handlers
-      editSvg.addEventListener("mousedown", (e: Event) => {
-        const me = e as MouseEvent;
-        const target = me.target as SVGElement;
-        const cmdIdx = target.getAttribute("data-pe-cmd");
-        const ctrl = target.getAttribute("data-pe-ctrl");
-        if (cmdIdx == null) return;
-        e.stopPropagation();
-        e.preventDefault();
-        const ci = parseInt(cmdIdx);
+      const persistPointEdit = (editData: { layerId: string; points: PathPoint[]; closed: boolean }) => {
+        const newPath = serializePathData(editData.points, editData.closed);
+        targetPath.setAttribute("d", newPath);
+        if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newPath);
+      };
+
+      editSvg.addEventListener("mousedown", (event: Event) => {
+        const target = event.target as SVGElement;
+        const pointAttribute = target.getAttribute("data-pe-point");
+        const handle = target.getAttribute("data-pe-handle") as "anchor" | "cpIn" | "cpOut" | null;
+        if (pointAttribute == null || !handle) return;
+        event.stopPropagation();
+        event.preventDefault();
+
+        const pointIndex = Number.parseInt(pointAttribute, 10);
         const editData = pointEditPathRef.current;
-        if (!editData) return;
+        if (!editData?.points[pointIndex]) return;
+        let workingPoints = editData.points;
 
         const svgEl2 = targetPath.closest("svg");
         const svgRect2 = svgEl2?.getBoundingClientRect();
-        const cRect2 = content.getBoundingClientRect();
-        const svgLeft2 = svgRect2 ? (svgRect2.left - cRect2.left) / z : x;
-        const svgTop2 = svgRect2 ? (svgRect2.top - cRect2.top) / z : y;
-        const svgVbStr2 = svgEl2?.getAttribute("viewBox");
-        let vbX2 = 0, vbY2 = 0, vbWidth2 = 0, vbHeight2 = 0;
-        if (svgVbStr2) {
-          const vbp = svgVbStr2.split(/\s+/);
-          vbX2 = parseFloat(vbp[0]) || 0;
-          vbY2 = parseFloat(vbp[1]) || 0;
-          vbWidth2 = parseFloat(vbp[2]) || 0;
-          vbHeight2 = parseFloat(vbp[3]) || 0;
-        }
+        const contentRect = content.getBoundingClientRect();
+        const svgLeft2 = svgRect2 ? (svgRect2.left - contentRect.left) / z : x;
+        const svgTop2 = svgRect2 ? (svgRect2.top - contentRect.top) / z : y;
+        const viewBox = (svgEl2?.getAttribute("viewBox") || "0 0 0 0").split(/\s+/).map(Number);
+        const [vbX2 = 0, vbY2 = 0, vbWidth2 = 0, vbHeight2 = 0] = viewBox;
         const svgScaleX2 = svgRect2 && vbWidth2 ? (svgRect2.width / z) / vbWidth2 : 1;
         const svgScaleY2 = svgRect2 && vbHeight2 ? (svgRect2.height / z) / vbHeight2 : 1;
 
-        const onPeMove = (ev: MouseEvent) => {
-          const cx = ((ev.clientX - cRect.left) / z - svgLeft2) / svgScaleX2 + vbX2;
-          const cy = ((ev.clientY - cRect.top) / z - svgTop2) / svgScaleY2 + vbY2;
-          const cmd = editData.commands[ci];
-          if (!cmd) return;
+        const eventToPathPoint = (mouseEvent: MouseEvent): Point => ({
+          x: Math.round((((mouseEvent.clientX - contentRect.left) / z - svgLeft2) / svgScaleX2 + vbX2) * 10) / 10,
+          y: Math.round((((mouseEvent.clientY - contentRect.top) / z - svgTop2) / svgScaleY2 + vbY2) * 10) / 10,
+        });
 
-          if (ctrl === "anchor") {
-            const dx = cx - cmd.x;
-            const dy = cy - cmd.y;
-            cmd.x = Math.round(cx);
-            cmd.y = Math.round(cy);
-            if (cmd.type === "C") {
-              cmd.cx1 = Math.round(cmd.cx1 + dx);
-              cmd.cy1 = Math.round(cmd.cy1 + dy);
-              cmd.cx2 = Math.round(cmd.cx2 + dx);
-              cmd.cy2 = Math.round(cmd.cy2 + dy);
-            }
-          } else if (ctrl === "cp1" && cmd.type === "C") {
-            cmd.cx1 = Math.round(cx);
-            cmd.cy1 = Math.round(cy);
-            // If not Alt, mirror cp2
-            if (!(ev.altKey || (ev as any).altKey)) {
-              cmd.cx2 = Math.round(cmd.x + (cmd.x - cx));
-              cmd.cy2 = Math.round(cmd.y + (cmd.y - cy));
-            }
-          } else if (ctrl === "cp2" && cmd.type === "C") {
-            cmd.cx2 = Math.round(cx);
-            cmd.cy2 = Math.round(cy);
-            if (!(ev.altKey || (ev as any).altKey)) {
-              cmd.cx1 = Math.round(cmd.x + (cmd.x - cx));
-              cmd.cy1 = Math.round(cmd.y + (cmd.y - cy));
-            }
+        const onPointMove = (mouseEvent: MouseEvent) => {
+          const position = eventToPathPoint(mouseEvent);
+          if (handle === "anchor") {
+            workingPoints = movePathPoint(workingPoints, pointIndex, position);
+          } else {
+            const remainsLinked = workingPoints[pointIndex].type === "smooth" && !mouseEvent.altKey;
+            workingPoints = movePathHandle(workingPoints, pointIndex, handle, position, remainsLinked);
           }
-
-          // Update the path element's d attribute live
-          const newD = buildPathFromCommands(editData.commands);
-          targetPath.setAttribute("d", newD);
-
-          // Refresh overlay to show updated handles
+          editData.points = workingPoints;
+          targetPath.setAttribute("d", serializePathData(workingPoints, editData.closed));
           refreshOverlay(el);
         };
 
-        const onPeUp = () => {
-          document.removeEventListener("mousemove", onPeMove);
-          document.removeEventListener("mouseup", onPeUp);
-          // Persist the path data change
-          const newD = buildPathFromCommands(editData.commands);
-          const lid = editData.layerId;
-          if (lid && onEditPathPointsRef.current) {
-            onEditPathPointsRef.current(lid, newD);
-          }
+        const onPointUp = () => {
+          document.removeEventListener("mousemove", onPointMove);
+          document.removeEventListener("mouseup", onPointUp);
+          persistPointEdit(editData);
         };
+        document.addEventListener("mousemove", onPointMove);
+        document.addEventListener("mouseup", onPointUp);
+      });
 
-        document.addEventListener("mousemove", onPeMove);
-        document.addEventListener("mouseup", onPeUp);
+      const toggleAnchor = (target: SVGElement) => {
+        const pointAttribute = target.getAttribute("data-pe-point");
+        if (pointAttribute == null || target.getAttribute("data-pe-handle") !== "anchor") return;
+        const editData = pointEditPathRef.current;
+        if (!editData) return;
+        editData.points = toggleSmoothCorner(editData.points, Number.parseInt(pointAttribute, 10), editData.closed);
+        persistPointEdit(editData);
+        refreshOverlay(el);
+      };
+
+      editSvg.addEventListener("dblclick", (event: Event) => {
+        const target = event.target as SVGElement;
+        if (!target.hasAttribute("data-pe-point")) return;
+        event.stopPropagation();
+        event.preventDefault();
+        toggleAnchor(target);
+      });
+      editSvg.addEventListener("keydown", (event: Event) => {
+        const keyboardEvent = event as KeyboardEvent;
+        if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
+        keyboardEvent.stopPropagation();
+        keyboardEvent.preventDefault();
+        toggleAnchor(keyboardEvent.target as SVGElement);
       });
     } else {
       // Rotation handle (above selection box)
@@ -732,19 +727,14 @@ export function DesignFrame({
     }
   }
 
-  const penPointsRef = useRef<(any)[]>([]);
+  const penPointsRef = useRef<PathPoint[]>([]);
   const penSvgRef = useRef<SVGElement | null>(null);
-  // Bezier pen drag state
-  const penDragStartRef = useRef<{x: number; y: number} | null>(null);
-  const penDragActiveRef = useRef(false);
-  const penDragPreviewRef = useRef<SVGElement | null>(null);
   // Point editing state
-  const pointEditPathRef = useRef<{ layerId: string; commands: any[] } | null>(null);
+  const pointEditPathRef = useRef<{ layerId: string; points: PathPoint[]; closed: boolean } | null>(null);
   const pointEditOverlayRef = useRef<SVGElement | null>(null);
-  const pointEditDragRef = useRef<{ cmdIndex: number; isControl: boolean; controlIndex: number } | null>(null);
 
   // ── Pen preview renderer (supports bezier curves) ──
-  function drawPenPreview(content: HTMLElement, pts: any[], dragAnchor?: {x:number;y:number}, dragControl?: {x:number;y:number}, alt?: boolean) {
+  function drawPenPreview(content: HTMLElement, pts: PathPoint[], draftPoint?: PathPoint) {
     // Ensure SVG container
     if (!penSvgRef.current) {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -762,38 +752,9 @@ export function DesignFrame({
     const svg = penSvgRef.current;
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    // Build path data from points (including bezier info)
-    if (pts.length >= 1) {
-      let pathD = `M ${pts[0].x} ${pts[0].y}`;
-      for (let i = 1; i < pts.length; i++) {
-        const prev = pts[i - 1];
-        const curr = pts[i];
-        if (curr.cx1 !== undefined || curr.cx2 !== undefined) {
-          // Bezier curve: use C command
-          const cx1 = curr.cx1 ?? prev.x;
-          const cy1 = curr.cy1 ?? prev.y;
-          const cx2 = curr.cx2 ?? curr.x;
-          const cy2 = curr.cy2 ?? curr.y;
-          pathD += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${curr.x} ${curr.y}`;
-        } else {
-          pathD += ` L ${curr.x} ${curr.y}`;
-        }
-      }
-
-      // Add preview segment for active drag
-      if (dragAnchor && dragControl) {
-        const lastPt = pts[pts.length - 1];
-        if (alt) {
-          pathD += ` C ${dragAnchor.x} ${dragAnchor.y}, ${dragControl.x} ${dragControl.y}, ${dragAnchor.x} ${dragAnchor.y}`;
-        } else {
-          // Symmetric: mirror on both sides
-          const mdx = dragAnchor.x - (dragControl.x - dragAnchor.x) * 0.5;
-          const mdy = dragAnchor.y - (dragControl.y - dragAnchor.y) * 0.5;
-          const cpx = dragAnchor.x + (dragControl.x - dragAnchor.x) * 0.5;
-          const cpy = dragAnchor.y + (dragControl.y - dragAnchor.y) * 0.5;
-          pathD += ` C ${mdx} ${mdy}, ${cpx} ${cpy}, ${dragAnchor.x} ${dragAnchor.y}`;
-        }
-      }
+    const previewPoints = draftPoint ? [...pts, draftPoint] : pts;
+    if (previewPoints.length >= 1) {
+      const pathD = serializePathData(previewPoints);
 
       const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
       pathEl.setAttribute("d", pathD);
@@ -806,140 +767,80 @@ export function DesignFrame({
     }
 
     // Draw anchor points
-    for (const p of pts) {
+    for (const p of previewPoints) {
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circle.setAttribute("cx", `${p.x}`);
       circle.setAttribute("cy", `${p.y}`);
-      circle.setAttribute("r", p.cx1 !== undefined ? "5" : "4");
-      circle.setAttribute("fill", p.cx1 !== undefined ? "#A78BFA" : "#8B5CF6");
+      circle.setAttribute("r", p.type === "smooth" ? "5" : "4");
+      circle.setAttribute("fill", p.type === "smooth" ? "#A78BFA" : "#8B5CF6");
       circle.setAttribute("stroke", "#fff");
       circle.setAttribute("stroke-width", "1.5");
       svg.appendChild(circle);
 
       // Draw control handles for bezier points
-      if (p.cx1 !== undefined && p.cy1 !== undefined) {
+      if (p.cpIn) {
         const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
         line1.setAttribute("x1", `${p.x}`);
         line1.setAttribute("y1", `${p.y}`);
-        line1.setAttribute("x2", `${p.cx1}`);
-        line1.setAttribute("y2", `${p.cy1}`);
+        line1.setAttribute("x2", `${p.cpIn.x}`);
+        line1.setAttribute("y2", `${p.cpIn.y}`);
         line1.setAttribute("stroke", "#A78BFA");
         line1.setAttribute("stroke-width", "1");
         line1.setAttribute("opacity", "0.5");
         svg.appendChild(line1);
 
         const c1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        c1.setAttribute("cx", `${p.cx1}`); c1.setAttribute("cy", `${p.cy1}`);
+        c1.setAttribute("cx", `${p.cpIn.x}`); c1.setAttribute("cy", `${p.cpIn.y}`);
         c1.setAttribute("r", "3"); c1.setAttribute("fill", "#F59E0B");
         c1.setAttribute("stroke", "#fff"); c1.setAttribute("stroke-width", "1");
         svg.appendChild(c1);
       }
-      if (p.cx2 !== undefined && p.cy2 !== undefined) {
+      if (p.cpOut) {
         const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
         line2.setAttribute("x1", `${p.x}`);
         line2.setAttribute("y1", `${p.y}`);
-        line2.setAttribute("x2", `${p.cx2}`);
-        line2.setAttribute("y2", `${p.cy2}`);
+        line2.setAttribute("x2", `${p.cpOut.x}`);
+        line2.setAttribute("y2", `${p.cpOut.y}`);
         line2.setAttribute("stroke", "#8B5CF6");
         line2.setAttribute("stroke-width", "1");
         line2.setAttribute("opacity", "0.5");
         svg.appendChild(line2);
 
         const c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        c2.setAttribute("cx", `${p.cx2}`); c2.setAttribute("cy", `${p.cy2}`);
+        c2.setAttribute("cx", `${p.cpOut.x}`); c2.setAttribute("cy", `${p.cpOut.y}`);
         c2.setAttribute("r", "3"); c2.setAttribute("fill", "#8B5CF6");
         c2.setAttribute("stroke", "#fff"); c2.setAttribute("stroke-width", "1");
         svg.appendChild(c2);
       }
     }
 
-    // Draw drag preview anchor + control lines
-    if (dragAnchor && dragControl) {
-      // Anchor dot
-      const a = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      a.setAttribute("cx", `${dragAnchor.x}`); a.setAttribute("cy", `${dragAnchor.y}`);
-      a.setAttribute("r", "5"); a.setAttribute("fill", "#A78BFA");
-      a.setAttribute("stroke", "#fff"); a.setAttribute("stroke-width", "1.5");
-      svg.appendChild(a);
-
-      // Handle lines
-      if (alt) {
-        const hl = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        hl.setAttribute("x1", `${dragAnchor.x}`); hl.setAttribute("y1", `${dragAnchor.y}`);
-        hl.setAttribute("x2", `${dragControl.x}`); hl.setAttribute("y2", `${dragControl.y}`);
-        hl.setAttribute("stroke", "#8B5CF6"); hl.setAttribute("stroke-width", "1");
-        hl.setAttribute("opacity", "0.5");
-        svg.appendChild(hl);
-      } else {
-        const mdx = dragAnchor.x - (dragControl.x - dragAnchor.x) * 0.5;
-        const mdy = dragAnchor.y - (dragControl.y - dragAnchor.y) * 0.5;
-        const hl1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        hl1.setAttribute("x1", `${dragAnchor.x}`); hl1.setAttribute("y1", `${dragAnchor.y}`);
-        hl1.setAttribute("x2", `${mdx}`); hl1.setAttribute("y2", `${mdy}`);
-        hl1.setAttribute("stroke", "#A78BFA"); hl1.setAttribute("stroke-width", "1");
-        hl1.setAttribute("opacity", "0.5");
-        svg.appendChild(hl1);
-      }
-      const hl2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      hl2.setAttribute("x1", `${dragAnchor.x}`); hl2.setAttribute("y1", `${dragAnchor.y}`);
-      hl2.setAttribute("x2", `${dragControl.x}`); hl2.setAttribute("y2", `${dragControl.y}`);
-      hl2.setAttribute("stroke", "#8B5CF6"); hl2.setAttribute("stroke-width", "1");
-      hl2.setAttribute("opacity", "0.5");
-      svg.appendChild(hl2);
-
-      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      c.setAttribute("cx", `${dragControl.x}`); c.setAttribute("cy", `${dragControl.y}`);
-      c.setAttribute("r", "3"); c.setAttribute("fill", "#F59E0B");
-      c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", "1");
-      svg.appendChild(c);
-    }
   }
 
   // ── Path parsing helpers for point editing ──
-  function parsePathCommands(pathData: string): any[] {
-    const tokens = pathData.match(/[a-zA-Z]|[-+]?\d*\.?\d+/g) || [];
-    const cmds: any[] = [];
-    let i = 0;
-    while (i < tokens.length) {
-      const c = tokens[i];
-      if (c === "M" || c === "m") {
-        cmds.push({ type: "M", x: parseFloat(tokens[i+1]) || 0, y: parseFloat(tokens[i+2]) || 0 });
-        i += 3;
-      } else if (c === "L" || c === "l") {
-        cmds.push({ type: "L", x: parseFloat(tokens[i+1]) || 0, y: parseFloat(tokens[i+2]) || 0 });
-        i += 3;
-      } else if (c === "C" || c === "c") {
-        cmds.push({ type: "C", cx1: parseFloat(tokens[i+1]) || 0, cy1: parseFloat(tokens[i+2]) || 0, cx2: parseFloat(tokens[i+3]) || 0, cy2: parseFloat(tokens[i+4]) || 0, x: parseFloat(tokens[i+5]) || 0, y: parseFloat(tokens[i+6]) || 0 });
-        i += 7;
-      } else if (c === "Z" || c === "z") {
-        cmds.push({ type: "Z" });
-        i++;
-      } else if (c === "H" || c === "h") {
-        cmds.push({ type: "H", x: parseFloat(tokens[i+1]) || 0 });
-        i += 2;
-      } else if (c === "V" || c === "v") {
-        cmds.push({ type: "V", y: parseFloat(tokens[i+1]) || 0 });
-        i += 2;
-      } else { i++; }
-    }
-    return cmds;
-  }
-
-  function buildPathFromCommands(cmds: any[]): string {
-    const parts: string[] = [];
-    for (const cmd of cmds) {
-      if (cmd.type === "M") parts.push(`M ${cmd.x} ${cmd.y}`);
-      else if (cmd.type === "L") parts.push(`L ${cmd.x} ${cmd.y}`);
-      else if (cmd.type === "C") parts.push(`C ${cmd.cx1} ${cmd.cy1}, ${cmd.cx2} ${cmd.cy2}, ${cmd.x} ${cmd.y}`);
-      else if (cmd.type === "Z") parts.push("Z");
-      else if (cmd.type === "H") parts.push(`H ${cmd.x}`);
-      else if (cmd.type === "V") parts.push(`V ${cmd.y}`);
-    }
-    return parts.join(" ");
-  }
-
   function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
     const DRAG_THRESHOLD = 4;
+
+    // ── Pen rubber band: preview the prospective segment between clicks ──
+    // While the mouse is up, the next segment follows the cursor (Illustrator-style),
+    // so the curve pulled by the previous drag is visible before committing a point.
+    content.addEventListener("mousemove", (e: Event) => {
+      const me = e as MouseEvent;
+      if (activeToolRef.current !== "pen" || me.buttons !== 0) return;
+      const pts = penPointsRef.current;
+      if (pts.length === 0) return;
+      const rect = content.getBoundingClientRect();
+      const z = zoomRef.current || 1;
+      const cursor = {
+        x: Math.round((me.clientX - rect.left) / z),
+        y: Math.round((me.clientY - rect.top) / z),
+      };
+      const closing = pts.length >= 2
+        && Math.hypot(cursor.x - pts[0].x, cursor.y - pts[0].y) < 12;
+      const draft: PathPoint = closing
+        ? { type: "anchor", x: pts[0].x, y: pts[0].y, cpIn: pts[0].cpIn ? { ...pts[0].cpIn } : undefined }
+        : { type: "anchor", ...cursor };
+      drawPenPreview(content, pts, draft);
+    });
 
     // ── Unified mousedown handler ──
     content.addEventListener("mousedown", (e: Event) => {
@@ -1056,9 +957,6 @@ export function DesignFrame({
           }
         }
 
-        // Start bezier drag tracking
-        penDragStartRef.current = { x: point.x, y: point.y };
-        penDragActiveRef.current = false;
         let dragged = false;
 
         const onPenMove = (ev: MouseEvent) => {
@@ -1070,9 +968,8 @@ export function DesignFrame({
 
           if (dist >= DRAG_THRESHOLD) {
             dragged = true;
-            penDragActiveRef.current = true;
-            // Update preview showing bezier handles
-            drawPenPreview(content, pts, point, { x: Math.round(cx), y: Math.round(cy) }, ev.altKey || (ev as any).altKey);
+            const outgoingHandle = { x: Math.round(cx), y: Math.round(cy) };
+            drawPenPreview(content, pts, createSmoothPoint(point, outgoingHandle));
           }
         };
 
@@ -1082,31 +979,14 @@ export function DesignFrame({
 
           if (!dragged) {
             // Click: add straight line point
-            pts.push(point);
+            pts.push({ type: "anchor", ...point });
             drawPenPreview(content, pts);
           } else {
-            // Drag: add bezier point
             const cx = (ev.clientX - rect.left) / z;
             const cy = (ev.clientY - rect.top) / z;
-            const alt = ev.altKey || (ev as any).altKey;
-
-            // Create bezier point with control handles
-            // The anchor is at mousedown position, control points extend in drag direction
-            const dx = cx - point.x;
-            const dy = cy - point.y;
-
-            // Incoming control: mirror of outgoing (unless Alt breaks symmetry)
-            const cp1x = alt ? point.x : point.x - dx * 0.5;
-            const cp1y = alt ? point.y : point.y - dy * 0.5;
-            const cp2x = point.x + dx * 0.5;
-            const cp2y = point.y + dy * 0.5;
-
-            pts.push({ x: point.x, y: point.y, cx1: cp1x, cy1: cp1y, cx2: cp2x, cy2: cp2y } as any);
+            pts.push(createSmoothPoint(point, { x: Math.round(cx), y: Math.round(cy) }));
             drawPenPreview(content, pts);
           }
-
-          penDragStartRef.current = null;
-          penDragActiveRef.current = false;
         };
 
         document.addEventListener("mousemove", onPenMove);
@@ -1124,36 +1004,12 @@ export function DesignFrame({
         for (const pathEl of Array.from(pathEls)) {
           const d = pathEl.getAttribute("d");
           if (!d) continue;
-          const cmds = parsePathCommands(d);
-
-          // Collect anchor points to check segment midpoints
-          const anchors: { cmdIdx: number; x: number; y: number }[] = [];
-          for (let i = 0; i < cmds.length; i++) {
-            if (cmds[i].type === "M" || cmds[i].type === "L" || cmds[i].type === "C") {
-              anchors.push({ cmdIdx: i, x: cmds[i].x, y: cmds[i].y });
-            }
-          }
-
-          // Find closest segment midpoint
-          let bestInsertIdx = -1;
-          let bestDist = Infinity;
-          let bestMid: { x: number; y: number } | null = null;
-
-          for (let i = 0; i < anchors.length - 1; i++) {
-            const a = anchors[i];
-            const b = anchors[i + 1];
-            const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-            const dist = Math.hypot(mx - mid.x, my - mid.y);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestInsertIdx = anchors[i + 1].cmdIdx;
-              bestMid = mid;
-            }
-          }
-
-          if (bestDist < 20 && bestMid && bestInsertIdx >= 0) {
-            cmds.splice(bestInsertIdx, 0, { type: "L", x: Math.round(bestMid.x), y: Math.round(bestMid.y) });
-            pathEl.setAttribute("d", buildPathFromCommands(cmds));
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
+          const closest = findClosestPathSegment(points, { x: mx, y: my }, closed);
+          if (closest && closest.distance < 20) {
+            const updated = splitPathSegment(points, closest.endIndex, closest.t, closed);
+            pathEl.setAttribute("d", serializePathData(updated, closed));
             emitFrameChange(cssRef.current, content.innerHTML);
             return;
           }
@@ -1171,23 +1027,21 @@ export function DesignFrame({
         for (const pathEl of Array.from(pathEls)) {
           const d = pathEl.getAttribute("d");
           if (!d) continue;
-          const cmds = parsePathCommands(d);
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
 
           // Find closest anchor point
           let bestIdx = -1;
           let bestDist = Infinity;
-          for (let i = 1; i < cmds.length; i++) {
-            const cmd = cmds[i];
-            if (cmd.type === "L" || cmd.type === "C") {
-              const dist = Math.hypot(mx - cmd.x, my - cmd.y);
-              if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-            }
+          for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            const dist = Math.hypot(mx - point.x, my - point.y);
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
           }
 
-          const anchorCount = cmds.filter(c => c.type !== "Z").length;
-          if (bestDist < 12 && bestIdx >= 0 && anchorCount > 2) {
-            cmds.splice(bestIdx, 1);
-            pathEl.setAttribute("d", buildPathFromCommands(cmds));
+          if (bestDist < 12 && bestIdx >= 0 && points.length > 2) {
+            const updated = deletePathPoint(points, bestIdx);
+            pathEl.setAttribute("d", serializePathData(updated, closed));
             emitFrameChange(cssRef.current, content.innerHTML);
             return;
           }
@@ -1205,45 +1059,43 @@ export function DesignFrame({
         for (const pathEl of Array.from(pathEls)) {
           const d = pathEl.getAttribute("d");
           if (!d) continue;
-          const cmds = parsePathCommands(d);
+          const points = parsePathData(d);
+          const closed = isPathClosed(d);
 
           // Find closest anchor point
           let bestIdx = -1;
           let bestDist = Infinity;
-          for (let i = 0; i < cmds.length; i++) {
-            const cmd = cmds[i];
-            let px: number | null = null, py: number | null = null;
-            if (cmd.type === "M" || cmd.type === "L" || cmd.type === "C") { px = cmd.x; py = cmd.y; }
-            if (px === null || py === null) continue;
-            const dist = Math.hypot(mx - px, my - py);
+          for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            const dist = Math.hypot(mx - point.x, my - point.y);
             if (dist < bestDist) { bestDist = dist; bestIdx = i; }
           }
 
           if (bestDist < 12 && bestIdx >= 0) {
-            const cmd = cmds[bestIdx];
-            const prev = bestIdx > 0 ? cmds[bestIdx - 1] : null;
-            const next = bestIdx < cmds.length - 1 ? cmds[bestIdx + 1] : null;
+            const anchor = points[bestIdx];
+            let updated = points;
+            let dragged = false;
 
-            // Get previous point coords
-            let prevX = cmd.x, prevY = cmd.y;
-            if (prev && (prev.type === "M" || prev.type === "L" || prev.type === "C")) { prevX = prev.x; prevY = prev.y; }
+            const onConvertMove = (mouseEvent: MouseEvent) => {
+              const handle = {
+                x: Math.round((mouseEvent.clientX - rect.left) / z),
+                y: Math.round((mouseEvent.clientY - rect.top) / z),
+              };
+              if (Math.hypot(handle.x - anchor.x, handle.y - anchor.y) < DRAG_THRESHOLD) return;
+              dragged = true;
+              updated = points.map((point, index) => index === bestIdx ? createSmoothPoint(anchor, handle) : point);
+              pathEl.setAttribute("d", serializePathData(updated, closed));
+            };
 
-            // Convert this point's incoming segment from L to C
-            if (cmd.type === "L") {
-              const dx = cmd.x - prevX;
-              const dy = cmd.y - prevY;
-              cmds[bestIdx] = { type: "C", cx1: Math.round(prevX + dx * 0.33), cy1: Math.round(prevY + dy * 0.33), cx2: Math.round(prevX + dx * 0.67), cy2: Math.round(prevY + dy * 0.67), x: cmd.x, y: cmd.y };
-            }
-
-            // Convert next segment from L to C
-            if (next && next.type === "L") {
-              const dx = next.x - cmd.x;
-              const dy = next.y - cmd.y;
-              cmds[bestIdx + 1] = { type: "C", cx1: Math.round(cmd.x + dx * 0.33), cy1: Math.round(cmd.y + dy * 0.33), cx2: Math.round(cmd.x + dx * 0.67), cy2: Math.round(cmd.y + dy * 0.67), x: next.x, y: next.y };
-            }
-
-            pathEl.setAttribute("d", buildPathFromCommands(cmds));
-            emitFrameChange(cssRef.current, content.innerHTML);
+            const onConvertUp = () => {
+              document.removeEventListener("mousemove", onConvertMove);
+              document.removeEventListener("mouseup", onConvertUp);
+              if (!dragged) updated = toggleSmoothCorner(points, bestIdx, closed);
+              pathEl.setAttribute("d", serializePathData(updated, closed));
+              emitFrameChange(cssRef.current, content.innerHTML);
+            };
+            document.addEventListener("mousemove", onConvertMove);
+            document.addEventListener("mouseup", onConvertUp);
             return;
           }
         }
@@ -1305,7 +1157,7 @@ export function DesignFrame({
           document.removeEventListener("mousemove", onPencilMove);
           document.removeEventListener("mouseup", onPencilUp);
           if (pencilPoints.length >= 2) {
-            penPointsRef.current = pencilPoints.map(p => ({ x: p.x, y: p.y }));
+            penPointsRef.current = pencilPoints.map(p => ({ type: "anchor", x: p.x, y: p.y }));
             finalizePenPath(content, false);
           }
         };
@@ -1683,37 +1535,8 @@ export function DesignFrame({
     const pts = penPointsRef.current;
     if (pts.length < 2) return;
 
-    // Build SVG path data (supports bezier curves)
-    let pathData = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1];
-      const curr = pts[i];
-      if (curr.cx1 !== undefined || curr.cx2 !== undefined) {
-        const cx1 = curr.cx1 ?? prev.x;
-        const cy1 = curr.cy1 ?? prev.y;
-        const cx2 = curr.cx2 ?? curr.x;
-        const cy2 = curr.cy2 ?? curr.y;
-        pathData += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${curr.x} ${curr.y}`;
-      } else {
-        pathData += ` L ${curr.x} ${curr.y}`;
-      }
-    }
-    if (closed) pathData += " Z";
-
-    // Calculate bounding box (include control points for bezier)
-    const allXs: number[] = [];
-    const allYs: number[] = [];
-    for (const p of pts) {
-      allXs.push(p.x); allYs.push(p.y);
-      if (p.cx1 !== undefined) { allXs.push(p.cx1); allYs.push(p.cy1); }
-      if (p.cx2 !== undefined) { allXs.push(p.cx2); allYs.push(p.cy2); }
-    }
-    const bounds = {
-      x: Math.min(...allXs),
-      y: Math.min(...allYs),
-      width: Math.max(...allXs) - Math.min(...allXs),
-      height: Math.max(...allYs) - Math.min(...allYs),
-    };
+    const pathData = serializePathData(pts, closed);
+    const bounds = computeBounds(pts);
 
     onAddPenPathRef.current?.(pathData, bounds, closed);
 

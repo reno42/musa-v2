@@ -50,6 +50,7 @@ interface InfiniteHtmlCanvasProps {
   onTextChange?: (layerId: string, newText: string) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
+  onEditPathPoints?: (frameId: string, layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
@@ -65,7 +66,7 @@ export function InfiniteHtmlCanvas({
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement,
-  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
+  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -422,6 +423,7 @@ export function InfiniteHtmlCanvas({
               onTextChange={onTextChange}
               onAddPenPath={onAddPenPath}
               onAddTextPath={onAddTextPath}
+              onEditPathPoints={(layerId, newPathD) => onEditPathPoints?.(frame.id, layerId, newPathD)}
               onElementDelete={onElementDelete}
               onElementDuplicate={onElementDuplicate}
               onLabelMouseDown={handleLabelMouseDown}

@@ -1,181 +1,354 @@
-/**
- * SVG Path Data Parser/Serializer — Phase E1
- * Parses path d="M...C...L...Z" strings into editable point models and back.
- */
+import SVGPathCommander from "svg-path-commander";
+import {
+  classifyBezierDegeneracy,
+  deCasteljau,
+  findBezierChainIntersections,
+  findBezierSingularities,
+  splitBezier,
+} from "./bezierMath.ts";
 
 export interface Point {
   x: number;
   y: number;
 }
 
-export interface PathPoint {
+/**
+ * Editable anchor model. Handles belong to the anchor, never to a command:
+ * cpIn controls the segment arriving at the anchor and cpOut the one leaving it.
+ */
+export interface PathPoint extends Point {
   type: "anchor" | "smooth";
-  x: number;
-  y: number;
-  cpIn?: Point;   // incoming control point (for bezier)
-  cpOut?: Point;  // outgoing control point (for bezier)
+  cpIn?: Point;
+  cpOut?: Point;
 }
 
-/** Parse SVG d attribute into array of PathPoint */
+export interface ClosestPathSegment {
+  /** Index of the segment's end anchor. `points.length` is the closing segment. */
+  endIndex: number;
+  t: number;
+  distance: number;
+  point: Point;
+}
+
+export interface PathAnalysis {
+  degeneracy: "point" | "line" | "curve";
+  selfIntersections: number;
+  singularities: number;
+}
+
+type PathSegment = Array<string | number>;
+
+/** Parse one SVG subpath into anchors with correctly-owned cubic handles. */
 export function parsePathData(d: string): PathPoint[] {
-  const points: PathPoint[] = [];
-  const tokens = tokenize(d);
-  let i = 0;
-  let currentX = 0;
-  let currentY = 0;
-  let subPathStartX = 0;
-  let subPathStartY = 0;
-  let prevCommand = "";
+  if (!d.trim()) return [];
 
-  while (i < tokens.length) {
-    const cmd = tokens[i];
-    const isRelative = cmd === cmd.toLowerCase();
-    const upperCmd = cmd.toUpperCase();
+  const closed = isPathClosed(d);
+  const absolute = SVGPathCommander.pathToAbsolute(d) as unknown as PathSegment[];
 
-    if (upperCmd === "M" || upperCmd === "L" || upperCmd === "T") {
-      const x = parseFloat(tokens[i + 1]);
-      const y = parseFloat(tokens[i + 2]);
-      const absX = isRelative ? currentX + x : x;
-      const absY = isRelative ? currentY + y : y;
-      if (upperCmd === "M") {
-        subPathStartX = absX; subPathStartY = absY;
-      }
-      points.push({ type: "anchor", x: absX, y: absY });
-      currentX = absX; currentY = absY;
-      i += 3;
-    } else if (upperCmd === "C") {
-      const cp1x = isRelative ? currentX + parseFloat(tokens[i + 1]) : parseFloat(tokens[i + 1]);
-      const cp1y = isRelative ? currentY + parseFloat(tokens[i + 2]) : parseFloat(tokens[i + 2]);
-      const cp2x = isRelative ? currentX + parseFloat(tokens[i + 3]) : parseFloat(tokens[i + 3]);
-      const cp2y = isRelative ? currentY + parseFloat(tokens[i + 4]) : parseFloat(tokens[i + 4]);
-      const x = isRelative ? currentX + parseFloat(tokens[i + 5]) : parseFloat(tokens[i + 5]);
-      const y = isRelative ? currentY + parseFloat(tokens[i + 6]) : parseFloat(tokens[i + 6]);
-      points.push({ type: "smooth", x, y, cpIn: { x: cp2x, y: cp2y }, cpOut: { x: cp1x, y: cp1y } });
-      currentX = x; currentY = y;
-      i += 7;
-    } else if (upperCmd === "S") {
-      const cp2x = isRelative ? currentX + parseFloat(tokens[i + 1]) : parseFloat(tokens[i + 1]);
-      const cp2y = isRelative ? currentY + parseFloat(tokens[i + 2]) : parseFloat(tokens[i + 2]);
-      const x = isRelative ? currentX + parseFloat(tokens[i + 3]) : parseFloat(tokens[i + 3]);
-      const y = isRelative ? currentY + parseFloat(tokens[i + 4]) : parseFloat(tokens[i + 4]);
-      // Reflect cpOut of previous point as cpIn
-      const prevPt = points[points.length - 1];
-      const cp1x = prevPt?.cpIn ? currentX + (currentX - prevPt.cpIn.x) : currentX;
-      const cp1y = prevPt?.cpIn ? currentY + (currentY - prevPt.cpIn.y) : currentY;
-      points.push({ type: "smooth", x, y, cpIn: { x: cp2x, y: cp2y }, cpOut: { x: cp1x, y: cp1y } });
-      currentX = x; currentY = y;
-      i += 5;
-    } else if (upperCmd === "Q") {
-      const cpx = isRelative ? currentX + parseFloat(tokens[i + 1]) : parseFloat(tokens[i + 1]);
-      const cpy = isRelative ? currentY + parseFloat(tokens[i + 2]) : parseFloat(tokens[i + 2]);
-      const x = isRelative ? currentX + parseFloat(tokens[i + 3]) : parseFloat(tokens[i + 3]);
-      const y = isRelative ? currentY + parseFloat(tokens[i + 4]) : parseFloat(tokens[i + 4]);
-      // Quadratic → cubic approximation: cp1 = current + 2/3*(cp - current), cp2 = target + 2/3*(cp - target)
-      const cp1x = currentX + (2 / 3) * (cpx - currentX);
-      const cp1y = currentY + (2 / 3) * (cpy - currentY);
-      const cp2x = x + (2 / 3) * (cpx - x);
-      const cp2y = y + (2 / 3) * (cpy - y);
-      points.push({ type: "smooth", x, y, cpIn: { x: cp2x, y: cp2y }, cpOut: { x: cp1x, y: cp1y } });
-      currentX = x; currentY = y;
-      i += 5;
-    } else if (upperCmd === "A") {
-      // Arc: extract endpoint
-      const x = isRelative ? currentX + parseFloat(tokens[i + 6]) : parseFloat(tokens[i + 6]);
-      const y = isRelative ? currentY + parseFloat(tokens[i + 7]) : parseFloat(tokens[i + 7]);
-      points.push({ type: "anchor", x, y });
-      currentX = x; currentY = y;
-      i += 8;
-    } else if (upperCmd === "Z") {
-      // Close path — add reference to subpath start
-      currentX = subPathStartX; currentY = subPathStartY;
-      i += 1;
-    } else if (upperCmd === "H") {
-      const x = isRelative ? currentX + parseFloat(tokens[i + 1]) : parseFloat(tokens[i + 1]);
-      points.push({ type: "anchor", x, y: currentY });
-      currentX = x;
-      i += 2;
-    } else if (upperCmd === "V") {
-      const y = isRelative ? currentY + parseFloat(tokens[i + 1]) : parseFloat(tokens[i + 1]);
-      points.push({ type: "anchor", x: currentX, y });
-      currentY = y;
-      i += 2;
-    } else {
-      // Unknown or numeric (implicit command repeat)
-      i++;
-    }
-    prevCommand = upperCmd;
+  // Arcs need cubic conversion before they can be edited with this anchor model.
+  // Shape is preserved; only the SVG command representation changes.
+  if (absolute.some((segment) => segment[0] === "A")) {
+    const curve = SVGPathCommander.pathToCurve(d) as unknown as PathSegment[];
+    return parseCurveSegments(curve, closed);
   }
-  return points;
+
+  const points: PathPoint[] = [];
+  let current: Point = { x: 0, y: 0 };
+  let previousCommand = "";
+  let previousQuadraticControl: Point | undefined;
+
+  for (const segment of absolute) {
+    const command = String(segment[0]).toUpperCase();
+    if (command === "M") {
+      current = pointFrom(segment, 1);
+      points.push({ type: "anchor", ...current });
+      previousQuadraticControl = undefined;
+    } else if (command === "L") {
+      current = pointFrom(segment, 1);
+      points.push({ type: "anchor", ...current });
+      previousQuadraticControl = undefined;
+    } else if (command === "H") {
+      current = { x: numberAt(segment, 1), y: current.y };
+      points.push({ type: "anchor", ...current });
+      previousQuadraticControl = undefined;
+    } else if (command === "V") {
+      current = { x: current.x, y: numberAt(segment, 1) };
+      points.push({ type: "anchor", ...current });
+      previousQuadraticControl = undefined;
+    } else if (command === "C") {
+      addCubicPoint(points, pointFrom(segment, 1), pointFrom(segment, 3), pointFrom(segment, 5));
+      current = pointFrom(segment, 5);
+      previousQuadraticControl = undefined;
+    } else if (command === "S") {
+      const previous = points[points.length - 1];
+      const cpOut = (previousCommand === "C" || previousCommand === "S") && previous?.cpIn
+        ? reflect(previous.cpIn, current)
+        : { ...current };
+      const end = pointFrom(segment, 3);
+      addCubicPoint(points, cpOut, pointFrom(segment, 1), end);
+      current = end;
+      previousQuadraticControl = undefined;
+    } else if (command === "Q") {
+      const quadraticControl = pointFrom(segment, 1);
+      const end = pointFrom(segment, 3);
+      addQuadraticPoint(points, current, quadraticControl, end);
+      current = end;
+      previousQuadraticControl = quadraticControl;
+    } else if (command === "T") {
+      const quadraticControl = previousCommand === "Q" || previousCommand === "T"
+        ? reflect(previousQuadraticControl ?? current, current)
+        : { ...current };
+      const end = pointFrom(segment, 1);
+      addQuadraticPoint(points, current, quadraticControl, end);
+      current = end;
+      previousQuadraticControl = quadraticControl;
+    }
+    previousCommand = command;
+  }
+
+  mergeExplicitClosingPoint(points, closed);
+  return classifyPoints(points);
 }
 
-/** Serialize PathPoint array back to SVG d attribute */
-export function serializePathData(points: PathPoint[]): string {
+/** Serialize anchors to SVG. A cubic segment uses previous.cpOut and current.cpIn. */
+export function serializePathData(points: PathPoint[], closed = false): string {
   if (points.length === 0) return "";
   const first = points[0];
   let d = `M ${round(first.x)} ${round(first.y)}`;
-  for (let i = 1; i < points.length; i++) {
-    const pt = points[i];
-    if (pt.type === "smooth" && pt.cpOut && points[i - 1]?.cpIn) {
-      d += ` C ${round(pt.cpOut.x)} ${round(pt.cpOut.y)} ${round(pt.cpIn!.x)} ${round(pt.cpIn!.y)} ${round(pt.x)} ${round(pt.y)}`;
-    } else if (pt.type === "smooth" && pt.cpOut) {
-      // Only outgoing control point
-      d += ` Q ${round(pt.cpOut.x)} ${round(pt.cpOut.y)} ${round(pt.x)} ${round(pt.y)}`;
-    } else {
-      d += ` L ${round(pt.x)} ${round(pt.y)}`;
+
+  for (let index = 1; index < points.length; index++) {
+    d += serializeSegment(points[index - 1], points[index]);
+  }
+
+  if (closed) {
+    const last = points[points.length - 1];
+    if (points.length > 1 && (last.cpOut || first.cpIn)) {
+      d += serializeSegment(last, first);
     }
+    d += " Z";
   }
   return d;
 }
 
-/** Serialize with Z at end for closed paths */
 export function serializePathDataClosed(points: PathPoint[]): string {
-  return serializePathData(points) + " Z";
+  return serializePathData(points, true);
 }
 
-/** Insert a new point at the given index */
+export function isPathClosed(d: string): boolean {
+  return /z\s*$/i.test(d.trim());
+}
+
+export function createSmoothPoint(anchor: Point, outgoingHandle: Point): PathPoint {
+  return {
+    type: "smooth",
+    ...anchor,
+    cpIn: reflect(outgoingHandle, anchor),
+    cpOut: { ...outgoingHandle },
+  };
+}
+
 export function insertPoint(points: PathPoint[], index: number, position: Point): PathPoint[] {
-  const result = [...points];
-  result.splice(index, 0, { type: "anchor", x: position.x, y: position.y });
+  const result = clonePathPoints(points);
+  result.splice(index, 0, { type: "anchor", ...position });
   return result;
 }
 
-/** Delete the point at the given index */
 export function deletePoint(points: PathPoint[], index: number): PathPoint[] {
-  if (points.length <= 2) return points; // minimum 2 points
-  return points.filter((_, i) => i !== index);
+  if (points.length <= 2) return points;
+  return clonePathPoints(points).filter((_, pointIndex) => pointIndex !== index);
 }
 
-/** Toggle between anchor (corner) and smooth (bezier) at given index */
-export function toggleSmoothCorner(points: PathPoint[], index: number): PathPoint[] {
-  const result = [...points];
-  const pt = result[index];
-  if (!pt) return result;
-  if (pt.type === "anchor") {
-    // Convert to smooth: create symmetric bezier handles
-    const prev = result[index - 1] || result[result.length - 1];
-    const next = result[index + 1] || result[0];
-    const dxPrev = pt.x - prev.x;
-    const dyPrev = pt.y - prev.y;
-    const dxNext = next.x - pt.x;
-    const dyNext = next.y - pt.y;
-    const handleLen = Math.min(Math.hypot(dxPrev, dyPrev), Math.hypot(dxNext, dyNext)) * 0.33;
-    const angleIn = Math.atan2(dyPrev, dxPrev);
-    const angleOut = Math.atan2(dyNext, dxNext);
-    result[index] = {
-      type: "smooth", x: pt.x, y: pt.y,
-      cpIn: { x: pt.x + handleLen * Math.cos(angleIn), y: pt.y + handleLen * Math.sin(angleIn) },
-      cpOut: { x: pt.x + handleLen * Math.cos(angleOut), y: pt.y + handleLen * Math.sin(angleOut) },
+/** Convert a straight/corner anchor to smooth, or remove all handles from a curved one. */
+export function toggleSmoothCorner(points: PathPoint[], index: number, closed = false): PathPoint[] {
+  const result = clonePathPoints(points);
+  const point = result[index];
+  if (!point) return result;
+
+  if (point.cpIn || point.cpOut) {
+    result[index] = { type: "anchor", x: point.x, y: point.y };
+    return result;
+  }
+
+  const previous = index > 0 ? result[index - 1] : closed ? result[result.length - 1] : undefined;
+  const next = index < result.length - 1 ? result[index + 1] : closed ? result[0] : undefined;
+  const direction = smoothDirection(point, previous, next);
+  const previousDistance = previous ? distance(point, previous) : Number.POSITIVE_INFINITY;
+  const nextDistance = next ? distance(point, next) : Number.POSITIVE_INFINITY;
+  const finiteDistance = Math.min(previousDistance, nextDistance);
+  const handleLength = Number.isFinite(finiteDistance) ? Math.max(8, finiteDistance / 3) : 24;
+
+  result[index] = {
+    type: "smooth",
+    x: point.x,
+    y: point.y,
+    cpIn: {
+      x: point.x - direction.x * handleLength,
+      y: point.y - direction.y * handleLength,
+    },
+    cpOut: {
+      x: point.x + direction.x * handleLength,
+      y: point.y + direction.y * handleLength,
+    },
+  };
+  return result;
+}
+
+export function movePathPoint(points: PathPoint[], index: number, position: Point): PathPoint[] {
+  const result = clonePathPoints(points);
+  const point = result[index];
+  if (!point) return result;
+  const dx = position.x - point.x;
+  const dy = position.y - point.y;
+  point.x = position.x;
+  point.y = position.y;
+  if (point.cpIn) point.cpIn = { x: point.cpIn.x + dx, y: point.cpIn.y + dy };
+  if (point.cpOut) point.cpOut = { x: point.cpOut.x + dx, y: point.cpOut.y + dy };
+  return result;
+}
+
+/** Move a handle. Smooth points keep the opposite handle collinear unless linked=false. */
+export function movePathHandle(
+  points: PathPoint[],
+  index: number,
+  handle: "cpIn" | "cpOut",
+  position: Point,
+  linked = true,
+): PathPoint[] {
+  const result = clonePathPoints(points);
+  const point = result[index];
+  if (!point) return result;
+
+  const opposite = handle === "cpIn" ? "cpOut" : "cpIn";
+  const oldOppositeLength = point[opposite] ? distance(point, point[opposite]!) : distance(point, position);
+  point[handle] = { ...position };
+
+  if (linked) {
+    const length = distance(point, position);
+    const scale = length > 0 ? oldOppositeLength / length : 0;
+    point[opposite] = {
+      x: point.x - (position.x - point.x) * scale,
+      y: point.y - (position.y - point.y) * scale,
     };
+    point.type = "smooth";
   } else {
-    result[index] = { type: "anchor", x: pt.x, y: pt.y };
+    point.type = "anchor";
   }
   return result;
 }
 
-/** Compute bounds for a set of points */
+/** Split a straight or cubic segment without changing its rendered shape. */
+export function splitPathSegment(
+  points: PathPoint[],
+  endIndex: number,
+  t = 0.5,
+  closed = false,
+): PathPoint[] {
+  if (points.length < 2 || endIndex < 1 || endIndex > points.length) return points;
+  if (endIndex === points.length && !closed) return points;
+
+  const result = clonePathPoints(points);
+  const previousIndex = endIndex - 1;
+  const currentIndex = endIndex % result.length;
+  const previous = result[previousIndex];
+  const current = result[currentIndex];
+  const insertAt = endIndex === result.length ? result.length : endIndex;
+
+  if (!previous.cpOut && !current.cpIn) {
+    const position = deCasteljau([previous, current], t);
+    result.splice(insertAt, 0, { type: "anchor", ...position });
+    return result;
+  }
+
+  const controls = [
+    { x: previous.x, y: previous.y },
+    previous.cpOut ?? { x: previous.x, y: previous.y },
+    current.cpIn ?? { x: current.x, y: current.y },
+    { x: current.x, y: current.y },
+  ];
+  const [left, right] = splitBezier(controls, t);
+  previous.cpOut = left[1];
+  current.cpIn = right[2];
+  const inserted: PathPoint = {
+    type: "smooth",
+    ...left[3],
+    cpIn: left[2],
+    cpOut: right[1],
+  };
+  result.splice(insertAt, 0, inserted);
+  return result;
+}
+
+/** Find the closest sampled location on every segment, including closure. */
+export function findClosestPathSegment(
+  points: PathPoint[],
+  position: Point,
+  closed = false,
+  samplesPerSegment = 32,
+): ClosestPathSegment | null {
+  if (points.length < 2) return null;
+  let best: ClosestPathSegment | null = null;
+  const segmentCount = points.length - 1 + (closed ? 1 : 0);
+
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+    const previous = points[segmentIndex];
+    const endIndex = segmentIndex + 1;
+    const current = points[endIndex % points.length];
+    const controls = previous.cpOut || current.cpIn
+      ? [previous, previous.cpOut ?? previous, current.cpIn ?? current, current]
+      : [previous, current];
+
+    for (let sample = 0; sample <= samplesPerSegment; sample++) {
+      const t = sample / samplesPerSegment;
+      const candidate = deCasteljau(controls, t);
+      const candidateDistance = distance(candidate, position);
+      if (!best || candidateDistance < best.distance) {
+        best = { endIndex, t, distance: candidateDistance, point: candidate };
+      }
+    }
+  }
+  return best;
+}
+
+/** Return every path segment as a linear or cubic Bezier control polygon. */
+export function getPathBezierSegments(points: PathPoint[], closed = false): Point[][] {
+  const segments: Point[][] = [];
+  const segmentCount = Math.max(0, points.length - 1 + (closed && points.length > 1 ? 1 : 0));
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+    const previous = points[segmentIndex];
+    const current = points[(segmentIndex + 1) % points.length];
+    segments.push(previous.cpOut || current.cpIn
+      ? [
+          { x: previous.x, y: previous.y },
+          previous.cpOut ?? { x: previous.x, y: previous.y },
+          current.cpIn ?? { x: current.x, y: current.y },
+          { x: current.x, y: current.y },
+        ]
+      : [{ x: previous.x, y: previous.y }, { x: current.x, y: current.y }]);
+  }
+  return segments;
+}
+
+export function analyzePathData(d: string, closed = isPathClosed(d)): PathAnalysis {
+  const segments = getPathBezierSegments(parsePathData(d), closed);
+  const controls = segments.flat();
+  return {
+    degeneracy: classifyBezierDegeneracy(controls),
+    selfIntersections: findBezierChainIntersections(segments).length,
+    singularities: segments
+      .filter((segment) => segment.length > 2)
+      .reduce((count, segment) => count + findBezierSingularities(segment).length, 0),
+  };
+}
+
 export function computeBounds(points: PathPoint[]): { x: number; y: number; width: number; height: number } {
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  const coordinates = points.flatMap((point) => [
+    { x: point.x, y: point.y },
+    ...(point.cpIn ? [point.cpIn] : []),
+    ...(point.cpOut ? [point.cpOut] : []),
+  ]);
+  const xs = coordinates.map((point) => point.x);
+  const ys = coordinates.map((point) => point.y);
   return {
     x: Math.min(...xs),
     y: Math.min(...ys),
@@ -184,16 +357,113 @@ export function computeBounds(points: PathPoint[]): { x: number; y: number; widt
   };
 }
 
-// ── Helpers ──
-
-function tokenize(d: string): string[] {
-  return d
-    .replace(/,/g, " ")
-    .replace(/([a-zA-Z])/g, " $1 ")
-    .trim()
-    .split(/\s+/);
+export function clonePathPoints(points: PathPoint[]): PathPoint[] {
+  return points.map((point) => ({
+    ...point,
+    cpIn: point.cpIn ? { ...point.cpIn } : undefined,
+    cpOut: point.cpOut ? { ...point.cpOut } : undefined,
+  }));
 }
 
-function round(n: number): number {
-  return Math.round(n * 10) / 10;
+function parseCurveSegments(segments: PathSegment[], closed: boolean): PathPoint[] {
+  const points: PathPoint[] = [];
+  for (const segment of segments) {
+    const command = String(segment[0]).toUpperCase();
+    if (command === "M") points.push({ type: "anchor", ...pointFrom(segment, 1) });
+    if (command === "C") addCubicPoint(points, pointFrom(segment, 1), pointFrom(segment, 3), pointFrom(segment, 5));
+  }
+  mergeExplicitClosingPoint(points, closed);
+  return classifyPoints(points);
+}
+
+function addCubicPoint(points: PathPoint[], cpOut: Point, cpIn: Point, end: Point): void {
+  const previous = points[points.length - 1];
+  if (!previous) {
+    points.push({ type: "anchor", ...end });
+    return;
+  }
+  previous.cpOut = cpOut;
+  points.push({ type: "anchor", ...end, cpIn });
+}
+
+function addQuadraticPoint(points: PathPoint[], start: Point, control: Point, end: Point): void {
+  addCubicPoint(
+    points,
+    { x: start.x + (2 / 3) * (control.x - start.x), y: start.y + (2 / 3) * (control.y - start.y) },
+    { x: end.x + (2 / 3) * (control.x - end.x), y: end.y + (2 / 3) * (control.y - end.y) },
+    end,
+  );
+}
+
+function mergeExplicitClosingPoint(points: PathPoint[], closed: boolean): void {
+  if (!closed || points.length < 2) return;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (distance(first, last) > 1e-7) return;
+  first.cpIn = last.cpIn;
+  points.pop();
+}
+
+function classifyPoints(points: PathPoint[]): PathPoint[] {
+  return points.map((point) => ({
+    ...point,
+    type: hasSmoothHandles(point) ? "smooth" : "anchor",
+  }));
+}
+
+function hasSmoothHandles(point: PathPoint): boolean {
+  if (!point.cpIn && !point.cpOut) return false;
+  if (!point.cpIn || !point.cpOut) return true;
+  const incoming = { x: point.cpIn.x - point.x, y: point.cpIn.y - point.y };
+  const outgoing = { x: point.cpOut.x - point.x, y: point.cpOut.y - point.y };
+  const cross = Math.abs(incoming.x * outgoing.y - incoming.y * outgoing.x);
+  const scale = Math.max(1, Math.hypot(incoming.x, incoming.y) * Math.hypot(outgoing.x, outgoing.y));
+  return cross / scale < 1e-4 && incoming.x * outgoing.x + incoming.y * outgoing.y <= 0;
+}
+
+function serializeSegment(previous: PathPoint, current: PathPoint): string {
+  if (!previous.cpOut && !current.cpIn) {
+    return ` L ${round(current.x)} ${round(current.y)}`;
+  }
+  const cpOut = previous.cpOut ?? previous;
+  const cpIn = current.cpIn ?? current;
+  return ` C ${round(cpOut.x)} ${round(cpOut.y)} ${round(cpIn.x)} ${round(cpIn.y)} ${round(current.x)} ${round(current.y)}`;
+}
+
+function smoothDirection(point: Point, previous?: Point, next?: Point): Point {
+  let dx = 1;
+  let dy = 0;
+  if (previous && next) {
+    dx = next.x - previous.x;
+    dy = next.y - previous.y;
+  } else if (next) {
+    dx = next.x - point.x;
+    dy = next.y - point.y;
+  } else if (previous) {
+    dx = point.x - previous.x;
+    dy = point.y - previous.y;
+  }
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length };
+}
+
+function pointFrom(segment: PathSegment, index: number): Point {
+  return { x: numberAt(segment, index), y: numberAt(segment, index + 1) };
+}
+
+function numberAt(segment: PathSegment, index: number): number {
+  const value = Number(segment[index]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function reflect(point: Point, around: Point): Point {
+  return { x: around.x * 2 - point.x, y: around.y * 2 - point.y };
+}
+
+function distance(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }

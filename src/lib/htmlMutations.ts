@@ -18,6 +18,22 @@ export function createLayerId(): string {
   return `el_${Date.now().toString(36)}_${generatedLayerSequence.toString(36)}`;
 }
 
+export function replaceLayerPathData(
+  html: string,
+  layerId: string,
+  pathData: string,
+  metadata: Record<string, string> = {},
+): string | null {
+  const document = parseFragment(html);
+  const layer = findLayer(document, layerId);
+  if (!layer) return null;
+  const path = layer.matches("path") ? layer : layer.querySelector("path");
+  if (!path) return null;
+  path.setAttribute("d", pathData);
+  for (const [name, value] of Object.entries(metadata)) layer.setAttribute(name, value);
+  return serializeFragment(document);
+}
+
 function offsetInlinePosition(element: Element, offset = 20): void {
   if (!(element instanceof HTMLElement)) return;
   for (const property of ["left", "top"] as const) {
