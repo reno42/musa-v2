@@ -38,6 +38,7 @@ interface InfiniteHtmlCanvasProps {
   onZoomChange: (z: number) => void;
   onFrameMove?: (id: string, x: number, y: number) => void;
   onMultiFrameMove?: (moves: { id: string; x: number; y: number }[]) => void;
+  onDuplicateFrames?: (copies: { sourceId: string; x: number; y: number }[]) => void;
   onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
@@ -59,7 +60,7 @@ const MAX_ZOOM = 5;
 export function InfiniteHtmlCanvas({
   frames, selectedFrameId, selectedFrameIds, contentFrameId, activeTool, zoom,
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
-  onZoomChange, onFrameMove, onMultiFrameMove, onRenameFrame,
+  onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
   onFrameResize,
@@ -71,10 +72,10 @@ export function InfiniteHtmlCanvas({
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const [isDraggingFrame, setIsDraggingFrame] = useState(false);
-  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; duplicate: boolean; moved: boolean } | null>(null);
 
   // Multi-frame drag state (Phase 4)
-  const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[] } | null>(null);
+  const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[]; duplicate: boolean; moved: boolean } | null>(null);
 
   // Marquee selection state (Phase 3)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -121,6 +122,8 @@ export function InfiniteHtmlCanvas({
         startX: e.clientX,
         startY: e.clientY,
         frames: selectedFrames.map(fr => ({ id: fr.id, origX: fr.x, origY: fr.y })),
+        duplicate: e.altKey,
+        moved: false,
       };
     } else {
       dragFrameRef.current = {
@@ -129,6 +132,8 @@ export function InfiniteHtmlCanvas({
         startY: e.clientY,
         origX: f.x,
         origY: f.y,
+        duplicate: e.altKey,
+        moved: false,
       };
     }
     setIsDraggingFrame(true);
@@ -177,10 +182,11 @@ export function InfiniteHtmlCanvas({
       const df = dragFrameRef.current;
       const dx = (e.clientX - df.startX) / zoom;
       const dy = (e.clientY - df.startY) / zoom;
+      if (!df.moved && Math.hypot(dx, dy) < 3) return;
+      df.moved = true;
       const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement;
       if (frameEl) {
-        frameEl.style.left = `${df.origX + dx}px`;
-        frameEl.style.top = `${df.origY + dy}px`;
+        frameEl.style.transform = `translate(${dx}px, ${dy}px)`;
       }
       return;
     }
@@ -189,11 +195,12 @@ export function InfiniteHtmlCanvas({
       const md = multiDragRef.current;
       const dx = (e.clientX - md.startX) / zoom;
       const dy = (e.clientY - md.startY) / zoom;
+      if (!md.moved && Math.hypot(dx, dy) < 3) return;
+      md.moved = true;
       for (const f of md.frames) {
         const el = document.querySelector(`[data-frame-id="${f.id}"]`) as HTMLElement;
         if (el) {
-          el.style.left = `${f.origX + dx}px`;
-          el.style.top = `${f.origY + dy}px`;
+          el.style.transform = `translate(${dx}px, ${dy}px)`;
         }
       }
       return;
@@ -218,7 +225,12 @@ export function InfiniteHtmlCanvas({
       const df = dragFrameRef.current;
       const dx = (e.clientX - df.startX) / zoom;
       const dy = (e.clientY - df.startY) / zoom;
-      onFrameMove?.(df.id, Math.round(df.origX + dx), Math.round(df.origY + dy));
+      const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement | null;
+      if (frameEl) frameEl.style.transform = "";
+      if (df.moved) {
+        if (df.duplicate) onDuplicateFrames?.([{ sourceId: df.id, x: df.origX + dx, y: df.origY + dy }]);
+        else onFrameMove?.(df.id, Math.round(df.origX + dx), Math.round(df.origY + dy));
+      }
       dragFrameRef.current = null;
       setIsDraggingFrame(false);
     }
@@ -232,7 +244,14 @@ export function InfiniteHtmlCanvas({
         x: Math.round(f.origX + dx),
         y: Math.round(f.origY + dy),
       }));
-      onMultiFrameMove?.(moves);
+      for (const frame of md.frames) {
+        const frameEl = document.querySelector(`[data-frame-id="${frame.id}"]`) as HTMLElement | null;
+        if (frameEl) frameEl.style.transform = "";
+      }
+      if (md.moved) {
+        if (md.duplicate) onDuplicateFrames?.(moves.map(move => ({ sourceId: move.id, x: move.x, y: move.y })));
+        else onMultiFrameMove?.(moves);
+      }
       multiDragRef.current = null;
       setIsDraggingFrame(false);
     }
@@ -253,7 +272,7 @@ export function InfiniteHtmlCanvas({
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onMarqueeSelect, frames, marqueeRect]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, frames, marqueeRect]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {

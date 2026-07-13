@@ -1,11 +1,13 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
+  cloneLayerCss,
   getCssPropertyValue,
   removeTransformFunction,
   setTransformFunction,
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
+import { createLayerId, duplicateLayerInHtml } from "../lib/htmlMutations";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -73,6 +75,7 @@ interface DesignFrameProps {
 
 const SEL = "#3B82F6";
 const HANDLE = 7;
+type ResizeDirection = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 const TRACKED_PROPS = [
   // Typography
@@ -101,7 +104,7 @@ const TRACKED_PROPS = [
   "overflow", "overflow-x", "overflow-y",
   // Effects
   "opacity", "box-shadow", "text-shadow",
-  "transform", "transform-origin",
+  "transform", "transform-origin", "translate", "scale",
   "filter", "backdrop-filter",
   "mix-blend-mode", "background-blend-mode",
   "transition",
@@ -158,6 +161,14 @@ export function DesignFrame({
   zoomRef.current = zoom || 1;
   const onFrameResizeRef = useRef(onFrameResize);
   onFrameResizeRef.current = onFrameResize;
+
+  function emitFrameChange(updatedCss: string, updatedHtml?: string) {
+    cssRef.current = updatedCss;
+    lastEmittedCssRef.current = updatedCss;
+    const style = shadowRef.current?.querySelector("style");
+    if (style) style.textContent = updatedCss;
+    onCssChangeRef.current?.(frame.id, updatedCss, updatedHtml);
+  }
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -269,7 +280,8 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!shadow) return;
     const content = shadow.getElementById("__df_content");
-    if (content) content.innerHTML = frame.html;
+    if (!content) return;
+    content.innerHTML = frame.html;
     selectedRef.current = null;
     selectedSourceRef.current = null;
     clearOverlay();
@@ -279,7 +291,7 @@ export function DesignFrame({
   }, [frame.html]);
 
   function emitElementSelection(element: Element, source: Element = element) {
-    const computed = element.ownerDocument.defaultView!.getComputedStyle(element);
+    const computed = source.ownerDocument.defaultView!.getComputedStyle(source);
     const computedStyles: Record<string, string> = {};
     for (const property of TRACKED_PROPS) computedStyles[property] = computed.getPropertyValue(property);
 
@@ -289,7 +301,7 @@ export function DesignFrame({
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
       tag,
-      selector: getSelector(element),
+      selector: getStyleSelector(element, source),
       computedStyles,
       frameId: frame.id,
       isSvg,
@@ -363,23 +375,27 @@ export function DesignFrame({
       const svgEl = targetPath.closest("svg");
       const svgRect = svgEl?.getBoundingClientRect();
       const svgVbStr = svgEl?.getAttribute("viewBox");
-      let vbX = 0, vbY = 0;
+      let vbX = 0, vbY = 0, vbWidth = 0, vbHeight = 0;
       if (svgVbStr) {
         const vbp = svgVbStr.split(/\s+/);
         vbX = parseFloat(vbp[0]) || 0;
         vbY = parseFloat(vbp[1]) || 0;
+        vbWidth = parseFloat(vbp[2]) || 0;
+        vbHeight = parseFloat(vbp[3]) || 0;
       }
       // Offset from content rect to SVG rect
       const svgLeft = svgRect ? (svgRect.left - cRect.left) / z : x;
       const svgTop = svgRect ? (svgRect.top - cRect.top) / z : y;
+      const svgScaleX = svgRect && vbWidth ? (svgRect.width / z) / vbWidth : 1;
+      const svgScaleY = svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1;
 
       // Render anchor points and control handles
       for (let ci = 0; ci < cmds.length; ci++) {
         const cmd = cmds[ci];
         if (cmd.type === "Z") continue;
 
-        const px = cmd.x + svgLeft - vbX;
-        const py = cmd.y + svgTop - vbY;
+        const px = (cmd.x - vbX) * svgScaleX + svgLeft;
+        const py = (cmd.y - vbY) * svgScaleY + svgTop;
 
         // Anchor point
         const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -398,8 +414,8 @@ export function DesignFrame({
         // Control handles for bezier
         if (cmd.type === "C") {
           // Handle 1 (incoming)
-          const h1x = cmd.cx1 + svgLeft - vbX;
-          const h1y = cmd.cy1 + svgTop - vbY;
+          const h1x = (cmd.cx1 - vbX) * svgScaleX + svgLeft;
+          const h1y = (cmd.cy1 - vbY) * svgScaleY + svgTop;
           const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
           line1.setAttribute("x1", `${px}`); line1.setAttribute("y1", `${py}`);
           line1.setAttribute("x2", `${h1x}`); line1.setAttribute("y2", `${h1y}`);
@@ -417,8 +433,8 @@ export function DesignFrame({
           editSvg.appendChild(c1);
 
           // Handle 2 (outgoing)
-          const h2x = cmd.cx2 + svgLeft - vbX;
-          const h2y = cmd.cy2 + svgTop - vbY;
+          const h2x = (cmd.cx2 - vbX) * svgScaleX + svgLeft;
+          const h2y = (cmd.cy2 - vbY) * svgScaleY + svgTop;
           const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
           line2.setAttribute("x1", `${px}`); line2.setAttribute("y1", `${py}`);
           line2.setAttribute("x2", `${h2x}`); line2.setAttribute("y2", `${h2y}`);
@@ -456,16 +472,20 @@ export function DesignFrame({
         const svgLeft2 = svgRect2 ? (svgRect2.left - cRect2.left) / z : x;
         const svgTop2 = svgRect2 ? (svgRect2.top - cRect2.top) / z : y;
         const svgVbStr2 = svgEl2?.getAttribute("viewBox");
-        let vbX2 = 0, vbY2 = 0;
+        let vbX2 = 0, vbY2 = 0, vbWidth2 = 0, vbHeight2 = 0;
         if (svgVbStr2) {
           const vbp = svgVbStr2.split(/\s+/);
           vbX2 = parseFloat(vbp[0]) || 0;
           vbY2 = parseFloat(vbp[1]) || 0;
+          vbWidth2 = parseFloat(vbp[2]) || 0;
+          vbHeight2 = parseFloat(vbp[3]) || 0;
         }
+        const svgScaleX2 = svgRect2 && vbWidth2 ? (svgRect2.width / z) / vbWidth2 : 1;
+        const svgScaleY2 = svgRect2 && vbHeight2 ? (svgRect2.height / z) / vbHeight2 : 1;
 
         const onPeMove = (ev: MouseEvent) => {
-          const cx = (ev.clientX - cRect.left) / z - svgLeft2 + vbX2;
-          const cy = (ev.clientY - cRect.top) / z - svgTop2 + vbY2;
+          const cx = ((ev.clientX - cRect.left) / z - svgLeft2) / svgScaleX2 + vbX2;
+          const cy = ((ev.clientY - cRect.top) / z - svgTop2) / svgScaleY2 + vbY2;
           const cmd = editData.commands[ci];
           if (!cmd) return;
 
@@ -581,38 +601,36 @@ export function DesignFrame({
             : setTransformFunction(existingTransform, "rotate", `${Math.round(currentRotation)}deg`);
           (el as HTMLElement).style.transform = finalTransform === "none" ? "" : finalTransform;
           const updated = updateCssRule(cssRef.current, selector, { transform: finalTransform });
-          cssRef.current = updated;
-          lastEmittedCssRef.current = updated;
-          onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
+          emitFrameChange(updated, content.innerHTML);
         };
 
         document.addEventListener("mousemove", onRotMove);
         document.addEventListener("mouseup", onRotUp);
       });
 
-      // Standard resize handles (only for non-path elements)
-      const handles: [number, number, string][] = [
-        [0, 0, "nwse-resize"], [0.5, 0, "ns-resize"], [1, 0, "nesw-resize"],
-        [0, 0.5, "ew-resize"], [1, 0.5, "ew-resize"],
-        [0, 1, "nesw-resize"], [0.5, 1, "ns-resize"], [1, 1, "nwse-resize"],
-      ];
-      for (const [cx, cy, cursor] of handles) {
-        const handle = document.createElement("div");
-        Object.assign(handle.style, {
-          position: "absolute",
-          left: `${x + cx * w - HANDLE / 2}px`,
-          top: `${y + cy * h - HANDLE / 2}px`,
-          width: `${HANDLE}px`, height: `${HANDLE}px`,
-          background: SEL, border: "1px solid #fff",
-          cursor, pointerEvents: "auto", boxSizing: "border-box",
-        });
-        overlay.appendChild(handle);
-        handle.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          startResize(el, e as MouseEvent, cursor, x, y, w, h);
-        });
-      }
+    }
+
+    const handles: [ResizeDirection, number, number, string][] = [
+      ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
+      ["w", 0, 0.5, "ew-resize"], ["e", 1, 0.5, "ew-resize"],
+      ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
+    ];
+    for (const [direction, cx, cy, cursor] of handles) {
+      const handle = document.createElement("div");
+      Object.assign(handle.style, {
+        position: "absolute",
+        left: `${x + cx * w - HANDLE / 2}px`,
+        top: `${y + cy * h - HANDLE / 2}px`,
+        width: `${HANDLE}px`, height: `${HANDLE}px`,
+        background: SEL, border: "1px solid #fff",
+        cursor, pointerEvents: "auto", boxSizing: "border-box",
+      });
+      overlay.appendChild(handle);
+      handle.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        startResize(el, e as MouseEvent, direction, x, y, w, h);
+      });
     }
   }
 
@@ -1038,7 +1056,7 @@ export function DesignFrame({
           if (bestDist < 20 && bestMid && bestInsertIdx >= 0) {
             cmds.splice(bestInsertIdx, 0, { type: "L", x: Math.round(bestMid.x), y: Math.round(bestMid.y) });
             pathEl.setAttribute("d", buildPathFromCommands(cmds));
-            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            emitFrameChange(cssRef.current, content.innerHTML);
             return;
           }
         }
@@ -1072,7 +1090,7 @@ export function DesignFrame({
           if (bestDist < 12 && bestIdx >= 0 && anchorCount > 2) {
             cmds.splice(bestIdx, 1);
             pathEl.setAttribute("d", buildPathFromCommands(cmds));
-            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            emitFrameChange(cssRef.current, content.innerHTML);
             return;
           }
         }
@@ -1127,7 +1145,7 @@ export function DesignFrame({
             }
 
             pathEl.setAttribute("d", buildPathFromCommands(cmds));
-            onCssChangeRef.current?.(frame.id, cssRef.current, content.innerHTML);
+            emitFrameChange(cssRef.current, content.innerHTML);
             return;
           }
         }
@@ -1289,12 +1307,13 @@ export function DesignFrame({
       // SVG object — dragging, CSS changes, and selection should target the
       // wrapper, not the individual path child.
       let dragTarget: Element = target as Element;
+      let dragSource: Element = target as Element;
       const parentSvg = target.closest?.("svg");
       if (parentSvg && parentSvg !== (target as Element)) {
         dragTarget = parentSvg;
       }
       if (!dragTarget.hasAttribute("data-layer-id")) {
-        dragTarget.setAttribute("data-layer-id", `el_${Date.now().toString(36)}`);
+        dragTarget.setAttribute("data-layer-id", createLayerId());
         htmlRef.current = content.innerHTML;
         onHtmlChangeRef.current?.(frame.id, htmlRef.current);
       }
@@ -1303,17 +1322,70 @@ export function DesignFrame({
       selectedSourceRef.current = target;
       refreshOverlay(dragTarget);
 
-      const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
+      let computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
       emitElementSelection(dragTarget, target);
 
       // ── Drag to move (with snap/guides) ──
       const SNAP = 8; // snap threshold in pixels
       const startDragX = me.clientX;
       const startDragY = me.clientY;
-      const origLeft = parseInt(computed.left) || (dragTarget as HTMLElement).offsetLeft || 0;
-      const origTop = parseInt(computed.top) || (dragTarget as HTMLElement).offsetTop || 0;
+      const contentRect = content.getBoundingClientRect();
+      const initialRect = dragTarget.getBoundingClientRect();
+      const origVisualX = (initialRect.left - contentRect.left) / z;
+      const origVisualY = (initialRect.top - contentRect.top) / z;
+      let origLeft = parseFloat(computed.left) || (dragTarget as HTMLElement).offsetLeft || 0;
+      let origTop = parseFloat(computed.top) || (dragTarget as HTMLElement).offsetTop || 0;
+      let baseTranslate = parseCssTranslate(computed.translate);
+      let preservesFlow = computed.position === "static";
+      let duplicatedForDrag = false;
       let moved = false;
       let guideLines: HTMLElement[] = [];
+
+      const duplicateForDrag = () => {
+        const sourceLayerId = dragTarget.getAttribute("data-layer-id");
+        if (!sourceLayerId) return;
+        const duplicated = duplicateLayerInHtml(content.innerHTML, sourceLayerId, createLayerId);
+        if (!duplicated) return;
+        const newLayerId = duplicated.idMap.get(sourceLayerId);
+        if (!newLayerId) return;
+
+        const sourceChildId = dragSource.getAttribute("data-layer-id");
+        const sourceTag = dragSource.tagName.toLowerCase();
+        const updatedCss = cloneLayerCss(cssRef.current, duplicated.idMap);
+        cssRef.current = updatedCss;
+        const style = shadow.querySelector("style");
+        if (style) style.textContent = updatedCss;
+        content.innerHTML = duplicated.html;
+
+        const clonedTarget = content.querySelector(`[data-layer-id="${newLayerId}"]`) as HTMLElement | null;
+        if (!clonedTarget) return;
+        const clonedSourceId = sourceChildId ? duplicated.idMap.get(sourceChildId) : null;
+        const clonedSource = clonedSourceId
+          ? content.querySelector(`[data-layer-id="${clonedSourceId}"]`)
+          : clonedTarget.querySelector(sourceTag);
+
+        if (preservesFlow) {
+          clonedTarget.style.position = "absolute";
+          clonedTarget.style.left = `${Math.round(origVisualX)}px`;
+          clonedTarget.style.top = `${Math.round(origVisualY)}px`;
+          clonedTarget.style.width = `${Math.round(initialRect.width / z)}px`;
+        } else {
+          clonedTarget.style.left = `${origLeft}px`;
+          clonedTarget.style.top = `${origTop}px`;
+        }
+
+        dragTarget = clonedTarget;
+        dragSource = clonedSource || clonedTarget;
+        computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(clonedTarget);
+        origLeft = parseFloat(computed.left) || 0;
+        origTop = parseFloat(computed.top) || 0;
+        baseTranslate = parseCssTranslate(computed.translate);
+        preservesFlow = false;
+        duplicatedForDrag = true;
+        selectedRef.current = clonedTarget;
+        selectedSourceRef.current = dragSource;
+        emitElementSelection(clonedTarget, dragSource);
+      };
 
       // Collect snap guides from other elements in the frame
       function collectGuides(excludeEl: Element): { x: number; y: number; w: number; h: number }[] {
@@ -1340,18 +1412,17 @@ export function DesignFrame({
       }
 
       const onDragMove = (ev: MouseEvent) => {
-        moved = true;
         const z = zoomRef.current || 1;
-        let dx = (ev.clientX - startDragX) / z;
-        let dy = (ev.clientY - startDragY) / z;
+        const dx = (ev.clientX - startDragX) / z;
+        const dy = (ev.clientY - startDragY) / z;
+        if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        if (!moved && (me.altKey || ev.altKey)) duplicateForDrag();
+        moved = true;
 
         // Snap to guides
         const guides = collectGuides(dragTarget);
-        let snapX = origLeft + dx;
-        let snapY = origTop + dy;
-        const tw = (dragTarget as HTMLElement).offsetWidth;
-        const th = (dragTarget as HTMLElement).offsetHeight;
-        const cr = content.getBoundingClientRect();
+        let snapX = origVisualX + dx;
+        let snapY = origVisualY + dy;
         const elRect = dragTarget.getBoundingClientRect();
         const elW = elRect.width / z;
         const elH = elRect.height / z;
@@ -1416,9 +1487,13 @@ export function DesignFrame({
           }
         }
 
-        (dragTarget as HTMLElement).style.position = "absolute";
-        (dragTarget as HTMLElement).style.left = `${snapX}px`;
-        (dragTarget as HTMLElement).style.top = `${snapY}px`;
+        const targetStyle = (dragTarget as HTMLElement).style;
+        if (preservesFlow) {
+          targetStyle.translate = `${Math.round(baseTranslate.x + snapX - origVisualX)}px ${Math.round(baseTranslate.y + snapY - origVisualY)}px`;
+        } else {
+          targetStyle.left = `${Math.round(origLeft + snapX - origVisualX)}px`;
+          targetStyle.top = `${Math.round(origTop + snapY - origVisualY)}px`;
+        }
         refreshOverlay(dragTarget);
       };
 
@@ -1428,18 +1503,12 @@ export function DesignFrame({
         if (!moved) return;
         const sel = getSelector(dragTarget);
         const dt = dragTarget as HTMLElement;
-        const updated = updateCssRule(cssRef.current, sel, {
-          position: "absolute",
-          left: dt.style.left,
-          top: dt.style.top,
-        });
-        cssRef.current = updated;
-        // Record the CSS we're about to emit so the echo-suppression check
-        // can skip the re-render that bounces our own change back.
-        lastEmittedCssRef.current = updated;
-        // Sync BOTH css and html — inline styles (position/left/top) are in the DOM,
-        // so content.innerHTML must be saved or reload reverts to original inline styles.
-        onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
+        const properties: Record<string, string> = preservesFlow
+          ? { translate: dt.style.translate }
+          : { left: dt.style.left, top: dt.style.top };
+        if (duplicatedForDrag) properties.position = "absolute";
+        const updated = updateCssRule(cssRef.current, sel, importantProperties(properties));
+        emitFrameChange(updated, duplicatedForDrag ? content.innerHTML : undefined);
       };
 
       document.addEventListener("mousemove", onDragMove);
@@ -1561,16 +1630,23 @@ export function DesignFrame({
     }
   }
 
-  function startResize(el: Element, startEvent: MouseEvent, handle: string, ox: number, oy: number, ow: number, oh: number) {
+  function startResize(el: Element, startEvent: MouseEvent, direction: ResizeDirection, ox: number, oy: number, ow: number, oh: number) {
     const startX = startEvent.clientX;
     const startY = startEvent.clientY;
     const target = el as HTMLElement;
+    const computed = target.ownerDocument.defaultView!.getComputedStyle(target);
+    const preservesFlow = computed.position === "static";
+    const baseScale = parseCssScale(computed.scale);
+    const baseLeft = parseFloat(computed.left) || 0;
+    const baseTop = parseFloat(computed.top) || 0;
+    const baseFontSize = parseFloat(computed.fontSize) || 0;
+    const scalesText = target.children.length === 0 && /^(H[1-6]|P|SPAN|A|LI|LABEL|BUTTON|EM|STRONG|SMALL|B|I)$/.test(target.tagName);
 
-    // Determine which edges this handle affects
-    const affectsLeft = handle.includes("w");
-    const affectsRight = handle.includes("e");
-    const affectsTop = handle.includes("n");
-    const affectsBottom = handle.includes("s");
+    const affectsLeft = direction.includes("w");
+    const affectsRight = direction.includes("e");
+    const affectsTop = direction.includes("n");
+    const affectsBottom = direction.includes("s");
+    const isCorner = (affectsLeft || affectsRight) && (affectsTop || affectsBottom);
 
     const onMove = (ev: MouseEvent) => {
       const z = zoomRef.current || 1;
@@ -1596,12 +1672,24 @@ export function DesignFrame({
         newH = Math.max(10, oh + dy);
       }
 
-      target.style.width = `${Math.round(newW)}px`;
-      target.style.height = `${Math.round(newH)}px`;
-      if (affectsLeft || affectsTop) {
-        target.style.position = "absolute";
-        if (affectsLeft) target.style.left = `${Math.round(newX)}px`;
-        if (affectsTop) target.style.top = `${Math.round(newY)}px`;
+      if (preservesFlow) {
+        const scaleX = baseScale.x * (newW / Math.max(ow, 1));
+        const scaleY = baseScale.y * (newH / Math.max(oh, 1));
+        const originX = affectsLeft ? "right" : affectsRight ? "left" : "center";
+        const originY = affectsTop ? "bottom" : affectsBottom ? "top" : "center";
+        target.style.scale = `${Math.max(0.01, scaleX)} ${Math.max(0.01, scaleY)}`;
+        target.style.transformOrigin = `${originX} ${originY}`;
+      } else {
+        target.style.width = `${Math.round(newW)}px`;
+        target.style.height = `${Math.round(newH)}px`;
+        if (scalesText && isCorner && baseFontSize > 0) {
+          const scale = Math.sqrt((newW / Math.max(ow, 1)) * (newH / Math.max(oh, 1)));
+          target.style.fontSize = `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`;
+        }
+        if (affectsLeft || affectsTop) {
+          if (affectsLeft) target.style.left = `${Math.round(baseLeft + newX - ox)}px`;
+          if (affectsTop) target.style.top = `${Math.round(baseTop + newY - oy)}px`;
+        }
       }
       refreshOverlay(el);
     };
@@ -1610,21 +1698,18 @@ export function DesignFrame({
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       const sel = getSelector(target);
-      const props: Record<string, string> = {
-        width: target.style.width,
-        height: target.style.height,
-      };
-      if (affectsLeft || affectsTop) {
-        props.position = "absolute";
-        if (affectsLeft) props.left = target.style.left;
-        if (affectsTop) props.top = target.style.top;
+      const props: Record<string, string> = preservesFlow
+        ? { scale: target.style.scale, "transform-origin": target.style.transformOrigin }
+        : { width: target.style.width, height: target.style.height };
+      if (!preservesFlow) {
+        if (scalesText && isCorner && target.style.fontSize) props["font-size"] = target.style.fontSize;
+        if (affectsLeft || affectsTop) {
+          if (affectsLeft) props.left = target.style.left;
+          if (affectsTop) props.top = target.style.top;
+        }
       }
-      const updated = updateCssRule(cssRef.current, sel, props);
-      cssRef.current = updated;
-      lastEmittedCssRef.current = updated;
-      // Sync BOTH css and html — resize changes width/height inline styles in the DOM.
-      const contentEl = shadowRef.current?.getElementById("__df_content");
-      onCssChangeRef.current?.(frame.id, updated, contentEl?.innerHTML);
+      const updated = updateCssRule(cssRef.current, sel, importantProperties(props));
+      emitFrameChange(updated);
     };
 
     document.addEventListener("mousemove", onMove);
@@ -1755,6 +1840,8 @@ export function DesignFrame({
       {/* Label above frame — interactive: draggable + double-click to rename (Phase 1).
           Rendered last so it's on top. bottom: 100% places it visually above the frame. */}
       <div
+        data-frame-label-id={frame.id}
+        aria-label={`Move frame ${frame.name}`}
         style={{
           position: "absolute", bottom: "100%", left: 0,
           padding: "2px 8px", marginBottom: 4,
@@ -1854,6 +1941,39 @@ function getSelector(el: Element): string {
   const clsStr = typeof cls === "string" ? cls : (cls?.baseVal ?? "");
   if (clsStr.trim()) return `.${clsStr.trim().split(/\s+/)[0]}`;
   return el.tagName.toLowerCase();
+}
+
+function getStyleSelector(element: Element, source: Element): string {
+  if (source === element) return getSelector(element);
+  const svg = source.closest("svg");
+  if (svg === element) return `${getSelector(element)} ${source.tagName.toLowerCase()}`;
+  return getSelector(element);
+}
+
+function parseCssTranslate(value: string): { x: number; y: number } {
+  if (!value || value === "none") return { x: 0, y: 0 };
+  const parts = value.split(/\s+/).map(part => parseFloat(part));
+  return {
+    x: Number.isFinite(parts[0]) ? parts[0] : 0,
+    y: Number.isFinite(parts[1]) ? parts[1] : 0,
+  };
+}
+
+function parseCssScale(value: string): { x: number; y: number } {
+  if (!value || value === "none") return { x: 1, y: 1 };
+  const parts = value.split(/\s+/).map(part => parseFloat(part));
+  const x = Number.isFinite(parts[0]) ? parts[0] : 1;
+  return {
+    x,
+    y: Number.isFinite(parts[1]) ? parts[1] : x,
+  };
+}
+
+function importantProperties(properties: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(properties).map(([property, value]) => [
+    property,
+    `${value.replace(/\s*!important\s*$/i, "").trim()} !important`,
+  ]));
 }
 
 function extractFontImports(css: string): string[] {

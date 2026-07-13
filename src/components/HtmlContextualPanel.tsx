@@ -102,7 +102,7 @@ const DIMENSION_PROPS = new Set([
   "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
   "border-radius", "gap", "row-gap", "column-gap",
   "top", "left", "right", "bottom",
-  "letter-spacing", "word-spacing", "border-width",
+  "letter-spacing", "word-spacing", "border-width", "stroke-width",
 ]);
 
 // ── Styles ──
@@ -349,16 +349,12 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function updateElementCssProperty(css: string, selector: string, prop: string, value: string): string {
-  let normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
-  if (prop === "font-family") {
-    // Keep the font-family quotes balanced. Removing only the closing quote
-    // turns `'Font Name'` into the invalid `'Font Name !important`, which can
-    // make the browser discard the declarations and rules that follow it.
-    normalized = normalized
-      .replace(/;+\s*$/, "")
-      .replace(/\s*!important\s*$/i, "")
-      .trim() + " !important";
-  }
+  const cleanValue = value
+    .replace(/;+\s*$/, "")
+    .replace(/\s*!important\s*$/i, "")
+    .trim();
+  let normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(cleanValue) : cleanValue;
+  if (normalized && !prop.startsWith("--")) normalized += " !important";
   return setCssProperty(css, selector, prop, normalized);
 }
 
@@ -447,8 +443,8 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
   const isGrid = s["display"] === "grid" || s["display"] === "inline-grid";
   const isSvg = element.isSvg;
   const isSvgPath = isSvg && element.svgChildTag === "path";
+  const isSvgShape = isSvg && ["path", "rect", "circle", "ellipse", "polygon", "polyline", "line"].includes(element.svgChildTag || "");
   const isSvgText = isSvg && element.svgChildTag === "text";
-  const isSvgWrapper = isSvg && !element.svgChildTag;
 
   return (
     <div style={panelStyle}>
@@ -459,7 +455,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
           <span style={{ fontSize: 9, color: "#555", fontFamily: "monospace" }}>{element.selector.length > 30 ? element.selector.slice(0, 30) + "…" : element.selector}</span>
         </div>
         <div style={{ display: "flex", gap: 4 }}>
-          {onChangeTag && (
+          {onChangeTag && !isSvg && (
             <select value={element.tag} onChange={e => onChangeTag(e.target.value)}
               style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(200,184,152,0.2)", color: "#c8b898", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", cursor: "pointer" }}>
               {SEMANTIC_TAGS.map(tag => <option key={tag} value={tag}>{`<${tag}>`}</option>)}
@@ -522,11 +518,11 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       )}
 
       {/* ── Fill ── */}
-      <SectionHead label={isSvgPath ? "Fill" : "Fill & Color"} section="fill" expanded={expanded} toggle={toggle} />
+      <SectionHead label={isSvgShape ? "Fill" : "Fill & Color"} section="fill" expanded={expanded} toggle={toggle} />
       {expanded.fill && (
         <div style={sectionBody}>
           {/* SVG path: fill color only */}
-          {isSvgPath && (
+          {isSvgShape && (
             <>
               <ColorRow label="Fill" value={s["fill"] || s["color"] || "#8B5CF6"} onChange={v => update(element.selector, "fill", v)} />
               <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
@@ -541,10 +537,10 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
             </>
           )}
           {/* SVG wrapper or div: background-based */}
-          {!isSvgPath && !isSvgText && (
+          {!isSvgShape && !isSvgText && (
             <>
-              <ColorRow label="Text" value={s["color"] || ""} onChange={v => update(element.selector, "color", v)} />
-              <ColorRow label="BG" value={s["background-color"] || s["background"] || ""} onChange={v => update(element.selector, "background-color", v)} />
+              {isText && <ColorRow label="Text" value={s["color"] || ""} onChange={v => update(element.selector, "color", v)} />}
+              <ColorRow label={isText ? "BG" : "Fill"} value={s["background-color"] || s["background"] || ""} onChange={v => update(element.selector, "background-color", v)} />
               <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
               {/* Gradient Builder */}
               <GradientBuilder
@@ -560,7 +556,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       )}
 
       {/* ── Stroke (SVG paths only) ── */}
-      {isSvgPath && (
+      {isSvgShape && (
         <>
           <SectionHead label="Stroke" section="stroke" expanded={expanded} toggle={toggle} />
           {expanded.stroke && (
@@ -593,7 +589,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
                 ))}
               </div>
               {/* Path Operations */}
-              {(onOutlineStroke || onOffsetPath) && (
+              {isSvgPath && (onOutlineStroke || onOffsetPath) && (
                 <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(200,184,152,0.1)" }}>
                   {onOutlineStroke && (
                     <button type="button" onClick={() => onOutlineStroke(element.layerId, element.frameId)}
@@ -624,7 +620,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       )}
 
       {/* ── Spacing (per-side) ── */}
-      {!isSvgPath && (
+      {!isSvgShape && (
         <>
           <SectionHead label="Spacing" section="spacing" expanded={expanded} toggle={toggle} />
           {expanded.spacing && (
@@ -637,7 +633,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       )}
 
       {/* ── Border ── */}
-      {!isSvgPath && (
+      {!isSvgShape && (
         <>
           <SectionHead label="Border" section="border" expanded={expanded} toggle={toggle} />
           {expanded.border && (
@@ -670,7 +666,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       )}
 
       {/* ── Layout (Flex/Grid) ── */}
-      {!isSvgPath && (
+      {!isSvgShape && (
         <>
           <SectionHead label="Layout" section="layout" expanded={expanded} toggle={toggle} />
           {expanded.layout && (

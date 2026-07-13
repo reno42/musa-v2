@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendCssOverride,
+  cloneLayerCss,
   getCssPropertyValue,
+  removeLayerCss,
   removeCssOverride,
   removeTransformFunction,
   setTransformFunction,
@@ -50,4 +52,23 @@ test("preserves existing transforms when rotating", () => {
     removeTransformFunction("translate(-50%, -50%) rotate(30deg) scale(1.2)", "rotate"),
     "translate(-50%, -50%) scale(1.2)",
   );
+});
+
+test("clones SVG child styles and offsets the cloned root", () => {
+  const source = `[data-layer-id="path"] { left: 10px; top: 15px; }\n[data-layer-id="path"] path { fill: red; stroke: blue; stroke-width: 3px; }`;
+  const cloned = cloneLayerCss(source, new Map([["path", "path-copy"]]), 20);
+
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="path-copy"]`, "left"), "30px");
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="path-copy"]`, "top"), "35px");
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="path-copy"] path`, "fill"), "red");
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="path-copy"] path`, "stroke-width"), "3px");
+});
+
+test("removes root and descendant CSS when deleting an SVG layer", () => {
+  const source = `[data-layer-id="path"] { left: 10px; }\n.keep, [data-layer-id="path"] path { fill: red; }\n.keep { color: white; }`;
+  const updated = removeLayerCss(source, "path");
+
+  assert.doesNotMatch(updated, /data-layer-id=["']path/);
+  assert.match(updated, /\.keep\s*\{\s*fill:\s*red/);
+  assert.equal(getCssPropertyValue(updated, ".keep", "color"), "white");
 });

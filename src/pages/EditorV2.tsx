@@ -37,9 +37,11 @@ import {
 } from "../lib/cssMutations";
 import {
   changeLayerTag,
+  createLayerId,
   deleteLayerFromHtml,
   duplicateLayerInHtml,
   ensureLayerIds,
+  pasteLayerFromHtml,
   replaceLayerText,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
@@ -77,10 +79,33 @@ const BUILD_VERSION = "persist-fix-v4-2026-06-30";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
-let generatedLayerSequence = 0;
-function createLayerId(): string {
-  generatedLayerSequence++;
-  return `el_${Date.now().toString(36)}_${generatedLayerSequence.toString(36)}`;
+let generatedFrameSequence = 0;
+function createFrameId(): string {
+  generatedFrameSequence++;
+  return `frame_${Date.now().toString(36)}_${generatedFrameSequence.toString(36)}`;
+}
+
+function cloneFrame(source: FrameData, x: number, y: number): FrameData {
+  return {
+    ...source,
+    id: createFrameId(),
+    name: `${source.name} (copy)`,
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+}
+
+type DesignClipboard =
+  | { kind: "element"; frameId: string; layerId: string; html: string; css: string; pasteCount: number }
+  | { kind: "frames"; frames: FrameData[]; pasteCount: number };
+
+interface PenStyle {
+  fill: string;
+  stroke: string;
+  strokeWidth: string;
+  strokeLinecap: string;
+  strokeLinejoin: string;
+  strokeDasharray: string;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -91,7 +116,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 const GEOMETRY_PROPERTIES = new Set([
   "position", "top", "right", "bottom", "left", "z-index",
   "width", "height", "min-width", "min-height", "max-width", "max-height",
-  "display", "transform", "transform-origin",
+  "display", "transform", "transform-origin", "translate", "scale",
 ]);
 
 const COPY_STYLE_PROPERTIES = new Set([
@@ -190,6 +215,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
   const framesRef = useRef(frames);
   framesRef.current = frames;
+  const designClipboardRef = useRef<DesignClipboard | null>(null);
+  const lastPenStyleRef = useRef<PenStyle>({
+    fill: "none",
+    stroke: "#111827",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    strokeDasharray: "none",
+  });
 
   // ── Selected element (inside a frame) ──
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
@@ -511,7 +545,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setSelectedFrameId(id);
     setSelectedFrameIds(id ? new Set([id]) : new Set());
     setContentFrameId(null);
-    if (id === null) setSelectedElement(null);
+    setSelectedElement(null);
   }, []);
 
   const handleActivateFrame = useCallback((frameId: string) => {
@@ -528,6 +562,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       return next;
     });
     setContentFrameId(null);
+    setSelectedElement(null);
   }, []);
 
   const handleMarqueeSelect = useCallback((ids: Set<string>) => {
@@ -535,6 +570,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (ids.size > 0) setSelectedFrameId(Array.from(ids)[0]);
     else setSelectedFrameId(null);
     setContentFrameId(null);
+    setSelectedElement(null);
   }, []);
 
   const handleEnterContentMode = useCallback((frameId: string) => {
@@ -566,7 +602,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const newX = lastFrame ? lastFrame.x + lastFrame.width + FRAME_GAP : 0;
     const newY = lastFrame ? lastFrame.y : 0;
     const newFrame: FrameData = {
-      id: `frame_${Date.now()}`,
+      id: createFrameId(),
       name: `Frame ${frames.length + 1}`,
       x: newX, y: newY,
       width: preset.width, height: preset.height,
@@ -613,19 +649,34 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const duplicateFrame = useCallback(() => {
     const src = frames.find(f => f.id === selectedFrameId);
     if (!src) return;
-    const clone: FrameData = {
-      ...src,
-      id: `frame_${Date.now()}`,
-      name: `${src.name} (copy)`,
-      x: src.x + src.width + FRAME_GAP,
-    };
+    const clone = cloneFrame(src, src.x + src.width + FRAME_GAP, src.y);
     pushUndo(frames);
     const updated = [...frames, clone];
     setFrames(updated);
     setSelectedFrameId(clone.id);
     setSelectedFrameIds(new Set([clone.id]));
+    setContentFrameId(null);
+    setSelectedElement(null);
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  const handleDuplicateFramesAtPositions = useCallback((copies: { sourceId: string; x: number; y: number }[]) => {
+    if (copies.length === 0) return;
+    const clones = copies.flatMap(({ sourceId, x, y }) => {
+      const source = frames.find(frame => frame.id === sourceId);
+      if (!source) return [];
+      return [cloneFrame(source, x, y)];
+    });
+    if (clones.length === 0) return;
+
+    pushUndo(frames);
+    const updated = [...frames, ...clones];
+    setFrames(updated);
+    setSelectedFrameId(clones[0].id);
+    setSelectedFrameIds(new Set(clones.map(frame => frame.id)));
+    setSelectedElement(null);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
 
   // ── Zoom helpers ──
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + 0.1)), []);
@@ -664,7 +715,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
     setSelectedElement(info);
-    if (info) setShowRightPanel(true);
+    if (info) {
+      setShowRightPanel(true);
+      if (info.isSvg && info.svgChildTag === "path") {
+        lastPenStyleRef.current = {
+          fill: info.computedStyles.fill || "none",
+          stroke: info.computedStyles.stroke || "#111827",
+          strokeWidth: info.computedStyles["stroke-width"] || "2",
+          strokeLinecap: info.computedStyles["stroke-linecap"] || "round",
+          strokeLinejoin: info.computedStyles["stroke-linejoin"] || "round",
+          strokeDasharray: info.computedStyles["stroke-dasharray"] || "none",
+        };
+      }
+    }
   }, []);
 
   // ── Layer selection from Layers Panel → click element in canvas ──
@@ -721,7 +784,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Add visual primitive to active frame ──
   const handleAddPrimitive = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => {
     if (!selectedFrameId) return;
-    const layerId = `el_${Date.now().toString(36)}`;
+    const layerId = createLayerId();
     let html: string;
     let css: string;
     const defaultSize = type === "polygon" ? 120 : (type === "star" ? 130 : 150);
@@ -777,7 +840,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Phase C: Draw shape with exact dimensions (drag-to-draw) ──
   const handleDrawShape = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => {
     if (!selectedFrameId) return;
-    const layerId = `el_${Date.now().toString(36)}`;
+    const layerId = createLayerId();
     let html: string;
     let css: string;
     if (type === "rect") {
@@ -844,10 +907,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
     if (!selectedFrameId) return;
-    const layerId = `el_${Date.now().toString(36)}`;
-    const fillValue = closed ? "rgba(139,92,246,0.18)" : "none";
-    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}" fill="${fillValue}" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n`;
+    const layerId = createLayerId();
+    const style = lastPenStyleRef.current;
+    const fill = closed && style.fill === "none" ? "#3B82F6" : style.fill;
+    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}"/></svg>`;
+    const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n[data-layer-id="${layerId}"] path {\n  fill: ${fill};\n  stroke: ${style.stroke};\n  stroke-width: ${style.strokeWidth};\n  stroke-linecap: ${style.strokeLinecap};\n  stroke-linejoin: ${style.strokeLinejoin};\n  stroke-dasharray: ${style.strokeDasharray};\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
         ? { ...f, html: f.html + "\n" + svgHtml, css: f.css + "\n" + css }
@@ -862,7 +926,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   // ── Text on Path: write text along an existing SVG path ──
   const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => {
     if (!selectedFrameId) return;
-    const layerId = `el_${Date.now().toString(36)}`;
+    const layerId = createLayerId();
     const pathId = `tp_${Date.now().toString(36)}`;
     const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
     const css = `[data-layer-id="${layerId}"] {
@@ -948,16 +1012,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!frame) return;
     const duplicated = duplicateLayerInHtml(frame.html, layerId, createLayerId);
     if (!duplicated) return;
-    let newCss = cloneLayerCss(frame.css, duplicated.idMap);
-    const newLayerId = duplicated.idMap.get(layerId);
-    if (newLayerId) {
-      for (const property of ["left", "top"] as const) {
-        const value = getCssPropertyValue(frame.css, `[data-layer-id="${layerId}"]`, property);
-        if (/^-?\d+(?:\.\d+)?px$/.test(value)) {
-          newCss = updateCssProperty(newCss, `[data-layer-id="${newLayerId}"]`, property, `${parseFloat(value) + 20}px`);
-        }
-      }
-    }
+    const newCss = cloneLayerCss(frame.css, duplicated.idMap, 20);
     const updated = frames.map(f =>
       f.id === selectedFrameId
         ? { ...f, html: duplicated.html, css: newCss }
@@ -969,6 +1024,80 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   // ── Change semantic tag of selected element ──
+  const copySelection = useCallback(() => {
+    if (selectedElement && selectedElement.frameId === selectedFrameId) {
+      const sourceFrame = frames.find(frame => frame.id === selectedElement.frameId);
+      if (!sourceFrame) return;
+      designClipboardRef.current = {
+        kind: "element",
+        frameId: sourceFrame.id,
+        layerId: selectedElement.layerId,
+        html: sourceFrame.html,
+        css: sourceFrame.css,
+        pasteCount: 0,
+      };
+      addToast("Elemento copiado.", "success");
+      return;
+    }
+
+    const frameIds = selectedFrameIds.size > 0
+      ? selectedFrameIds
+      : new Set(selectedFrameId ? [selectedFrameId] : []);
+    const copiedFrames = frames.filter(frame => frameIds.has(frame.id)).map(frame => ({ ...frame }));
+    if (copiedFrames.length === 0) return;
+    designClipboardRef.current = { kind: "frames", frames: copiedFrames, pasteCount: 0 };
+    addToast(`${copiedFrames.length} frame${copiedFrames.length === 1 ? "" : "s"} copiado${copiedFrames.length === 1 ? "" : "s"}.`, "success");
+  }, [selectedElement, selectedFrameId, selectedFrameIds, frames, addToast]);
+
+  const pasteSelection = useCallback(() => {
+    const clipboard = designClipboardRef.current;
+    if (!clipboard) {
+      addToast("No hay ningún elemento o frame copiado.", "error");
+      return;
+    }
+    clipboard.pasteCount++;
+    const offset = clipboard.pasteCount * 20;
+
+    if (clipboard.kind === "element") {
+      const targetFrameId = selectedFrameId || clipboard.frameId;
+      const targetFrame = frames.find(frame => frame.id === targetFrameId);
+      if (!targetFrame) return;
+      const pasted = pasteLayerFromHtml(
+        targetFrame.html,
+        clipboard.html,
+        clipboard.layerId,
+        createLayerId,
+        offset,
+      );
+      if (!pasted) return;
+      const newCss = cloneLayerCss(targetFrame.css, pasted.idMap, offset);
+      const updated = frames.map(frame => frame.id === targetFrameId
+        ? { ...frame, html: pasted.html, css: newCss }
+        : frame);
+      pushUndo(frames);
+      setFrames(updated);
+      setSelectedFrameId(targetFrameId);
+      setSelectedFrameIds(new Set([targetFrameId]));
+      setContentFrameId(targetFrameId);
+      setSelectedElement(null);
+      setActiveTool("select");
+      autoSave(updated);
+      addToast("Elemento pegado.", "success");
+      return;
+    }
+
+    const clones = clipboard.frames.map(source => cloneFrame(source, source.x + offset, source.y + offset));
+    pushUndo(frames);
+    const updated = [...frames, ...clones];
+    setFrames(updated);
+    setSelectedFrameId(clones[0].id);
+    setSelectedFrameIds(new Set(clones.map(frame => frame.id)));
+    setContentFrameId(null);
+    setSelectedElement(null);
+    autoSave(updated);
+    addToast(`${clones.length} frame${clones.length === 1 ? "" : "s"} pegado${clones.length === 1 ? "" : "s"}.`, "success");
+  }, [selectedFrameId, frames, autoSave, pushUndo, addToast]);
+
   const handleChangeTag = useCallback((newTag: string) => {
     if (!selectedElement || !selectedFrameId) return;
     const frame = frames.find(f => f.id === selectedElement.frameId);
@@ -1056,6 +1185,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
+      if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
+      if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
       if (!mod) {
@@ -1099,9 +1230,30 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         }
       }
     };
+    const handleNativeCopy = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
+        || selectedFrameIds.size > 0
+        || Boolean(selectedFrameId);
+      if (!hasSelection) return;
+      e.preventDefault();
+      e.clipboardData?.setData("text/plain", "Futuraria design object");
+      copySelection();
+    };
+    const handleNativePaste = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target) || !designClipboardRef.current) return;
+      e.preventDefault();
+      pasteSelection();
+    };
     window.addEventListener("keydown", handler, { capture: true });
-    return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [handleUndo, handleRedo, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, frames.length, contentFrameId, handleFrameMove, frames]);
+    window.addEventListener("copy", handleNativeCopy, { capture: true });
+    window.addEventListener("paste", handleNativePaste, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", handler, { capture: true });
+      window.removeEventListener("copy", handleNativeCopy, { capture: true });
+      window.removeEventListener("paste", handleNativePaste, { capture: true });
+    };
+  }, [handleUndo, handleRedo, copySelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2346,6 +2498,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onZoomChange={setZoom}
             onFrameMove={handleFrameMove}
             onMultiFrameMove={handleMultiFrameMove}
+            onDuplicateFrames={handleDuplicateFramesAtPositions}
             onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
             onFrameCssChange={handleFrameCssChange}

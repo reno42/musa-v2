@@ -149,6 +149,17 @@ function layerIdFromSelector(selector: string): string | null {
   return /^\[data-layer-id=["']([^"']+)["']\]$/.exec(selector)?.[1] || null;
 }
 
+function layerIdsFromSelector(selector: string): string[] {
+  return [...selector.matchAll(/\[data-layer-id=["']([^"']+)["']\]/g)].map(match => match[1]);
+}
+
+function replaceLayerIdsInSelector(selector: string, idMap: Map<string, string>): string {
+  return selector.replace(/\[data-layer-id=(["'])([^"']+)\1\]/g, (match, quote: string, id: string) => {
+    const replacement = idMap.get(id);
+    return replacement ? `[data-layer-id=${quote}${replacement}${quote}]` : match;
+  });
+}
+
 function setDeclaration(block: string, property: string, value: string): string {
   const matches = parseCssDeclarations(block).filter(decl => decl.property.toLowerCase() === property.toLowerCase());
   const match = matches[matches.length - 1];
@@ -245,27 +256,42 @@ export function getLayerIdsWithDeclaration(css: string, property: string, expect
   return new Set([...values].filter(([, value]) => value === expected).map(([id]) => id));
 }
 
-export function cloneLayerCss(css: string, idMap: Map<string, string>): string {
+export function cloneLayerCss(css: string, idMap: Map<string, string>, positionOffset = 0): string {
   const clones: string[] = [];
   for (const rule of collectRules(css)) {
     const block = css.slice(rule.blockStart, rule.blockEnd);
-    for (const [oldId, newId] of idMap) {
-      if (rule.selectors.some(selector => layerIdFromSelector(selector) === oldId)) {
-        clones.push(`[data-layer-id="${newId}"] {${block}}`);
+    const clonedSelectors = rule.selectors
+      .filter(selector => layerIdsFromSelector(selector).some(id => idMap.has(id)))
+      .map(selector => replaceLayerIdsInSelector(selector, idMap));
+    if (clonedSelectors.length) clones.push(`${clonedSelectors.join(", ")} {${block}}`);
+  }
+  let updated = clones.length ? css.trimEnd() + "\n\n" + clones.join("\n\n") : css;
+  if (positionOffset === 0) return updated;
+
+  for (const [oldId, newId] of idMap) {
+    for (const property of ["left", "top"] as const) {
+      const value = getCssPropertyValue(css, `[data-layer-id="${oldId}"]`, property);
+      if (/^-?\d+(?:\.\d+)?px$/.test(value)) {
+        updated = updateCssProperty(
+          updated,
+          `[data-layer-id="${newId}"]`,
+          property,
+          `${parseFloat(value) + positionOffset}px`,
+        );
       }
     }
   }
-  return clones.length ? css.trimEnd() + "\n\n" + clones.join("\n\n") : css;
+  return updated;
 }
 
 export function removeLayerCss(css: string, layerId: string): string {
   let updated = css;
-  for (const rule of collectRules(css).filter(item => item.selectors.some(selector => layerIdFromSelector(selector) === layerId)).reverse()) {
-    if (rule.selectors.length === 1) {
+  for (const rule of collectRules(css).filter(item => item.selectors.some(selector => layerIdsFromSelector(selector).includes(layerId))).reverse()) {
+    const remainingSelectors = rule.selectors.filter(selector => !layerIdsFromSelector(selector).includes(layerId));
+    if (remainingSelectors.length === 0) {
       updated = updated.slice(0, rule.start) + updated.slice(rule.end);
     } else {
-      const remainingSelectors = rule.selectors.filter(selector => layerIdFromSelector(selector) !== layerId).join(", ");
-      updated = updated.slice(0, rule.start) + remainingSelectors + " " + updated.slice(rule.blockStart - 1);
+      updated = updated.slice(0, rule.start) + remainingSelectors.join(", ") + " " + updated.slice(rule.blockStart - 1);
     }
   }
   return updated.replace(/\n{3,}/g, "\n\n").trimEnd();

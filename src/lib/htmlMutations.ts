@@ -11,14 +11,34 @@ function findLayer(document: Document, layerId: string): Element | null {
     .find(element => element.getAttribute("data-layer-id") === layerId) || null;
 }
 
-function offsetInlinePosition(element: Element): void {
+let generatedLayerSequence = 0;
+
+export function createLayerId(): string {
+  generatedLayerSequence++;
+  return `el_${Date.now().toString(36)}_${generatedLayerSequence.toString(36)}`;
+}
+
+function offsetInlinePosition(element: Element, offset = 20): void {
   if (!(element instanceof HTMLElement)) return;
   for (const property of ["left", "top"] as const) {
     const value = element.style[property];
     if (/^-?\d+(?:\.\d+)?px$/.test(value)) {
-      element.style[property] = `${parseFloat(value) + 20}px`;
+      element.style[property] = `${parseFloat(value) + offset}px`;
     }
   }
+}
+
+function cloneLayerTree(element: Element, createId: () => string): { clone: Element; idMap: Map<string, string> } {
+  const clone = element.cloneNode(true) as Element;
+  const idMap = new Map<string, string>();
+  for (const clonedElement of [clone, ...clone.querySelectorAll("[data-layer-id]")]) {
+    const oldId = clonedElement.getAttribute("data-layer-id");
+    if (!oldId) continue;
+    const newId = createId();
+    clonedElement.setAttribute("data-layer-id", newId);
+    idMap.set(oldId, newId);
+  }
+  return { clone, idMap };
 }
 
 export function ensureLayerIds(html: string, createId: () => string): string {
@@ -59,18 +79,34 @@ export function duplicateLayerInHtml(
   const element = findLayer(document, layerId);
   if (!element) return null;
 
-  const clone = element.cloneNode(true) as Element;
-  const idMap = new Map<string, string>();
-  for (const clonedElement of [clone, ...clone.querySelectorAll("[data-layer-id]")]) {
-    const oldId = clonedElement.getAttribute("data-layer-id");
-    if (!oldId) continue;
-    const newId = createId();
-    clonedElement.setAttribute("data-layer-id", newId);
-    idMap.set(oldId, newId);
-  }
+  const { clone, idMap } = cloneLayerTree(element, createId);
   offsetInlinePosition(clone);
   element.after(clone);
   return { html: serializeFragment(document), idMap };
+}
+
+export function pasteLayerFromHtml(
+  targetHtml: string,
+  sourceHtml: string,
+  sourceLayerId: string,
+  createId: () => string,
+  offset = 20,
+): { html: string; idMap: Map<string, string>; rootLayerId: string } | null {
+  const sourceDocument = parseFragment(sourceHtml);
+  const sourceElement = findLayer(sourceDocument, sourceLayerId);
+  if (!sourceElement) return null;
+
+  const targetDocument = parseFragment(targetHtml);
+  const { clone, idMap } = cloneLayerTree(sourceElement, createId);
+  offsetInlinePosition(clone, offset);
+
+  const matchingTarget = findLayer(targetDocument, sourceLayerId);
+  if (matchingTarget) matchingTarget.after(clone);
+  else targetDocument.body.appendChild(clone);
+
+  const rootLayerId = idMap.get(sourceLayerId);
+  if (!rootLayerId) return null;
+  return { html: serializeFragment(targetDocument), idMap, rootLayerId };
 }
 
 export function changeLayerTag(html: string, layerId: string, newTag: string): string | null {
