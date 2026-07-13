@@ -408,6 +408,31 @@ export function extractLayerTreeCss(css: string, layerHtml: string, layerIds: It
   return [...imports, scopedRoot, ...extracted].filter(Boolean).join("\n\n");
 }
 
+export function cloneLayerTreeCss(
+  css: string,
+  layerHtml: string,
+  layerIds: Iterable<string>,
+  idMap: Map<string, string>,
+  positionOffset = 0,
+): string {
+  let cloned = remapLayerCss(extractLayerTreeCss(css, layerHtml, layerIds), idMap);
+  if (positionOffset === 0) return cloned;
+
+  for (const [oldId, newId] of idMap) {
+    for (const property of ["left", "top"] as const) {
+      const value = getCssPropertyValue(css, `[data-layer-id="${oldId}"]`, property);
+      if (!/^-?\d+(?:\.\d+)?px$/.test(value)) continue;
+      cloned = updateCssProperty(
+        cloned,
+        `[data-layer-id="${newId}"]`,
+        property,
+        `${parseFloat(value) + positionOffset}px`,
+      );
+    }
+  }
+  return cloned;
+}
+
 function normalizedCss(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }

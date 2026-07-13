@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, type FrameData, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, type FrameData, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -41,6 +41,8 @@ interface InfiniteHtmlCanvasProps {
   onDuplicateFrames?: (copies: { sourceId: string; x: number; y: number }[]) => void;
   onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
+  layerSelectionRequest?: LayerSelectionRequest | null;
+  selectedElement?: SelectedElementInfo | null;
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onFrameHtmlChange?: (frameId: string, newHtml: string) => void;
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
@@ -62,6 +64,7 @@ export function InfiniteHtmlCanvas({
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
+  layerSelectionRequest, selectedElement,
   onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onElementDelete, onElementDuplicate,
   onFrameResize,
 }: InfiniteHtmlCanvasProps) {
@@ -409,6 +412,8 @@ export function InfiniteHtmlCanvas({
               zoom={zoom}
               onActivate={onActivateFrame ?? onSelectFrame}
               onElementSelect={onElementSelect}
+              selectionRequest={layerSelectionRequest?.frameId === frame.id ? layerSelectionRequest : null}
+              selectedLayerId={selectedElement?.frameId === frame.id ? selectedElement.layerId : null}
               onCssChange={onFrameCssChange}
               onHtmlChange={onFrameHtmlChange}
               activeTool={activeTool}

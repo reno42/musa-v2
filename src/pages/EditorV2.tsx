@@ -11,7 +11,7 @@ import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
-import type { FrameData, SelectedElementInfo } from "../components/DesignFrame";
+import type { FrameData, LayerSelectionRequest, SelectedElementInfo } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
@@ -26,14 +26,13 @@ import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/su
 import {
   appendCssOverride,
   cloneLayerCss,
-  extractLayerTreeCss,
+  cloneLayerTreeCss,
   filterCssDeclarations,
   getCssPropertyValue,
   getExactRuleDeclarations,
   getLayerIdsWithDeclaration,
   mergeCssRules,
   parseCssDeclarations,
-  remapLayerCss,
   removeLayerCss,
   removeLayersCss,
   removeCssOverride,
@@ -137,7 +136,15 @@ function frameSnapshotsMatch(first: FrameData[], second: FrameData[]): boolean {
 }
 
 type DesignClipboard =
-  | { kind: "element"; frameId: string; layerId: string; html: string; css: string; pasteCount: number }
+  | {
+    kind: "element";
+    frameId: string;
+    layerId: string;
+    html: string;
+    css: string;
+    layout: { left: string; top: string; translate: string };
+    pasteCount: number;
+  }
   | { kind: "frames"; frames: FrameData[]; pasteCount: number };
 
 interface PenStyle {
@@ -268,6 +275,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Selected element (inside a frame) ──
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
+  const [layerSelectionRequest, setLayerSelectionRequest] = useState<LayerSelectionRequest | null>(null);
+  const layerSelectionSequenceRef = useRef(0);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<string>("contextual");
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
@@ -606,6 +615,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setSelectedFrameIds(id ? new Set([id]) : new Set());
     setContentFrameId(null);
     setSelectedElement(null);
+    setLayerSelectionRequest(null);
   }, []);
 
   const handleActivateFrame = useCallback((frameId: string) => {
@@ -696,15 +706,26 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [frames, autoSave, pushUndo]);
 
-  const deleteSelectedFrame = useCallback(() => {
-    if (!selectedFrameId || frames.length <= 1) return;
+  const deleteFrames = useCallback((frameIds: Set<string>): boolean => {
+    if (frameIds.size === 0) return false;
+    const updated = frames.filter(frame => !frameIds.has(frame.id));
+    if (updated.length === 0 || updated.length === frames.length) return false;
+
     pushUndo(frames);
-    const updated = frames.filter(f => f.id !== selectedFrameId);
     setFrames(updated);
     setSelectedFrameId(updated[0]?.id ?? null);
     setSelectedFrameIds(updated[0]?.id ? new Set([updated[0].id]) : new Set());
+    setContentFrameId(null);
+    setSelectedElement(null);
+    setLayerSelectionRequest(null);
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+    return true;
+  }, [frames, autoSave, pushUndo]);
+
+  const deleteSelectedFrame = useCallback(() => {
+    if (!selectedFrameId) return;
+    deleteFrames(new Set([selectedFrameId]));
+  }, [selectedFrameId, deleteFrames]);
 
   const duplicateFrame = useCallback(() => {
     const src = frames.find(f => f.id === selectedFrameId);
@@ -789,8 +810,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       return;
     }
 
-    const transferredCss = remapLayerCss(
-      extractLayerTreeCss(sourceFrame.css, extracted.layerHtml, extracted.layerIds),
+    const transferredCss = cloneLayerTreeCss(
+      sourceFrame.css,
+      extracted.layerHtml,
+      extracted.layerIds,
       remapped.idMap,
     );
     const sourceCss = removeLayersCss(sourceFrame.css, extracted.layerIds);
@@ -865,6 +888,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
+    setLayerSelectionRequest(null);
     setSelectedElement(info);
     if (info) {
       setSelectedFrameId(info.frameId);
@@ -919,47 +943,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     setSelectedFrameId(frameId);
     setSelectedFrameIds(new Set());
     setContentFrameId(frameId);
-    const frameEl = document.querySelector(`[data-frame-id="${frameId}"]`);
-    if (!frameEl) return;
-    const allChildren = frameEl.querySelectorAll("*");
-    let shadow: ShadowRoot | null = null;
-    for (const child of allChildren) {
-      if (child.shadowRoot) { shadow = child.shadowRoot; break; }
-    }
-    if (!shadow) return;
-    const content = shadow.getElementById("__df_content");
-    if (!content) return;
-
-    let el: Element | null = null;
-
-    // Try data-layer-id lookup first
-    if (!layerId.startsWith("auto_")) {
-      el = content.querySelector(`[data-layer-id="${layerId}"]`);
-    }
-
-    // Fallback: walk DOM by path for auto-generated layers
-    if (!el && path && path.length > 0) {
-      el = content;
-      for (let i = 0; i < path.length; i++) {
-        const idx = path[i];
-        if (idx < el.children.length) {
-          el = el.children[idx];
-        } else {
-          el = null;
-          break;
-        }
-      }
-    }
-
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      el.dispatchEvent(new MouseEvent("mousedown", {
-        bubbles: true, composed: true,
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top + rect.height / 2,
-        button: 0, view: window,
-      }));
-    }
+    setLayerSelectionRequest({
+      frameId,
+      layerId,
+      path,
+      requestId: ++layerSelectionSequenceRef.current,
+    });
   }, []);
 
   // ── Contextual panel CSS change ──
@@ -1210,30 +1199,65 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   // ── Change semantic tag of selected element ──
-  const copySelection = useCallback(() => {
+  const captureSelection = useCallback((): DesignClipboard | null => {
     if (selectedElement && selectedElement.frameId === selectedFrameId) {
       const sourceFrame = frames.find(frame => frame.id === selectedElement.frameId);
-      if (!sourceFrame) return;
-      designClipboardRef.current = {
+      if (!sourceFrame) return null;
+      return {
         kind: "element",
         frameId: sourceFrame.id,
         layerId: selectedElement.layerId,
         html: sourceFrame.html,
         css: sourceFrame.css,
+        layout: {
+          left: selectedElement.computedStyles.left,
+          top: selectedElement.computedStyles.top,
+          translate: selectedElement.computedStyles.translate,
+        },
         pasteCount: 0,
       };
-      addToast("Elemento copiado.", "success");
-      return;
     }
 
     const frameIds = selectedFrameIds.size > 0
       ? selectedFrameIds
       : new Set(selectedFrameId ? [selectedFrameId] : []);
     const copiedFrames = frames.filter(frame => frameIds.has(frame.id)).map(frame => ({ ...frame }));
-    if (copiedFrames.length === 0) return;
-    designClipboardRef.current = { kind: "frames", frames: copiedFrames, pasteCount: 0 };
+    return copiedFrames.length > 0
+      ? { kind: "frames", frames: copiedFrames, pasteCount: 0 }
+      : null;
+  }, [selectedElement, selectedFrameId, selectedFrameIds, frames]);
+
+  const copySelection = useCallback(() => {
+    const clipboard = captureSelection();
+    if (!clipboard) return;
+    designClipboardRef.current = clipboard;
+    if (clipboard.kind === "element") {
+      addToast("Elemento copiado.", "success");
+      return;
+    }
+    const copiedFrames = clipboard.frames;
     addToast(`${copiedFrames.length} frame${copiedFrames.length === 1 ? "" : "s"} copiado${copiedFrames.length === 1 ? "" : "s"}.`, "success");
-  }, [selectedElement, selectedFrameId, selectedFrameIds, frames, addToast]);
+  }, [captureSelection, addToast]);
+
+  const cutSelection = useCallback(() => {
+    const clipboard = captureSelection();
+    if (!clipboard) return;
+
+    if (clipboard.kind === "element") {
+      designClipboardRef.current = clipboard;
+      handleDeleteElement(clipboard.layerId, clipboard.frameId);
+      addToast("Elemento cortado.", "success");
+      return;
+    }
+
+    const frameIds = new Set(clipboard.frames.map(frame => frame.id));
+    if (!deleteFrames(frameIds)) {
+      addToast("El diseño debe conservar al menos un frame.", "error");
+      return;
+    }
+    designClipboardRef.current = clipboard;
+    addToast(`${clipboard.frames.length} frame${clipboard.frames.length === 1 ? "" : "s"} cortado${clipboard.frames.length === 1 ? "" : "s"}.`, "success");
+  }, [captureSelection, handleDeleteElement, deleteFrames, addToast]);
 
   const pasteSelection = useCallback(() => {
     const clipboard = designClipboardRef.current;
@@ -1248,6 +1272,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       const targetFrameId = selectedFrameId || clipboard.frameId;
       const targetFrame = frames.find(frame => frame.id === targetFrameId);
       if (!targetFrame) return;
+      const sourceLayer = extractLayerFromHtml(clipboard.html, clipboard.layerId);
+      if (!sourceLayer) return;
       const pasted = pasteLayerFromHtml(
         targetFrame.html,
         clipboard.html,
@@ -1256,7 +1282,36 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         offset,
       );
       if (!pasted) return;
-      const newCss = cloneLayerCss(targetFrame.css, pasted.idMap, offset);
+      let pastedCss = cloneLayerTreeCss(
+        clipboard.css,
+        sourceLayer.layerHtml,
+        sourceLayer.layerIds,
+        pasted.idMap,
+        offset,
+      );
+      const rootSelector = `[data-layer-id="${pasted.rootLayerId}"]`;
+      let offsetByPosition = false;
+      for (const property of ["left", "top"] as const) {
+        const value = clipboard.layout[property];
+        if (!/^-?\d+(?:\.\d+)?px$/.test(value)) continue;
+        pastedCss = updateCssProperty(
+          pastedCss,
+          rootSelector,
+          property,
+          `${parseFloat(value) + offset}px`,
+        );
+        offsetByPosition = true;
+      }
+      if (!offsetByPosition) {
+        const translate = parseTranslate(clipboard.layout.translate);
+        pastedCss = updateCssProperty(
+          pastedCss,
+          rootSelector,
+          "translate",
+          `${translate.x + offset}px ${translate.y + offset}px`,
+        );
+      }
+      const newCss = mergeCssRules(targetFrame.css, pastedCss);
       const updated = frames.map(frame => frame.id === targetFrameId
         ? { ...frame, html: pasted.html, css: newCss }
         : frame);
@@ -1378,6 +1433,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
+      if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
       if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
@@ -1447,15 +1503,27 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       e.preventDefault();
       pasteSelection();
     };
+    const handleNativeCut = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
+        || selectedFrameIds.size > 0
+        || Boolean(selectedFrameId);
+      if (!hasSelection) return;
+      e.preventDefault();
+      e.clipboardData?.setData("text/plain", "Futuraria design object");
+      cutSelection();
+    };
     window.addEventListener("keydown", handler, { capture: true });
     window.addEventListener("copy", handleNativeCopy, { capture: true });
+    window.addEventListener("cut", handleNativeCut, { capture: true });
     window.addEventListener("paste", handleNativePaste, { capture: true });
     return () => {
       window.removeEventListener("keydown", handler, { capture: true });
       window.removeEventListener("copy", handleNativeCopy, { capture: true });
+      window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2720,6 +2788,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onDuplicateFrames={handleDuplicateFramesAtPositions}
             onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
+            layerSelectionRequest={layerSelectionRequest}
+            selectedElement={selectedElement}
             onFrameCssChange={handleFrameCssChange}
             onFrameHtmlChange={handleFrameHtmlChange}
             onAddPrimitive={handleAddPrimitive}

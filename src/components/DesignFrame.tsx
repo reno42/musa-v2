@@ -49,12 +49,21 @@ export interface SelectedElementInfo {
   }>;
 }
 
+export interface LayerSelectionRequest {
+  frameId: string;
+  layerId: string;
+  path?: number[];
+  requestId: number;
+}
+
 interface DesignFrameProps {
   frame: FrameData;
   isActive: boolean;
   zoom?: number;
   onActivate: (frameId: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
+  selectionRequest?: LayerSelectionRequest | null;
+  selectedLayerId?: string | null;
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
@@ -124,6 +133,7 @@ const TRACKED_PROPS = [
 
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
+  selectionRequest, selectedLayerId,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
@@ -298,6 +308,38 @@ export function DesignFrame({
     penSvgRef.current = null;
   }, [frame.html]);
 
+  useEffect(() => {
+    if (!selectionRequest || selectionRequest.frameId !== frame.id) return;
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!content) return;
+
+    let element: Element | null = null;
+    if (!selectionRequest.layerId.startsWith("auto_")) {
+      element = content.querySelector(`[data-layer-id="${selectionRequest.layerId}"]`);
+    }
+    if (!element && selectionRequest.path?.length) {
+      element = content;
+      for (const index of selectionRequest.path) {
+        element = element.children[index] || null;
+        if (!element) break;
+      }
+    }
+    if (!element) return;
+    if (!element.hasAttribute("data-layer-id")) {
+      element.setAttribute("data-layer-id", createLayerId());
+      htmlRef.current = content.innerHTML;
+      onHtmlChangeRef.current?.(frame.id, htmlRef.current);
+    }
+    selectElement(element);
+  }, [selectionRequest]);
+
+  useEffect(() => {
+    if (selectedLayerId || selectionRequest) return;
+    selectedRef.current = null;
+    selectedSourceRef.current = null;
+    clearOverlay();
+  }, [selectedLayerId, selectionRequest]);
+
   function emitElementSelection(element: Element, source: Element = element) {
     const computed = source.ownerDocument.defaultView!.getComputedStyle(source);
     const computedStyles: Record<string, string> = {};
@@ -356,6 +398,13 @@ export function DesignFrame({
     const right = Math.max(...rects.map(rect => rect.right));
     const bottom = Math.max(...rects.map(rect => rect.bottom));
     return new DOMRect(left, top, right - left, bottom - top);
+  }
+
+  function selectElement(element: Element, source: Element = element): void {
+    selectedRef.current = element;
+    selectedSourceRef.current = source;
+    refreshOverlay(element);
+    emitElementSelection(element, source);
   }
 
   function clearOverlay() {
@@ -1367,12 +1416,9 @@ export function DesignFrame({
         onHtmlChangeRef.current?.(frame.id, htmlRef.current);
       }
 
-      selectedRef.current = dragTarget;
-      selectedSourceRef.current = target;
-      refreshOverlay(dragTarget);
+      selectElement(dragTarget, target);
 
       let computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
-      emitElementSelection(dragTarget, target);
 
       // ── Drag to move (with snap/guides) ──
       const SNAP = 8; // snap threshold in pixels

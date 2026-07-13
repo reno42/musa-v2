@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendCssOverride,
+  cloneLayerTreeCss,
   cloneLayerCss,
   extractLayerCss,
   getCssPropertyValue,
@@ -110,4 +111,18 @@ test("remaps layer selectors when a cross-frame move resolves id collisions", ()
   assert.match(remapped, /data-layer-id="group_2"/);
   assert.match(remapped, /data-layer-id='child_2'/);
   assert.doesNotMatch(remapped, /data-layer-id=["'](?:group|child)["']/);
+});
+
+test("clones an extracted layer stylesheet and offsets positioned roots", () => {
+  const cloned = cloneLayerTreeCss(
+    `[data-layer-id="source"] { position: absolute; left: 10px; top: 15px; color: red; }`,
+    `<div data-layer-id="source"></div>`,
+    ["source"],
+    new Map([["source", "copy"]]),
+    20,
+  );
+
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "left"), "30px");
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "top"), "35px");
+  assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "color"), "red");
 });
