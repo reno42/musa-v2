@@ -147,6 +147,66 @@ export function moveLayerBefore(html: string, layerId: string, targetLayerId: st
   return serializeFragment(document);
 }
 
+export type LayerStackPlacement = "above" | "below";
+export type LayerStackDirection = "forward" | "backward";
+
+export interface LayerStackChange {
+  html: string;
+  /** Layer ids ordered from the back of the canvas to the front. */
+  siblingLayerIds: string[];
+}
+
+function stackChange(document: Document, parent: Element): LayerStackChange {
+  return {
+    html: serializeFragment(document),
+    siblingLayerIds: [...parent.children]
+      .map(element => element.getAttribute("data-layer-id"))
+      .filter((layerId): layerId is string => Boolean(layerId)),
+  };
+}
+
+/**
+ * Moves a layer relative to another sibling. "Above" matches the layers-panel
+ * convention: the moved layer is painted later and therefore appears in front.
+ */
+export function moveLayerInStack(
+  html: string,
+  layerId: string,
+  targetLayerId: string,
+  placement: LayerStackPlacement,
+): LayerStackChange | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  const target = findLayer(document, targetLayerId);
+  const parent = target?.parentElement;
+  if (!element || !target || !parent || element === target || element.parentElement !== parent) return null;
+
+  if (placement === "above") target.after(element);
+  else target.before(element);
+  return stackChange(document, parent);
+}
+
+/** Moves one layer a single visual step forward or backward. */
+export function reorderLayerInStack(
+  html: string,
+  layerId: string,
+  direction: LayerStackDirection,
+): LayerStackChange | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  const parent = element?.parentElement;
+  if (!element || !parent) return null;
+
+  const siblings = [...parent.children].filter(sibling => sibling.hasAttribute("data-layer-id"));
+  const index = siblings.indexOf(element);
+  const target = direction === "forward" ? siblings[index + 1] : siblings[index - 1];
+  if (!target) return null;
+
+  if (direction === "forward") target.after(element);
+  else target.before(element);
+  return stackChange(document, parent);
+}
+
 export function groupLayersInHtml(
   html: string,
   layerIds: string[],

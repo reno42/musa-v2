@@ -1,116 +1,159 @@
 import { useMemo } from "react";
+
 export {
   groupLayersInHtml,
-  moveLayerBefore,
-  reorderLayerInHtml,
+  moveLayerInStack,
+  reorderLayerInStack,
   ungroupLayerInHtml,
 } from "../lib/htmlMutations";
+
+export type LayerKind = "text" | "image" | "svg" | "bezier" | "shape" | "group" | "component";
 
 export interface LayerNode {
   layerId: string;
   tag: string;
-  text: string;
+  kind: LayerKind;
+  name: string;
   depth: number;
   parentId: string | null;
   children: string[];
-  /** DOM child-index path from body to this element. Used to locate auto-generated layers. */
+  /** DOM child-index path from body to this element. Used to locate layers without ids. */
   path: number[];
 }
 
-let _autoIdCounter = 0;
-function resetAutoIds() { _autoIdCounter = 0; }
+const TEXT_TAGS = new Set([
+  "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "button", "label", "li",
+  "strong", "em", "small", "blockquote", "figcaption", "text", "textpath",
+]);
 
-/**
- * Parses an HTML string and extracts all elements with data-layer-id into
- * a flat tree structure suitable for rendering a layers panel.
- */
-export function useLayerTree(html: string): LayerNode[] {
-  return useMemo(() => parseLayerTree(html), [html]);
+function directText(element: Element): string {
+  return [...element.childNodes]
+    .filter(node => node.nodeType === Node.TEXT_NODE)
+    .map(node => node.textContent || "")
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
+function compactText(value: string): string {
+  return value.length > 44 ? `${value.slice(0, 43)}…` : value;
+}
+
+function humanizeIdentifier(value: string): string {
+  return value
+    .replace(/^(?:el|auto|grp)[_-]/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, character => character.toUpperCase())
+    .trim();
+}
+
+function isGeneratedIdentifier(value: string): boolean {
+  return /^(?:el|auto|grp)[_-]/i.test(value);
+}
+
+function inferLayerKind(element: Element, text: string): LayerKind {
+  const declared = element.getAttribute("data-layer-kind")?.toLowerCase();
+  if (declared && ["text", "image", "svg", "bezier", "shape", "group", "component"].includes(declared)) {
+    return declared as LayerKind;
+  }
+
+  const tag = element.tagName.toLowerCase();
+  if (tag === "img" || tag === "picture") return "image";
+  if (tag === "svg") return "svg";
+  if (TEXT_TAGS.has(tag) || text) return "text";
+  if (["input", "select", "textarea", "form"].includes(tag)) return "component";
+  if (element.children.length > 0) return "group";
+  return "shape";
+}
+
+function inferLayerName(element: Element, layerId: string, kind: LayerKind, text: string): string {
+  const explicitName = element.getAttribute("data-layer-name")
+    || element.getAttribute("aria-label")
+    || element.getAttribute("title");
+  if (explicitName?.trim()) return compactText(explicitName.trim());
+
+  if (kind === "text") {
+    const readableText = text || element.textContent?.replace(/\s+/g, " ").trim() || "";
+    if (readableText) return compactText(readableText);
+  }
+  if (kind === "image") {
+    const alt = element.getAttribute("alt")?.trim();
+    if (alt) return compactText(alt);
+    const source = element.getAttribute("src") || "";
+    if (source.startsWith("data:")) return "Image";
+    const filename = source.split(/[\\/]/).pop()?.split(/[?#]/)[0];
+    return filename ? compactText(filename) : "Image";
+  }
+  if (kind === "bezier") return "Bezier";
+  if (kind === "svg") {
+    const title = element.querySelector("title")?.textContent?.trim();
+    return title ? compactText(title) : "SVG";
+  }
+
+  if (!isGeneratedIdentifier(layerId)) {
+    const identifierName = humanizeIdentifier(layerId);
+    if (identifierName) return compactText(identifierName);
+  }
+
+  if (kind === "group") {
+    const className = element.getAttribute("class")?.split(/\s+/).find(Boolean);
+    if (className) return compactText(humanizeIdentifier(className));
+    return "Group";
+  }
+  if (kind === "component") return "Component";
+
+  const style = element.getAttribute("style") || "";
+  if (/border-radius\s*:\s*50%/i.test(style)) return "Circle";
+  return "Shape";
+}
+
+/** Parses editor HTML into semantic layer nodes without exposing raw DOM tag names. */
 export function parseLayerTree(html: string): LayerNode[] {
-  if (!html) return [];
+  if (!html.trim()) return [];
 
-  resetAutoIds();
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  if (!doc.body) return [];
-
+  const document = new DOMParser().parseFromString(html, "text/html");
   const nodes: LayerNode[] = [];
-  const stack: string[] = [];
-  const path: number[] = [];
+  const byId = new Map<string, LayerNode>();
 
-  function walk(el: Element) {
-    const hasLid = el.hasAttribute("data-layer-id");
-    const tag = el.tagName.toLowerCase();
+  function walk(element: Element, path: number[], parentId: string | null, depth: number): void {
+    const text = directText(element);
+    const tag = element.tagName.toLowerCase();
+    const declaredId = element.getAttribute("data-layer-id");
+    const layerId = declaredId || `auto_${path.join("_")}`;
+    const isStructuralWrapper = !declaredId && tag === "div" && element.children.length > 0 && !text;
+    let nextParentId = parentId;
+    let nextDepth = depth;
 
-    // Get direct text (not from children) to detect if this is a structural wrapper
-    let directText = "";
-    for (let i = 0; i < el.childNodes.length; i++) {
-      if (el.childNodes[i].nodeType === 3) { // Text node
-        directText += el.childNodes[i].textContent || "";
-      }
-    }
-    const trimmedDirect = directText.trim();
-
-    // Skip structural wrappers: div with no data-layer-id, no direct text, has children
-    const isWrapper = tag === "div" && !hasLid && el.children.length > 0 && !trimmedDirect;
-
-    if (!isWrapper) {
-      const lid = hasLid ? el.getAttribute("data-layer-id")! : `auto_${_autoIdCounter++}`;
-      const parentId = stack.length > 0 ? stack[stack.length - 1] : null;
-      const depth = stack.length;
-
-      let text = "";
-      if (lid.startsWith("grp_")) {
-        // Group name
-        text = `Grupo ${lid.replace("grp_", "").substring(0, 6)}`;
-      } else if (tag === "img") {
-        const src = el.getAttribute("src") || "";
-        text = src ? `🖼 ${src.substring(0, 30)}` : "🖼 Image";
-      } else if (tag === "svg") {
-        text = "📐 SVG Path";
-      } else if (trimmedDirect) {
-        text = trimmedDirect.substring(0, 40) + (trimmedDirect.length > 40 ? "…" : "");
-      } else if (!el.children.length && el.textContent) {
-        const tc = el.textContent.trim();
-        text = tc.substring(0, 40) + (tc.length > 40 ? "…" : "");
-      }
-
-      nodes.push({
-        layerId: lid,
+    if (!isStructuralWrapper) {
+      const kind = inferLayerKind(element, text);
+      const node: LayerNode = {
+        layerId,
         tag,
-        text: text || tag,
+        kind,
+        name: inferLayerName(element, layerId, kind, text),
         depth,
         parentId,
         children: [],
-        path: [...path],
-      });
-
-      if (parentId) {
-        const parent = nodes.find(n => n.layerId === parentId);
-        if (parent) parent.children.push(lid);
-      }
-
-      stack.push(lid);
+        path,
+      };
+      nodes.push(node);
+      byId.set(layerId, node);
+      if (parentId) byId.get(parentId)?.children.push(layerId);
+      nextParentId = layerId;
+      nextDepth = depth + 1;
     }
 
-    for (let i = 0; i < el.children.length; i++) {
-      path.push(i);
-      walk(el.children[i]);
-      path.pop();
-    }
-
-    if (!isWrapper) {
-      stack.pop();
-    }
+    // SVG internals are edited as one canvas object, not as noisy path/div rows.
+    if (tag === "svg") return;
+    [...element.children].forEach((child, index) => {
+      walk(child, [...path, index], nextParentId, nextDepth);
+    });
   }
 
-  // Walk all children of body (skip body itself)
-  for (let i = 0; i < doc.body.children.length; i++) {
-    path[0] = i;
-    walk(doc.body.children[i]);
-  }
-
+  [...document.body.children].forEach((element, index) => walk(element, [index], null, 0));
   return nodes;
+}
+
+export function useLayerTree(html: string): LayerNode[] {
+  return useMemo(() => parseLayerTree(html), [html]);
 }

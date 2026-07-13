@@ -26,6 +26,16 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
 
 type ImportMode = "svg" | "raster";
 
+function escapeHtmlAttribute(value: string): string {
+  const entities: Record<string, string> = {
+    "&": "&amp;",
+    '"': "&quot;",
+    "<": "&lt;",
+    ">": "&gt;",
+  };
+  return value.replace(/[&"<>]/g, character => entities[character]);
+}
+
 export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
   const [tab, setTab] = useState<"upload" | "paste">("upload");
   const [svgCode, setSvgCode] = useState("");
@@ -102,7 +112,8 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
 
       if (importMode === "raster" && rasterDataUrl) {
         // ── Raster import: create a template with an <img> inside a frame ──
-        const html = `<img data-layer-id="image" src="${rasterDataUrl}" style="width:100%;height:100%;object-fit:contain;" />`;
+        const imageName = escapeHtmlAttribute(name);
+        const html = `<img data-layer-id="image" data-layer-name="${imageName}" data-layer-kind="image" alt="${imageName}" src="${rasterDataUrl}" style="width:100%;height:100%;object-fit:contain;" />`;
         const css = `body {\n  margin: 0;\n  padding: 0;\n  width: 100%;\n  height: 100%;\n  overflow: hidden;\n}\nimg {\n  display: block;\n}`;
         const res = await apiFetch<any>("/mcp", {
           method: "POST",

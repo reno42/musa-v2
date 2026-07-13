@@ -108,8 +108,8 @@ const DIMENSION_PROPS = new Set([
 // ── Styles ──
 
 const panelStyle: React.CSSProperties = {
-  width: 264, background: "rgba(18,18,36,0.92)", backdropFilter: "blur(10px)",
-  border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8,
+  width: "100%", minWidth: 0, background: "transparent",
+  border: "none", borderRadius: 10,
   color: "#e0e0e0", fontSize: 12, fontFamily: "Inter, system-ui, sans-serif",
   overflow: "auto", padding: 0, maxHeight: "100%",
 };
@@ -447,7 +447,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
   const isSvgText = isSvg && element.svgChildTag === "text";
 
   return (
-    <div style={panelStyle}>
+    <div className="html-contextual-panel" style={panelStyle}>
       {/* ── Header ── */}
       <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

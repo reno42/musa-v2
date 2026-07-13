@@ -43,6 +43,7 @@ import {
   ensureLayerIds,
   pasteLayerFromHtml,
   replaceLayerText,
+  type LayerStackChange,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { useToast } from "../components/Toast";
@@ -93,6 +94,14 @@ function cloneFrame(source: FrameData, x: number, y: number): FrameData {
     x: Math.round(x),
     y: Math.round(y),
   };
+}
+
+function snapshotFrames(frames: FrameData[]): FrameData[] {
+  return frames.map(frame => ({ ...frame }));
+}
+
+function frameSnapshotsMatch(first: FrameData[], second: FrameData[]): boolean {
+  return JSON.stringify(first) === JSON.stringify(second);
 }
 
 type DesignClipboard =
@@ -244,7 +253,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Undo/Redo helpers ──
   const pushUndo = useCallback((current: FrameData[]) => {
-    undoStack.current.push(JSON.parse(JSON.stringify(current)));
+    const snapshot = snapshotFrames(current);
+    const previous = undoStack.current[undoStack.current.length - 1];
+    if (previous && frameSnapshotsMatch(previous, snapshot)) return;
+    undoStack.current.push(snapshot);
     if (undoStack.current.length > 50) undoStack.current.shift();
     redoStack.current = [];
     setCanUndo(true);
@@ -256,11 +268,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       return;
     }
     const prev = undoStack.current.pop()!;
-    // Push current state to redo stack BEFORE setFrames (StrictMode-safe: outside updater)
-    redoStack.current.push(JSON.parse(JSON.stringify(framesRef.current)));
+    redoStack.current.push(snapshotFrames(framesRef.current));
     setFrames(prev);
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
+    lastPushTimeRef.current = 0;
+    setSelectedElement(null);
+    setContentFrameId(current => current && prev.some(frame => frame.id === current) ? current : null);
+    setSelectedFrameId(current => current && prev.some(frame => frame.id === current) ? current : prev[0]?.id || null);
+    setSelectedFrameIds(current => {
+      const valid = new Set([...current].filter(id => prev.some(frame => frame.id === id)));
+      if (valid.size === 0 && prev[0]) valid.add(prev[0].id);
+      return valid;
+    });
     isDirtyRef.current = true;
     autoSaveRef.current(prev);
   }, []);
@@ -268,11 +288,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const handleRedo = useCallback(() => {
     if (redoStack.current.length === 0) return;
     const next = redoStack.current.pop()!;
-    // Push current state to undo stack BEFORE setFrames (StrictMode-safe: outside updater)
-    undoStack.current.push(JSON.parse(JSON.stringify(framesRef.current)));
+    undoStack.current.push(snapshotFrames(framesRef.current));
     setFrames(next);
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
+    lastPushTimeRef.current = 0;
+    setSelectedElement(null);
+    setContentFrameId(current => current && next.some(frame => frame.id === current) ? current : null);
+    setSelectedFrameId(current => current && next.some(frame => frame.id === current) ? current : next[0]?.id || null);
+    setSelectedFrameIds(current => {
+      const valid = new Set([...current].filter(id => next.some(frame => frame.id === id)));
+      if (valid.size === 0 && next[0]) valid.add(next[0].id);
+      return valid;
+    });
     isDirtyRef.current = true;
     autoSaveRef.current(next);
   }, []);
@@ -309,10 +337,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           }));
           setFrames(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
-          // Reset undo stack and push initial state so Ctrl+Z can revert to loaded state
+          // Loaded data is the baseline, not an undoable user action.
           undoStack.current = [];
           redoStack.current = [];
-          undoStack.current.push(JSON.parse(JSON.stringify(loaded)));
+          lastPushTimeRef.current = 0;
           setCanUndo(false);
           setCanRedo(false);
         } else {
@@ -329,10 +357,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
           };
           setFrames([single]);
           setSelectedFrameId(single.id);
-          // Reset undo stack and push initial state
+          // Loaded data is the baseline, not an undoable user action.
           undoStack.current = [];
           redoStack.current = [];
-          undoStack.current.push(JSON.parse(JSON.stringify([single])));
+          lastPushTimeRef.current = 0;
           setCanUndo(false);
           setCanRedo(false);
         }
@@ -678,6 +706,27 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
   }, [frames, autoSave, pushUndo]);
 
+  const handleLayerStackChange = useCallback((frameId: string, change: LayerStackChange) => {
+    const frame = frames.find(item => item.id === frameId);
+    if (!frame) return;
+
+    let stackedCss = frame.css;
+    change.siblingLayerIds.forEach((layerId, index) => {
+      stackedCss = updateCssProperty(
+        stackedCss,
+        `[data-layer-id="${layerId}"]`,
+        "z-index",
+        `${index + 1} !important`,
+      );
+    });
+    const updated = frames.map(item => item.id === frameId
+      ? { ...item, html: change.html, css: stackedCss }
+      : item);
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
+
   // ── Zoom helpers ──
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + 0.1)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(MIN_ZOOM, z - 0.1)), []);
@@ -731,9 +780,11 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, []);
 
   // ── Layer selection from Layers Panel → click element in canvas ──
-  const handleSelectLayerElement = useCallback((layerId: string, path?: number[]) => {
-    if (!selectedFrameId) return;
-    const frameEl = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
+  const handleSelectLayerElement = useCallback((frameId: string, layerId: string, path?: number[]) => {
+    setSelectedFrameId(frameId);
+    setSelectedFrameIds(new Set([frameId]));
+    setContentFrameId(frameId);
+    const frameEl = document.querySelector(`[data-frame-id="${frameId}"]`);
     if (!frameEl) return;
     const allChildren = frameEl.querySelectorAll("*");
     let shadow: ShadowRoot | null = null;
@@ -774,7 +825,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         button: 0, view: window,
       }));
     }
-  }, [selectedFrameId]);
+  }, []);
 
   // ── Contextual panel CSS change ──
   const handleContextualCssChange = useCallback((newCss: string) => {
@@ -789,14 +840,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     let css: string;
     const defaultSize = type === "polygon" ? 120 : (type === "star" ? 130 : 150);
     if (type === "rect") {
-      html = `<div data-layer-id="${layerId}" style="width:200px;height:150px;background:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape" style="width:200px;height:150px;background:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
-      html = `<div data-layer-id="${layerId}" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
       const w = 150, h = 150;
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = 130;
@@ -808,7 +859,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const r = i % 2 === 0 ? outerR : innerR;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else if (type === "polygon") {
       const n = sides || 6;
@@ -820,10 +871,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
-      html = `<div data-layer-id="${layerId}" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
       css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -844,13 +895,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     let html: string;
     let css: string;
     if (type === "rect") {
-      html = `<div data-layer-id="${layerId}"></div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
-      html = `<div data-layer-id="${layerId}"></div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = Math.max(w, h);
@@ -862,7 +913,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const r = i % 2 === 0 ? outerR : innerR;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       // polygon — uses SVG path with configurable sides
@@ -875,7 +926,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
         pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
       }
-      html = `<svg data-layer-id="${layerId}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -910,7 +961,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const layerId = createLayerId();
     const style = lastPenStyleRef.current;
     const fill = closed && style.fill === "none" ? "#3B82F6" : style.fill;
-    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}"/></svg>`;
+    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Bezier" data-layer-kind="bezier" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${pathData}"/></svg>`;
     const css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}\n[data-layer-id="${layerId}"] path {\n  fill: ${fill};\n  stroke: ${style.stroke};\n  stroke-width: ${style.strokeWidth};\n  stroke-linecap: ${style.strokeLinecap};\n  stroke-linejoin: ${style.strokeLinejoin};\n  stroke-dasharray: ${style.strokeDasharray};\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
@@ -928,7 +979,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!selectedFrameId) return;
     const layerId = createLayerId();
     const pathId = `tp_${Date.now().toString(36)}`;
-    const svgHtml = `<svg data-layer-id="${layerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
+    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Text on path" data-layer-kind="text" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
     const css = `[data-layer-id="${layerId}"] {
   position: absolute;
   left: ${bounds.x}px;
@@ -989,15 +1040,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [onBack]);
 
   // ── Phase C: Delete element inside frame ──
-  const handleDeleteElement = useCallback((layerId: string) => {
-    if (!selectedFrameId) return;
-    const frame = frames.find(f => f.id === selectedFrameId);
+  const handleDeleteElement = useCallback((layerId: string, frameId = selectedFrameId) => {
+    if (!frameId) return;
+    const frame = frames.find(f => f.id === frameId);
     if (!frame) return;
     const newHtml = deleteLayerFromHtml(frame.html, layerId);
     if (newHtml === null) return;
     const newCss = removeLayerCss(frame.css, layerId);
     const updated = frames.map(f =>
-      f.id === selectedFrameId ? { ...f, html: newHtml, css: newCss } : f
+      f.id === frameId ? { ...f, html: newHtml, css: newCss } : f
     );
     pushUndo(frames);
     setFrames(updated);
@@ -1006,15 +1057,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedFrameId, frames, autoSave, pushUndo]);
 
   // ── Phase C: Duplicate element inside frame ──
-  const handleDuplicateElement = useCallback((layerId: string) => {
-    if (!selectedFrameId) return;
-    const frame = frames.find(f => f.id === selectedFrameId);
+  const handleDuplicateElement = useCallback((layerId: string, frameId = selectedFrameId) => {
+    if (!frameId) return;
+    const frame = frames.find(f => f.id === frameId);
     if (!frame) return;
     const duplicated = duplicateLayerInHtml(frame.html, layerId, createLayerId);
     if (!duplicated) return;
     const newCss = cloneLayerCss(frame.css, duplicated.idMap, 20);
     const updated = frames.map(f =>
-      f.id === selectedFrameId
+      f.id === frameId
         ? { ...f, html: duplicated.html, css: newCss }
         : f
     );
@@ -1686,8 +1737,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [mcpLoading, setMcpLoading] = useState<string | null>(null);
   const [mcpMsg, setMcpMsg] = useState("");
   const [clipboardStyle, setClipboardStyle] = useState<string | null>(null);
-  const lockedLayers = useMemo(() => getLayerIdsWithDeclaration(activeCss, "pointer-events", "none"), [activeCss]);
-  const hiddenLayers = useMemo(() => getLayerIdsWithDeclaration(activeCss, "display", "none"), [activeCss]);
+  const lockedLayersByFrame = useMemo(() => new Map(
+    frames.map(frame => [frame.id, getLayerIdsWithDeclaration(frame.css, "pointer-events", "none")]),
+  ), [frames]);
+  const hiddenLayersByFrame = useMemo(() => new Map(
+    frames.map(frame => [frame.id, getLayerIdsWithDeclaration(frame.css, "display", "none")]),
+  ), [frames]);
 
   // ── Copy / Paste Style ──
   const handleCopyStyle = useCallback(() => {
@@ -1718,21 +1773,25 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [selectedElement, clipboardStyle, activeCss, handleCssChange]);
 
   // ── Lock / Hide toggle ──
-  const handleLockToggle = useCallback((layerId: string, locked: boolean) => {
+  const handleLockToggle = useCallback((frameId: string, layerId: string, locked: boolean) => {
+    const frame = frames.find(item => item.id === frameId);
+    if (!frame) return;
     const selector = `[data-layer-id="${layerId}"]`;
     const updated = locked
-      ? appendCssOverride(activeCss, selector, "pointer-events", "none !important")
-      : removeCssOverride(activeCss, selector, "pointer-events", "none !important");
-    handleCssChange(updated);
-  }, [activeCss, handleCssChange]);
+      ? appendCssOverride(frame.css, selector, "pointer-events", "none !important")
+      : removeCssOverride(frame.css, selector, "pointer-events", "none !important");
+    handleFrameCssChange(frameId, updated);
+  }, [frames, handleFrameCssChange]);
 
-  const handleHideToggle = useCallback((layerId: string, hidden: boolean) => {
+  const handleHideToggle = useCallback((frameId: string, layerId: string, hidden: boolean) => {
+    const frame = frames.find(item => item.id === frameId);
+    if (!frame) return;
     const selector = `[data-layer-id="${layerId}"]`;
     const updated = hidden
-      ? appendCssOverride(activeCss, selector, "display", "none !important")
-      : removeCssOverride(activeCss, selector, "display", "none !important");
-    handleCssChange(updated);
-  }, [activeCss, handleCssChange]);
+      ? appendCssOverride(frame.css, selector, "display", "none !important")
+      : removeCssOverride(frame.css, selector, "display", "none !important");
+    handleFrameCssChange(frameId, updated);
+  }, [frames, handleFrameCssChange]);
 
   // ── Generic MCP call helper ──
   const callMcp = useCallback(async (method: string, params: any) => {
@@ -1922,12 +1981,16 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
-  const codeDock = useDockablePanel(0, 56, null);
-  const layersDock = useDockablePanel(0, 56, null);
+  const codeDock = useDockablePanel(0, 56, "left");
+  const layersDock = useDockablePanel(380, 56, "left");
   const toolbarDock = useDockablePanel(20, 80, "left");
 
-  // Toolbar pushes right when code/layers panels are open
-  const toolbarLeft = (toolbarDock.state.isDocked ? (showCodePanel ? 380 : 0) + (showLayersPanel ? 260 : 0) : undefined) as number | undefined;
+  const codeIsDocked = showCodePanel && codeDock.state.isDocked;
+  const layersIsDocked = showLayersPanel && layersDock.state.isDocked;
+  const layersDockOffset = codeIsDocked && codeDock.state.dockSide === layersDock.state.dockSide ? 380 : 0;
+  const leftPanelsWidth = (codeIsDocked && codeDock.state.dockSide === "left" ? 380 : 0)
+    + (layersIsDocked && layersDock.state.dockSide === "left" ? 260 : 0);
+  const toolbarLeft = toolbarDock.state.isDocked ? leftPanelsWidth : undefined;
 
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
@@ -2372,7 +2435,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       <div className="editor-v2-main">
         {/* ── Code Panel (slide-in from left) ── */}
         {showCodePanel && (
-          <div className="editor-v2-code-panel" style={codeDock.panelStyle(380)}>
+          <div className="editor-v2-code-panel" style={codeDock.panelStyle(380, 0)}>
             <div className="dock-handle" {...codeDock.handleProps}>
               <span>Code</span>
               <button type="button" onClick={() => codeDock.toggleDock("left")} className="dock-pin-btn" title={codeDock.state.isDocked ? "Undock" : "Dock left"}>
@@ -2391,7 +2454,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
         {/* ── Layers Panel (slide-in from left, next to Code Panel) ── */}
         {showLayersPanel && (
-          <div className="editor-v2-layers-panel" style={layersDock.panelStyle(260)}>
+          <div className="editor-v2-layers-panel" style={layersDock.panelStyle(260, layersDockOffset)}>
             <div className="dock-handle" {...layersDock.handleProps}>
               <span>Layers</span>
               <button type="button" onClick={() => layersDock.toggleDock("left")} className="dock-pin-btn" title={layersDock.state.isDocked ? "Undock" : "Dock left"}>
@@ -2399,18 +2462,20 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               </button>
             </div>
             <HtmlLayersPanel
-              html={activeHtml}
-              frameId={selectedFrameId || ""}
+              frames={frames}
+              selectedFrameId={selectedFrameId}
               selectedElementId={selectedElement?.layerId || null}
+              onSelectFrame={handleSelectFrame}
               onSelectElement={handleSelectLayerElement}
-              onHtmlChange={handleHtmlChange}
-              onLayerDelete={handleDeleteElement}
-              onLayerDuplicate={handleDuplicateElement}
+              onHtmlChange={handleFrameHtmlChange}
+              onLayerStackChange={handleLayerStackChange}
+              onLayerDelete={(frameId, layerId) => handleDeleteElement(layerId, frameId)}
+              onLayerDuplicate={(frameId, layerId) => handleDuplicateElement(layerId, frameId)}
               onMultiSelectChange={setMultiSelectLayerIds}
               onLockToggle={handleLockToggle}
               onHideToggle={handleHideToggle}
-              lockedLayers={lockedLayers}
-              hiddenLayers={hiddenLayers}
+              lockedLayersByFrame={lockedLayersByFrame}
+              hiddenLayersByFrame={hiddenLayersByFrame}
             />
           </div>
         )}

@@ -11,8 +11,6 @@ export interface DockState {
 
 const DOCK_THRESHOLD = 30;   // px from edge to trigger dock
 const UNDOCK_THRESHOLD = 60; // px from edge to undock (when dragging docked panel)
-const DOCK_ANIM_TIME = 200;  // ms transition
-
 export function useDockablePanel(
   initialX: number,
   initialY: number,
@@ -133,14 +131,13 @@ export function useDockablePanel(
     });
   }, []);
 
-  const panelStyle = (width: number): React.CSSProperties => ({
+  const panelStyle = (width: number, dockedOffset = 0): React.CSSProperties => ({
     position: "fixed",
     left: state.isDocked
-      ? (state.dockSide === "left" ? 0 : window.innerWidth - width)
+      ? (state.dockSide === "left" ? dockedOffset : window.innerWidth - width - dockedOffset)
       : state.x,
     top: state.isDocked ? 44 : state.y,
     zIndex: state.isDocked ? 15 : 25,
-    transition: `left ${DOCK_ANIM_TIME}ms ease, top ${DOCK_ANIM_TIME}ms ease`,
   });
 
   const handleProps = {
