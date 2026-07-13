@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect } from "react";
 import type { LayerNode } from "../hooks/useLayerTree";
-import { useLayerTree, reorderLayerInHtml, groupLayersInHtml, ungroupLayerInHtml } from "../hooks/useLayerTree";
+import {
+  groupLayersInHtml,
+  moveLayerBefore,
+  reorderLayerInHtml,
+  ungroupLayerInHtml,
+  useLayerTree,
+} from "../hooks/useLayerTree";
 
 interface Props {
   html: string;
@@ -102,8 +108,8 @@ export function HtmlLayersPanel({
   const handleGroup = useCallback(() => {
     const ids = Array.from(multiSelect);
     if (ids.length < 2) return;
-    const result = groupLayersInHtml(html, ids);
-    if (result) onHtmlChange(result.html);
+    const result = groupLayersInHtml(html, ids, `grp_${Date.now().toString(36)}`);
+    if (result) onHtmlChange(result);
     setContextMenu(null);
     setMultiSelect(new Set());
   }, [html, onHtmlChange, multiSelect]);
@@ -174,8 +180,7 @@ export function HtmlLayersPanel({
                   e.preventDefault();
                   const draggedId = e.dataTransfer.getData("text/plain");
                   if (draggedId && draggedId !== layer.layerId) {
-                    // Reorder: move dragged layer before/after the drop target
-                    const reordered = reorderLayerInHtml(html, draggedId, "up");
+                    const reordered = moveLayerBefore(html, draggedId, layer.layerId);
                     if (reordered) onHtmlChange(reordered);
                   }
                 }}

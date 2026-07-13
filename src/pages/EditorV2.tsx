@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import html2canvas from "html2canvas";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
@@ -23,6 +23,26 @@ import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { mcpCall } from "../lib/mcpClient";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
+import {
+  appendCssOverride,
+  cloneLayerCss,
+  filterCssDeclarations,
+  getCssPropertyValue,
+  getExactRuleDeclarations,
+  getLayerIdsWithDeclaration,
+  parseCssDeclarations,
+  removeLayerCss,
+  removeCssOverride,
+  updateCssProperty,
+} from "../lib/cssMutations";
+import {
+  changeLayerTag,
+  deleteLayerFromHtml,
+  duplicateLayerInHtml,
+  ensureLayerIds,
+  replaceLayerText,
+} from "../lib/htmlMutations";
+import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -56,6 +76,31 @@ const FRAME_GAP = 100;
 const BUILD_VERSION = "persist-fix-v4-2026-06-30";
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
+
+let generatedLayerSequence = 0;
+function createLayerId(): string {
+  generatedLayerSequence++;
+  return `el_${Date.now().toString(36)}_${generatedLayerSequence.toString(36)}`;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.matches("input, textarea, select, [contenteditable='true']") || target.isContentEditable;
+}
+
+const GEOMETRY_PROPERTIES = new Set([
+  "position", "top", "right", "bottom", "left", "z-index",
+  "width", "height", "min-width", "min-height", "max-width", "max-height",
+  "display", "transform", "transform-origin",
+]);
+
+const COPY_STYLE_PROPERTIES = new Set([
+  "font-family", "font-size", "font-weight", "font-style", "line-height", "letter-spacing",
+  "text-align", "text-decoration", "text-transform", "color", "opacity",
+  "background", "background-color", "background-image", "background-size", "background-position", "background-repeat",
+  "border", "border-width", "border-style", "border-color", "border-radius",
+  "box-shadow", "text-shadow", "filter", "backdrop-filter", "mix-blend-mode",
+]);
 
 const elemBtnStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.06)", color: "#ccc",
@@ -105,28 +150,6 @@ p {
   line-height: 1.6;
   margin: 0;
 }`;
-
-/// Directly inject a Google Font <link> into every active Shadow DOM for immediate rendering.
-function injectFontIntoShadowDOMs(fontUrl: string) {
-  const href = `https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-  const frames = document.querySelectorAll("[data-frame-id]");
-  for (const frameEl of frames) {
-    for (const child of frameEl.querySelectorAll("*")) {
-      if ((child as HTMLElement).shadowRoot) {
-        const shadow = (child as HTMLElement).shadowRoot!;
-        const existing = shadow.querySelectorAll("link");
-        const already = [...existing].some(l => (l as HTMLLinkElement).href === href);
-        if (!already) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = href;
-          shadow.insertBefore(link, shadow.firstChild);
-        }
-        break;
-      }
-    }
-  }
-}
 
 export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const { addToast } = useToast();
@@ -246,7 +269,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             y: f.y ?? 0,
             width: f.width || t.width || 1080,
             height: f.height || t.height || 1080,
-            html: f.html || "",
+            html: ensureLayerIds(f.html || "", createLayerId),
             css: f.css || "",
             background: f.background || "#ffffff",
           }));
@@ -266,7 +289,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             x: 0, y: 0,
             width: t.width || 1080,
             height: t.height || 1080,
-            html: t.html || DEFAULT_HTML,
+            html: ensureLayerIds(t.html || DEFAULT_HTML, createLayerId),
             css: t.css || DEFAULT_CSS,
             background: "#ffffff",
           };
@@ -332,7 +355,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             method: "PUT",
             body: JSON.stringify(payload),
           });
-          broadcastChange(realtimeChannelRef.current, templateId, active?.html || "", active?.css || "");
+          broadcastChange(realtimeChannelRef.current, templateId, active?.id || "", active?.html || "", active?.css || "");
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
           isDirtyRef.current = false;
@@ -366,13 +389,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   useEffect(() => {
     realtimeReadyRef.current = false; // Reset on re-mount
-    const channel = subscribeTemplate(templateId, (newHtml, newCss) => {
+    const channel = subscribeTemplate(templateId, (remoteFrameId, newHtml, newCss) => {
       // Skip the initial callback fired when the channel is first joined
       if (!realtimeReadyRef.current) {
         realtimeReadyRef.current = true;
         return;
       }
-      if (!selectedFrameId) return;
+      const targetFrameId = remoteFrameId || selectedFrameId;
+      if (!targetFrameId) return;
       // Ignore our own broadcasts
       if (lastBroadcastRef.current &&
           lastBroadcastRef.current.html === newHtml &&
@@ -380,8 +404,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         return;
       }
       setFrames(prev => prev.map(f =>
-        f.id === selectedFrameId
-          ? { ...f, html: newHtml || f.html, css: newCss || f.css }
+        f.id === targetFrameId
+          ? { ...f, html: newHtml, css: newCss }
           : f
       ));
     });
@@ -629,30 +653,10 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!fontFamily || !selectedFrameId) return;
     setSelectedFont(fontFamily);
     setShowFontPicker(false);
-    const fontUrl = fontFamily.replace(/ /g, "+");
-    // Use full weight range for all variants
-    const importLine = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n`;
-    let newCss = activeCss;
-    if (!newCss.includes(`family=${fontUrl}`)) newCss = importLine + newCss;
-
-    // Directly inject the font into every Shadow DOM for immediate effect
-    injectFontIntoShadowDOMs(fontUrl);
-
-    // Apply font-family to selected element's CSS rule if one is selected
+    let newCss = ensureGoogleFontImport(activeCss, fontFamily);
+    injectGoogleFontIntoFrames(fontFamily);
     if (selectedElement) {
-      const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-      const ruleMatch = ruleRe.exec(newCss);
-      if (ruleMatch) {
-        let decl = ruleMatch[2];
-        const famRe = /font-family\s*:[^;]*;?/;
-        if (famRe.test(decl)) {
-          decl = decl.replace(famRe, `font-family: '${fontFamily}', sans-serif;`);
-        } else {
-          decl = decl.trimEnd() + `\n  font-family: '${fontFamily}', sans-serif;\n`;
-        }
-        newCss = newCss.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
-      }
+      newCss = updateCssProperty(newCss, selectedElement.selector, "font-family", `'${fontFamily}' !important`);
     }
     handleCssChange(newCss);
   }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
@@ -827,19 +831,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!selectedFrameId) return;
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
-    // Replace the text content of the element with the given layer-id.
-    // Uses backreference to capture the opening tag name and match the EXACT
-    // corresponding closing tag, preventing corruption when child elements
-    // have their own closing tags that would match a generic pattern.
-    // Groups: 1=opening tag, 2=tag name (backref), 3=content, 4=closing tag
-    const layerIdEsc = layerId.replace(/[[\]"\\]/g, "\\$&");
-    const elRe = new RegExp(
-      `(<([a-zA-Z0-9]+)[^>]*data-layer-id="${layerIdEsc}"[^>]*>)([\\s\\S]*?)(<\\/\\2>)`,
-      "i"
-    );
-    const match = elRe.exec(frame.html);
-    if (!match) return;
-    const newHtml = frame.html.replace(elRe, `${match[1]}${newText}${match[4]}`);
+    const newHtml = replaceLayerText(frame.html, layerId, newText);
+    if (newHtml === null) return;
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml } : f
     );
@@ -936,12 +929,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!selectedFrameId) return;
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
-    // Remove HTML element
-    const elRe = new RegExp(`<[^>]*data-layer-id="${layerId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${layerId}"[^>]*\\s*\\/?>`, "g");
-    const newHtml = frame.html.replace(elRe, "");
-    // Remove CSS rule
-    const cssRe = new RegExp(`\\[data-layer-id="${layerId}"\\]\\s*\\{[^}]*\\}\\s*`, "g");
-    const newCss = frame.css.replace(cssRe, "");
+    const newHtml = deleteLayerFromHtml(frame.html, layerId);
+    if (newHtml === null) return;
+    const newCss = removeLayerCss(frame.css, layerId);
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml, css: newCss } : f
     );
@@ -956,29 +946,21 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!selectedFrameId) return;
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
-    // Find the element HTML
-    const elRe = new RegExp(`(<[^>]*data-layer-id="${layerId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${layerId}"[^>]*\\s*\\/?>)`, "");
-    const match = elRe.exec(frame.html);
-    if (!match) return;
-    const newLayerId = `el_${Date.now().toString(36)}`;
-    // Clone HTML with new layer-id
-    const clonedHtml = match[1].replace(`data-layer-id="${layerId}"`, `data-layer-id="${newLayerId}"`);
-    // Clone CSS with new layer-id selector
-    const cssRe = new RegExp(`\\[data-layer-id="${layerId}"\\]\\s*\\{([^}]*)\\}`, "");
-    const cssMatch = cssRe.exec(frame.css);
-    let newCss = "";
-    if (cssMatch) {
-      // Offset position slightly
-      let decl = cssMatch[1];
-      const leftMatch = /left:\s*(\d+)px/.exec(decl);
-      const topMatch = /top:\s*(\d+)px/.exec(decl);
-      if (leftMatch) decl = decl.replace(/left:\s*\d+px/, `left: ${parseInt(leftMatch[1]) + 20}px`);
-      if (topMatch) decl = decl.replace(/top:\s*\d+px/, `top: ${parseInt(topMatch[1]) + 20}px`);
-      newCss = `\n[data-layer-id="${newLayerId}"] {${decl}}\n`;
+    const duplicated = duplicateLayerInHtml(frame.html, layerId, createLayerId);
+    if (!duplicated) return;
+    let newCss = cloneLayerCss(frame.css, duplicated.idMap);
+    const newLayerId = duplicated.idMap.get(layerId);
+    if (newLayerId) {
+      for (const property of ["left", "top"] as const) {
+        const value = getCssPropertyValue(frame.css, `[data-layer-id="${layerId}"]`, property);
+        if (/^-?\d+(?:\.\d+)?px$/.test(value)) {
+          newCss = updateCssProperty(newCss, `[data-layer-id="${newLayerId}"]`, property, `${parseFloat(value) + 20}px`);
+        }
+      }
     }
     const updated = frames.map(f =>
       f.id === selectedFrameId
-        ? { ...f, html: f.html + "\n" + clonedHtml, css: f.css + newCss }
+        ? { ...f, html: duplicated.html, css: newCss }
         : f
     );
     pushUndo(frames);
@@ -992,30 +974,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     const frame = frames.find(f => f.id === selectedElement.frameId);
     if (!frame) return;
 
-    const oldTag = selectedElement.tag;
     const layerId = selectedElement.layerId;
-
-    // Replace the opening tag in HTML
-    const openTagRe = new RegExp(`<${oldTag}([^>]*data-layer-id="${layerId.replace(/[[\]"\\]/g, "\\$&")}"[^>]*)>`);
-    const closeTagRe = new RegExp(`</${oldTag}>`);
-    let newHtml = frame.html;
-    const openMatch = openTagRe.exec(newHtml);
-    if (openMatch) {
-      newHtml = newHtml.replace(openTagRe, `<${newTag}$1>`);
-      // Replace the corresponding closing tag
-      const openPos = newHtml.indexOf(openMatch[0]);
-      const afterOpen = newHtml.slice(openPos + openMatch[0].length);
-      const closeIdx = afterOpen.search(closeTagRe);
-      if (closeIdx >= 0) {
-        newHtml = newHtml.slice(0, openPos + openMatch[0].length + closeIdx) +
-          `</${newTag}>` +
-          newHtml.slice(openPos + openMatch[0].length + closeIdx + oldTag.length + 3);
-      }
-    }
-
-    // Update CSS selector
-    const oldSelector = `[data-layer-id="${layerId}"]`;
-    // CSS selectors don't change with tag (they use attribute selectors), so no CSS update needed
+    const newHtml = changeLayerTag(frame.html, layerId, newTag);
+    if (newHtml === null) return;
 
     const updated = frames.map(f =>
       f.id === selectedElement.frameId ? { ...f, html: newHtml } : f
@@ -1090,14 +1051,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         setShowFontPicker(false);
         return;
       }
-      const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
+      if (isEditableTarget(e.target)) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
-      if (!isInput && !mod) {
+      if (!mod) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
           case "h": setActiveTool("hand"); break;
@@ -1573,18 +1534,21 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [mcpLoading, setMcpLoading] = useState<string | null>(null);
   const [mcpMsg, setMcpMsg] = useState("");
   const [clipboardStyle, setClipboardStyle] = useState<string | null>(null);
-  const [lockedLayers, setLockedLayers] = useState<Set<string>>(new Set());
-  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
+  const lockedLayers = useMemo(() => getLayerIdsWithDeclaration(activeCss, "pointer-events", "none"), [activeCss]);
+  const hiddenLayers = useMemo(() => getLayerIdsWithDeclaration(activeCss, "display", "none"), [activeCss]);
 
   // ── Copy / Paste Style ──
   const handleCopyStyle = useCallback(() => {
     if (!selectedElement) return;
-    // Extract all CSS for the current selector
-    const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const ruleRe = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`);
-    const match = ruleRe.exec(activeCss);
-    if (match) {
-      setClipboardStyle(match[1].trim());
+    const declarations = getExactRuleDeclarations(activeCss, selectedElement.selector);
+    const styleDeclarations = declarations
+      ? filterCssDeclarations(declarations, GEOMETRY_PROPERTIES)
+      : Object.entries(selectedElement.computedStyles)
+        .filter(([property, value]) => COPY_STYLE_PROPERTIES.has(property) && value && value !== "none" && value !== "normal")
+        .map(([property, value]) => `${property}: ${value};`)
+        .join("\n");
+    if (styleDeclarations) {
+      setClipboardStyle(styleDeclarations);
       setMcpMsg("✓ Style copied");
       setTimeout(() => setMcpMsg(""), 1500);
     }
@@ -1592,14 +1556,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   const handlePasteStyle = useCallback(() => {
     if (!selectedElement || !clipboardStyle) return;
-    const escaped = selectedElement.selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-    const match = ruleRe.exec(activeCss);
-    let updated: string;
-    if (match) {
-      updated = activeCss.replace(ruleRe, `${match[1]}\n  ${clipboardStyle}\n${match[3]}`);
-    } else {
-      updated = activeCss + `\n${selectedElement.selector} {\n  ${clipboardStyle}\n}`;
+    let updated = activeCss;
+    for (const declaration of parseCssDeclarations(clipboardStyle)) {
+      updated = updateCssProperty(updated, selectedElement.selector, declaration.property, declaration.value);
     }
     handleCssChange(updated);
     setMcpMsg("✓ Style pasted");
@@ -1608,31 +1567,19 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   // ── Lock / Hide toggle ──
   const handleLockToggle = useCallback((layerId: string, locked: boolean) => {
-    setLockedLayers(prev => {
-      const next = new Set(prev);
-      locked ? next.add(layerId) : next.delete(layerId);
-      return next;
-    });
-    if (locked) {
-      handleCssChange(activeCss + `\n[data-layer-id="${layerId}"] { pointer-events: none !important; }`);
-    } else {
-      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      handleCssChange(activeCss.replace(new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*pointer-events[^}]*\\}\\s*`, 'g'), ''));
-    }
+    const selector = `[data-layer-id="${layerId}"]`;
+    const updated = locked
+      ? appendCssOverride(activeCss, selector, "pointer-events", "none !important")
+      : removeCssOverride(activeCss, selector, "pointer-events", "none !important");
+    handleCssChange(updated);
   }, [activeCss, handleCssChange]);
 
   const handleHideToggle = useCallback((layerId: string, hidden: boolean) => {
-    setHiddenLayers(prev => {
-      const next = new Set(prev);
-      hidden ? next.add(layerId) : next.delete(layerId);
-      return next;
-    });
-    if (hidden) {
-      handleCssChange(activeCss + `\n[data-layer-id="${layerId}"] { display: none !important; }`);
-    } else {
-      const escaped = layerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      handleCssChange(activeCss.replace(new RegExp(`\\[data-layer-id="${escaped}"\\]\\s*\\{[^}]*display[^}]*\\}\\s*`, 'g'), ''));
-    }
+    const selector = `[data-layer-id="${layerId}"]`;
+    const updated = hidden
+      ? appendCssOverride(activeCss, selector, "display", "none !important")
+      : removeCssOverride(activeCss, selector, "display", "none !important");
+    handleCssChange(updated);
   }, [activeCss, handleCssChange]);
 
   // ── Generic MCP call helper ──

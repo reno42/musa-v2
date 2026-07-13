@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { loadGoogleFontInDocument } from "../lib/googleFonts";
 
 interface FontEntry {
   family: string;
@@ -16,17 +17,6 @@ async function fetchCatalog(): Promise<FontEntry[]> {
   } catch {
     return []; // offline fallback — returns empty, handled gracefully
   }
-}
-
-/** Dynamically load a Google Font via CSS link tag */
-function loadFont(family: string, variants: string[] = ["400","700"]) {
-  const id = `gf-${family.replace(/\s+/g, "-").toLowerCase()}`;
-  if (document.getElementById(id)) return;
-  const link = document.createElement("link");
-  link.id = id;
-  link.rel = "stylesheet";
-  link.href = `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}:wght@${variants.join(";")}&display=swap`;
-  document.head.appendChild(link);
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -71,7 +61,7 @@ export function GoogleFontPicker({ value, onChange }: Props) {
   const categories = [...new Set(catalog.map(f => f.category))];
 
   const select = (f: FontEntry) => {
-    loadFont(f.family, f.variants);
+    loadGoogleFontInDocument(f.family, f.variants);
     onChange(f.family);
     setOpen(false);
     setSearch("");

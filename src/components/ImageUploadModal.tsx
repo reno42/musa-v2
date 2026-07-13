@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { imageStorageWarning } from "../lib/storageHealth";
 
 interface Asset {
   id: string;
@@ -41,6 +42,7 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<Asset[]>([]);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [assetsList, setAssetsList] = useState<Asset[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [showAssets, setShowAssets] = useState(false);
@@ -59,6 +61,9 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
   }, []);
 
   const uploadFile = useCallback(async (file: File) => {
+    const warning = imageStorageWarning(file);
+    setStorageWarning(warning || "");
+    if (warning && !window.confirm(`${warning}\n\n¿Deseas continuar con la carga?`)) return;
     setError("");
     setUploading(true);
     try {
@@ -150,7 +155,7 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
       <div className="image-upload-modal" onClick={e => e.stopPropagation()}>
         <div className="image-upload-header">
           <h2>📷 Upload Images</h2>
-          <button type="button" className="image-upload-close" onClick={onClose}>✕</button>
+          <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close image upload">✕</button>
         </div>
 
         <div
@@ -183,6 +188,12 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
 
         {error && (
           <div className="image-upload-error">{error}</div>
+        )}
+
+        {storageWarning && (
+          <div className="image-upload-error" role="alert" style={{ color: "#fbbf24", borderColor: "rgba(251,191,36,0.3)" }}>
+            {storageWarning}
+          </div>
         )}
 
         {previewUrl && (

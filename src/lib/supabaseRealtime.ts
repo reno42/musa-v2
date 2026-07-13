@@ -15,7 +15,7 @@ function getClient() {
 /** Subscribe to template changes via Supabase Realtime Broadcast */
 export function subscribeTemplate(
   templateId: string,
-  onHtmlCssChange: (html: string, css: string) => void
+  onHtmlCssChange: (frameId: string | null, html: string, css: string) => void
 ): RealtimeChannel | null {
   const client = getClient();
   if (!client) return null;
@@ -26,7 +26,11 @@ export function subscribeTemplate(
 
   channel
     .on("broadcast", { event: "html_css_change" }, (payload: any) => {
-      onHtmlCssChange(payload.payload?.html || "", payload.payload?.css || "");
+      onHtmlCssChange(
+        payload.payload?.frameId || null,
+        payload.payload?.html ?? "",
+        payload.payload?.css ?? "",
+      );
     })
     .subscribe();
 
@@ -37,6 +41,7 @@ export function subscribeTemplate(
 export function broadcastChange(
   channel: RealtimeChannel | null,
   templateId: string,
+  frameId: string,
   html: string,
   css: string
 ) {
@@ -44,7 +49,7 @@ export function broadcastChange(
   channel.send({
     type: "broadcast",
     event: "html_css_change",
-    payload: { html, css },
+    payload: { templateId, frameId, html, css },
   });
 }
 

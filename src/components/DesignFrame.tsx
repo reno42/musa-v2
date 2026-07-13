@@ -1,5 +1,11 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
+import {
+  getCssPropertyValue,
+  removeTransformFunction,
+  setTransformFunction,
+  updateCssProperties as mutateCssProperties,
+} from "../lib/cssMutations";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -115,6 +121,7 @@ export function DesignFrame({
   const shadowRef = useRef<ShadowRoot | null>(null);
   const overlayRef = useRef<HTMLElement | null>(null);
   const selectedRef = useRef<Element | null>(null);
+  const selectedSourceRef = useRef<Element | null>(null);
   const cssRef = useRef(frame.css);
   const htmlRef = useRef(frame.html);
   // Track the last CSS we wrote to React so we can skip ONLY our own echo.
@@ -144,6 +151,8 @@ export function DesignFrame({
   onCssChangeRef.current = onCssChange;
   const onHtmlChangeRef = useRef(onHtmlChange);
   onHtmlChangeRef.current = onHtmlChange;
+  const onElementSelectRef = useRef(onElementSelect);
+  onElementSelectRef.current = onElementSelect;
   const editingTextRef = useRef<Element | null>(null);
   const zoomRef = useRef(zoom || 1);
   zoomRef.current = zoom || 1;
@@ -235,7 +244,10 @@ export function DesignFrame({
         shadow.insertBefore(link, shadow.firstChild);
       }
     }
-    if (selectedRef.current) refreshOverlay(selectedRef.current);
+    if (selectedRef.current) {
+      refreshOverlay(selectedRef.current);
+      emitElementSelection(selectedRef.current, selectedSourceRef.current || selectedRef.current);
+    }
   }, [frame.css]);
 
   // ── Override content pointer-events for interactive modes ──
@@ -259,11 +271,31 @@ export function DesignFrame({
     const content = shadow.getElementById("__df_content");
     if (content) content.innerHTML = frame.html;
     selectedRef.current = null;
+    selectedSourceRef.current = null;
     clearOverlay();
     // Clear pen state on HTML update
     penPointsRef.current = [];
     penSvgRef.current = null;
   }, [frame.html]);
+
+  function emitElementSelection(element: Element, source: Element = element) {
+    const computed = element.ownerDocument.defaultView!.getComputedStyle(element);
+    const computedStyles: Record<string, string> = {};
+    for (const property of TRACKED_PROPS) computedStyles[property] = computed.getPropertyValue(property);
+
+    const tag = element.tagName.toLowerCase();
+    const parentSvg = source.closest?.("svg");
+    const isSvg = tag === "svg" || !!parentSvg;
+    onElementSelectRef.current?.({
+      layerId: element.getAttribute("data-layer-id") || "",
+      tag,
+      selector: getSelector(element),
+      computedStyles,
+      frameId: frame.id,
+      isSvg,
+      svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
+    });
+  }
 
   function clearOverlay() {
     if (overlayRef.current) overlayRef.current.innerHTML = "";
@@ -527,7 +559,8 @@ export function DesignFrame({
           (e as MouseEvent).clientX - cRect.left - centerX * z
         );
         let currentRotation = 0;
-        const existingTransform = (el as HTMLElement).style.transform || "";
+        const selector = getSelector(el);
+        const existingTransform = (el as HTMLElement).style.transform || getCssPropertyValue(cssRef.current, selector, "transform");
         const rotMatch = existingTransform.match(/rotate\(([^)]+)deg\)/);
         const baseRotation = rotMatch ? parseFloat(rotMatch[1]) : 0;
 
@@ -537,26 +570,20 @@ export function DesignFrame({
             ev.clientX - cRect.left - centerX * z
           );
           currentRotation = baseRotation + (angle - startAngle) * (180 / Math.PI);
-          (el as HTMLElement).style.transform = `rotate(${Math.round(currentRotation)}deg)`;
+          (el as HTMLElement).style.transform = setTransformFunction(existingTransform, "rotate", `${Math.round(currentRotation)}deg`);
         };
 
         const onRotUp = () => {
           document.removeEventListener("mousemove", onRotMove);
           document.removeEventListener("mouseup", onRotUp);
-          const sel = getSelector(el);
-          if (Math.abs(currentRotation) < 0.5) {
-            // Remove rotation if near zero
-            (el as HTMLElement).style.transform = "";
-            const updated = updateCssRule(cssRef.current, sel, { transform: "none" });
-            cssRef.current = updated;
-            lastEmittedCssRef.current = updated;
-            onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
-          } else {
-            const updated = updateCssRule(cssRef.current, sel, { transform: `rotate(${Math.round(currentRotation)}deg)` });
-            cssRef.current = updated;
-            lastEmittedCssRef.current = updated;
-            onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
-          }
+          const finalTransform = Math.abs(currentRotation) < 0.5
+            ? removeTransformFunction(existingTransform, "rotate") || "none"
+            : setTransformFunction(existingTransform, "rotate", `${Math.round(currentRotation)}deg`);
+          (el as HTMLElement).style.transform = finalTransform === "none" ? "" : finalTransform;
+          const updated = updateCssRule(cssRef.current, selector, { transform: finalTransform });
+          cssRef.current = updated;
+          lastEmittedCssRef.current = updated;
+          onCssChangeRef.current?.(frame.id, updated, content.innerHTML);
         };
 
         document.addEventListener("mousemove", onRotMove);
@@ -1266,27 +1293,18 @@ export function DesignFrame({
       if (parentSvg && parentSvg !== (target as Element)) {
         dragTarget = parentSvg;
       }
+      if (!dragTarget.hasAttribute("data-layer-id")) {
+        dragTarget.setAttribute("data-layer-id", `el_${Date.now().toString(36)}`);
+        htmlRef.current = content.innerHTML;
+        onHtmlChangeRef.current?.(frame.id, htmlRef.current);
+      }
 
       selectedRef.current = dragTarget;
+      selectedSourceRef.current = target;
       refreshOverlay(dragTarget);
 
       const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
-      const props: Record<string, string> = {};
-      for (const p of TRACKED_PROPS) props[p] = computed.getPropertyValue(p);
-
-      const elTag = dragTarget.tagName.toLowerCase();
-      const isSvg = elTag === "svg" || !!parentSvg;
-      const svgChildTag = isSvg ? (elTag === "svg" ? undefined : target.tagName.toLowerCase()) : undefined;
-
-      onElementSelect?.({
-        layerId: dragTarget.getAttribute("data-layer-id") || dragTarget.tagName.toLowerCase() + "_" + Math.random().toString(36).slice(2, 6),
-        tag: elTag,
-        selector: getSelector(dragTarget),
-        computedStyles: props,
-        frameId: frame.id,
-        isSvg,
-        svgChildTag,
-      });
+      emitElementSelection(dragTarget, target);
 
       // ── Drag to move (with snap/guides) ──
       const SNAP = 8; // snap threshold in pixels
@@ -1440,8 +1458,8 @@ export function DesignFrame({
       const isTextLike = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "a", "li", "div", "label", "button", "em", "strong", "small", "b", "i"].includes(tag);
       if (!isTextLike) return;
 
-      // Check if element has text content (not just child elements)
-      if (target.children.length > 2) return;
+      // Editing a container as plain text would destroy its child structure.
+      if (target.children.length > 0) return;
 
       e.stopPropagation();
       e.preventDefault();
@@ -1846,27 +1864,6 @@ function extractFontImports(css: string): string[] {
   return hrefs;
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function updateCssRule(css: string, selector: string, props: Record<string, string>): string {
-  const escaped = escapeRegex(selector);
-  const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-  const match = ruleRe.exec(css);
-  if (match) {
-    let decl = match[2];
-    for (const [prop, value] of Object.entries(props)) {
-      const propRe = new RegExp(`${prop}\\s*:[^;]*;?`);
-      if (propRe.test(decl)) {
-        decl = decl.replace(propRe, `${prop}: ${value};`);
-      } else {
-        decl = decl.trimEnd() + `\n  ${prop}: ${value};\n`;
-      }
-    }
-    return css.replace(ruleRe, `${match[1]}${decl}${match[3]}`);
-  }
-  // New rule
-  const rule = `\n${selector} {\n${Object.entries(props).map(([k, v]) => `  ${k}: ${v};`).join("\n")}\n}`;
-  return css + rule;
+  return mutateCssProperties(css, selector, props);
 }

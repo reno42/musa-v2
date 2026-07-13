@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { SelectedElementInfo } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
+import { setTransformFunction, updateCssProperty as setCssProperty } from "../lib/cssMutations";
+import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 
 /**
  * HtmlContextualPanel — Full design properties panel.
@@ -100,8 +102,7 @@ const DIMENSION_PROPS = new Set([
   "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
   "border-radius", "gap", "row-gap", "column-gap",
   "top", "left", "right", "bottom",
-  "letter-spacing", "word-spacing", "line-height",
-  "border-width", "z-index",
+  "letter-spacing", "word-spacing", "border-width",
 ]);
 
 // ── Styles ──
@@ -198,7 +199,7 @@ function ScrubbyInput({
         ref={inputRef}
         value={value}
         onChange={e => onChange(e.target.value)}
-        onBlur={() => onChange(normalizeCssValue(value))}
+        onBlur={() => onChange(value)}
         onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         style={{ ...miniInp, flex: label ? undefined : 1 }}
       />
@@ -253,18 +254,17 @@ function ColorRow({ label, value, onChange }: {
   );
 }
 
-function AlphaRow({ label, value, onChange }: {
+function OpacityRow({ label, value, onChange }: {
   label: string; value: string; onChange: (v: string) => void;
 }) {
-  const alpha = parseAlpha(value);
-  const hex = toHex(value);
+  const opacity = Math.max(0, Math.min(1, parseFloat(value) || 0));
   return (
     <PropRow label={label}>
-      <input type="range" min="0" max="1" step="0.01" value={alpha}
-        onChange={e => onChange(hexToRgba(hex, parseFloat(e.target.value)))}
+      <input type="range" min="0" max="1" step="0.01" value={opacity}
+        onChange={e => onChange(e.target.value)}
         style={{ flex: 1, accentColor: "#c8b898" }} />
       <span style={{ fontSize: 10, color: "#7a7668", width: 30, textAlign: "right" }}>
-        {Math.round(alpha * 100)}%
+        {Math.round(opacity * 100)}%
       </span>
     </PropRow>
   );
@@ -313,7 +313,18 @@ function normalizeCssValue(value: string): string {
 
 function toHex(color?: string): string {
   if (!color) return "#000000";
-  if (color.startsWith("#")) return color.slice(0, 7);
+  if (/^#[0-9a-f]{3}$/i.test(color)) {
+    return "#" + color.slice(1).split("").map(char => char + char).join("");
+  }
+  if (/^#[0-9a-f]{6,8}$/i.test(color)) return color.slice(0, 7);
+
+  const context = document.createElement("canvas").getContext("2d");
+  if (context) {
+    context.fillStyle = "#000000";
+    context.fillStyle = color;
+    color = context.fillStyle;
+    if (color.startsWith("#")) return color.slice(0, 7);
+  }
   const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (m) {
     return "#" + [m[1], m[2], m[3]].map(c =>
@@ -337,63 +348,27 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function injectFontIntoShadowDOMs(fontUrl: string) {
-  const href = `https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-  const frames = document.querySelectorAll("[data-frame-id]");
-  for (const frameEl of frames) {
-    for (const child of frameEl.querySelectorAll("*")) {
-      if ((child as HTMLElement).shadowRoot) {
-        const shadow = (child as HTMLElement).shadowRoot!;
-        const existing = shadow.querySelectorAll("link");
-        const already = [...existing].some(l => (l as HTMLLinkElement).href === href);
-        if (!already) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet"; link.href = href;
-          shadow.insertBefore(link, shadow.firstChild);
-        }
-        break;
-      }
-    }
-  }
-}
-
-function updateCssProperty(css: string, selector: string, prop: string, value: string): string {
+function updateElementCssProperty(css: string, selector: string, prop: string, value: string): string {
   let normalized = DIMENSION_PROPS.has(prop) ? normalizeCssValue(value) : value;
-  if (prop === "font-family") normalized = normalized.replace(/['"]*$/g, "").replace(/;?\s*$/, "") + " !important";
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-  const match = ruleRe.exec(css);
-  if (match) {
-    let decl = match[2];
-    const propRe = new RegExp(`${prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[^;]*;?`);
-    if (propRe.test(decl)) {
-      decl = decl.replace(propRe, `${prop}: ${normalized};`);
-    } else {
-      decl = decl.trimEnd() + `\n  ${prop}: ${normalized};\n`;
-    }
-    return css.replace(ruleRe, `${match[1]}${decl}${match[3]}`);
+  if (prop === "font-family") {
+    // Keep the font-family quotes balanced. Removing only the closing quote
+    // turns `'Font Name'` into the invalid `'Font Name !important`, which can
+    // make the browser discard the declarations and rules that follow it.
+    normalized = normalized
+      .replace(/;+\s*$/, "")
+      .replace(/\s*!important\s*$/i, "")
+      .trim() + " !important";
   }
-  return css + `\n${selector} {\n  ${prop}: ${normalized};\n}`;
+  return setCssProperty(css, selector, prop, normalized);
 }
 
 function updatePseudoCss(css: string, selector: string, pseudo: string, props: Record<string, string>): string {
   const pseudoSelector = `${selector}${pseudo}`;
-  const escaped = pseudoSelector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-  const existing = ruleRe.exec(css);
-  let decl = existing ? existing[2] : "";
+  let updated = css;
   for (const [prop, value] of Object.entries(props)) {
-    const propRe = new RegExp(`${prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[^;]*;?`);
-    if (propRe.test(decl)) {
-      decl = decl.replace(propRe, `${prop}: ${value};`);
-    } else {
-      decl = decl.trimEnd() + `\n  ${prop}: ${value};\n`;
-    }
+    updated = setCssProperty(updated, pseudoSelector, prop, value);
   }
-  if (existing) {
-    return css.replace(ruleRe, `${existing[1]}${decl}${existing[3]}`);
-  }
-  return css + `\n${pseudoSelector} {\n${Object.entries(props).map(([k, v]) => `  ${k}: ${v};`).join("\n")}\n}`;
+  return updated;
 }
 
 // ── Main Component ──
@@ -410,17 +385,12 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
   const toggle = (s: string) => setExpanded(prev => ({ ...prev, [s]: !prev[s] }));
 
   const update = useCallback((selector: string, prop: string, value: string) => {
-    let updated = updateCssProperty(css, selector, prop, value);
+    let updated = updateElementCssProperty(css, selector, prop, value);
     if (prop === "font-family") {
       const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
       if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {
-        const fontUrl = fontName.replace(/ /g, "+");
-        if (!updated.includes(`family=${fontUrl}`)) {
-          updated = `@import url('https://fonts.googleapis.com/css2?family=${fontUrl}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');\n` + updated;
-          injectFontIntoShadowDOMs(fontUrl);
-        } else {
-          injectFontIntoShadowDOMs(fontUrl);
-        }
+        updated = ensureGoogleFontImport(updated, fontName);
+        injectGoogleFontIntoFrames(fontName);
       }
     }
     onCssChange(updated);
@@ -429,7 +399,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
   const updateMulti = useCallback((selector: string, props: Record<string, string>) => {
     let updated = css;
     for (const [k, v] of Object.entries(props)) {
-      updated = updateCssProperty(updated, selector, k, v);
+      updated = updateElementCssProperty(updated, selector, k, v);
     }
     onCssChange(updated);
   }, [css, onCssChange]);
@@ -443,7 +413,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       if (idx === -1) continue;
       const prop = line.slice(0, idx).trim();
       const val = line.slice(idx + 1).replace(/;$/, "").trim();
-      if (prop && val) updated = updateCssProperty(updated, element.selector, prop, val);
+      if (prop && val) updated = updateElementCssProperty(updated, element.selector, prop, val);
     }
     onCssChange(updated);
     setCustomCssText("");
@@ -559,7 +529,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
           {isSvgPath && (
             <>
               <ColorRow label="Fill" value={s["fill"] || s["color"] || "#8B5CF6"} onChange={v => update(element.selector, "fill", v)} />
-              <AlphaRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
+              <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
             </>
           )}
           {/* SVG text: fill + color */}
@@ -567,7 +537,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
             <>
               <ColorRow label="Fill" value={s["fill"] || s["color"] || "#333"} onChange={v => update(element.selector, "fill", v)} />
               <ColorRow label="Color" value={s["color"] || ""} onChange={v => update(element.selector, "color", v)} />
-              <AlphaRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
+              <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
             </>
           )}
           {/* SVG wrapper or div: background-based */}
@@ -575,9 +545,10 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
             <>
               <ColorRow label="Text" value={s["color"] || ""} onChange={v => update(element.selector, "color", v)} />
               <ColorRow label="BG" value={s["background-color"] || s["background"] || ""} onChange={v => update(element.selector, "background-color", v)} />
-              <AlphaRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
+              <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(element.selector, "opacity", v)} />
               {/* Gradient Builder */}
               <GradientBuilder
+                key={element.layerId}
                 value={s["background-image"] || ""}
                 onChange={(v) => update(element.selector, "background-image", v)}
               />
@@ -818,19 +789,19 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       {expanded.transform && (
         <div style={sectionBody}>
           <PropRow label="Rotate">
-            <ScrubbyInput value={extractTransformValue(s["transform"], "rotate") || "0"} onChange={v => update(element.selector, "transform", `rotate(${v}deg)`)} suffix="°" />
+            <ScrubbyInput value={extractTransformValue(s["transform"], "rotate") || "0"} onChange={v => update(element.selector, "transform", setTransformFunction(s["transform"], "rotate", normalizeAngleValue(v)))} suffix="°" />
           </PropRow>
           <PropRow label="Scale X">
-            <ScrubbyInput value={extractTransformValue(s["transform"], "scaleX") || "1"} onChange={v => update(element.selector, "transform", mergeTransform(s["transform"], "scaleX", v))} />
+            <ScrubbyInput value={extractTransformValue(s["transform"], "scaleX") || "1"} onChange={v => update(element.selector, "transform", setTransformFunction(s["transform"], "scaleX", v))} />
           </PropRow>
           <PropRow label="Scale Y">
-            <ScrubbyInput value={extractTransformValue(s["transform"], "scaleY") || "1"} onChange={v => update(element.selector, "transform", mergeTransform(s["transform"], "scaleY", v))} />
+            <ScrubbyInput value={extractTransformValue(s["transform"], "scaleY") || "1"} onChange={v => update(element.selector, "transform", setTransformFunction(s["transform"], "scaleY", v))} />
           </PropRow>
           <PropRow label="Skew X">
-            <ScrubbyInput value={extractTransformValue(s["transform"], "skewX") || "0"} onChange={v => update(element.selector, "transform", mergeTransform(s["transform"], "skewX", `${v}deg`))} suffix="°" />
+            <ScrubbyInput value={extractTransformValue(s["transform"], "skewX") || "0"} onChange={v => update(element.selector, "transform", setTransformFunction(s["transform"], "skewX", normalizeAngleValue(v)))} suffix="°" />
           </PropRow>
           <PropRow label="Skew Y">
-            <ScrubbyInput value={extractTransformValue(s["transform"], "skewY") || "0"} onChange={v => update(element.selector, "transform", mergeTransform(s["transform"], "skewY", `${v}deg`))} suffix="°" />
+            <ScrubbyInput value={extractTransformValue(s["transform"], "skewY") || "0"} onChange={v => update(element.selector, "transform", setTransformFunction(s["transform"], "skewY", normalizeAngleValue(v)))} suffix="°" />
           </PropRow>
           <SelectRow label="Origin" value={s["transform-origin"] || "center"} options={TRANSFORM_ORIGINS.map(o => ({ label: o, value: o }))} onChange={v => update(element.selector, "transform-origin", v)} />
         </div>
@@ -844,11 +815,11 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
             <input value={extractTransitionPart(s["transition"], 0) || "all"} placeholder="all" onChange={e => update(element.selector, "transition", mergeTransition(s["transition"], 0, e.target.value))} style={inp} />
           </PropRow>
           <PropRow label="Duration">
-            <ScrubbyInput value={extractTransitionPart(s["transition"], 1) || "0.3s"} onChange={v => update(element.selector, "transition", mergeTransition(s["transition"], 1, normalizeCssValue(v)))} suffix="s" />
+            <ScrubbyInput value={extractTransitionPart(s["transition"], 1) || "0.3s"} onChange={v => update(element.selector, "transition", mergeTransition(s["transition"], 1, normalizeTimeValue(v)))} suffix="s" />
           </PropRow>
           <SelectRow label="Easing" value={extractTransitionPart(s["transition"], 2) || "ease"} options={EASINGS.map(e => ({ label: e, value: e }))} onChange={v => update(element.selector, "transition", mergeTransition(s["transition"], 2, v))} />
           <PropRow label="Delay">
-            <ScrubbyInput value={extractTransitionPart(s["transition"], 3) || "0s"} onChange={v => update(element.selector, "transition", mergeTransition(s["transition"], 3, normalizeCssValue(v)))} suffix="s" />
+            <ScrubbyInput value={extractTransitionPart(s["transition"], 3) || "0s"} onChange={v => update(element.selector, "transition", mergeTransition(s["transition"], 3, normalizeTimeValue(v)))} suffix="s" />
           </PropRow>
         </div>
       )}
@@ -1045,19 +1016,14 @@ function extractTransformValue(transform: string | undefined, fn: string): strin
   return m[1].replace(/deg$/, "").trim();
 }
 
-function mergeTransform(existing: string | undefined, fn: string, value: string): string {
-  const base = existing && existing !== "none" ? existing : "";
-  const re = new RegExp(`${fn}\\([^)]+\\)\\s*`, "g");
-  const cleaned = base.replace(re, "");
-  const part = `${fn}(${value})`;
-  // Ensure rotate comes first
-  if (fn.startsWith("rotate")) return `${part} ${cleaned}`.trim();
-  if (fn.startsWith("skew")) return `${cleaned} ${part}`.trim();
-  // scale
-  // Remove duplicate scaleX/scaleY and rebuild as scale() if both exist
-  const scaleCleaned = cleaned.replace(/scale[XY]\([^)]+\)\s*/g, "");
-  const allScale = `${cleaned.match(/scale[XY]\([^)]+\)\s*/g)?.join("") || ""}${part}`;
-  return `${scaleCleaned} ${allScale}`.trim().replace(/\s+/g, " ");
+function normalizeAngleValue(value: string): string {
+  const trimmed = value.trim();
+  return /(?:deg|grad|rad|turn)$/i.test(trimmed) ? trimmed : `${trimmed}deg`;
+}
+
+function normalizeTimeValue(value: string): string {
+  const trimmed = value.trim();
+  return /(?:ms|s)$/i.test(trimmed) ? trimmed : `${trimmed}s`;
 }
 
 // ── Transition Helpers ──

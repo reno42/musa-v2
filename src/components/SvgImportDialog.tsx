@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
+import { imageStorageWarning } from "../lib/storageHealth";
 
 interface Props {
   workspaceId: string;
@@ -31,6 +32,7 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [preview, setPreview] = useState("");
   const [importMode, setImportMode] = useState<ImportMode>("svg");
   // For raster images, we store the data URL instead of SVG text
@@ -47,6 +49,7 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
     if (!file) return;
 
     if (isRaster(file)) {
+      setStorageWarning(imageStorageWarning(file) || "");
       // ── Raster path: JPG/PNG → read as data URL ──
       setImportMode("raster");
       setFileName(file.name.replace(/\.[^.]+$/, ""));
@@ -61,6 +64,7 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
       reader.onerror = () => setError("Failed to read image file");
       reader.readAsDataURL(file);
     } else {
+      setStorageWarning("");
       // ── SVG path: read as text ──
       setImportMode("svg");
       setFileName(file.name.replace(/\.svg$/i, ""));
@@ -169,7 +173,7 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
       <div style={dialogStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Import Image / SVG</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 18 }}>✕</button>
+          <button type="button" onClick={onClose} aria-label="Close import dialog" style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 18 }}>✕</button>
         </div>
 
         <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
@@ -218,6 +222,12 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
         )}
 
         {error && <div style={{ color: "#EF4444", fontSize: 12, marginTop: 8 }}>{error}</div>}
+
+        {storageWarning && (
+          <div role="alert" style={{ color: "#fbbf24", fontSize: 12, marginTop: 8 }}>
+            {storageWarning}
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose}

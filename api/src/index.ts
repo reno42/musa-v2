@@ -20,7 +20,8 @@ import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
-import fontCatalog from "./data/google-fonts.json";
+import fontCatalog from "./data/google-fonts.json" with { type: "json" };
+import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
 const app = express();
 
@@ -28,6 +29,21 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(rateLimit);
 app.use(auth);
+
+// Local development bridge for the same MCP handler used by Netlify.
+app.post("/mcp", async (req, res) => {
+  try {
+    const result = await mcpHandler({
+      httpMethod: "POST",
+      headers: Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(",") : value || ""])),
+      body: JSON.stringify(req.body),
+    });
+    for (const [name, value] of Object.entries(result.headers || {})) res.setHeader(name, String(value));
+    res.status(result.statusCode || 200).send(result.body || "");
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "MCP bridge failed" });
+  }
+});
 
 // Health
 app.get("/api/health", (_req, res) => {
