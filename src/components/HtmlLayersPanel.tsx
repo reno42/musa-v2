@@ -337,15 +337,17 @@ export function HtmlLayersPanel({
       startY: event.clientY,
       moved: false,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
   }, []);
 
   const updatePointerDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const state = pointerDragRef.current;
     if (!state || state.pointerId !== event.pointerId) return;
-    if (!state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 4) return;
+    if (!state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < 6) return;
 
     event.preventDefault();
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
     state.moved = true;
     draggingRef.current = state.source;
     setDragging(state.source);

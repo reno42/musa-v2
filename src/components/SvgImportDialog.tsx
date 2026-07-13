@@ -2,9 +2,17 @@ import { useState, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
 import { imageStorageWarning } from "../lib/storageHealth";
 
+export interface RasterImageImport {
+  name: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 interface Props {
   workspaceId: string;
   onImported: (templateId: string) => void;
+  onRasterImported: (image: RasterImageImport) => void;
   onClose: () => void;
 }
 
@@ -26,17 +34,13 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
 
 type ImportMode = "svg" | "raster";
 
-function escapeHtmlAttribute(value: string): string {
-  const entities: Record<string, string> = {
-    "&": "&amp;",
-    '"': "&quot;",
-    "<": "&lt;",
-    ">": "&gt;",
-  };
-  return value.replace(/[&"<>]/g, character => entities[character]);
+function isRasterFile(file: File): boolean {
+  return /\.(jpg|jpeg|png)$/i.test(file.name)
+    || file.type === "image/jpeg"
+    || file.type === "image/png";
 }
 
-export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
+export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onClose }: Props) {
   const [tab, setTab] = useState<"upload" | "paste">("upload");
   const [svgCode, setSvgCode] = useState("");
   const [fileName, setFileName] = useState("");
@@ -45,21 +49,16 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
   const [storageWarning, setStorageWarning] = useState("");
   const [preview, setPreview] = useState("");
   const [importMode, setImportMode] = useState<ImportMode>("svg");
-  // For raster images, we store the data URL instead of SVG text
   const [rasterDataUrl, setRasterDataUrl] = useState<string | null>(null);
-
-  const isRaster = (file: File): boolean => {
-    return /\.(jpg|jpeg|png)$/i.test(file.name) ||
-      file.type === "image/jpeg" ||
-      file.type === "image/png";
-  };
+  const [rasterDimensions, setRasterDimensions] = useState({ width: 0, height: 0 });
 
   const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (isRaster(file)) {
+    if (isRasterFile(file)) {
       setStorageWarning(imageStorageWarning(file) || "");
+      setRasterDimensions({ width: 0, height: 0 });
       // ── Raster path: JPG/PNG → read as data URL ──
       setImportMode("raster");
       setFileName(file.name.replace(/\.[^.]+$/, ""));
@@ -68,8 +67,13 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
         const dataUrl = reader.result as string;
         setRasterDataUrl(dataUrl);
         setPreview(`<img src="${dataUrl}" style="max-width:100%;height:auto;" />`);
-        // Clear SVG code since we're in raster mode
         setSvgCode("");
+        const image = new Image();
+        image.onload = () => setRasterDimensions({
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+        });
+        image.src = dataUrl;
       };
       reader.onerror = () => setError("Failed to read image file");
       reader.readAsDataURL(file);
@@ -83,6 +87,7 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
         const svg = reader.result as string;
         setSvgCode(svg);
         setRasterDataUrl(null);
+        setRasterDimensions({ width: 0, height: 0 });
         setPreview(svg);
       };
       reader.onerror = () => setError("Failed to read SVG file");
@@ -111,47 +116,13 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
       const name = fileName || (importMode === "raster" ? "Imported Image" : "Imported SVG");
 
       if (importMode === "raster" && rasterDataUrl) {
-        // ── Raster import: create a template with an <img> inside a frame ──
-        const imageName = escapeHtmlAttribute(name);
-        const html = `<img data-layer-id="image" data-layer-name="${imageName}" data-layer-kind="image" alt="${imageName}" src="${rasterDataUrl}" style="width:100%;height:100%;object-fit:contain;" />`;
-        const css = `body {\n  margin: 0;\n  padding: 0;\n  width: 100%;\n  height: 100%;\n  overflow: hidden;\n}\nimg {\n  display: block;\n}`;
-        const res = await apiFetch<any>("/mcp", {
-          method: "POST",
-          body: JSON.stringify({
-            jsonrpc: "2.0", method: "create_template",
-            params: {
-              workspaceId,
-              name,
-              width: 1080,
-              height: 1080,
-              engine: "html",
-            },
-            id: 0,
-          }),
+        onRasterImported({
+          name,
+          dataUrl: rasterDataUrl,
+          width: rasterDimensions.width,
+          height: rasterDimensions.height,
         });
-        const templateId = res.result?.id;
-        if (!templateId) throw new Error(res.error?.message || "Failed to create template");
-
-        // Now add the frame with the image
-        const frameRes = await apiFetch<any>("/mcp", {
-          method: "POST",
-          body: JSON.stringify({
-            jsonrpc: "2.0", method: "create_html_frame",
-            params: {
-              templateId,
-              name,
-              width: 1080,
-              height: 1080,
-              html,
-              css,
-              x: 0,
-              y: 0,
-            },
-            id: 0,
-          }),
-        });
-        if (frameRes.error) throw new Error(frameRes.error.message);
-        onImported(templateId);
+        onClose();
       } else {
         // ── SVG import: use import_svg MCP tool ──
         const res = await apiFetch<any>("/mcp", {
@@ -175,9 +146,11 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
       setError(err.message || "Import failed");
     }
     setLoading(false);
-  }, [svgCode, rasterDataUrl, importMode, fileName, workspaceId, onImported]);
+  }, [svgCode, rasterDataUrl, rasterDimensions, importMode, fileName, workspaceId, onImported, onRasterImported, onClose]);
 
-  const canImport = importMode === "raster" ? !!rasterDataUrl : !!svgCode.trim();
+  const canImport = importMode === "raster"
+    ? Boolean(rasterDataUrl && rasterDimensions.width > 0 && rasterDimensions.height > 0)
+    : Boolean(svgCode.trim());
 
   return (
     <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -218,7 +191,9 @@ export function SvgImportDialog({ workspaceId, onImported, onClose }: Props) {
 
         {fileName && (
           <div style={{ marginTop: 12 }}>
-            <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Template Name</label>
+            <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>
+              {importMode === "raster" ? "Image Name" : "Template Name"}
+            </label>
             <input value={fileName} onChange={e => setFileName(e.target.value)}
               style={{ width: "100%", padding: "8px 12px", background: "rgba(255,255,255,0.06)",
                 border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4,

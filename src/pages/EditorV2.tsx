@@ -15,7 +15,7 @@ import type { FrameData, LayerSelectionRequest, SelectedElementInfo } from "../c
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
-import { SvgImportDialog } from "../components/SvgImportDialog";
+import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
@@ -55,6 +55,11 @@ import {
   type LayerStackPlacement,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
+import {
+  persistDesignClipboard,
+  readDesignClipboard,
+  type DesignClipboard,
+} from "../lib/designClipboard";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -134,18 +139,6 @@ function snapshotFrames(frames: FrameData[]): FrameData[] {
 function frameSnapshotsMatch(first: FrameData[], second: FrameData[]): boolean {
   return JSON.stringify(first) === JSON.stringify(second);
 }
-
-type DesignClipboard =
-  | {
-    kind: "element";
-    frameId: string;
-    layerId: string;
-    html: string;
-    css: string;
-    layout: { left: string; top: string; translate: string };
-    pasteCount: number;
-  }
-  | { kind: "frames"; frames: FrameData[]; pasteCount: number };
 
 interface PenStyle {
   fill: string;
@@ -263,7 +256,6 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
   const framesRef = useRef(frames);
   framesRef.current = frames;
-  const designClipboardRef = useRef<DesignClipboard | null>(null);
   const lastPenStyleRef = useRef<PenStyle>({
     fill: "none",
     stroke: "#111827",
@@ -1163,6 +1155,57 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     onBack();
   }, [onBack]);
 
+  const handleRasterImageImported = useCallback((image: RasterImageImport) => {
+    const frame = frames.find(item => item.id === selectedFrameId);
+    if (!frame) {
+      addToast("Selecciona un frame antes de importar la imagen.", "error");
+      return;
+    }
+
+    const layerId = createLayerId();
+    const imageElement = document.createElement("img");
+    imageElement.setAttribute("data-layer-id", layerId);
+    imageElement.setAttribute("data-layer-name", image.name);
+    imageElement.setAttribute("data-layer-kind", "image");
+    imageElement.setAttribute("alt", image.name);
+    imageElement.setAttribute("src", image.dataUrl);
+    imageElement.setAttribute("draggable", "false");
+
+    const inserted = insertLayerIntoHtml(frame.html, imageElement.outerHTML, null, "inside");
+    if (!inserted) {
+      addToast("No se pudo insertar la imagen en el frame.", "error");
+      return;
+    }
+
+    const sourceWidth = Math.max(1, image.width || 512);
+    const sourceHeight = Math.max(1, image.height || 512);
+    const availableWidth = Math.max(1, frame.width - 80);
+    const availableHeight = Math.max(1, frame.height - 80);
+    const scale = Math.min(1, availableWidth / sourceWidth, availableHeight / sourceHeight);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const left = Math.round((frame.width - width) / 2);
+    const top = Math.round((frame.height - height) / 2);
+    const imageCss = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: ${left}px;
+  top: ${top}px;
+  width: ${width}px;
+  height: ${height}px;
+  display: block;
+  object-fit: contain;
+}`;
+    const updated = frames.map(item => item.id === frame.id
+      ? { ...item, html: inserted.html, css: mergeCssRules(item.css, imageCss) }
+      : item);
+
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    handleSelectLayerElement(frame.id, layerId);
+    addToast("Imagen insertada en el frame.", "success");
+  }, [frames, selectedFrameId, pushUndo, autoSave, handleSelectLayerElement, addToast]);
+
   // ── Phase C: Delete element inside frame ──
   const handleDeleteElement = useCallback((layerId: string, frameId = selectedFrameId) => {
     if (!frameId) return;
@@ -1230,13 +1273,20 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const copySelection = useCallback(() => {
     const clipboard = captureSelection();
     if (!clipboard) return;
-    designClipboardRef.current = clipboard;
+    const availableAcrossProjects = persistDesignClipboard(clipboard);
     if (clipboard.kind === "element") {
-      addToast("Elemento copiado.", "success");
+      addToast(availableAcrossProjects
+        ? "Elemento copiado. Puedes pegarlo en otro proyecto."
+        : "Elemento copiado en esta pestaña; es demasiado grande para compartirlo entre pestañas.",
+      availableAcrossProjects ? "success" : "error");
       return;
     }
     const copiedFrames = clipboard.frames;
-    addToast(`${copiedFrames.length} frame${copiedFrames.length === 1 ? "" : "s"} copiado${copiedFrames.length === 1 ? "" : "s"}.`, "success");
+    const message = `${copiedFrames.length} frame${copiedFrames.length === 1 ? "" : "s"} copiado${copiedFrames.length === 1 ? "" : "s"}`;
+    addToast(availableAcrossProjects
+      ? `${message}. Puedes pegarlo en otro proyecto.`
+      : `${message} en esta pestaña; es demasiado grande para compartirlo entre pestañas.`,
+    availableAcrossProjects ? "success" : "error");
   }, [captureSelection, addToast]);
 
   const cutSelection = useCallback(() => {
@@ -1244,7 +1294,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     if (!clipboard) return;
 
     if (clipboard.kind === "element") {
-      designClipboardRef.current = clipboard;
+      persistDesignClipboard(clipboard);
       handleDeleteElement(clipboard.layerId, clipboard.frameId);
       addToast("Elemento cortado.", "success");
       return;
@@ -1255,17 +1305,18 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       addToast("El diseño debe conservar al menos un frame.", "error");
       return;
     }
-    designClipboardRef.current = clipboard;
+    persistDesignClipboard(clipboard);
     addToast(`${clipboard.frames.length} frame${clipboard.frames.length === 1 ? "" : "s"} cortado${clipboard.frames.length === 1 ? "" : "s"}.`, "success");
   }, [captureSelection, handleDeleteElement, deleteFrames, addToast]);
 
   const pasteSelection = useCallback(() => {
-    const clipboard = designClipboardRef.current;
+    const clipboard = readDesignClipboard();
     if (!clipboard) {
       addToast("No hay ningún elemento o frame copiado.", "error");
       return;
     }
     clipboard.pasteCount++;
+    persistDesignClipboard(clipboard);
     const offset = clipboard.pasteCount * 20;
 
     if (clipboard.kind === "element") {
@@ -1499,7 +1550,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       copySelection();
     };
     const handleNativePaste = (e: ClipboardEvent) => {
-      if (isEditableTarget(e.target) || !designClipboardRef.current) return;
+      if (isEditableTarget(e.target) || !readDesignClipboard()) return;
       e.preventDefault();
       pasteSelection();
     };
@@ -2886,6 +2937,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <SvgImportDialog
           workspaceId={templateWorkspaceId}
           onImported={handleSvgImported}
+          onRasterImported={handleRasterImageImported}
           onClose={() => setShowSvgImport(false)}
         />
       )}

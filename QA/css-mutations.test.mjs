@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   appendCssOverride,
@@ -15,6 +16,11 @@ import {
   setTransformFunction,
   updateCssProperty,
 } from "../src/lib/cssMutations.ts";
+import {
+  DESIGN_CLIPBOARD_KEY,
+  persistDesignClipboard,
+  readDesignClipboard,
+} from "../src/lib/designClipboard.ts";
 
 test("updates exact CSS properties without touching similarly named properties", () => {
   const source = `[data-layer-id="title"] { background-color: red; border-width: 4px; color: white; width: 200px; }`;
@@ -125,4 +131,53 @@ test("clones an extracted layer stylesheet and offsets positioned roots", () => 
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "left"), "30px");
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "top"), "35px");
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "color"), "red");
+});
+
+test("persists a copied frame so another editor project can read it", () => {
+  const values = new Map();
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    },
+  });
+
+  const clipboard = {
+    kind: "frames",
+    frames: [{
+      id: "frame_source",
+      name: "Source",
+      x: 20,
+      y: 30,
+      width: 500,
+      height: 360,
+      html: '<div data-layer-id="card">Luxury</div>',
+      css: '[data-layer-id="card"] { color: gold; }',
+      background: "#fff",
+    }],
+    pasteCount: 0,
+  };
+
+  try {
+    assert.equal(persistDesignClipboard(clipboard), true);
+    assert.ok(values.has(DESIGN_CLIPBOARD_KEY));
+    assert.deepEqual(readDesignClipboard(), clipboard);
+  } finally {
+    if (previousStorage === undefined) delete globalThis.localStorage;
+    else Object.defineProperty(globalThis, "localStorage", { configurable: true, value: previousStorage });
+  }
+});
+
+test("raster import inserts into the active design without creating a template", () => {
+  const source = readFileSync(new URL("../src/components/SvgImportDialog.tsx", import.meta.url), "utf8");
+  const rasterStart = source.indexOf('if (importMode === "raster" && rasterDataUrl)');
+  const svgStart = source.indexOf("} else {", rasterStart);
+  const rasterBranch = source.slice(rasterStart, svgStart);
+
+  assert.notEqual(rasterStart, -1);
+  assert.notEqual(svgStart, -1);
+  assert.match(rasterBranch, /onRasterImported/);
+  assert.doesNotMatch(rasterBranch, /create_template|create_html_frame/);
 });
