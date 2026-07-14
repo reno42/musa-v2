@@ -39,6 +39,30 @@ window.futurariaAgent.inspectFrame(frameId)
    de estética, solo de geometría).
 5. Repite hasta que el lint esté limpio y el render te convenza.
 
+## Publicar en segundos: `scripts/agent-design.mjs`
+
+Para el flujo "agente escribe → humano edita" sin tocar el navegador:
+
+```bash
+# 1. Genera un starter y edítalo (o escribe tu design.json directo)
+node scripts/agent-design.mjs example > design.json
+
+# 2. Publica: crea workspace+template y devuelve el link del editor
+node scripts/agent-design.mjs push design.json
+#   ✔ 1 frame(s) publicados en 0.1s
+#   Editor: http://localhost:5173/?template=tpl_xxx&v=2
+
+# Contra producción u otra instancia:
+node scripts/agent-design.mjs push design.json --api https://<sitio> --app https://<sitio>
+
+# Actualizar un template existente (iteración):
+node scripts/agent-design.mjs push design.json --template tpl_xxx
+```
+
+`design.json` = `{ workspace, name, frames: [{ id, name, x, y, width, height, background, html, css }] }`.
+Regla de oro: cada elemento con `data-layer-id` + `data-layer-name`, posiciones
+absolutas en px del frame, y tipografía proporcional al formato (1080, 1920…).
+
 ## Limitaciones
 
 - `renderFrame` usa SVG `foreignObject`: imágenes externas del frame deben ser
