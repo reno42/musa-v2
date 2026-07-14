@@ -31,23 +31,48 @@ function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
   };
 }
 
+/** Race a Supabase query against a timeout so the Netlify Function doesn't hang. */
+function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 async function listFromSupabase(
   limit: number, offset: number, workspaceId?: string, search?: string
 ): Promise<{ data: DesignTemplate[]; total: number } | null> {
   const sb = getSupabase();
   if (!sb) return null;
   try {
-    let q = sb.from("templates").select("*", { count: "exact" });
-    q = q.order("updated_at", { ascending: false }).range(offset, offset + limit - 1);
-    const { data, count, error } = await q;
+    // Select lightweight columns to avoid loading bloated JSONB data column.
+    // The dashboard only needs id, name, dimensions, engine and updatedAt.
+    // Full template data is loaded on-demand via GET /:id.
+    const queryPromise = sb.from("templates")
+      .select("id, name, workspace_id, created_at, updated_at, data", { count: "exact" })
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // 6s timeout — leaves room for the Netlify Function to respond before its 10s limit
+    const result = await withTimeout(queryPromise as any, 6000);
+    if (!result) {
+      console.warn("[templates] Supabase list timed out (6s) — returning empty");
+      return null;
+    }
+    const { data, count, error } = result as any;
     if (error) throw error;
-    let items = (data || []).map((r: any) => rowToTemplate(r));
+    let items = (data || []).map((r: any) => {
+      const tpl = rowToTemplate(r);
+      // Strip heavy fields not needed for the dashboard list view
+      tpl.versions = [];
+      return tpl;
+    });
     // Client-side filters (Supabase .eq on custom-format IDs may not match UUID columns)
     if (workspaceId) {
-      items = items.filter(t => t.workspaceId === workspaceId);
+      items = items.filter((t: DesignTemplate) => t.workspaceId === workspaceId);
     }
     if (search) {
-      items = items.filter(t => t.name.toLowerCase().includes(search));
+      items = items.filter((t: DesignTemplate) => t.name.toLowerCase().includes(search));
     }
     // Use filtered count when client-side filtering is active
     const total = (workspaceId || search) ? items.length : (count || items.length);
@@ -62,9 +87,20 @@ async function getFromSupabase(id: string): Promise<DesignTemplate | null> {
   const sb = getSupabase();
   if (!sb) return null;
   try {
-    const { data, error } = await sb.from("templates").select("*").eq("id", id).single();
+    const queryPromise = sb.from("templates").select("*").eq("id", id).single();
+    const result = await withTimeout(queryPromise as any, 6000);
+    if (!result) {
+      console.warn("[templates] Supabase get timed out (6s)");
+      return null;
+    }
+    const { data, error } = result as any;
     if (error || !data) return null;
-    return rowToTemplate(data as any);
+    const tpl = rowToTemplate(data as any);
+    // Trim versions on read to avoid re-bloat (502 fix)
+    if (tpl.versions && tpl.versions.length > 10) {
+      tpl.versions = tpl.versions.slice(-10);
+    }
+    return tpl;
   } catch {
     return null;
   }
