@@ -96,7 +96,7 @@ interface DesignFrameProps {
   onTextChange?: (layerId: string, newText: string) => void;
   onAddTextBox?: (x: number, y: number, w: number, h: number) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
-  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
+  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => void;
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
@@ -1229,16 +1229,17 @@ export function DesignFrame({
 
         if (bestPath && bestDist < 16) {
           const pathD = bestPath.getAttribute("d")!;
-          // Get SVG bounding box
+          // Get SVG bounding box and original viewBox
           const svgEl = bestPath.closest("svg");
           const svgRect = svgEl ? svgEl.getBoundingClientRect() : null;
+          const originalViewBox = svgEl?.getAttribute("viewBox") || undefined;
           const bounds = {
             x: svgRect ? (svgRect.left - rect.left) / z : mx - 50,
             y: svgRect ? (svgRect.top - rect.top) / z : my - 20,
             width: svgRect ? svgRect.width / z : 300,
             height: svgRect ? svgRect.height / z : 40,
           };
-          onAddTextPathRef.current?.(pathD, bounds, Math.round(mx), Math.round(my), Math.round(bestStartOffset));
+          onAddTextPathRef.current?.(pathD, bounds, Math.round(mx), Math.round(my), Math.round(bestStartOffset), originalViewBox);
           return;
         }
         // No path found nearby — ignore click
@@ -1250,58 +1251,56 @@ export function DesignFrame({
 
       // ── Text tool: click = auto-width text, drag = fixed-size text box ──
       if (tool === "text") {
-        if (target === content) {
-          e.stopPropagation();
-          e.preventDefault();
-          const startX = mx;
-          const startY = my;
-          let drawing = false;
+        e.stopPropagation();
+        e.preventDefault();
+        const startX = mx;
+        const startY = my;
+        let drawing = false;
 
-          const preview = document.createElement("div");
-          Object.assign(preview.style, {
-            position: "absolute",
-            left: `${startX}px`, top: `${startY}px`,
-            width: "0px", height: "0px",
-            border: "1.5px dashed #3B82F6",
-            background: "rgba(59,130,246,0.06)",
-            pointerEvents: "none",
-            boxSizing: "border-box",
-            zIndex: "9998",
-          });
+        const preview = document.createElement("div");
+        Object.assign(preview.style, {
+          position: "absolute",
+          left: `${startX}px`, top: `${startY}px`,
+          width: "0px", height: "0px",
+          border: "1.5px dashed #3B82F6",
+          background: "rgba(59,130,246,0.06)",
+          pointerEvents: "none",
+          boxSizing: "border-box",
+          zIndex: "9998",
+        });
 
-          const onTextMove = (ev: MouseEvent) => {
-            const cx = (ev.clientX - rect.left) / z;
-            const cy = (ev.clientY - rect.top) / z;
-            if (!drawing && Math.hypot(cx - startX, cy - startY) < DRAG_THRESHOLD) return;
-            if (!drawing) { drawing = true; content.appendChild(preview); }
-            preview.style.left = `${Math.min(startX, cx)}px`;
-            preview.style.top = `${Math.min(startY, cy)}px`;
-            preview.style.width = `${Math.abs(cx - startX)}px`;
-            preview.style.height = `${Math.abs(cy - startY)}px`;
-          };
+        const onTextMove = (ev: MouseEvent) => {
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
+          if (!drawing && Math.hypot(cx - startX, cy - startY) < DRAG_THRESHOLD) return;
+          if (!drawing) { drawing = true; content.appendChild(preview); }
+          preview.style.left = `${Math.min(startX, cx)}px`;
+          preview.style.top = `${Math.min(startY, cy)}px`;
+          preview.style.width = `${Math.abs(cx - startX)}px`;
+          preview.style.height = `${Math.abs(cy - startY)}px`;
+        };
 
-          const onTextUp = (ev: MouseEvent) => {
-            document.removeEventListener("mousemove", onTextMove);
-            document.removeEventListener("mouseup", onTextUp);
-            preview.remove();
-            if (!drawing) {
-              // Click: auto-width text (grows as you type)
-              onAddPrimitiveRef.current?.("text", Math.round(startX), Math.round(startY));
-              return;
-            }
-            const cx = (ev.clientX - rect.left) / z;
-            const cy = (ev.clientY - rect.top) / z;
-            onAddTextBoxRef.current?.(
-              Math.round(Math.min(startX, cx)),
-              Math.round(Math.min(startY, cy)),
-              Math.max(40, Math.round(Math.abs(cx - startX))),
-              Math.max(20, Math.round(Math.abs(cy - startY))),
-            );
-          };
-          document.addEventListener("mousemove", onTextMove);
-          document.addEventListener("mouseup", onTextUp);
-          return;
-        }
+        const onTextUp = (ev: MouseEvent) => {
+          document.removeEventListener("mousemove", onTextMove);
+          document.removeEventListener("mouseup", onTextUp);
+          preview.remove();
+          if (!drawing) {
+            // Click: auto-width text (grows as you type)
+            onAddPrimitiveRef.current?.("text", Math.round(startX), Math.round(startY));
+            return;
+          }
+          const cx = (ev.clientX - rect.left) / z;
+          const cy = (ev.clientY - rect.top) / z;
+          onAddTextBoxRef.current?.(
+            Math.round(Math.min(startX, cx)),
+            Math.round(Math.min(startY, cy)),
+            Math.max(40, Math.round(Math.abs(cx - startX))),
+            Math.max(20, Math.round(Math.abs(cy - startY))),
+          );
+        };
+        document.addEventListener("mousemove", onTextMove);
+        document.addEventListener("mouseup", onTextUp);
+        return;
       }
 
       // ── Select tool (default) ──
@@ -1359,6 +1358,8 @@ export function DesignFrame({
       let duplicatedForDrag = false;
       let moved = false;
       let guideLines: HTMLElement[] = [];
+      let cachedGuides: ReturnType<typeof collectGuides> | null = null;
+      let rafPending = false;
 
       const duplicateForDrag = () => {
         const sourceLayerId = dragTarget.getAttribute("data-layer-id");
@@ -1438,8 +1439,9 @@ export function DesignFrame({
         if (!moved && (me.altKey || ev.altKey)) duplicateForDrag();
         moved = true;
 
-        // Snap to guides
-        const guides = collectGuides(dragTarget);
+        // Snap to guides (computed once — other elements are static)
+        if (!cachedGuides) cachedGuides = collectGuides(dragTarget);
+        const guides = cachedGuides;
         let snapX = origVisualX + dx;
         let snapY = origVisualY + dy;
         const elRect = dragTarget.getBoundingClientRect();
@@ -1513,7 +1515,13 @@ export function DesignFrame({
           targetStyle.left = `${Math.round(origLeft + snapX - origVisualX)}px`;
           targetStyle.top = `${Math.round(origTop + snapY - origVisualY)}px`;
         }
-        refreshOverlay(dragTarget);
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(() => {
+            refreshOverlay(dragTarget);
+            rafPending = false;
+          });
+        }
       };
 
       const onDragUp = () => {

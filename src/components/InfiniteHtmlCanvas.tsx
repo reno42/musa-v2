@@ -50,7 +50,7 @@ interface InfiniteHtmlCanvasProps {
   onTextChange?: (layerId: string, newText: string) => void;
   onAddTextBox?: (x: number, y: number, w: number, h: number) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
-  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
+  onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => void;
   onEditPathPoints?: (frameId: string, layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;

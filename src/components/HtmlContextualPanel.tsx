@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
-import { setTransformFunction, updateCssProperty as setCssProperty } from "../lib/cssMutations";
+import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 
 /**
@@ -383,6 +383,13 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
 
   const update = useCallback((selector: string, prop: string, value: string) => {
     let updated = updateElementCssProperty(css, selector, prop, value);
+    // Auto-set border-style to solid when border-width becomes non-zero
+    if (prop === "border-width" && parseFloat(value) > 0) {
+      const existingStyle = getCssPropertyValue(updated, selector, "border-style");
+      if (!existingStyle || existingStyle === "none") {
+        updated = updateElementCssProperty(updated, selector, "border-style", "solid");
+      }
+    }
     if (prop === "font-family") {
       const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
       if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {

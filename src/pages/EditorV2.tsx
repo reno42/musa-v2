@@ -1228,11 +1228,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   }, [frames, autoSave, pushUndo]);
 
   // ── Text on Path: write text along an existing SVG path ──
-  const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => {
+  const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => {
     if (!selectedFrameId) return;
     const layerId = createLayerId();
     const pathId = `tp_${Date.now().toString(36)}`;
-    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Text on path" data-layer-kind="text" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
+    // Use original SVG viewBox if available; otherwise fall back to screen-space bounds
+    const vb = originalViewBox
+      ? originalViewBox.split(/\s+/).map(Number)
+      : [bounds.x, bounds.y, Math.max(bounds.width, 1), Math.max(bounds.height, 1)];
+    const svgHtml = `<svg data-layer-id="${layerId}" data-layer-name="Text on path" data-layer-kind="text" viewBox="${vb[0]} ${vb[1]} ${Math.max(vb[2], 1)} ${Math.max(vb[3], 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><defs><path id="${pathId}" d="${pathData}"/></defs><text fill="#c4c0b4" font-size="18" font-family="inherit"><textPath href="#${pathId}" startOffset="${startOffset}%">Text</textPath></text></svg>`;
     const css = `[data-layer-id="${layerId}"] {
   position: absolute;
   left: ${bounds.x}px;
