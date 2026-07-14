@@ -191,26 +191,35 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         });
       } catch { /* keep original if sanitization fails */ }
     }
+    // Build version snapshot and merge into updates BEFORE writing (single-write pattern)
+    // Previous code did a SECOND updateTemplate call just for versions — that caused
+    // 2 reads + 2 writes per auto-save on an ever-growing JSONB row → 502 timeouts.
+    if (engine === "html" && existing && (updates.html !== undefined || updates.css !== undefined)) {
+      const MAX_VERSIONS = 10;
+      const payloadSize = (updates.html || "").length + (updates.css || "").length;
+      // Skip version snapshot for payloads > 200KB to avoid JSONB bloat
+      if (payloadSize < 200000) {
+        const versions = [...(existing.versions || [])].slice(-(MAX_VERSIONS - 1));
+        versions.push({
+          id: `ver_${uuid().slice(0, 12)}`,
+          templateId: req.params.id,
+          label: `HTML save ${new Date().toLocaleString()}`,
+          canvas: null as any,
+          html: updates.html ?? (existing as any).html,
+          css: updates.css ?? (existing as any).css,
+          createdAt: new Date().toISOString(),
+        });
+        updates.versions = versions;
+      } else {
+        // Still cap existing versions on this write even if we skip the snapshot
+        if (existing.versions && existing.versions.length > MAX_VERSIONS) {
+          updates.versions = existing.versions.slice(-MAX_VERSIONS);
+        }
+      }
+    }
+
     const tpl = await templates.updateTemplate(req.params.id, updates);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
-
-    // Auto-save version for HTML templates when html/css changed
-    if (engine === "html" && (updates.html !== undefined || updates.css !== undefined)) {
-      const version = {
-        id: `ver_${uuid().slice(0, 12)}`,
-        templateId: tpl.id,
-        label: `HTML save ${new Date().toLocaleString()}`,
-        canvas: null as any,
-        html: tpl.html,
-        css: tpl.css,
-        createdAt: new Date().toISOString(),
-      };
-      tpl.versions.push(version);
-      // Cap versions to last 10 to prevent unbounded JSONB growth (502 fix)
-      tpl.versions = tpl.versions.slice(-10);
-      // Persist the version (re-update with capped versions array)
-      await templates.updateTemplate(req.params.id, { versions: tpl.versions });
-    }
 
     res.json({ success: true, data: tpl });
   } catch (err: any) {
