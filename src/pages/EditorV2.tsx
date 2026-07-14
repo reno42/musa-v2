@@ -1300,11 +1300,30 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     onBack();
   }, [onBack]);
 
-  const handleRasterImageImported = useCallback((image: RasterImageImport) => {
+  const handleRasterImageImported = useCallback(async (image: RasterImageImport) => {
     const frame = frames.find(item => item.id === selectedFrameId);
     if (!frame) {
       addToast("Selecciona un frame antes de importar la imagen.", "error");
       return;
+    }
+
+    // Upload to Supabase Storage instead of embedding base64 in HTML.
+    // This keeps the JSONB template row small and prevents 502 timeouts.
+    let imgSrc = image.dataUrl;
+    try {
+      const uploadRes = await apiFetch<{ url: string; assetId: string }>('/api/assets/upload', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: image.name,
+          data: image.dataUrl,
+          workspaceId: templateWorkspaceId,
+        }),
+      });
+      if (uploadRes?.url) {
+        imgSrc = uploadRes.url;
+      }
+    } catch {
+      addToast("No se pudo subir a Storage — usando imagen temporal.", "error");
     }
 
     const layerId = createLayerId();
@@ -1313,7 +1332,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     imageElement.setAttribute("data-layer-name", image.name);
     imageElement.setAttribute("data-layer-kind", "image");
     imageElement.setAttribute("alt", image.name);
-    imageElement.setAttribute("src", image.dataUrl);
+    imageElement.setAttribute("src", imgSrc);
     imageElement.setAttribute("draggable", "false");
 
     const inserted = insertLayerIntoHtml(frame.html, imageElement.outerHTML, null, "inside");
@@ -1349,7 +1368,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
     autoSave(updated);
     handleSelectLayerElement(frame.id, layerId);
     addToast("Imagen insertada en el frame.", "success");
-  }, [frames, selectedFrameId, pushUndo, autoSave, handleSelectLayerElement, addToast]);
+  }, [frames, selectedFrameId, pushUndo, autoSave, handleSelectLayerElement, addToast, templateWorkspaceId]);
 
   // ── Phase C: Delete element inside frame ──
   const handleDeleteElement = useCallback((layerId: string, frameId = selectedFrameId) => {

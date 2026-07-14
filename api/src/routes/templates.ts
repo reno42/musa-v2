@@ -180,6 +180,25 @@ templateRoutes.get("/:id", async (req, res) => {
 templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
   try {
     const updates = { ...req.body };
+    // Strip base64 images from HTML frames before storing (502 prevention)
+    // Images should use Supabase Storage URLs, not inline data URIs
+    if (updates.frames && Array.isArray(updates.frames)) {
+      updates.frames = updates.frames.map((f: any) => {
+        if (f.html && typeof f.html === "string" && f.html.includes("data:image/")) {
+          f.html = f.html.replace(
+            /data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g,
+            ""
+          );
+        }
+        return f;
+      });
+    }
+    if (updates.html && typeof updates.html === "string" && updates.html.includes("data:image/")) {
+      updates.html = updates.html.replace(
+        /data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g,
+        ""
+      );
+    }
     // DOMPurify sanitization: if engine is html and html field is present
     const existing = await templates.getTemplate(req.params.id);
     const engine = updates.engine || existing?.engine;
