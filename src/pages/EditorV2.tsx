@@ -11,7 +11,7 @@ import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
-import type { FrameData, LayerSelectionRequest, SelectedElementInfo } from "../components/DesignFrame";
+import type { FrameData, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
@@ -51,6 +51,7 @@ import {
   reparentLayerInHtml,
   replaceLayerPathData,
   replaceLayerText,
+  wrapLayersInFrame,
   type LayerDropPlacement,
   type LayerStackChange,
   type LayerStackPlacement,
@@ -62,6 +63,7 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
+import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -969,27 +971,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = 130;
-      const hw = s / 2; const hh = s / 2;
-      const outerR = hw * 0.95; const innerR = hw * 0.38;
-      const pts: string[] = [];
-      for (let i = 0; i < 10; i++) {
-        const angle = (Math.PI / 2 * -1) + (Math.PI / 5) * i;
-        const r = i % 2 === 0 ? outerR : innerR;
-        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
-      }
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      const d = generateStarPath(s, 5, 0.4);
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else if (type === "polygon") {
-      const n = sides || 6;
+      const n = clampShapeCount(sides || 6);
       const s = 120;
-      const hw = s / 2; const hh = s / 2;
-      const r = hw * 0.92;
-      const pts: string[] = [];
-      for (let i = 0; i < n; i++) {
-        const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
-        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
-      }
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      const d = generatePolygonPath(s, n);
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
@@ -1023,28 +1012,15 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = Math.max(w, h);
-      const hw = s / 2; const hh = s / 2;
-      const outerR = hw * 0.95; const innerR = hw * 0.38;
-      const pts: string[] = [];
-      for (let i = 0; i < 10; i++) {
-        const angle = (Math.PI / 2 * -1) + (Math.PI / 5) * i;
-        const r = i % 2 === 0 ? outerR : innerR;
-        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
-      }
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      const d = generateStarPath(s, 5, 0.4);
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
-      // polygon — uses SVG path with configurable sides
-      const n = sides || 6;
+      // polygon — parametric path with configurable sides
+      const n = clampShapeCount(sides || 6);
       const s = Math.max(w, h);
-      const hw = s / 2; const hh = s / 2;
-      const r = hw * 0.92;
-      const pts: string[] = [];
-      for (let i = 0; i < n; i++) {
-        const angle = (Math.PI / 2 * -1) + (2 * Math.PI / n) * i;
-        pts.push(`${Math.round(hw + r * Math.cos(angle))},${Math.round(hh + r * Math.sin(angle))}`);
-      }
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="M${pts.join(" L")} Z" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      const d = generatePolygonPath(s, n);
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -1114,6 +1090,142 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       addToast(`Trazado creado con ${analysis.selfIntersections} auto-intersección(es) y ${analysis.singularities} punto(s) singular(es).`, "info");
     }
   }, [selectedFrameId, frames, autoSave, pushUndo, addToast]);
+
+  // ── Frame tool (F/A): click = 100×100 frame, drag = custom dimensions ──
+  const handleCreateFrameAt = useCallback((x: number, y: number, w: number, h: number) => {
+    const newFrame: FrameData = {
+      id: createFrameId(),
+      name: `Frame ${nextFrameNumber(frames)}`,
+      x, y, width: w, height: h,
+      html: "",
+      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n`,
+      background: "#ffffff",
+    };
+    pushUndo(frames);
+    const updated = [...frames, newFrame];
+    setFrames(updated);
+    setSelectedFrameId(newFrame.id);
+    setSelectedFrameIds(new Set([newFrame.id]));
+    autoSave(updated);
+    setActiveTool("select");
+  }, [frames, autoSave, pushUndo]);
+
+  // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
+  const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number) => {
+    if (!selectedFrameId) return;
+    const layerId = createLayerId();
+    const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">Text</div>`;
+    const css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: hidden;\n}\n`;
+    const updated = frames.map(f =>
+      f.id === selectedFrameId
+        ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
+        : f
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setActiveTool("select");
+  }, [selectedFrameId, frames, autoSave, pushUndo]);
+
+  // ── Wrap selection in a frame (Ctrl+Alt+G) — Figma-style "frame selection" ──
+  // Measures rendered layer bounds through the frame's shadow DOM, then nests
+  // the layers inside a new frame container that becomes their coordinate system.
+  const handleWrapSelectionInFrame = useCallback(() => {
+    if (!selectedFrameId) return;
+    const layerIds = multiSelectLayerIds.length > 0
+      ? multiSelectLayerIds
+      : selectedElement && selectedElement.frameId === selectedFrameId && selectedElement.layerId
+        ? [selectedElement.layerId]
+        : [];
+    if (layerIds.length === 0) {
+      addToast("Selecciona una o más capas para envolverlas en un frame.", "info");
+      return;
+    }
+    const frame = frames.find(candidate => candidate.id === selectedFrameId);
+    if (!frame) return;
+
+    const wrapper = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
+    const host = wrapper && [...wrapper.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
+    const content = host?.shadowRoot?.getElementById("__df_content");
+    if (!content) return;
+    const contentRect = content.getBoundingClientRect();
+    const scale = zoom || 1;
+    const rects: Array<{ layerId: string; left: number; top: number; width: number; height: number }> = [];
+    for (const layerId of layerIds) {
+      const element = content.querySelector(`[data-layer-id="${layerId}"]`);
+      if (!element) {
+        addToast("No se encontró una de las capas seleccionadas.", "error");
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      rects.push({
+        layerId,
+        left: (rect.left - contentRect.left) / scale,
+        top: (rect.top - contentRect.top) / scale,
+        width: rect.width / scale,
+        height: rect.height / scale,
+      });
+    }
+
+    const minX = Math.floor(Math.min(...rects.map(r => r.left)));
+    const minY = Math.floor(Math.min(...rects.map(r => r.top)));
+    const maxX = Math.ceil(Math.max(...rects.map(r => r.left + r.width)));
+    const maxY = Math.ceil(Math.max(...rects.map(r => r.top + r.height)));
+    const frameLayerId = createLayerId();
+    const newHtml = wrapLayersInFrame(
+      frame.html,
+      rects.map(r => ({
+        layerId: r.layerId,
+        left: Math.round(r.left - minX),
+        top: Math.round(r.top - minY),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      })),
+      {
+        layerId: frameLayerId,
+        name: "Frame",
+        left: minX,
+        top: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      },
+    );
+    if (!newHtml) {
+      addToast("Las capas deben compartir el mismo padre para envolverlas.", "error");
+      return;
+    }
+    const updated = frames.map(candidate =>
+      candidate.id === selectedFrameId ? { ...candidate, html: newHtml } : candidate
+    );
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+    setMultiSelectLayerIds([]);
+    addToast(`${rects.length} capa(s) envuelta(s) en un frame.`, "success");
+  }, [selectedFrameId, multiSelectLayerIds, selectedElement, frames, zoom, autoSave, pushUndo, addToast]);
+
+  // ── Parametric shape options: star/polygon count, star ratio, corner radius ──
+  const handleShapeOptionsChange = useCallback((layerId: string, frameId: string, options: ShapeOptions) => {
+    const frame = frames.find(candidate => candidate.id === frameId);
+    if (!frame) return;
+    const size = options.size || 120;
+    const count = clampShapeCount(options.count);
+    const d = options.shape === "star"
+      ? generateStarPath(size, count, options.ratio, options.cornerRadius)
+      : generatePolygonPath(size, count, options.cornerRadius);
+    const newHtml = replaceLayerPathData(frame.html, layerId, d, {
+      "data-shape": options.shape,
+      "data-shape-count": String(count),
+      "data-shape-ratio": String(options.ratio),
+      "data-shape-corner-radius": String(options.cornerRadius),
+      "data-shape-size": String(size),
+    });
+    if (newHtml === null || newHtml === frame.html) return;
+    const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
+    pushUndo(frames);
+    setFrames(updated);
+    autoSave(updated);
+  }, [frames, autoSave, pushUndo]);
 
   // ── Text on Path: write text along an existing SVG path ──
   const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => {
@@ -1505,6 +1617,16 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       }
       if (isEditableTarget(e.target)) return;
       const mod = e.metaKey || e.ctrlKey;
+      // Ctrl/⌘+Alt combos: wrap in frame + boolean operations (Figma-style)
+      if (mod && e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case "g": e.preventDefault(); handleWrapSelectionInFrame(); return;
+          case "u": e.preventDefault(); handlePathfinder("union"); return;
+          case "s": e.preventDefault(); handlePathfinder("subtract"); return;
+          case "i": e.preventDefault(); handlePathfinder("intersect"); return;
+          case "e": e.preventDefault(); handlePathfinder("exclude"); return;
+        }
+      }
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
@@ -1517,8 +1639,13 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
           case "h": setActiveTool("hand"); break;
+          case "f":
+          case "a": setActiveTool("frame"); break;
           case "r": setActiveTool("rect"); break;
           case "o": setActiveTool("circle"); break;
+          case "s": setActiveTool("star"); break;
+          case "g": setActiveTool("triangle"); break;
+          case "n": setActiveTool("polygon"); break;
           case "t":
             if (e.shiftKey) { setActiveTool("text-path"); }
             else { setActiveTool("text"); }
@@ -1599,7 +1726,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2873,10 +3000,12 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
             onTextChange={handleTextChange}
             onAddPenPath={handleAddPenPath}
             onAddTextPath={handleAddTextPath}
+            onAddTextBox={handleAddTextBox}
             onEditPathPoints={handleEditPathPoints}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
             onFrameResize={handleFrameResize}
+            onCreateFrame={handleCreateFrameAt}
           />
         </div>
       </div>
@@ -2930,6 +3059,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               onConvertToPath={handleConvertToPath}
               onOutlineStroke={handleOutlineStroke}
               onOffsetPath={handleOffsetPath}
+              onShapeOptionsChange={handleShapeOptionsChange}
             />
           )}
           {rightPanelTab === "structure" && (

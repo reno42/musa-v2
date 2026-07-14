@@ -21,7 +21,7 @@ import { DesignFrame, type FrameData, type LayerSelectionRequest, type SelectedE
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -48,12 +48,15 @@ interface InfiniteHtmlCanvasProps {
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
+  onAddTextBox?: (x: number, y: number, w: number, h: number) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
   onEditPathPoints?: (frameId: string, layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
+  /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
+  onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -66,8 +69,8 @@ export function InfiniteHtmlCanvas({
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement,
-  onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
-  onFrameResize,
+  onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  onFrameResize, onCreateFrame,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -84,6 +87,13 @@ export function InfiniteHtmlCanvas({
   // Marquee selection state (Phase 3)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  // Frame tool draw state — click places a default frame, drag sizes a custom one.
+  // The ref mirrors the state so mouseup reads the latest rect even when React
+  // hasn't re-rendered between mousemove and mouseup.
+  const frameDrawStartRef = useRef<{ x: number; y: number } | null>(null);
+  const frameDrawRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [frameDrawRect, setFrameDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // Label rename state (Phase 1)
   const [renamingFrameId, setRenamingFrameId] = useState<string | null>(null);
@@ -167,6 +177,13 @@ export function InfiniteHtmlCanvas({
       marqueeStartRef.current = pt;
       setMarqueeRect(null);
     }
+    // Frame tool: start drawing a new frame on the empty canvas
+    if (activeTool === "frame" && e.button === 0 && e.target === viewportRef.current) {
+      frameDrawStartRef.current = screenToCanvas(e.clientX, e.clientY);
+      frameDrawRectRef.current = null;
+      setFrameDrawRect(null);
+      return;
+    }
     // Primitive tools: don't deselect the frame when clicking canvas background
     if (["rect", "circle", "text", "pen"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
       // Keep frame selected so primitive can be added
@@ -207,6 +224,27 @@ export function InfiniteHtmlCanvas({
           el.style.transform = `translate(${dx}px, ${dy}px)`;
         }
       }
+      return;
+    }
+    // Frame tool drawing
+    if (frameDrawStartRef.current) {
+      const pt = screenToCanvas(e.clientX, e.clientY);
+      const start = frameDrawStartRef.current;
+      let w = pt.x - start.x;
+      let h = pt.y - start.y;
+      if (e.shiftKey) {
+        const size = Math.max(Math.abs(w), Math.abs(h));
+        w = w < 0 ? -size : size;
+        h = h < 0 ? -size : size;
+      }
+      const rect = {
+        x: w < 0 ? start.x + w : start.x,
+        y: h < 0 ? start.y + h : start.y,
+        w: Math.abs(w),
+        h: Math.abs(h),
+      };
+      frameDrawRectRef.current = rect;
+      setFrameDrawRect(rect);
       return;
     }
     // Marquee selection (Phase 3)
@@ -259,6 +297,20 @@ export function InfiniteHtmlCanvas({
       multiDragRef.current = null;
       setIsDraggingFrame(false);
     }
+    // Frame tool commit: drag = custom size, click = default 100×100
+    if (frameDrawStartRef.current) {
+      const start = frameDrawStartRef.current;
+      frameDrawStartRef.current = null;
+      const rect = frameDrawRectRef.current;
+      frameDrawRectRef.current = null;
+      setFrameDrawRect(null);
+      if (rect && rect.w >= 4 && rect.h >= 4) {
+        onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
+      } else {
+        onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
+      }
+      return;
+    }
     // Marquee selection commit (Phase 3) — AABB intersection
     if (marqueeStartRef.current && marqueeRect) {
       const ids = new Set<string>();
@@ -276,7 +328,7 @@ export function InfiniteHtmlCanvas({
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, frames, marqueeRect]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onCreateFrame, frames, marqueeRect, frameDrawRect]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {
@@ -375,7 +427,9 @@ export function InfiniteHtmlCanvas({
 
   const cursor = activeTool === "hand"
     ? (isPanning.current ? "grabbing" : "grab")
-    : (isDraggingFrame ? "move" : marqueeRect ? "crosshair" : "default");
+    : activeTool === "frame"
+      ? "crosshair"
+      : (isDraggingFrame ? "move" : marqueeRect ? "crosshair" : "default");
 
   return (
     <div
@@ -421,6 +475,7 @@ export function InfiniteHtmlCanvas({
               onAddPrimitive={onAddPrimitive}
               onDrawShape={onDrawShape}
               onTextChange={onTextChange}
+              onAddTextBox={onAddTextBox}
               onAddPenPath={onAddPenPath}
               onAddTextPath={onAddTextPath}
               onEditPathPoints={(layerId, newPathD) => onEditPathPoints?.(frame.id, layerId, newPathD)}
@@ -438,6 +493,21 @@ export function InfiniteHtmlCanvas({
             />
           </div>
         ))}
+
+        {/* Frame tool draw preview */}
+        {frameDrawRect && (
+          <div style={{
+            position: "absolute",
+            left: frameDrawRect.x,
+            top: frameDrawRect.y,
+            width: frameDrawRect.w,
+            height: frameDrawRect.h,
+            background: "rgba(255,255,255,0.85)",
+            border: "1px solid rgba(59,130,246,0.9)",
+            pointerEvents: "none",
+            zIndex: 10000,
+          }} />
+        )}
 
         {/* Marquee selection rectangle (Phase 3) */}
         {marqueeRect && (

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { SelectedElementInfo } from "./DesignFrame";
+import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
@@ -22,6 +22,7 @@ interface Props {
   onConvertToPath?: (layerId: string, frameId: string) => void;
   onOutlineStroke?: (layerId: string, frameId: string) => void;
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
+  onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
 }
 
 // ── Constants ──
@@ -369,10 +370,10 @@ function updatePseudoCss(css: string, selector: string, pseudo: string, props: R
 
 // ── Main Component ──
 
-export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath }: Props) {
+export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     typography: true, fill: true, stroke: true, spacing: true, border: true,
-    layout: true, position: false, effects: false, transform: false,
+    layout: true, shape: true, position: false, effects: false, transform: false,
     transition: false, states: false, custom: false,
   });
   const [activePseudo, setActivePseudo] = useState<string>(":hover");
@@ -512,6 +513,31 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
               </PropRow>
               <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(element.selector, "text-decoration", v)} />
               <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(element.selector, "text-transform", v)} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Shape (parametric star/polygon controls) ── */}
+      {element.shapeOptions && onShapeOptionsChange && (
+        <>
+          <SectionHead label="Shape" section="shape" expanded={expanded} toggle={toggle} />
+          {expanded.shape && (
+            <div style={sectionBody}>
+              <PropRow label={element.shapeOptions.shape === "star" ? "Points" : "Sides"}>
+                <ScrubbyInput value={String(element.shapeOptions.count)} min={3} max={60}
+                  onChange={v => onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions!, count: parseInt(v) || 3 })} />
+              </PropRow>
+              {element.shapeOptions.shape === "star" && (
+                <PropRow label="Ratio">
+                  <ScrubbyInput value={String(Math.round(element.shapeOptions.ratio * 100))} min={1} max={99} suffix="%"
+                    onChange={v => onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions!, ratio: (parseInt(v) || 40) / 100 })} />
+                </PropRow>
+              )}
+              <PropRow label="Radius">
+                <ScrubbyInput value={String(element.shapeOptions.cornerRadius)} min={0} max={200}
+                  onChange={v => onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions!, cornerRadius: parseInt(v) || 0 })} />
+              </PropRow>
             </div>
           )}
         </>

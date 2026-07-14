@@ -46,6 +46,14 @@ export interface FrameData {
   lastModifiedAt?: string;
 }
 
+export interface ShapeOptions {
+  shape: "star" | "polygon";
+  count: number;
+  ratio: number;
+  cornerRadius: number;
+  size: number;
+}
+
 export interface SelectedElementInfo {
   layerId: string;
   tag: string;
@@ -54,6 +62,7 @@ export interface SelectedElementInfo {
   frameId: string;
   isSvg: boolean;
   svgChildTag?: string;
+  shapeOptions?: ShapeOptions;
   movableLayers: Array<{
     layerId: string;
     position: string;
@@ -85,6 +94,7 @@ interface DesignFrameProps {
   onAddPrimitive?: (type: "rect" | "circle" | "triangle" | "star" | "polygon" | "text", x: number, y: number, sides?: number) => void;
   onDrawShape?: (type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => void;
   onTextChange?: (layerId: string, newText: string) => void;
+  onAddTextBox?: (x: number, y: number, w: number, h: number) => void;
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number) => void;
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
@@ -149,7 +159,7 @@ const TRACKED_PROPS = [
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId,
-  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
 }: DesignFrameProps) {
@@ -173,6 +183,8 @@ export function DesignFrame({
   onDrawShapeRef.current = onDrawShape;
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
+  const onAddTextBoxRef = useRef(onAddTextBox);
+  onAddTextBoxRef.current = onAddTextBox;
   const onAddPenPathRef = useRef(onAddPenPath);
   onAddPenPathRef.current = onAddPenPath;
   const onAddTextPathRef = useRef(onAddTextPath);
@@ -376,6 +388,17 @@ export function DesignFrame({
         display: layout.display,
       }];
     });
+    const shapeKind = element.getAttribute("data-shape") as ShapeOptions["shape"] | null;
+    const shapeOptions: ShapeOptions | undefined = shapeKind === "star" || shapeKind === "polygon"
+      ? {
+          shape: shapeKind,
+          count: Number(element.getAttribute("data-shape-count")) || (shapeKind === "star" ? 5 : 6),
+          ratio: Number(element.getAttribute("data-shape-ratio")) || 0.4,
+          cornerRadius: Number(element.getAttribute("data-shape-corner-radius")) || 0,
+          size: Number(element.getAttribute("data-shape-size")) || 120,
+        }
+      : undefined;
+
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
       tag,
@@ -384,6 +407,7 @@ export function DesignFrame({
       frameId: frame.id,
       isSvg,
       svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
+      shapeOptions,
       movableLayers,
     });
   }
@@ -878,29 +902,35 @@ export function DesignFrame({
         });
         content.appendChild(preview);
 
-        const onMove = (ev: MouseEvent) => {
-          drawing = true;
+        // Shift constrains to square/circle; Alt draws from the center outward.
+        const dragRect = (ev: MouseEvent) => {
           const cx = (ev.clientX - rect.left) / z;
           const cy = (ev.clientY - rect.top) / z;
           let w = cx - startX;
           let h = cy - startY;
-
-          // Shift constrains to square/circle
           if (ev.shiftKey) {
             const size = Math.max(Math.abs(w), Math.abs(h));
             w = w < 0 ? -size : size;
             h = h < 0 ? -size : size;
           }
+          if (ev.altKey) {
+            return { x: startX - Math.abs(w), y: startY - Math.abs(h), w: Math.abs(w) * 2, h: Math.abs(h) * 2 };
+          }
+          return {
+            x: w < 0 ? startX + w : startX,
+            y: h < 0 ? startY + h : startY,
+            w: Math.abs(w),
+            h: Math.abs(h),
+          };
+        };
 
-          const x = w < 0 ? startX + w : startX;
-          const y = h < 0 ? startY + h : startY;
-          const absW = Math.abs(w);
-          const absH = Math.abs(h);
-
-          preview.style.left = `${x}px`;
-          preview.style.top = `${y}px`;
-          preview.style.width = `${absW}px`;
-          preview.style.height = `${absH}px`;
+        const onMove = (ev: MouseEvent) => {
+          drawing = true;
+          const box = dragRect(ev);
+          preview.style.left = `${box.x}px`;
+          preview.style.top = `${box.y}px`;
+          preview.style.width = `${box.w}px`;
+          preview.style.height = `${box.h}px`;
         };
 
         const onUp = (ev: MouseEvent) => {
@@ -914,19 +944,11 @@ export function DesignFrame({
             return;
           }
 
-          const cx = (ev.clientX - rect.left) / z;
-          const cy = (ev.clientY - rect.top) / z;
-          let w = cx - startX;
-          let h = cy - startY;
-          if (ev.shiftKey) {
-            const size = Math.max(Math.abs(w), Math.abs(h));
-            w = w < 0 ? -size : size;
-            h = h < 0 ? -size : size;
-          }
-          const finalX = Math.round(w < 0 ? startX + w : startX);
-          const finalY = Math.round(h < 0 ? startY + h : startY);
-          const finalW = Math.max(10, Math.round(Math.abs(w)));
-          const finalH = Math.max(10, Math.round(Math.abs(h)));
+          const box = dragRect(ev);
+          const finalX = Math.round(box.x);
+          const finalY = Math.round(box.y);
+          const finalW = Math.max(10, Math.round(box.w));
+          const finalH = Math.max(10, Math.round(box.h));
 
           const sides = (tool === "polygon" && ev.shiftKey) ? prompt("Number of sides?", "6") : undefined;
           const sidesNum = sides ? parseInt(sides) || 6 : undefined;
@@ -1223,11 +1245,61 @@ export function DesignFrame({
         return;
       }
 
-      // ── Text tool: click to place text ──
+      // ── Frame tool: frames are drawn on the canvas background, not inside frames ──
+      if (tool === "frame") return;
+
+      // ── Text tool: click = auto-width text, drag = fixed-size text box ──
       if (tool === "text") {
         if (target === content) {
           e.stopPropagation();
-          onAddPrimitiveRef.current?.("text", Math.round(mx), Math.round(my));
+          e.preventDefault();
+          const startX = mx;
+          const startY = my;
+          let drawing = false;
+
+          const preview = document.createElement("div");
+          Object.assign(preview.style, {
+            position: "absolute",
+            left: `${startX}px`, top: `${startY}px`,
+            width: "0px", height: "0px",
+            border: "1.5px dashed #3B82F6",
+            background: "rgba(59,130,246,0.06)",
+            pointerEvents: "none",
+            boxSizing: "border-box",
+            zIndex: "9998",
+          });
+
+          const onTextMove = (ev: MouseEvent) => {
+            const cx = (ev.clientX - rect.left) / z;
+            const cy = (ev.clientY - rect.top) / z;
+            if (!drawing && Math.hypot(cx - startX, cy - startY) < DRAG_THRESHOLD) return;
+            if (!drawing) { drawing = true; content.appendChild(preview); }
+            preview.style.left = `${Math.min(startX, cx)}px`;
+            preview.style.top = `${Math.min(startY, cy)}px`;
+            preview.style.width = `${Math.abs(cx - startX)}px`;
+            preview.style.height = `${Math.abs(cy - startY)}px`;
+          };
+
+          const onTextUp = (ev: MouseEvent) => {
+            document.removeEventListener("mousemove", onTextMove);
+            document.removeEventListener("mouseup", onTextUp);
+            preview.remove();
+            if (!drawing) {
+              // Click: auto-width text (grows as you type)
+              onAddPrimitiveRef.current?.("text", Math.round(startX), Math.round(startY));
+              return;
+            }
+            const cx = (ev.clientX - rect.left) / z;
+            const cy = (ev.clientY - rect.top) / z;
+            onAddTextBoxRef.current?.(
+              Math.round(Math.min(startX, cx)),
+              Math.round(Math.min(startY, cy)),
+              Math.max(40, Math.round(Math.abs(cx - startX))),
+              Math.max(20, Math.round(Math.abs(cy - startY))),
+            );
+          };
+          document.addEventListener("mousemove", onTextMove);
+          document.addEventListener("mouseup", onTextUp);
           return;
         }
       }

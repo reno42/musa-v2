@@ -321,6 +321,7 @@ export function FloatingToolbar({
       {/* ── Selection tools ── */}
       {toolBtn("select", <IconPointer size={16} />, "V", "Select")}
       {toolBtn("hand", <IconHand size={16} />, "H", "Hand — drag to pan")}
+      {toolBtn("frame", <IconFrame size={16} />, "F", "Frame — click for 100×100, drag for custom size")}
 
       {divider}
 

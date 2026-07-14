@@ -412,6 +412,59 @@ export function groupLayersInHtml(
   return serializeFragment(document);
 }
 
+export interface WrapLayerEntry {
+  layerId: string;
+  /** Measured offset of the layer relative to the new frame's origin. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Wrap the given layers inside a new frame container (Figma-style Ctrl+Alt+G).
+ * The frame becomes the layers' parent and its own coordinate system: children
+ * are pinned with inline absolute offsets measured relative to the frame.
+ */
+export function wrapLayersInFrame(
+  html: string,
+  entries: WrapLayerEntry[],
+  frame: { layerId: string; name: string; left: number; top: number; width: number; height: number },
+): string | null {
+  if (entries.length === 0) return null;
+  const document = parseFragment(html);
+  const elements = entries.map(entry => findLayer(document, entry.layerId));
+  if (elements.some(element => !element)) return null;
+
+  const layers = elements as Element[];
+  const parent = layers[0].parentElement;
+  if (!parent || layers.some(layer => layer.parentElement !== parent)) return null;
+
+  const container = document.createElement("div");
+  container.setAttribute("data-layer-id", frame.layerId);
+  container.setAttribute("data-layer-kind", "frame");
+  container.setAttribute("data-layer-name", frame.name);
+  container.setAttribute(
+    "style",
+    `position:absolute;left:${frame.left}px;top:${frame.top}px;width:${frame.width}px;height:${frame.height}px;overflow:hidden;`,
+  );
+
+  const selected = new Set(layers);
+  const ordered = [...parent.children].filter(child => selected.has(child));
+  ordered[0].before(container);
+  for (let index = 0; index < ordered.length; index++) {
+    const layer = ordered[index] as HTMLElement;
+    const entry = entries.find(candidate => candidate.layerId === layer.getAttribute("data-layer-id"))!;
+    layer.style.position = "absolute";
+    layer.style.left = `${entry.left}px`;
+    layer.style.top = `${entry.top}px`;
+    layer.style.width = `${entry.width}px`;
+    layer.style.height = `${entry.height}px`;
+    container.appendChild(layer);
+  }
+  return serializeFragment(document);
+}
+
 export function ungroupLayerInHtml(html: string, groupId: string): string | null {
   const document = parseFragment(html);
   const group = findLayer(document, groupId);
