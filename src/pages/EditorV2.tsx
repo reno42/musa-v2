@@ -64,6 +64,7 @@ import {
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
+import { installAgentBridge } from "../lib/agentBridge";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -230,6 +231,9 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [zoom, setZoom] = useState(0.5);
+
+  // Agent bridge: window.futurariaAgent gives AI agents frame snapshots + layout lint
+  useEffect(() => { installAgentBridge(); }, []);
 
   // ── Undo/Redo ──
   const undoStack = useRef<FrameData[][]>([]);

@@ -2485,8 +2485,10 @@ async function handleMethod(method, params, userId) {
       return result;
     }
     case "get_template": {
-      const tpl = await templates.getTemplate(params.id);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      // Accept both `id` and `templateId` — agents guess either; be forgiving.
+      const getId = params.id || params.templateId;
+      const tpl = await templates.getTemplate(getId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${getId}` };
       return {
         ...tpl,
         _frameCount: tpl.frames?.length || 0,
