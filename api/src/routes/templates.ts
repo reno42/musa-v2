@@ -121,6 +121,11 @@ templateRoutes.get("/", async (req, res) => {
 
     const result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
 
+    // Strip versions from list results — not needed for listing, reduces payload (502 fix)
+    for (const t of result.data) {
+      if (t.versions) t.versions = [];
+    }
+
     res.json({
       success: true,
       data: result.data,
@@ -148,6 +153,10 @@ templateRoutes.get("/:id", async (req, res) => {
   try {
     const tpl = await templates.getTemplate(req.params.id);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    // Trim versions to last 10 on read to reduce payload size (502 fix)
+    if (tpl.versions && tpl.versions.length > 10) {
+      tpl.versions = tpl.versions.slice(-10);
+    }
     res.json({ success: true, data: tpl });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -197,7 +206,9 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         createdAt: new Date().toISOString(),
       };
       tpl.versions.push(version);
-      // Persist the version (re-update with versions array)
+      // Cap versions to last 10 to prevent unbounded JSONB growth (502 fix)
+      tpl.versions = tpl.versions.slice(-10);
+      // Persist the version (re-update with capped versions array)
       await templates.updateTemplate(req.params.id, { versions: tpl.versions });
     }
 
