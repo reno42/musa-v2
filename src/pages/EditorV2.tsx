@@ -93,6 +93,7 @@ function simpleHash(str: string): string {
 interface EditorV2Props {
   templateId: string;
   onBack: () => void;
+  onOpenTemplate?: (id: string) => void;
 }
 
 const FRAME_GAP = 100;
@@ -223,7 +224,7 @@ p {
   margin: 0;
 }`;
 
-export function EditorV2({ templateId, onBack }: EditorV2Props) {
+export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
   // ── Multi-frame state ──
   const [frames, setFrames] = useState<FrameData[]>([]);
@@ -3159,6 +3160,8 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         <BatchAMator
           templateId={templateId}
           onClose={() => setShowBatch(false)}
+          onOpenTemplate={onOpenTemplate}
+          onBackToDashboard={onBack}
         />
       )}
 

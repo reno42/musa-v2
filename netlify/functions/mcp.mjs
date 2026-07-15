@@ -1940,6 +1940,19 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "list_batch_templates",
+    description: "List all templates that contain {{slot}} placeholders or data-slot attributes — i.e. templates ready for CSV batch generation. Returns template ID, name, slot count, and slot names. Use to discover which templates can be used with apply_csv_to_frames or the REST batch API.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: {
+          type: "string",
+          description: "Optional: filter by workspace ID",
+        },
+      },
+    },
+  },
+  {
     name: "lock_element",
     description: "Lock or unlock a layer/element in a frame. Locked elements cannot be selected or moved on the canvas (pointer-events: none).",
     inputSchema: {
@@ -6976,6 +6989,23 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
         // Serialize the modified HTML
         newFrame.html = $.html();
+
+        // ── Phase 3b: Also apply {{slot}} string substitution (mustache syntax fallback) ──
+        // This handles templates that use {{columnName}} placeholders instead of data-slot attributes.
+        // Replaces in both HTML and CSS.
+        var mustacheHtml = newFrame.html || "";
+        var mustacheCss = newFrame.css || "";
+        for (var musi = 0; musi < headerRow.length; musi++) {
+          if (musi === templateColIdx) continue;
+          var musColName = headerRow[musi];
+          var musCellVal = (row[musi] || "").trim();
+          if (!musCellVal) continue;
+          mustacheHtml = mustacheHtml.split("{{" + musColName + "}}").join(musCellVal);
+          mustacheCss = mustacheCss.split("{{" + musColName + "}}").join(musCellVal);
+        }
+        newFrame.html = mustacheHtml;
+        newFrame.css = mustacheCss;
+
         newFrame.contentHash = computeFrameHash(newFrame.html || "", newFrame.css || "");
 
         outputTpl.frames.push(newFrame);
@@ -7017,6 +7047,52 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         generatedFrames: report.filter(function (r) { return r.status === "ok"; }).length,
         skippedRows: report.filter(function (r) { return r.status === "skipped"; }).length,
         report: report,
+        _deterministic: true,
+      };
+    }
+
+    // ── list_batch_templates: discover templates with {{slot}} or data-slot ──
+    case "list_batch_templates": {
+      var wsFilter = params.workspaceId;
+      var listResult = await templates.listTemplatesPaginated(wsFilter || undefined, 200, 0);
+      var allTpls = listResult.data || [];
+
+      var batchReady = [];
+      for (var lbtI = 0; lbtI < allTpls.length; lbtI++) {
+        var lbtTpl = allTpls[lbtI];
+        var lbtTexts = [];
+        if (lbtTpl.html) lbtTexts.push(lbtTpl.html);
+        if (lbtTpl.css) lbtTexts.push(lbtTpl.css);
+        if (lbtTpl.frames) {
+          for (var lbtF = 0; lbtF < lbtTpl.frames.length; lbtF++) {
+            if (lbtTpl.frames[lbtF].html) lbtTexts.push(lbtTpl.frames[lbtF].html);
+            if (lbtTpl.frames[lbtF].css) lbtTexts.push(lbtTpl.frames[lbtF].css);
+          }
+        }
+        var combinedText = lbtTexts.join("\n");
+        var mustacheSlots = combinedText.match(/\{\{(\w+)\}\}/g) || [];
+        var dataSlots = combinedText.match(/data-slot=["'](\w+)["']/g) || [];
+        var mustacheNames = mustacheSlots.map(function (s) { return s.replace(/\{\{|\}\}/g, ""); });
+        var dataNames = dataSlots.map(function (s) { return s.replace(/data-slot=["']|["']/g, ""); });
+        var allSlots = [];
+        mustacheNames.concat(dataNames).forEach(function (s) { if (allSlots.indexOf(s) === -1) allSlots.push(s); });
+        if (allSlots.length > 0) {
+          batchReady.push({
+            id: lbtTpl.id,
+            name: lbtTpl.name,
+            slotCount: allSlots.length,
+            slots: allSlots,
+            mustacheSlots: mustacheNames,
+            dataSlots: dataNames,
+            workspaceId: lbtTpl.workspaceId,
+            updatedAt: lbtTpl.metadata && lbtTpl.metadata.updatedAt,
+          });
+        }
+      }
+
+      return {
+        batchReadyTemplates: batchReady,
+        count: batchReady.length,
         _deterministic: true,
       };
     }

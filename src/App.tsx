@@ -84,6 +84,7 @@ function App() {
     <EditorV2
       templateId={templateId!}
       onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/'); }}
+      onOpenTemplate={(id) => { dispatch({ type: "OPEN_TEMPLATE_V2", id }); window.history.replaceState(null, '', `/?template=${id}&v=2`); }}
     />
   );
 }
