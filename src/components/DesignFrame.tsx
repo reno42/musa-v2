@@ -211,7 +211,7 @@ export function DesignFrame({
     cssRef.current = updatedCss;
     lastEmittedCssRef.current = updatedCss;
     const style = shadowRef.current?.querySelector("style");
-    if (style) style.textContent = updatedCss;
+    if (style) style.textContent = mapBodySelectors(updatedCss);
     onCssChangeRef.current?.(frame.id, updatedCss, updatedHtml);
   }
 
@@ -233,9 +233,9 @@ export function DesignFrame({
       shadow.appendChild(link);
     }
 
-    // Style element
+    // Style element — map body/html selectors to Shadow DOM root
     const style = document.createElement("style");
-    style.textContent = frame.css;
+    style.textContent = mapBodySelectors(frame.css);
     shadow.appendChild(style);
 
     // Editor interaction CSS: content wrapper is transparent to pointer events,
@@ -287,7 +287,7 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!shadow) return;
     const style = shadow.querySelector("style");
-    if (style) style.textContent = frame.css;
+    if (style) style.textContent = mapBodySelectors(frame.css);
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
     const newHrefs = extractFontImports(frame.css);
@@ -1981,6 +1981,19 @@ function importantProperties(properties: Record<string, string>): Record<string,
     property,
     `${value.replace(/\s*!important\s*$/i, "").trim()} !important`,
   ]));
+}
+
+/**
+ * Maps `body` and `html` selectors to `#__df_content` so that CSS written for
+ * full-page documents works inside the Shadow DOM (which has no <body>).
+ * Covers: `body { ... }`, `html { ... }`, `body.class`, `body > ...`, etc.
+ */
+function mapBodySelectors(css: string): string {
+  // Replace standalone `body` and `html` at the start of selectors,
+ // or after commas. Preserves pseudo-classes, combinators, and descendants.
+  return css
+    .replace(/(^|,\s*)html\b/g, "$1#__df_content")
+    .replace(/(^|,\s*)body\b/g, "$1#__df_content");
 }
 
 function extractFontImports(css: string): string[] {
