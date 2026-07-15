@@ -105,12 +105,46 @@ async function push(file) {
   console.log(`  Editor:   ${APP}/?template=${templateId}&v=2`);
 }
 
+async function deck(file) {
+  const spec = JSON.parse(readFileSync(file, "utf8"));
+  const started = Date.now();
+  const workspaceId = await resolveWorkspaceId(spec.workspace || "Agent Designs");
+  const result = await mcp("create_deck", {
+    workspaceId,
+    name: spec.name,
+    brand: spec.brand,
+    cover: spec.cover,
+    slides: spec.slides,
+  });
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  console.log(`✔ Deck "${result.name}" — ${result.totalFrames} frames en ${seconds}s`);
+  for (const frameName of result.frames) console.log(`    ${frameName}`);
+  console.log(`  Template: ${result.templateId}`);
+  console.log(`  Editor:   ${APP}/?template=${result.templateId}&v=2`);
+}
+
+const EXAMPLE_DECK = {
+  workspace: "Brand",
+  name: "Design System — Ejemplo",
+  brand: { name: "Ejemplo", color: "#0A4B3E", titleFont: "Fraunces", bodyFont: "Inter" },
+  slides: [
+    { title: "Colores", html: `<div style="display:flex;gap:32px"><div style="width:220px;height:220px;background:var(--deck-brand);border-radius:20px"></div><div style="width:220px;height:220px;background:var(--deck-ink);border-radius:20px"></div></div>` },
+    { title: "Tipografía", html: `<p style="font-family:var(--deck-title-font);font-size:96px;margin:0;color:var(--deck-ink)">Aa Bb Cc</p><p style="font-family:var(--deck-body-font);font-size:32px;color:var(--deck-muted)">El cuerpo de texto usa la fuente de párrafos.</p>` },
+  ],
+};
+
 if (command === "example") {
   console.log(JSON.stringify(EXAMPLE, null, 2));
+} else if (command === "example-deck") {
+  console.log(JSON.stringify(EXAMPLE_DECK, null, 2));
 } else if (command === "push" && args[1]) {
   push(args[1]).catch(error => { console.error(`✗ ${error.message}`); process.exit(1); });
+} else if (command === "deck" && args[1]) {
+  deck(args[1]).catch(error => { console.error(`✗ ${error.message}`); process.exit(1); });
 } else {
   console.log("Uso: node scripts/agent-design.mjs push <design.json> [--api url] [--key k] [--template id]");
+  console.log("     node scripts/agent-design.mjs deck <deck.json>  [--api url] [--key k]");
   console.log("     node scripts/agent-design.mjs example > design.json");
+  console.log("     node scripts/agent-design.mjs example-deck > deck.json");
   process.exit(command ? 1 : 0);
 }

@@ -6,6 +6,7 @@ import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
+import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -542,6 +543,50 @@ const MCP_TOOLS = [
         css: { type: "string", description: "Initial CSS styles (HTML engine only)" },
       },
       required: ["name", "workspaceId"],
+    },
+  },
+  {
+    name: "create_deck",
+    description: "Create a complete deck (design system, brand manual, PPT-style document) in ONE call. Deterministic scaffolding: 1920x1080 frames laid side by side (never overlapping), cover on the corporate color, page numbering NN/TT, and consistent title/body fonts on every slide. You only send the creative part: free HTML/CSS composition per slide (rendered inside the content zone) and optionally a free cover composition. CSS vars available in your slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the deck in" },
+        name: { type: "string", description: "Deck name, e.g. 'Design System — Acme'" },
+        brand: {
+          type: "object",
+          description: "Brand constraints (deterministic)",
+          properties: {
+            name: { type: "string", description: "Brand display name (cover + footer)" },
+            color: { type: "string", description: "Corporate color hex, e.g. #0A4B3E (cover background + accents)" },
+            titleFont: { type: "string", description: "Google Font for titles (default Fraunces)" },
+            bodyFont: { type: "string", description: "Google Font for paragraphs (default Inter)" },
+            background: { type: "string", description: "Slide background color (default #FFFFFF)" },
+          },
+          required: ["color"],
+        },
+        cover: {
+          type: "object",
+          description: "Optional free cover composition (background stays the corporate color)",
+          properties: {
+            html: { type: "string" },
+            css: { type: "string" },
+          },
+        },
+        slides: {
+          type: "array",
+          description: "One entry per slide. title is placed deterministically; html/css is your free composition inside the 1728x760 content zone.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Slide title (deterministic position + title font)" },
+              html: { type: "string", description: "Free HTML composition for the content zone" },
+              css: { type: "string", description: "CSS for your composition (scoped per frame)" },
+            },
+          },
+        },
+      },
+      required: ["workspaceId", "name", "brand", "slides"],
     },
   },
   {
@@ -2566,6 +2611,37 @@ async function handleMethod(method, params, userId) {
       }
       autoSnapshot(tpl.id, "create_template");
       return tpl;
+    }
+    case "create_deck": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const deckName = (params.name || "").trim();
+      if (!deckName) throw { code: -32602, message: "name is required" };
+      let deck;
+      try {
+        deck = buildDeckFrames({ name: deckName, brand: params.brand, cover: params.cover, slides: params.slides });
+      } catch (e) {
+        throw { code: -32602, message: e.message };
+      }
+      const deckTpl = await templates.createTemplate(
+        deckName, DECK_FRAME_W, DECK_FRAME_H,
+        undefined, userId, params.workspaceId,
+      );
+      if (!deckTpl.id) throw { code: -32000, message: "Deck creation failed: no ID returned from store" };
+      await templates.updateTemplate(deckTpl.id, {
+        engine: "html",
+        html: "",
+        css: "",
+        frames: deck.frames,
+      });
+      autoSnapshot(deckTpl.id, "create_deck");
+      const siteUrl = (process.env.URL || "").replace(/\/$/, "");
+      return {
+        templateId: deckTpl.id,
+        name: deckName,
+        frames: deck.frames.map(f => f.name),
+        totalFrames: deck.total,
+        editorUrl: `${siteUrl}/?template=${deckTpl.id}&v=2`,
+      };
     }
     case "update_template": {
       const updates = {};

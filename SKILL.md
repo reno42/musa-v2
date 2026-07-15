@@ -217,7 +217,7 @@ Agent (Claude / Cursor / Custom)
 | Teams | `create_team`, `list_teams`, `get_team`, `invite_to_team`, `list_team_members`, `remove_team_member`, `update_team_member_role`, `share_workspace_with_team` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
-| Design System | `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `extract_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 11 |
+| Design System | `create_deck`, `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `extract_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 12 |
 | Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template`, `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 11 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
@@ -244,6 +244,7 @@ Agent (Claude / Cursor / Custom)
 | `transform_element` | `templateId`, `elementId` | `x`, `y`, `width`, `height`, `rotation` | `{ success }` |
 | `generate_design_artifacts` | `templateId` | `action` ("generate"/"publish"), `brandName` | `{ designMd, tokensJson, sharedCss, sourceHash }` |
 | `extract_design_system` | `templateIds`, `workspaceId` | `name` | `{ extraction, artifacts: { tokensJson, sharedCss, designMd } }` |
+| `create_deck` | `workspaceId`, `name`, `brand: { color }`, `slides: [{ title, html, css }]` | `brand.titleFont/bodyFont/background`, `cover: { html, css }` | `{ templateId, editorUrl, frames }` — deterministic 1920×1080 deck: side-by-side frames, cover on brand color, page numbers, consistent fonts; your html/css per slide is the free composition (CSS vars: `--deck-brand`, `--deck-ink`, `--deck-muted`, `--deck-title-font`, `--deck-body-font`) |
 | `export_batch` | `templateId` | `frameIds`, `format` ("png"/"svg"/"pdf") | `{ urls }` |
 
 **Important constants:**

@@ -52,8 +52,11 @@ function findFrameDom(frameId: string): FrameDom | null {
   const shadow = host?.shadowRoot;
   const content = shadow?.getElementById("__df_content") as HTMLElement | null;
   if (!host || !shadow || !content) return null;
-  const zm = (wrapper.parentElement as HTMLElement | null)?.style.transform.match(/scale\(([\d.]+)\)/);
-  return { wrapper, host, shadow, content, zoom: zm ? parseFloat(zm[1]) : 1 };
+  // Derive the effective zoom from layout vs rendered size — robust even
+  // when the canvas transform is scale(0) (viewport not laid out yet).
+  const layoutWidth = host.offsetWidth || 1;
+  const zoom = host.getBoundingClientRect().width / layoutWidth;
+  return { wrapper, host, shadow, content, zoom };
 }
 
 /** Fetch a Google Fonts stylesheet and inline every font file as a data URI. */
@@ -85,11 +88,10 @@ export function listAgentFrames(): Array<{ frameId: string; width: number; heigh
     const frameId = wrapper.getAttribute("data-frame-id")!;
     const dom = findFrameDom(frameId);
     if (!dom) return [];
-    const rect = dom.host.getBoundingClientRect();
     return [{
       frameId,
-      width: Math.round(rect.width / dom.zoom),
-      height: Math.round(rect.height / dom.zoom),
+      width: dom.host.offsetWidth,
+      height: dom.host.offsetHeight,
     }];
   });
 }
@@ -105,9 +107,10 @@ export async function renderAgentFrame(frameId: string, scale = 0.5): Promise<st
     .replace(/@import\s+url\([^)]*\)[^;]*;/g, "")
     .replace(/&(?!(amp|lt|gt|quot|apos|#)\w*;)/g, "&amp;");
 
-  const hostRect = dom.host.getBoundingClientRect();
-  const width = Math.round(hostRect.width / dom.zoom);
-  const height = Math.round(hostRect.height / dom.zoom);
+  // Layout size is transform-independent — renderFrame works even when the
+  // on-screen canvas is zoomed out to (near) zero.
+  const width = dom.host.offsetWidth;
+  const height = dom.host.offsetHeight;
   const background = (dom.host.firstElementChild as HTMLElement | null)?.style.background || "#ffffff";
   const xhtml = new XMLSerializer().serializeToString(dom.content);
 
@@ -139,10 +142,12 @@ export async function renderAgentFrame(frameId: string, scale = 0.5): Promise<st
 export function inspectAgentFrame(frameId: string): AgentFrameReport {
   const dom = findFrameDom(frameId);
   if (!dom) throw new Error(`Frame not found: ${frameId}`);
+  if (dom.zoom < 0.01) {
+    throw new Error("Canvas zoom is ~0 — zoom in (or re-run auto-fit) before inspecting; on-screen boxes are unmeasurable at scale(0)");
+  }
 
-  const hostRect = dom.host.getBoundingClientRect();
-  const frameWidth = hostRect.width / dom.zoom;
-  const frameHeight = hostRect.height / dom.zoom;
+  const frameWidth = dom.host.offsetWidth;
+  const frameHeight = dom.host.offsetHeight;
   const contentRect = dom.content.getBoundingClientRect();
 
   // SVG containers often extend past their drawn shapes (overflow: visible);

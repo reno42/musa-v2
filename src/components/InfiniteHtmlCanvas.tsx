@@ -108,7 +108,10 @@ export function InfiniteHtmlCanvas({
     const bw = b.maxX - b.minX + 200;
     const bh = b.maxY - b.minY + 200;
     const fz = Math.min(vw / bw, vh / bh, 1);
-    onZoomChange(Math.round(fz * 100) / 100);
+    // Clamp to MIN_ZOOM: wide decks (many 1920px frames side by side) or a
+    // not-yet-laid-out viewport (clientWidth 0) used to round fz down to 0,
+    // rendering the whole canvas at scale(0) — invisible frames.
+    onZoomChange(Math.max(Math.round(fz * 100) / 100, MIN_ZOOM));
     setPan({
       x: vw / 2 - ((b.minX + (b.maxX - b.minX) / 2)) * fz,
       y: vh / 2 - ((b.minY + (b.maxY - b.minY) / 2)) * fz,
