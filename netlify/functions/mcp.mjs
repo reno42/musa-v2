@@ -4,7 +4,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
-import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents } from "./design-extractor.mjs";
+import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
