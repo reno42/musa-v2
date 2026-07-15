@@ -31,6 +31,7 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
   const [applyMsg, setApplyMsg] = useState("");
   const [extraction, setExtraction] = useState<any>(null);
   const [extractLoading, setExtractLoading] = useState(false);
+  const [manualUrl, setManualUrl] = useState<string | null>(null);
 
   const runCheck = useCallback(async (method: string) => {
     setLoading(method);
@@ -303,6 +304,7 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
           const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
           if (data?.extraction) {
             setExtraction({ extraction: data.extraction, artifacts: data.artifacts || {} });
+            setManualUrl(data.manualUrl || null);
             const colorCount = (data.extraction.colors || []).filter((c: any) => c.role).length;
             const compCount = (data.extraction.components || []).length;
             setApplyMsg(`✓ Extracted: ${colorCount} colors, ${compCount} components`);
@@ -369,6 +371,19 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
               </button>
             )}
           </div>
+
+          {/* Open Manual */}
+          {manualUrl && (
+            <div style={{ marginTop: 6 }}>
+              <button
+                type="button"
+                onClick={() => window.open(manualUrl, "_blank")}
+                style={{ background: "linear-gradient(135deg, #8B5CF6, #6D28D9)", border: "none", color: "#fff", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}
+              >
+                📖 Open Brand Manual
+              </button>
+            </div>
+          )}
 
           {/* Color preview swatches */}
           {(extraction.extraction.colors || []).filter((c: any) => c.role && c.role !== "other").length > 0 && (

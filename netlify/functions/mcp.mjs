@@ -4,7 +4,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
-import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents } from "./design-extractor.mjs";
+import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -5894,12 +5894,51 @@ async function handleMethod(method, params, userId) {
         generatedAt: new Date().toISOString(),
       };
 
+      // ── Generate Brand Manual (new template with 1920×1080 frames) ──
+      var manualTpl = null;
+      try {
+        var manualName = "Manual — " + designName;
+        var wsId = params.workspaceId;
+        // Fallback: use first template's workspace
+        if (!wsId && templateIds.length > 0) {
+          var firstTpl = await templates.getTemplate(templateIds[0]);
+          wsId = firstTpl && firstTpl.workspace_id;
+        }
+        if (wsId) {
+          var manualFrames = generateManualFrames(merged, designName);
+          manualTpl = await templates.createTemplate(manualName, 1920, 1080, undefined, userId, wsId);
+          if (manualTpl && manualTpl.id) {
+            manualTpl.engine = "html";
+            manualTpl.frames = manualFrames.map(function (mf) {
+              return {
+                id: "frame_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10),
+                name: mf.name,
+                x: 0, y: 0,
+                width: 1920, height: 1080,
+                html: mf.html,
+                css: mf.css,
+                background: "#ffffff",
+              };
+            });
+            await templates.updateTemplate(manualTpl.id, {
+              engine: "html",
+              frames: manualTpl.frames,
+            });
+          }
+        }
+      } catch (e) {
+        // Manual generation is best-effort — don't fail extraction
+        console.error("Manual generation failed:", e.message || e);
+      }
+
       return {
         templateIds: templateIds,
         templatesAnalyzed: allExtractions.length,
         totalFrames: allFrames.length,
         extraction: merged,
         artifacts: artifacts,
+        manualUrl: manualTpl ? ("https://design.futuraria.com/?template=" + manualTpl.id + "&v=2") : null,
+        manualTemplateId: manualTpl ? manualTpl.id : null,
       };
     }
 
