@@ -395,7 +395,7 @@ function hasProp(rules, prop) {
 
 function sortByCountDesc(a, b) {
   if (b.count !== a.count) return b.count - a.count;
-  return a.value.localeCompare(b.value);
+  return (a.value || "").localeCompare(b.value || "");
 }
 
 function sortNumberDesc(a, b) {
@@ -490,7 +490,7 @@ export function extractDesignSystem(frames) {
 
   var families = Object.keys(fontFamilyCounts)
     .map(function (k) { return { name: k, count: fontFamilyCounts[k] }; })
-    .sort(function (a, b) { return b.count - a.count || a.name.localeCompare(b.name); });
+    .sort(function (a, b) { return b.count - a.count || (a.name || "").localeCompare(b.name || ""); });
 
   var typeScale = Object.keys(fontSizeCounts)
     .map(function (k) { return parseInt(k); })
@@ -777,7 +777,7 @@ function detectComponents(frames) {
     .filter(Boolean)
     .sort(function (a, b) {
       if (b.frameCount !== a.frameCount) return b.frameCount - a.frameCount;
-      return a.selector.localeCompare(b.selector);
+      return (a.selector || "").localeCompare(b.selector || "");
     });
 
   return components;
@@ -1322,7 +1322,7 @@ export function mergeExtractions(extractions) {
 
   var families = Object.keys(familyMap)
     .map(function (k) { return { name: k, count: familyMap[k] }; })
-    .sort(function (a, b) { return b.count - a.count || a.name.localeCompare(b.name); });
+    .sort(function (a, b) { return b.count - a.count || (a.name || "").localeCompare(b.name || ""); });
   var typeScale = Object.keys(sizeSet).map(Number).sort(sortNumberDesc);
   var weights = Object.keys(weightSet).map(Number).sort(sortNumberDesc);
   var leading = Object.keys(leadingSet).map(Number).sort(sortNumberDesc);
@@ -1371,7 +1371,7 @@ export function mergeExtractions(extractions) {
         confidence: confidence, sampleHtml: mc.c.sampleHtml || "",
       };
     })
-    .sort(function (a, b) { return b.frameCount - a.frameCount || a.selector.localeCompare(b.selector); });
+    .sort(function (a, b) { return b.frameCount - a.frameCount || (a.selector || "").localeCompare(b.selector || ""); });
 
   // ── Merge images ──
   var imageSeen = {};
