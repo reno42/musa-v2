@@ -29,6 +29,8 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
   const [savedBrands, setSavedBrands] = useState<any[]>([]);
   const [brandsLoaded, setBrandsLoaded] = useState(false);
   const [applyMsg, setApplyMsg] = useState("");
+  const [extraction, setExtraction] = useState<any>(null);
+  const [extractLoading, setExtractLoading] = useState(false);
 
   const runCheck = useCallback(async (method: string) => {
     setLoading(method);
@@ -282,6 +284,105 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
       }} disabled={loading !== ""} style={{ ...btnStyle, marginTop: 4 }}>
         {loading === "palette" ? "..." : "🎨 Suggest Palette"}
       </button>
+
+      {/* Extract Design System */}
+      <button onClick={async () => {
+        setExtractLoading(true);
+        setExtraction(null);
+        setApplyMsg("");
+        try {
+          const res = await apiFetch<any>("/mcp", {
+            method: "POST",
+            body: JSON.stringify({
+              jsonrpc: "2.0", method: "extract_design_system",
+              params: { templateIds: [templateId], name: "Current Template" },
+              id: 0,
+            }),
+          });
+          const text = res?.result?.content?.[0]?.text;
+          const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+          if (data?.extraction) {
+            setExtraction({ extraction: data.extraction, artifacts: data.artifacts || {} });
+            const colorCount = (data.extraction.colors || []).filter((c: any) => c.role).length;
+            const compCount = (data.extraction.components || []).length;
+            setApplyMsg(`✓ Extracted: ${colorCount} colors, ${compCount} components`);
+          } else {
+            setApplyMsg("✓ Design system extracted");
+          }
+          setTimeout(() => setApplyMsg(""), 4000);
+        } catch { setApplyMsg("✗ Extraction failed"); }
+        setExtractLoading(false);
+      }} disabled={extractLoading} style={{ ...btnStyle, marginTop: 4, background: extractLoading ? undefined : "rgba(139,92,246,0.1)", borderColor: extractLoading ? undefined : "rgba(139,92,246,0.2)" }}>
+        {extractLoading ? "Analyzing…" : "🔬 Extract Design System"}
+      </button>
+
+      {/* Extraction Result */}
+      {extraction && (
+        <div style={{ marginTop: 8, fontSize: 11 }}>
+          <div style={{ color: "#4ade80", marginBottom: 4 }}>
+            {extraction.extraction.colors.filter((c: any) => c.role).length} semantic colors · {extraction.extraction.components.length} components
+          </div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {extraction.artifacts.tokensJson && (
+              <button
+                type="button"
+                onClick={() => {
+                  const blob = new Blob([extraction.artifacts.tokensJson], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = "tokens.json"; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", color: "#8B5CF6", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
+              >
+                tokens.json
+              </button>
+            )}
+            {extraction.artifacts.sharedCss && (
+              <button
+                type="button"
+                onClick={() => {
+                  const blob = new Blob([extraction.artifacts.sharedCss], { type: "text/css" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = "shared.css"; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)", color: "#22c55e", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
+              >
+                shared.css
+              </button>
+            )}
+            {extraction.artifacts.designMd && (
+              <button
+                type="button"
+                onClick={() => {
+                  const blob = new Blob([extraction.artifacts.designMd], { type: "text/markdown" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = "DESIGN.md"; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.2)", color: "#fbbf24", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
+              >
+                DESIGN.md
+              </button>
+            )}
+          </div>
+
+          {/* Color preview swatches */}
+          {(extraction.extraction.colors || []).filter((c: any) => c.role && c.role !== "other").length > 0 && (
+            <div style={{ marginTop: 6, display: "flex", gap: 3, flexWrap: "wrap" }}>
+              {extraction.extraction.colors.filter((c: any) => c.role && c.role !== "other").slice(0, 12).map((c: any, i: number) => (
+                <div key={i} style={{
+                  width: 16, height: 16, borderRadius: 4, background: c.value,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }} title={`${c.token}: ${c.value} (${c.role})`} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

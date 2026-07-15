@@ -4,7 +4,7 @@ import { store } from "../../api/src/services/store.js";
 import { getSupabase } from "../../api/src/services/supabase.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
-import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate } from "./design-extractor.mjs";
+import { extractDesignSystem, generateAllArtifacts, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 
 // ═══════════════════════════════════════════════════════════════
@@ -1383,6 +1383,19 @@ const MCP_TOOLS = [
         brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name (creates/updates brand_guidelines row)" },
       },
       required: ["templateId"],
+    },
+  },
+  {
+    name: "extract_design_system",
+    description: "Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateIds: { type: "array", items: { type: "string" }, description: "Template IDs to analyze. Multiple templates = merged unified design system." },
+        workspaceId: { type: "string", description: "Workspace ID for template lookup" },
+        name: { type: "string", description: "Name for the extracted design system (defaults to first template name)" },
+      },
+      required: ["templateIds"],
     },
   },
   {
@@ -5826,6 +5839,68 @@ async function handleMethod(method, params, userId) {
       if (cssOutput) result.css = cssOutput;
       if (dtcgOutput) result.dtcg = dtcgOutput;
       return result;
+    }
+
+    // ── extract_design_system: multi-template design system extraction ──
+    case "extract_design_system": {
+      var templateIds = params.templateIds || [];
+      if (!templateIds.length) throw { code: -32602, message: "At least one templateId required" };
+
+      // Collect frames from all templates
+      var allExtractions = [];
+      var allFrames = [];
+
+      for (var t = 0; t < templateIds.length; t++) {
+        var tpl = await templates.getTemplate(templateIds[t]);
+        if (!tpl) throw { code: -32000, message: "Template not found: " + templateIds[t] };
+
+        var extFrames = (tpl.frames || []).map(function (f) {
+          return {
+            id: f.id,
+            name: f.name,
+            html: f.html || "",
+            css: f.css || "",
+            width: f.width,
+            height: f.height,
+            layoutMode: f.layoutMode,
+          };
+        }).filter(function (f) { return f.html || f.css; });
+
+        if (extFrames.length > 0) {
+          var extraction = extractDesignSystem(extFrames);
+          allExtractions.push(extraction);
+          allFrames.push.apply(allFrames, extFrames);
+        }
+      }
+
+      if (allExtractions.length === 0) throw { code: -32000, message: "No frames with HTML/CSS found in any template" };
+
+      // Merge if multiple templates, else use single extraction
+      var merged = allExtractions.length > 1
+        ? mergeExtractions(allExtractions)
+        : fillSemanticGaps(allExtractions[0]);
+
+      // Apply structural component discovery
+      merged.components = discoverStructuralComponents(allFrames, merged.colors);
+
+      // Generate artifacts
+      var designName = params.name || (templateIds.length === 1 ? "Extracted Design System" : "Merged Design System");
+      var artifacts = {
+        tokensJson: generateTokensJson(merged, { name: designName }),
+        designMd: generateDesignMd(merged, { name: designName }),
+        sharedCss: generateSharedCss(merged),
+        sourceHash: merged.sourceHash,
+        styleFingerprint: computeStyleFingerprint(merged),
+        generatedAt: new Date().toISOString(),
+      };
+
+      return {
+        templateIds: templateIds,
+        templatesAnalyzed: allExtractions.length,
+        totalFrames: allFrames.length,
+        extraction: merged,
+        artifacts: artifacts,
+      };
     }
 
     // ── generate_design_artifacts: deterministic extraction ──

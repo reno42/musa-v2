@@ -1246,6 +1246,9 @@ export function generateSharedCss(extraction) {
  */
 export function generateAllArtifacts(frames, templateMeta) {
   var extraction = extractDesignSystem(frames);
+  // Apply semantic gap-filling and structural component discovery
+  extraction = fillSemanticGaps(extraction);
+  extraction.components = discoverStructuralComponents(frames, extraction.colors);
   var fingerprint = computeStyleFingerprint(extraction);
   return {
     sourceHash: extraction.sourceHash,
@@ -1256,4 +1259,422 @@ export function generateAllArtifacts(frames, templateMeta) {
     extraction: extraction,
     generatedAt: new Date().toISOString(),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MULTI-TEMPLATE MERGE
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Merge multiple extraction results from different templates into one
+ * unified design system. Used by extract_design_system when multiple
+ * templateIds are provided.
+ *
+ * Strategy:
+ *   - Colors: merge counts, re-classify after merge
+ *   - Fonts: merge counts, keep top 4
+ *   - Type scale: union of all sizes
+ *   - Spacing/Radii/Shadows: union, sorted
+ *   - Components: intersection (found across templates → higher confidence)
+ */
+export function mergeExtractions(extractions) {
+  if (extractions.length === 0) return null;
+  if (extractions.length === 1) return extractions[0];
+
+  // ── Merge colors ──
+  var mergedColorMap = {}; // hex → {count, hsl}
+  extractions.forEach(function (ext) {
+    ext.colors.forEach(function (c) {
+      if (!c.value) return;
+      if (!mergedColorMap[c.value]) {
+        mergedColorMap[c.value] = { count: 0, hsl: c.hsl };
+      }
+      mergedColorMap[c.value].count += c.usageCount || 0;
+    });
+  });
+
+  var colorEntries = Object.keys(mergedColorMap)
+    .map(function (hex) {
+      return { hex: hex, count: mergedColorMap[hex].count, hsl: mergedColorMap[hex].hsl,
+        saturation: mergedColorMap[hex].hsl ? mergedColorMap[hex].hsl.s : 0,
+        lightness: mergedColorMap[hex].hsl ? mergedColorMap[hex].hsl.l : 0 };
+    })
+    .sort(sortByCountDesc);
+
+  var classified = classifyColors(colorEntries);
+
+  // ── Merge typography ──
+  var familyMap = {};
+  var sizeSet = {};
+  var weightSet = {};
+  var leadingSet = {};
+  var trackingSet = {};
+
+  extractions.forEach(function (ext) {
+    (ext.typography.families || []).forEach(function (f) {
+      familyMap[f.name] = (familyMap[f.name] || 0) + (f.count || 1);
+    });
+    (ext.typography.typeScale || []).forEach(function (s) { sizeSet[s] = true; });
+    (ext.typography.weights || []).forEach(function (w) { weightSet[w] = true; });
+    (ext.typography.leading || []).forEach(function (l) { leadingSet[l] = true; });
+    (ext.typography.tracking || []).forEach(function (t) { trackingSet[t] = true; });
+  });
+
+  var families = Object.keys(familyMap)
+    .map(function (k) { return { name: k, count: familyMap[k] }; })
+    .sort(function (a, b) { return b.count - a.count || a.name.localeCompare(b.name); });
+  var typeScale = Object.keys(sizeSet).map(Number).sort(sortNumberDesc);
+  var weights = Object.keys(weightSet).map(Number).sort(sortNumberDesc);
+  var leading = Object.keys(leadingSet).map(Number).sort(sortNumberDesc);
+  var tracking = Object.keys(trackingSet).map(Number).sort(sortNumberDesc);
+
+  // ── Merge spacing/radii/shadows ──
+  var spacingSet = {};
+  var radiusMap = {};
+  var shadowMap = {};
+
+  extractions.forEach(function (ext) {
+    (ext.spacing || []).forEach(function (s) { spacingSet[s] = (spacingSet[s] || 0) + 1; });
+    (ext.radii || []).forEach(function (r) { radiusMap[r.value] = (radiusMap[r.value] || 0) + (r.count || 1); });
+    (ext.shadows || []).forEach(function (s) { shadowMap[s.value] = (shadowMap[s.value] || 0) + (s.count || 1); });
+  });
+
+  var spacingScale = Object.keys(spacingSet).map(Number).sort(sortNumberDesc);
+  var radii = Object.keys(radiusMap)
+    .map(function (k) { return { value: k, count: radiusMap[k] }; })
+    .sort(sortByCountDesc);
+  var shadows = Object.keys(shadowMap)
+    .map(function (k) { return { value: k, count: shadowMap[k] }; })
+    .sort(sortByCountDesc);
+
+  // ── Merge components (intersection strategy) ──
+  var compMap = {};
+  var templateCount = extractions.length;
+  extractions.forEach(function (ext) {
+    (ext.components || []).forEach(function (c) {
+      if (!compMap[c.selector]) {
+        compMap[c.selector] = { c: c, templateCount: 0 };
+      }
+      compMap[c.selector].templateCount++;
+    });
+  });
+
+  var components = Object.keys(compMap)
+    .map(function (key) {
+      var mc = compMap[key];
+      var coverage = mc.templateCount / templateCount;
+      var confidence = coverage >= 0.6 ? "high" : coverage >= 0.3 ? "medium" : "low";
+      return {
+        selector: mc.c.selector, tag: mc.c.tag, classes: mc.c.classes,
+        frameCount: mc.templateCount, totalFrames: templateCount,
+        coverage: Math.round(coverage * 100) / 100,
+        confidence: confidence, sampleHtml: mc.c.sampleHtml || "",
+      };
+    })
+    .sort(function (a, b) { return b.frameCount - a.frameCount || a.selector.localeCompare(b.selector); });
+
+  // ── Merge images ──
+  var imageSeen = {};
+  var allImages = [];
+  extractions.forEach(function (ext) {
+    (ext.images || []).forEach(function (img) {
+      var key = img.url + "|" + img.selector;
+      if (!imageSeen[key]) { imageSeen[key] = true; allImages.push(img); }
+    });
+  });
+
+  // ── Merge constraints ──
+  var constraintSeen = {};
+  var allConstraints = [];
+  extractions.forEach(function (ext) {
+    (ext.constraints || []).forEach(function (c) {
+      if (!constraintSeen[c.statement]) { constraintSeen[c.statement] = true; allConstraints.push(c); }
+    });
+  });
+  // Add multi-template fact
+  allConstraints.unshift({ type: "meta", statement: "Merged from " + templateCount + " templates." });
+
+  // ── Source hash (combined) ──
+  var combinedHash = crypto.createHash("sha256")
+    .update(extractions.map(function (e) { return e.sourceHash; }).join("|"))
+    .digest("hex").substring(0, 32);
+
+  var merged = {
+    sourceHash: combinedHash,
+    colors: classified,
+    typography: { families: families, typeScale: typeScale, weights: weights, leading: leading, tracking: tracking },
+    spacing: spacingScale,
+    radii: radii,
+    shadows: shadows,
+    components: components,
+    images: allImages,
+    constraints: allConstraints,
+    cssImports: [],
+    atRules: [],
+    parserLimitations: "Merged from " + templateCount + " template extractions.",
+  };
+
+  // Apply gap-filling on merged result
+  merged = fillSemanticGaps(merged);
+
+  return merged;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SEMANTIC COLOR GAP-FILLING
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Fill missing semantic color roles (success, warning, error, info)
+ * by deriving them from the existing palette using color theory.
+ *
+ * Strategy:
+ *   - Find the main accent color (highest count among accents)
+ *   - Derive success (green) by shifting accent hue toward 120°
+ *   - Derive warning (amber) by shifting toward 45°
+ *   - Derive error (red) by shifting toward 0°/360°
+ *   - Derive info (blue) by shifting toward 210°
+ *   - Maintain similar lightness/saturation profile as accent
+ */
+export function fillSemanticGaps(extraction) {
+  var colors = extraction.colors || [];
+
+  // Check what semantic roles already exist (heuristic naming detection)
+  var hasSuccess = colors.some(function (c) {
+    return /success|green|confirm|valid|positive/.test(c.token || "");
+  });
+  var hasWarning = colors.some(function (c) {
+    return /warning|amber|yellow|caution|alert/.test(c.token || "");
+  });
+  var hasError = colors.some(function (c) {
+    return /error|red|danger|invalid|negative|destructive/.test(c.token || "");
+  });
+  var hasInfo = colors.some(function (c) {
+    return /info|blue|neutral/.test(c.token || "");
+  });
+
+  // Find the primary accent color to derive from
+  var accents = colors.filter(function (c) { return c.role === "accent"; });
+  var primaryAccent = null;
+  var mostUsed = 0;
+  accents.forEach(function (c) {
+    if (c.usageCount > mostUsed) { mostUsed = c.usageCount; primaryAccent = c; }
+  });
+  // Fallback: use the first accent
+  if (!primaryAccent && accents.length > 0) primaryAccent = accents[0];
+
+  if (!primaryAccent) {
+    // No accent at all — use a sensible default base
+    primaryAccent = { value: "#6C5CE7", hsl: rgbToHsl(108, 92, 231) };
+  }
+
+  var baseHsl = primaryAccent.hsl;
+
+  // Derive colors from accent using fixed hue shifts
+  var derive = function (hueShift, role, token) {
+    var h = ((baseHsl.h + hueShift) % 360 + 360) % 360;
+    // Make semantic colors more saturated and mid-lightness for visibility
+    var s = Math.min(1, Math.max(0.4, baseHsl.s * 1.1));
+    var l = Math.min(0.85, Math.max(0.3, baseHsl.l > 0.6 ? 0.45 : baseHsl.l < 0.3 ? 0.5 : baseHsl.l));
+    var rgb = hslToRgb(h, s, l);
+    return {
+      token: "--color-" + token,
+      value: "#" + rgb.r.toString(16).padStart(2, "0") + rgb.g.toString(16).padStart(2, "0") + rgb.b.toString(16).padStart(2, "0"),
+      role: role,
+      usageCount: 0,
+      hsl: { h: h, s: s, l: l },
+      _derived: true,
+    };
+  };
+
+  var newColors = colors.slice();
+
+  if (!hasSuccess) {
+    newColors.push(derive(120, "success", "success"));
+  }
+  if (!hasWarning) {
+    newColors.push(derive(45, "warning", "warning"));
+  }
+  if (!hasError) {
+    newColors.push(derive(0, "error", "error"));
+  }
+  if (!hasInfo) {
+    newColors.push(derive(210, "info", "info"));
+  }
+
+  return Object.assign({}, extraction, { colors: newColors });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STRUCTURAL COMPONENT DISCOVERY (80/20)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Discover component patterns by DOM structure heuristics.
+ * Falls back to palette-derived defaults when nothing is found.
+ *
+ * 80/20 rule: quick heuristics only. No deep edge-case handling.
+ * If detection is ambiguous → deliver defaults.
+ */
+export function discoverStructuralComponents(frames, palette) {
+  if (!frames || frames.length === 0) return [];
+
+  var discovered = [];
+  var paletteColors = palette || [];
+  var accentColor = "#6C5CE7";
+  var bgColor = "#FFFFFF";
+  var textColor = "#1A1A2E";
+
+  paletteColors.forEach(function (c) {
+    if (c.role === "accent" && !accentColor) accentColor = c.value;
+    if (c.role === "background" && !bgColor) bgColor = c.value;
+    if (c.role === "text" && !textColor) textColor = c.value;
+  });
+
+  // Heuristic 1: Rounded rectangle with text → button
+  var buttonCandidates = [];
+  frames.forEach(function (frame) {
+    try {
+      var $ = cheerio.load(frame.html || "");
+      $("*").each(function (_, el) {
+        var $el = $(el);
+        var style = ($el.attr("style") || "").toLowerCase();
+        var hasBorderRadius = /border-radius\s*:\s*(\d+)px/.test(style);
+        var hasBg = /background(-color)?\s*:/.test(style);
+        var text = $el.text().trim();
+        var hasText = text.length > 0 && text.length < 80;
+        var hasChildren = $el.children().length === 0 ||
+          ($el.children().length === 1 && $el.children().first().text().trim() === text);
+
+        if (hasBorderRadius && hasBg && hasText && hasChildren) {
+          // Extract the border-radius value
+          var rxMatch = style.match(/border-radius\s*:\s*(\d+)px/);
+          var rx = rxMatch ? parseInt(rxMatch[1]) : 8;
+          var elTag = ($el.prop("tagName") || "button").toLowerCase();
+          buttonCandidates.push({ tag: elTag, radius: rx, text: text.substring(0, 60) });
+        }
+      });
+    } catch (e) { /* skip */ }
+  });
+
+  if (buttonCandidates.length > 0) {
+    var avgRadius = Math.round(buttonCandidates.reduce(function (s, b) { return s + b.radius; }, 0) / buttonCandidates.length);
+    discovered.push({
+      type: "button",
+      selector: ".btn",
+      tag: "button",
+      frameCount: buttonCandidates.length,
+      totalFrames: frames.length,
+      coverage: Math.min(1, buttonCandidates.length / frames.length),
+      confidence: buttonCandidates.length >= 2 ? "high" : "medium",
+      sampleHtml: "<button class=\"btn\" style=\"background:" + accentColor + ";color:" + bgColor + ";border-radius:" + avgRadius + "px;padding:12px 24px;border:none;cursor:pointer;\">" + (buttonCandidates[0].text || "Button") + "</button>",
+    });
+  }
+
+  // Heuristic 2: Container with img + heading + paragraph → card
+  var cardCandidates = 0;
+  frames.forEach(function (frame) {
+    try {
+      var $ = cheerio.load(frame.html || "");
+      $("div, article, section").each(function (_, el) {
+        var $el = $(el);
+        var hasImg = $el.find("img").length > 0;
+        var hasHeading = $el.find("h1, h2, h3, h4, h5, h6").length > 0;
+        var hasP = $el.find("p").length > 0;
+        if (hasImg && hasHeading && hasP) {
+          cardCandidates++;
+          return false; // break each loop
+        }
+      });
+    } catch (e) { /* skip */ }
+  });
+
+  if (cardCandidates > 0) {
+    var cardRadius = 12;
+    // Try to detect radius from first card
+    frames.forEach(function (frame) {
+      try {
+        var $ = cheerio.load(frame.html || "");
+        $("div[style*='border-radius']").each(function (_, el) {
+          var style = ($(el).attr("style") || "").toLowerCase();
+          var rxMatch = style.match(/border-radius\s*:\s*(\d+)px/);
+          if (rxMatch) { cardRadius = parseInt(rxMatch[1]); return false; }
+        });
+      } catch (e) { /* skip */ }
+    });
+
+    discovered.push({
+      type: "card",
+      selector: ".card",
+      tag: "div",
+      frameCount: cardCandidates,
+      totalFrames: frames.length,
+      coverage: Math.min(1, cardCandidates / frames.length),
+      confidence: cardCandidates >= 2 ? "high" : "medium",
+      sampleHtml: "<div class=\"card\" style=\"background:" + bgColor + ";border-radius:" + cardRadius + "px;overflow:hidden;\"><img src=\"\" alt=\"\"/><h3>Card Title</h3><p>Card description</p></div>",
+    });
+  }
+
+  // Heuristic 3: input/textarea elements → form input
+  var inputCount = 0;
+  frames.forEach(function (frame) {
+    try {
+      var $ = cheerio.load(frame.html || "");
+      inputCount += $("input, textarea, select").length;
+    } catch (e) { /* skip */ }
+  });
+
+  if (inputCount > 0) {
+    discovered.push({
+      type: "input",
+      selector: ".input",
+      tag: "input",
+      frameCount: inputCount,
+      totalFrames: frames.length,
+      coverage: Math.min(1, inputCount / Math.max(1, frames.length)),
+      confidence: "medium",
+      sampleHtml: "<input class=\"input\" type=\"text\" placeholder=\"Enter text…\" style=\"background:" + bgColor + ";color:" + textColor + ";border:1px solid rgba(0,0,0,0.1);padding:10px 16px;border-radius:8px;\"/>",
+    });
+  }
+
+  // ── Default components if nothing detected ──
+  if (discovered.length === 0) {
+    // Button defaults
+    discovered.push({
+      type: "button", selector: ".btn", tag: "button",
+      frameCount: 1, totalFrames: frames.length, coverage: 1,
+      confidence: "low", _default: true,
+      sampleHtml: "<button class=\"btn\" style=\"background:" + accentColor + ";color:#fff;border-radius:8px;padding:12px 24px;border:none;cursor:pointer;font-weight:600;\">Button</button>",
+    });
+    discovered.push({
+      type: "button-secondary", selector: ".btn-secondary", tag: "button",
+      frameCount: 1, totalFrames: frames.length, coverage: 1,
+      confidence: "low", _default: true,
+      sampleHtml: "<button class=\"btn-secondary\" style=\"background:transparent;color:" + accentColor + ";border:2px solid " + accentColor + ";border-radius:8px;padding:12px 24px;cursor:pointer;font-weight:600;\">Secondary</button>",
+    });
+    discovered.push({
+      type: "button-ghost", selector: ".btn-ghost", tag: "button",
+      frameCount: 1, totalFrames: frames.length, coverage: 1,
+      confidence: "low", _default: true,
+      sampleHtml: "<button class=\"btn-ghost\" style=\"background:transparent;color:" + accentColor + ";border:none;padding:12px 24px;cursor:pointer;font-weight:600;\">Ghost</button>",
+    });
+
+    // Card default
+    discovered.push({
+      type: "card", selector: ".card", tag: "div",
+      frameCount: 1, totalFrames: frames.length, coverage: 1,
+      confidence: "low", _default: true,
+      sampleHtml: "<div class=\"card\" style=\"background:" + bgColor + ";border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);\"><img src=\"\" alt=\"\" style=\"width:100%;\"/><div style=\"padding:16px;\"><h3>Card Title</h3><p>Card description text goes here.</p></div></div>",
+    });
+
+    // Input default
+    discovered.push({
+      type: "input", selector: ".input", tag: "input",
+      frameCount: 1, totalFrames: frames.length, coverage: 1,
+      confidence: "low", _default: true,
+      sampleHtml: "<input class=\"input\" type=\"text\" placeholder=\"Enter text…\" style=\"background:" + bgColor + ";color:" + textColor + ";border:1px solid rgba(0,0,0,0.1);padding:10px 16px;border-radius:8px;font-size:14px;width:100%;\"/>",
+    });
+  }
+
+  return discovered;
 }

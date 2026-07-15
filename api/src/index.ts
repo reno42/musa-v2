@@ -20,6 +20,7 @@ import { fontRoutes } from "./routes/fonts.js";
 import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
+import { designSystemRoutes } from "./routes/designSystem.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -68,6 +69,7 @@ app.use("/api/templates", fontRoutes);
 app.use("/api/templates", componentRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/assets", assetRoutes);
+app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
 // ── Google Fonts Catalog ──
