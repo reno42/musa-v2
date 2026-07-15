@@ -217,7 +217,7 @@ Agent (Claude / Cursor / Custom)
 | Teams | `create_team`, `list_teams`, `get_team`, `invite_to_team`, `list_team_members`, `remove_team_member`, `update_team_member_role`, `share_workspace_with_team` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
 | Format | `detect_structure`, `adapt_format`, `adapt_all_formats`, `compare_adaptations` | 4 |
-| Design System | `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 10 |
+| Design System | `generate_design_artifacts`, `get_design_artifacts`, `generate_brand_manual`, `verify_design_system`, `extract_design_system`, `duplicate_frame`, `update_frame_content`, `get_frame_changes`, `profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames` | 11 |
 | Brand Guidelines DB | `create_brand_guideline`, `get_brand_guideline`, `list_brand_guidelines`, `update_brand_guideline`, `delete_brand_guideline`, `apply_brand_to_template`, `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 11 |
 | Render | `render_html_template`, `render_to_formats` | 2 |
 
@@ -243,6 +243,7 @@ Agent (Claude / Cursor / Custom)
 | `remove_element` | `templateId`, `elementId` | — | `{ success }` |
 | `transform_element` | `templateId`, `elementId` | `x`, `y`, `width`, `height`, `rotation` | `{ success }` |
 | `generate_design_artifacts` | `templateId` | `action` ("generate"/"publish"), `brandName` | `{ designMd, tokensJson, sharedCss, sourceHash }` |
+| `extract_design_system` | `templateIds`, `workspaceId` | `name` | `{ extraction, artifacts: { tokensJson, sharedCss, designMd } }` |
 | `export_batch` | `templateId` | `frameIds`, `format` ("png"/"svg"/"pdf") | `{ urls }` |
 
 **Important constants:**
@@ -345,6 +346,26 @@ tools/call: generate_design_artifacts({ templateId: tplId, action: "generate" })
 // Publish to template metadata + optionally to brand_guidelines table:
 tools/call: generate_design_artifacts({ templateId: tplId, action: "publish", brandName: "Acme Corp" })
   → { designMd, tokensJson, sharedCss, _published: true, brandId: "brand_abc123" }
+```
+
+**Pattern 4b: Multi-template design system extraction**
+```
+// Analyze multiple posts/stories/formats → one unified design system
+// Merges colors, typography, spacing, radii, shadows across all templates
+// Fills missing semantic colors (success green, error red, warning amber, info blue)
+// Discovers components by structure: rounded rect+text→button, img+heading+p→card
+// Falls back to palette-derived defaults when nothing found
+// Deterministic: same input → same output, zero AI opinion
+tools/call: extract_design_system({
+  templateIds: ["tpl_post1", "tpl_post2", "tpl_story1", "tpl_carousel1"],
+  workspaceId: wsId,
+  name: "Futuraria Brand System"
+})
+  → {
+    templatesAnalyzed: 4, totalFrames: 15,
+    extraction: { colors: [...], typography: {...}, components: [...], ... },
+    artifacts: { tokensJson, sharedCss, designMd, styleFingerprint }
+  }
 ```
 
 **Pattern 5: Retrieve + check staleness of stored artifacts**
@@ -1443,6 +1464,23 @@ The MCP server has a more sophisticated batch pipeline:
 3. **`apply_csv_to_frames`** — Applies filled CSV to generate frames using cheerio DOM manipulation
 
 The MCP tools use `data-slot` attributes for explicit slot naming and support overflow handling (truncate/skip/warn), slot types (text/image/cta), and multi-template pools with `_template` column.
+
+### Design System Extraction (`extract_design_system`)
+
+**Purpose:** Analyze one or more templates and extract a complete, deterministic design system. Zero AI opinion — same input always produces identical output.
+
+**Multi-template mode:** When multiple `templateIds` are provided, extracts from all templates and merges into one unified design system. Colors are re-classified after merge, fonts are combined, and shared components get higher confidence.
+
+**Semantic gap-filling:** If the designs don't contain success/warning/error/info colors, they are derived from the accent hue using color theory (green=+120°, amber=+45°, red=0°, blue=+210°). This ensures a complete palette even if the source posts only use brand colors.
+
+**Structural component discovery:** Scans DOM structure for patterns:
+- Rounded rectangle with text child → **button** (with radius detected)
+- Container with img + heading + paragraph → **card**
+- Input/textarea elements → **form input**
+
+If no patterns are found, falls back to palette-derived defaults: `.btn` (primary), `.btn-secondary`, `.btn-ghost`, `.card`, `.input`.
+
+**Output:** Full extraction with colors (classified by role: background, text, accent, muted + derived success/error/warning/info), typography (families, scale, weights), spacing scale, border radii, shadows, components, and three artifacts: `tokens.json` (DTCG format), `shared.css` (:root variables + component classes), `DESIGN.md` (structured markdown).
 
 ## Keyboard Shortcuts
 

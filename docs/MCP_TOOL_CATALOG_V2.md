@@ -1,4 +1,4 @@
-# 🔧 MCP Tool Catalog — Design Harness v2 (Análisis Completo)
+﻿# 🔧 MCP Tool Catalog — Design Harness v2 (Análisis Completo)
 
 > **Fecha:** 18 Junio 2026, 13:50 GMT-5 | **Autor:** Lara  
 > **Principio:** 100% MCP-first. Toda operación es una MCP tool. El editor UI es un cliente más del MCP.
@@ -75,6 +75,15 @@
 | Tool | Qué hace | Necesita |
 |------|----------|----------|
 | `batch_design_from_csv` | Crea variantes desde CSV | Adaptar para HTML engine |
+| `extract_design_system` | Extrae sistema de diseño completo desde uno o múltiples templates. Multi-template: mergea paletas, tipografía, spacing, componentes. Rellena colores semánticos faltantes (success/warning/error/info). Descubre componentes estructurales (botón, card, input). Output: tokens.json DTCG + shared.css + DESIGN.md. Determinístico: mismo input → mismo output. | ✅ Implementado |
+
+
+### Design System Extraction
+
+| Tool | Description |
+|------|-------------|
+| `extract_design_system` | Analyze N templates, merge colors/typography/spacing/radii/shadows. Derive missing semantic colors (success/error/warning/info) from accent hue. Discover structural components (rounded+text=button, img+heading+p=card, input=form). Fallback to palette-defaults. Output: tokens.json, shared.css, DESIGN.md, style fingerprint. |
+
 
 ### Render (existente, adaptable)
 | Tool | Qué hace | Necesita |
