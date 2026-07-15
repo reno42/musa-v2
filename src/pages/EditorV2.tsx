@@ -15,6 +15,7 @@ import type { FrameData, LayerSelectionRequest, SelectedElementInfo, ShapeOption
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
+import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
@@ -2064,6 +2065,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImageUpload, setShowImageUpload] = useState(false);
+  const [showBatch, setShowBatch] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   const handleSaveRecipe = useCallback(async () => {
@@ -2871,6 +2873,18 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
         >
           <IconLink size={14} />
         </button>
+
+        {/* Batch-a-mator */}
+        <div className="editor-v2-topbar-sep" />
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowBatch(true)}
+          title="Batch-a-mator — Generate designs from CSV"
+        >
+          <IconGrid size={14} />
+          <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
+        </button>
       </div>
 
       {/* ═══ Font Picker Dropdown ═══ */}
@@ -3136,6 +3150,14 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
               addToast("Error al subir la imagen.", "error");
             }
           }}
+        />
+      )}
+
+      {/* ═══ Batch-a-mator ═══ */}
+      {showBatch && (
+        <BatchAMator
+          templateId={templateId}
+          onClose={() => setShowBatch(false)}
         />
       )}
 
