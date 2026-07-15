@@ -1754,8 +1754,7 @@ export function generateManualFrames(extraction, designName) {
       '    <span>' + (extraction.typography && extraction.typography.families ? extraction.typography.families.length : 0) + ' Font Families</span>',
       '  </div>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: linear-gradient(135deg, ' + bg + ' 0%, ' + bg + ' 40%, ' + gradColor + '22 100%); font-family: "Inter", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; overflow: hidden; }',
@@ -1765,8 +1764,7 @@ export function generateManualFrames(extraction, designName) {
       '.cover-sub { font-size: 18px; color: ' + muted + '; margin-bottom: 48px; }',
       '.cover-meta { display: flex; gap: 24px; justify-content: center; }',
       '.cover-meta span { background: ' + bg + '; color: ' + text + '; padding: 10px 24px; border-radius: 12px; font-size: 15px; font-weight: 500; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   // ── FRAME 2: Color Palette ──
@@ -1774,8 +1772,7 @@ export function generateManualFrames(extraction, designName) {
     var isDerived = c._derived ? ' derived' : '';
     var hex = c.value || '#ccc';
     return '<div class="swatch' + isDerived + '"><div class="swatch-color" style="background:' + hex + '"></div><div class="swatch-info"><strong>' + escapeHtml(hex) + '</strong><span>' + escapeHtml(c.role || 'other') + '</span></div></div>';
-  }).join("
-");
+  }).join("\n");
 
   frames.push({
     name: "02 — Colors",
@@ -1788,8 +1785,7 @@ export function generateManualFrames(extraction, designName) {
       '  </div>',
       '  <p class="legend">🤖 <em>Derived</em> = auto-filled using color theory. ✅ <em>Extracted</em> = found in the design.</p>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: ' + bg + '; font-family: "Inter", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; }',
@@ -1804,8 +1800,7 @@ export function generateManualFrames(extraction, designName) {
       '.swatch-info span { font-size: 12px; color: ' + muted + '; text-transform: capitalize; }',
       '.swatch.derived .swatch-color { border: 2px dashed ' + muted + '; }',
       '.legend { font-size: 13px; color: ' + muted + '; }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   // ── FRAME 3: Typography ──
@@ -1817,13 +1812,11 @@ export function generateManualFrames(extraction, designName) {
 
   var scaleRows = scale.map(function(s) {
     return '<tr><td class="size-preview" style="font-size:' + s + 'px">Aa</td><td>' + s + 'px</td></tr>';
-  }).join("
-");
+  }).join("\n");
 
   var weightRows = weights.map(function(w) {
     return '<tr><td class="weight-preview" style="font-weight:' + w + '">' + primaryFont + '</td><td>' + w + '</td></tr>';
-  }).join("
-");
+  }).join("\n");
 
   var foxText = '<p class="fox" style="font-family:\"' + primaryFont + '\", sans-serif">The quick brown fox jumps over the lazy dog.</p>';
 
@@ -1849,8 +1842,7 @@ export function generateManualFrames(extraction, designName) {
       '    </div>',
       '  </div>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: ' + bg + '; font-family: "' + primaryFont + '", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; }',
@@ -1869,8 +1861,7 @@ export function generateManualFrames(extraction, designName) {
       '.typo-table td { padding: 10px 0; font-size: 14px; color: ' + text + '; border-bottom: 1px solid ' + muted + '22; }',
       '.size-preview { font-weight: 600; line-height: 1.2; }',
       '.weight-preview { line-height: 1.4; }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   // ── FRAME 4: Components (code snippets, not rendered) ──
@@ -1890,10 +1881,8 @@ export function generateManualFrames(extraction, designName) {
       '  </div>',
       '  <pre class="comp-code">' + (escaped || '<span class="no-code">(no sample)</span>') + '</pre>',
       '</div>',
-    ].join("
-");
-  }).join("
-");
+    ].join("\n");
+  }).join("\n");
 
   if (!compCards) {
     compCards = '<p class="no-comps">No components detected — the design may use utility classes or inline styles.</p>';
@@ -1909,8 +1898,7 @@ export function generateManualFrames(extraction, designName) {
       compCards,
       '  </div>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: ' + bg + '; font-family: "Inter", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; }',
@@ -1930,25 +1918,21 @@ export function generateManualFrames(extraction, designName) {
       '.comp-code { background: ' + text + '08; padding: 12px; border-radius: 8px; font-family: "JetBrains Mono", monospace; font-size: 11px; color: ' + text + '; overflow-x: auto; white-space: pre-wrap; line-height: 1.6; max-height: 120px; overflow-y: auto; }',
       '.no-code { color: ' + muted + '; font-style: italic; }',
       '.no-comps { font-size: 16px; color: ' + muted + '; }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   // ── FRAME 5: Spacing, Radii, Shadows ──
   var spacingRows = (extraction.spacing || []).map(function(s) {
     return '<tr><td><code>--space-' + s + '</code></td><td>' + s + 'px</td></tr>';
-  }).join("
-");
+  }).join("\n");
 
   var radiiRows = (extraction.radii || []).map(function(r) {
     return '<tr><td><code>' + escapeHtml(r.value || '') + '</code></td><td>Used ' + (r.count || 0) + '×</td></tr>';
-  }).join("
-");
+  }).join("\n");
 
   var shadowRows = (extraction.shadows || []).map(function(s) {
     return '<tr><td style="font-family:monospace;font-size:11px">' + escapeHtml((s.value || '').substring(0, 60)) + '</td><td>' + (s.count || 0) + '×</td></tr>';
-  }).join("
-");
+  }).join("\n");
 
   frames.push({
     name: "05 — Tokens",
@@ -1971,8 +1955,7 @@ export function generateManualFrames(extraction, designName) {
       '    </div>',
       '  </div>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: ' + bg + '; font-family: "Inter", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; }',
@@ -1987,8 +1970,7 @@ export function generateManualFrames(extraction, designName) {
       '.token-table td { padding: 10px 0; font-size: 14px; color: ' + text + '; border-bottom: 1px solid ' + muted + '22; }',
       '.token-table td code { font-size: 13px; background: ' + accent + '11; padding: 2px 8px; border-radius: 4px; font-family: "JetBrains Mono", monospace; }',
       '.empty { color: ' + muted + '; font-style: italic; text-align: center; }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   // ── FRAME 6: Artifacts ──
@@ -2025,8 +2007,7 @@ export function generateManualFrames(extraction, designName) {
       '    <p class="fp-note">Same input always produces this exact fingerprint — the system is fully deterministic.</p>',
       '  </div>',
       '</div>',
-    ].join("
-"),
+    ].join("\n"),
     css: [
       '* { margin: 0; padding: 0; box-sizing: border-box; }',
       'body { background: ' + bg + '; font-family: "Inter", system-ui, sans-serif; width: ' + W + 'px; height: ' + H + 'px; display: flex; align-items: center; justify-content: center; }',
@@ -2043,8 +2024,7 @@ export function generateManualFrames(extraction, designName) {
       '.fp-label { font-size: 12px; font-weight: 600; color: ' + muted + '; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px; }',
       '.fp-hash { font-size: 14px; font-family: "JetBrains Mono", monospace; color: ' + text + '; word-break: break-all; }',
       '.fp-note { font-size: 13px; color: ' + muted + '; margin-top: 8px; }',
-    ].join("
-"),
+    ].join("\n"),
   });
 
   return frames;
