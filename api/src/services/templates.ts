@@ -31,6 +31,34 @@ function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
   };
 }
 
+/**
+ * Cap a thumbnail frame so a single huge frame (e.g. base64 images inlined
+ * by batch generation) can't blow up the list payload. The dashboard falls
+ * back to a placeholder card when html is empty.
+ */
+const THUMBNAIL_FRAME_BUDGET = 300_000;
+function thumbnailFrame<T extends { html?: string; css?: string }>(frame: T): T {
+  const size = (frame.html?.length || 0) + (frame.css?.length || 0);
+  return size > THUMBNAIL_FRAME_BUDGET ? { ...frame, html: "", css: "" } : frame;
+}
+
+/**
+ * Clone a template into a list summary: first frame only (thumbnail),
+ * no canvas/versions/top-level html. Cloning matters — in-memory store
+ * entries are returned by reference and must not be mutated by listings.
+ */
+function toListSummary(tpl: DesignTemplate): DesignTemplate {
+  const first = tpl.frames?.[0];
+  return {
+    ...tpl,
+    canvas: null,
+    html: "",
+    css: "",
+    versions: [],
+    frames: first ? [thumbnailFrame({ ...first })] : [],
+  };
+}
+
 /** Race a Supabase query against a timeout so the Netlify Function doesn't hang. */
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T | null> {
   return Promise.race([
@@ -45,11 +73,12 @@ async function listFromSupabase(
   const sb = getSupabase();
   if (!sb) return null;
   try {
-    // Select lightweight columns to avoid loading bloated JSONB data column.
-    // The dashboard only needs id, name, dimensions, engine and updatedAt.
-    // Full template data is loaded on-demand via GET /:id.
+    // Lean select: never pull the full `data` JSONB column when listing.
+    // Postgres extracts the scalars and ONLY the first frame (dashboard
+    // thumbnail) server-side. Pulling whole rows made the response grow
+    // with every batch-generated design until Netlify answered 502.
     const queryPromise = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, data", { count: "exact" })
+      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, first_frame:data->frames->0", { count: "exact" })
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -61,12 +90,25 @@ async function listFromSupabase(
     }
     const { data, count, error } = result as any;
     if (error) throw error;
-    let items = (data || []).map((r: any) => {
-      const tpl = rowToTemplate(r);
-      // Strip heavy fields not needed for the dashboard list view
-      tpl.versions = [];
-      return tpl;
-    });
+    let items = (data || []).map((r: any): DesignTemplate => ({
+      id: r.id,
+      name: r.name,
+      workspaceId: r.workspace_id,
+      width: Number(r.width) || 1080,
+      height: Number(r.height) || 1080,
+      engine: (r.engine as "html") || "html",
+      canvas: null,
+      frames: r.first_frame ? [thumbnailFrame(r.first_frame)] : [],
+      styles: [],
+      comments: [],
+      versions: [],
+      variables: {} as DesignTemplate["variables"],
+      components: [],
+      metadata: {
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      } as DesignTemplate["metadata"],
+    }));
     // Client-side filters (Supabase .eq on custom-format IDs may not match UUID columns)
     if (workspaceId) {
       items = items.filter((t: DesignTemplate) => t.workspaceId === workspaceId);
@@ -167,13 +209,15 @@ export async function listTemplatesPaginated(
   const fromSb = await listFromSupabase(limit, offset, workspaceId, search);
   const fromStore = store.listTemplates(workspaceId, 99999, 0);
 
-  // Merge Supabase + in-memory store, deduping by ID (store takes precedence)
+  // Merge Supabase + in-memory store, deduping by ID (store takes precedence).
+  // Everything is reduced to a list summary (first frame only) so the response
+  // stays small no matter how many heavy designs exist.
   const merged = new Map<string, DesignTemplate>();
   if (fromSb) {
-    for (const t of fromSb.data) merged.set(t.id, t);
+    for (const t of fromSb.data) merged.set(t.id, t); // already lean from the DB
   }
   for (const t of fromStore.data) {
-    merged.set(t.id, t); // store overrides Supabase for same ID
+    merged.set(t.id, toListSummary(t)); // store overrides Supabase for same ID
   }
 
   let data = [...merged.values()];

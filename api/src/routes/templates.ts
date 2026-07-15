@@ -119,12 +119,9 @@ templateRoutes.get("/", async (req, res) => {
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;
 
+    // listTemplatesPaginated returns lean summaries (first frame only, no
+    // versions/canvas) — see toListSummary in services/templates.ts (502 fix).
     const result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
-
-    // Strip versions from list results — not needed for listing, reduces payload (502 fix)
-    for (const t of result.data) {
-      if (t.versions) t.versions = [];
-    }
 
     res.json({
       success: true,
