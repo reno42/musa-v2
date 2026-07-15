@@ -5902,7 +5902,7 @@ async function handleMethod(method, params, userId) {
         // Fallback: use first template's workspace
         if (!wsId && templateIds.length > 0) {
           var firstTpl = await templates.getTemplate(templateIds[0]);
-          wsId = firstTpl && firstTpl.workspace_id;
+          wsId = (firstTpl && (firstTpl.workspace_id || firstTpl.workspaceId)) || null;
         }
         if (wsId) {
           var manualFrames = generateManualFrames(merged, designName);

@@ -3115,7 +3115,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <VariablesPanel templateId={templateId} onCssUpdated={(c: string) => handleCssChange(c)} />
           )}
           {rightPanelTab === "brand" && (
-            <BrandPanel templateId={templateId} onCssUpdated={(c: string) => handleCssChange(c)} />
+            <BrandPanel templateId={templateId} workspaceId={templateWorkspaceId} onCssUpdated={(c: string) => handleCssChange(c)} />
           )}
           {rightPanelTab === "format" && (
             <FormatPanel templateId={templateId} width={selectedFrame?.width ?? 1080} height={selectedFrame?.height ?? 1080} onTemplateCreated={(id: string) => {

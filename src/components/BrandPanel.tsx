@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/supabase";
 
 interface Props {
   templateId: string;
+  workspaceId?: string;
   onCssUpdated: (css: string) => void;
 }
 
@@ -19,7 +20,7 @@ const btnStyle: React.CSSProperties = {
   fontFamily: "inherit", width: "100%", textAlign: "left" as const,
 };
 
-export function BrandPanel({ templateId, onCssUpdated }: Props) {
+export function BrandPanel({ templateId, workspaceId, onCssUpdated }: Props) {
   const [brandCheck, setBrandCheck] = useState<any>(null);
   const [contrast, setContrast] = useState<any>(null);
   const [a11y, setA11y] = useState<any>(null);
@@ -296,7 +297,7 @@ export function BrandPanel({ templateId, onCssUpdated }: Props) {
             method: "POST",
             body: JSON.stringify({
               jsonrpc: "2.0", method: "extract_design_system",
-              params: { templateIds: [templateId], name: "Current Template" },
+              params: { templateIds: [templateId], workspaceId: workspaceId || undefined, name: "Current Template" },
               id: 0,
             }),
           });
