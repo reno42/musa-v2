@@ -1454,10 +1454,10 @@ export function mergeExtractions(extractions) {
  *
  * Strategy:
  *   - Find the main accent color (highest count among accents)
- *   - Derive success (green) by shifting accent hue toward 120°
- *   - Derive warning (amber) by shifting toward 45°
- *   - Derive error (red) by shifting toward 0°/360°
- *   - Derive info (blue) by shifting toward 210°
+ *   - Derive success (green) at absolute hue 120°
+ *   - Derive warning (amber) at absolute hue 45°
+ *   - Derive error (red) at absolute hue 0°/360°
+ *   - Derive info (blue) at absolute hue 210°
  *   - Maintain similar lightness/saturation profile as accent
  */
 export function fillSemanticGaps(extraction) {
@@ -1494,9 +1494,9 @@ export function fillSemanticGaps(extraction) {
 
   var baseHsl = primaryAccent.hsl;
 
-  // Derive colors from accent using fixed hue shifts
-  var derive = function (hueShift, role, token) {
-    var h = ((baseHsl.h + hueShift) % 360 + 360) % 360;
+  // Derive semantic colors at absolute hue positions (not shifts from accent)
+  var derive = function (targetHue, role, token) {
+    var h = ((targetHue % 360) + 360) % 360;
     // Make semantic colors more saturated and mid-lightness for visibility
     var s = Math.min(1, Math.max(0.4, baseHsl.s * 1.1));
     var l = Math.min(0.85, Math.max(0.3, baseHsl.l > 0.6 ? 0.45 : baseHsl.l < 0.3 ? 0.5 : baseHsl.l));
