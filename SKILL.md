@@ -756,14 +756,14 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Fabric.js canvas editor for the Futuraria Design platform. Full WYSIWYG design tool with 14 drawing tools, boolean operations, alignment/distribution, auto-layout, frame management, layers panel, properties inspector, batch generation (3 modes), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Scores 100/100 on react-doctor health audit. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (145+ tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
 
 ## Overview
 
-You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application that wraps Fabric.js v6 for a full WYSIWYG design experience. The editor is deployed on **Netlify** with a serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write freemium model: Supabase when configured, in-memory fallback when not).
+You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application that uses a **Shadow DOM HTML rendering engine** for full WYSIWYG design. Each frame is real HTML+CSS rendered inside a Shadow DOM (no Fabric.js, no canvas 2D API) — pure browser CSS engine. The editor is deployed on **Netlify** with a serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write freemium model: Supabase when configured, in-memory fallback when not).
 
 **React-Doctor Score:** 100/100 (clean bill of health)
 **Production URL:** `https://futuraria.netlify.app`
@@ -780,18 +780,25 @@ design-main/
 │   ├── App.tsx                   — Root, useReducer, routing
 │   ├── components/
 │   │   ├── Dashboard.tsx         — Template gallery, workspace selector
-│   │   ├── CanvasEditor.tsx      — Fabric.js mount + template loader
-│   │   ├── Toolbar.tsx           — 14 drawing tools + controls
-│   │   ├── PropertiesPanel.tsx   — Object inspector
-│   │   ├── LayersPanel.tsx       — Layer manager
-│   │   ├── BatchAMator.tsx       — Batch generation (3 modes)
+│   │   ├── EditorV2.tsx             — Main editor (Shadow DOM HTML engine)
+│   │   ├── DesignFrame.tsx       — Per-frame Shadow DOM renderer
+│   │   ├── InfiniteHtmlCanvas.tsx — Pannable/zoomable canvas container
+│   │   ├── HtmlToolbar.tsx       — HTML element insertion toolbar
+│   │   ├── HtmlLayersPanel.tsx   — Layer manager (DOM tree)
+│   │   ├── HtmlContextualPanel.tsx — Right-click actions
+│   │   ├── ElementProperties.tsx — CSS property inspector
+│   │   ├── BatchAMator.tsx       — Batch generation from CSV (3 modes)
+│   │   ├── CodePanel.tsx        — Live HTML/CSS code editor
+│   │   ├── AIPanel.tsx          — AI design generation
+│   │   ├── InsertToolbar.tsx    — Element insertion bar
+│   │   ├── FloatingToolbar.tsx  — Contextual floating toolbar
 │   │   ├── KeyboardShortcuts.tsx — Shortcuts modal
 │   │   ├── Toast.tsx             — Toast notifications
 │   │   └── toolbar/              — Toolbar sub-components
 │   ├── hooks/
-│   │   ├── useCanvas.ts          — Fabric.js canvas operations (689 lines)
-│   │   ├── useAutoSave.ts        — Dual-write auto-save (223 lines)
-│   │   └── useDropdowns.ts       — Dropdown state
+│   │   ├── useDockablePanel.ts   — Dockable panel state
+│   │   ├── useDropdowns.ts       — Dropdown state
+│   │   └── useLayerTree.ts       — Layer tree builder
 │   └── lib/
 │       ├── templateApi.ts        — API client + localStorage fallback
 │       └── supabase.ts           — Fetch wrapper (API_BASE = "")
@@ -800,7 +807,9 @@ design-main/
 │   │   ├── index.ts              — Express app factory
 │   │   ├── server.ts             — Local dev server entry
 │   │   ├── routes/
-│   │   │   ├── templates.ts      — Template CRUD
+│   │   │   ├── templates.ts      — Template CRUD + base64 guard
+│   │   │   ├── batch.ts          — CSV batch generation ({{slot}} substitution)
+│   │   │   ├── assets.ts         — Image upload to Supabase Storage
 │   │   │   └── workspaces.ts     — Workspace CRUD
 │   │   ├── services/
 │   │   │   ├── templates.ts      — Template service (Supabase dual-write)
@@ -814,7 +823,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 10 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 145+ tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -861,11 +870,15 @@ App (useReducer — single state atom)
 │   ├── Toolbar          — vertical toolbar with grouped dropdowns
 │   │   ├── ToolbarButtons   — ToolBtn, Divider, Spacer primitives
 │   │   └── ToolbarDropdowns — ShapesDropdown, DrawDropdown, AlignDropdown, BooleanDropdown
-│   ├── CanvasEditor     — Fabric.js canvas mount + template loading
-│   ├── PropertiesPanel  — object property inspector (fill, stroke, opacity, position, size)
-│   ├── LayersPanel      — layer list with visibility/lock/delete/reorder
+│   ├── InfiniteHtmlCanvas — Pannable/zoomable HTML canvas
+│   ├── DesignFrame      — Per-frame Shadow DOM renderer (real HTML+CSS)
+│   ├── HtmlToolbar      — Element insertion + formatting toolbar
+│   ├── ElementProperties — CSS property inspector (fill, stroke, position, size, typography)
+│   ├── HtmlLayersPanel   — layer list with visibility/lock/delete/reorder
 │   ├── KeyboardShortcuts — modal dialog showing all shortcuts
-│   └── BatchAMator      — batch generator (single-post, multi-post, carousel modes)
+│   ├── BatchAMator      — batch generator (single-post, multi-post, carousel modes)
+│   ├── CodePanel         — live HTML/CSS code editor
+│   └── AIPanel           — AI-powered design generation
 └── ToastProvider        — toast notification system
 ```
 
@@ -873,45 +886,41 @@ App (useReducer — single state atom)
 
 The app uses **`useReducer`** with a single state atom (`AppState`). No useState for global state — this was the key refactor to achieve react-doctor 100.
 
-```typescript
-type AppState = {
-  view: "dashboard" | "editor";
-  templateId: string | null;
-  templateJson: any;
-  canvas: { zoom: number; tool: ToolName; canUndo: boolean; canRedo: boolean; selectedObjects: FabricObject[] };
-  shortcutsOpen: boolean;
-  batchRenderKey: number;
-};
-type AppAction =
-  | { type: "SET_VIEW"; view: ViewMode }
-  | { type: "OPEN_TEMPLATE"; id: string; json: any }
-  | { type: "BACK_TO_DASHBOARD" }
-  | { type: "SET_CANVAS"; canvas: AppState["canvas"] }
-  | { type: "SET_TOOL"; tool: ToolName }
-  | { type: "TOGGLE_SHORTCUTS" }
-  | { type: "SET_SHORTCUTS"; open: boolean }
-  | { type: "TRIGGER_BATCH_RENDER" };
-```
+The editor (EditorV2.tsx, ~3200 lines) manages state via React `useState`/`useCallback` hooks:
+- `frames[]` — array of DesignFrame objects (each has html, css, x, y, width, height)
+- `selectedFrameId`, `selectedElement` — current selection
+- `undoStack[]`, `redoStack[]` — frame snapshots for history
+- `showCodePanel`, `showBatch`, `showImageUpload` — UI toggles
 
-**Pattern:** Canvas state syncs via polling `window.__canvasControls` every 200ms — this bridges the imperative Fabric.js API with React's declarative state.
+Each frame renders inside a **Shadow DOM** via DesignFrame.tsx, which:
+1. Creates a shadow root on a div
+2. Injects `<style>` with the frame's CSS
+3. Injects `<div id="__df_content">` with the frame's HTML
+4. Maps `body`/`html` CSS selectors to `#__df_content` (Shadow DOM has no `<body>`)
+5. Emits change events for auto-save
+
+**Pattern:** Frame content is real HTML+CSS inside Shadow DOM — changes emit via MutationObserver + custom events. EditorV2 listens and auto-saves debounced.
 
 ### Data Flow
 
 ```
-User action → Fabric.js canvas event
-  → useAutoSave detects change (debounce 2s)
+User edits in Shadow DOM → DesignFrame emits change event
+  → EditorV2 debounces 800ms → autoSave(frames)
     → localStorage (instant, primary)
     → API PUT /api/templates/:id (best-effort cloud sync)
-    
+
 Template load:
   → API GET /api/templates/:id
-    → If localStorage is newer → prefer localStorage
-    → If API has empty canvas → fall back to localStorage
+    → Frames rendered into individual Shadow DOM roots
+
+Image imports:
+  → Upload to Supabase Storage → get URL → insert <img src=url>
+  → Server strips any inline base64 in PUT handler (anti-bloat guard)
 ```
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **10 tools** for workspace and template management. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1104,7 +1113,7 @@ curl -X POST https://futuraria.netlify.app/mcp \
     "properties": {
       "id": { "type": "string", "description": "Template ID" },
       "name": { "type": "string", "description": "New name" },
-      "canvas": { "type": "object", "description": "Full Fabric.js canvas JSON" }
+      "canvas": { "type": "object", "description": "Full template JSON (frames, html, css)" }
     },
     "required": ["id"]
   }
@@ -1247,21 +1256,20 @@ This pattern avoids the `no-derived-state` warning because the search value is r
 
 ### Key Pattern: queueMicrotask Deferral
 
-CanvasEditor splits initialization into two effects to avoid `no-cascading-set-state`:
+DesignFrame initializes Shadow DOM in a single effect to inject HTML+CSS:
 
 ```typescript
-// Step 1: Init canvas only (no template loading, no state changes)
+// Shadow DOM init: inject <style> + <div id="__df_content"> into shadow root
 useEffect(() => {
-  const c = initCanvas(mountRef.current, containerRef.current, w, h);
-  fabricRef.current = c;
-  initDoneRef.current = true;
-}, [initCanvas]);
-
-// Step 2: Load template deferred via queueMicrotask
-useEffect(() => {
-  if (!initDoneRef.current || !fabricRef.current) return;
-  queueMicrotask(() => loadTemplate(tj.canvas || tj));
-}, [loadTemplate, templateJson]);
+  if (!hostRef.current || hostRef.current.shadowRoot) return;
+  const sr = hostRef.current.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = mapBodySelectors(frame.css || "");
+  const content = document.createElement("div");
+  content.id = "__df_content";
+  content.innerHTML = frame.html || "";
+  sr.append(style, content);
+}, []);
 ```
 
 ### Key Pattern: Semantic Button Restructuring
@@ -1308,12 +1316,18 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
 - **Features:** Workspace selector, template search (ref-based, not state-based), create/duplicate/delete templates, localStorage-API merge
 - **A11y:** Semantic buttons for cards, no role="button" divs
 
-### CanvasEditor
-- **File:** `src/components/CanvasEditor.tsx`
-- **Props:** `templateId`, `templateJson`, `onToolChange`
-- **Role:** Mounts Fabric.js canvas, loads template JSON, exposes `window.__canvasControls` for App polling
-- **Uses:** `useCanvas()` hook, `useAutoSave()` hook
-- **Key pattern:** Split useEffect + queueMicrotask for no-cascading-set-state
+### EditorV2 (Main Editor)
+- **File:** `src/pages/EditorV2.tsx` (~3200 lines)
+- **Role:** Main editor page — manages frames, selection, undo/redo, auto-save, keyboard shortcuts
+- **Renders:** InfiniteHtmlCanvas (zoom/pan container) → DesignFrame[] (Shadow DOM per frame)
+- **Key features:** Frame CRUD, element selection/drag/resize, code panel, batch modal, AI panel, image upload to Storage
+- **Keyboard:** Ctrl+B (batch), Ctrl+/ (code panel), Ctrl+Z/Y (undo/redo), Ctrl+D (duplicate), V/H/F/R/O/T (tools)
+
+### DesignFrame
+- **File:** `src/components/DesignFrame.tsx` (~2000 lines)
+- **Role:** Per-frame Shadow DOM renderer — injects HTML+CSS into shadow root
+- **Key:** `mapBodySelectors()` transforms `body`/`html` CSS selectors to `#__df_content` (Shadow DOM has no `<body>`)
+- **Events:** Emits `frame:change` on content mutation, `frame:select` on click
 
 ### Toolbar
 - **File:** `src/components/Toolbar.tsx`
@@ -1333,10 +1347,13 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
 - **A11y:** Semantic buttons for row selection and actions
 
 ### BatchAMator
-- **File:** `src/components/BatchAMator.tsx`
+- **File:** `src/components/BatchAMator.tsx` (301 lines)
 - **Props:** `templateId`, `onClose`
-- **Modes:** single-post (one template × CSV rows), multi-post (template per row), carousel (grouped by ID_Carrusel)
-- **State:** `useReducer(batchReducer, initialBatchState)` — 8 consolidated useState → single reducer
+- **Modes:** single-post (one template × CSV rows), multi-post (template per row), carousel (frames grouped in one template)
+- **State:** `useReducer(batchReducer, initialBatchState)` — CSV upload, parse, preview, generate
+- **API:** `POST /api/templates/:id/batch/:mode` with `{ data: rows[] }`
+- **Slot syntax:** `{{columnName}}` in HTML or CSS — replaced with CSV cell values
+- **Limits:** Max 15 rows per batch (Netlify 10s timeout)
 
 ### KeyboardShortcuts
 - **File:** `src/components/KeyboardShortcuts.tsx`
@@ -1351,37 +1368,18 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
 
 ## Hooks Reference
 
-### useCanvas
-- **File:** `src/hooks/useCanvas.ts` (689 lines)
-- **Role:** Core Fabric.js canvas operations
-- **Exports:**
-  - Canvas lifecycle: `initCanvas`, `loadTemplate`, `getCanvasJSON`
-  - Tools: `setTool(ToolName)`, 14 tool types
-  - History: `undo`, `redo`, `pushHistory`, `canUndo`, `canRedo` (50-snapshot limit)
-  - Selection: `selectedObjects`, `updateSelection`
-  - Transform: `group`, `ungroup`, `deleteSelected`, `copySelected`, `pasteObject`, `duplicateSelected`
-  - Layout: `align(6 directions)`, `distribute(H/V)`, `booleanOp(4 ops)`, `autoLayout(H/V)`
-  - View: `zoomIn`, `zoomOut`, `zoomToFit`, `showGrid`, `toggleSnap`, `setGridSize`
-  - Export: `exportPNG(scale)`, `exportSVG()`, `exportJSON()`
-  - Lock: `toggleLock(layerName)`
-- **ToolName type:** `"select" | "hand" | "rect" | "ellipse" | "line" | "triangle" | "star" | "polygon" | "frame" | "text" | "image" | "pencil" | "pen" | "eyedropper"`
-
-### useAutoSave
-- **File:** `src/hooks/useAutoSave.ts` (223 lines)
-- **Role:** Dual-write auto-save with debounce
-- **Flow:**
-  1. Listens to Fabric.js events: `object:added/removed/modified/moving/scaling/rotating`
-  2. Debounces 2s before `performSave()`
-  3. **Always saves to localStorage first** (instant, primary)
-  4. **Then PUT to API** (best-effort cloud sync via `/api/templates/:id`)
-  5. API failures are silent — localStorage already has the data
-- **Exports:** `status` (idle/saving/saved/error), `forceSave()`, `flushSave()`, `clearPending()`, `setLoading(bool)`
-- **Custom serialization:** Preserves Fabric.js metadata (layerId, layerName, frameId, styleId, componentId, etc.)
+### useDockablePanel
+- **File:** `src/hooks/useDockablePanel.ts`
+- **Role:** Manages dockable panel position (left/right/floating)
 
 ### useDropdowns
 - **File:** `src/hooks/useDropdowns.ts`
-- **Role:** Manages open/close state for toolbar dropdowns (align, boolean, shapes, draw)
-- **State:** `useReducer` — single reducer for 4 boolean dropdown states
+- **Role:** Manages open/close state for toolbar dropdowns
+- **State:** `useReducer` — single reducer for boolean dropdown states
+
+### useLayerTree
+- **File:** `src/hooks/useLayerTree.ts`
+- **Role:** Builds a tree representation of DOM elements inside a frame's Shadow DOM for the layers panel
 
 ## API Client
 
@@ -1399,6 +1397,52 @@ KeyboardShortcuts modal uses `<dialog>` with `onCancel` for Escape handling, wit
 ### supabase.ts
 - **File:** `src/lib/supabase.ts` (12 lines)
 - **Role:** Thin fetch wrapper with `API_BASE = ""` (relative URLs for cloud deployment) and default headers
+
+## REST API — Batch Generation
+
+### Overview
+
+Two parallel batch generation paths exist:
+
+| Path | Mechanism | Slot syntax | Use case |
+|------|-----------|-------------|----------|
+| **REST API** (UI) | `{{columnName}}` string substitution in HTML + CSS | `{{slot}}` | BatchAMator UI component |
+| **MCP** (AI agents) | `data-slot` attribute + cheerio DOM manipulation | `data-slot="name"` | AI agent automation |
+
+### REST Endpoints
+
+#### `GET /api/templates/:id/batch/slots`
+Detects `{{slot}}` placeholders in template HTML and CSS.
+
+**Response:** `{ success: true, slots: ["headline", "subtitle", "image_url"] }`
+
+#### `POST /api/templates/:id/batch/:mode`
+Generates designs from CSV data.
+
+**Body:** `{ data: Record<string, string>[] }`
+
+**Modes:**
+- `single-post` — N templates, each with frames substituted per CSV row
+- `multi-post` — alias for single-post
+- `carousel` — 1 template with N×frames, one set per CSV row
+
+**Slot substitution:**
+- `{{columnName}}` in HTML: `<h1>{{headline}}</h1>` → `<h1>New Product Launch</h1>`
+- `{{columnName}}` in CSS: `background-image: url({{image_url}})` → `background-image: url(https://...)`
+
+**Limits:** Max 15 rows per batch (Netlify 10s function timeout).
+
+**Response:** `{ success: true, data: DesignTemplate[], count: number }`
+
+### MCP Tools (for AI agents)
+
+The MCP server has a more sophisticated batch pipeline:
+
+1. **`profile_template_pool`** — Detects content slots (text, image, richtext, cta) via DOM analysis
+2. **`generate_csv_template`** — Creates a CSV template with columns matching profiled slots
+3. **`apply_csv_to_frames`** — Applies filled CSV to generate frames using cheerio DOM manipulation
+
+The MCP tools use `data-slot` attributes for explicit slot naming and support overflow handling (truncate/skip/warn), slot types (text/image/cta), and multi-template pools with `_template` column.
 
 ## Keyboard Shortcuts
 
@@ -1441,7 +1485,7 @@ The editor achieved a perfect 100/100 react-doctor score. Key fixes applied:
 **Ignored rules (by design):**
 - `deslop/unused-file` — some files are entry points referenced by Vite
 - `react-doctor/exhaustive-deps` — intentional omissions with stable refs
-- `react-doctor/no-giant-component` — useCanvas is 689 lines (Fabric.js imperative API)
+- `react-doctor/no-giant-component` — EditorV2 is ~3200 lines (complex editor logic)
 - `react-doctor/no-many-boolean-props` — Toolbar has many boolean props by nature
 
 ## Coding Standards for This Editor
@@ -1464,12 +1508,13 @@ When modifying editor files, follow these rules:
 ```json
 {
   "react": "^18.3.1",
-  "react-dom": "^18.3.1",
-  "fabric": "^6.9.1"
+  "react-dom": "^18.3.1"
 }
 ```
 
 Dev: `vite@5`, `typescript@5`, `@vitejs/plugin-react@4`
+
+**No Fabric.js dependency** — the editor uses native browser Shadow DOM for all rendering.
 
 ## Start Commands
 
@@ -1493,25 +1538,25 @@ npm run preview
 ## Key Files
 
 | File | Lines | Purpose |
-|------|-------|---------|
-| `src/App.tsx` | ~250 | Root component, useReducer, routing |
-| `src/hooks/useCanvas.ts` | 689 | Fabric.js canvas operations |
-| `src/hooks/useAutoSave.ts` | 223 | Dual-write auto-save |
-| `src/components/Toolbar.tsx` | 176 | Toolbar shell |
+|------|-------|--------|
+| `src/pages/EditorV2.tsx` | ~3200 | Main editor (Shadow DOM HTML engine) |
+| `src/components/DesignFrame.tsx` | ~2000 | Per-frame Shadow DOM renderer |
+| `src/components/InfiniteHtmlCanvas.tsx` | — | Pannable/zoomable canvas |
+| `src/components/HtmlToolbar.tsx` | — | HTML element insertion toolbar |
 | `src/components/Dashboard.tsx` | ~230 | Template gallery |
-| `src/components/BatchAMator.tsx` | ~300 | Batch generation (useReducer) |
-| `src/components/CanvasEditor.tsx` | ~150 | Canvas mount + template loader |
-| `src/components/PropertiesPanel.tsx` | ~260 | Object inspector |
-| `src/components/LayersPanel.tsx` | ~150 | Layer manager |
+| `src/components/BatchAMator.tsx` | ~300 | Batch generation from CSV |
+| `src/components/CodePanel.tsx` | — | Live HTML/CSS code editor |
+| `src/components/ElementProperties.tsx` | — | CSS property inspector |
+| `src/components/HtmlLayersPanel.tsx` | — | Layer manager (DOM tree) |
 | `src/components/KeyboardShortcuts.tsx` | ~170 | Shortcuts modal (native dialog) |
 | `src/lib/templateApi.ts` | 207 | API client + localStorage |
 | `src/lib/supabase.ts` | 12 | Fetch wrapper |
-| `src/hooks/useDropdowns.ts` | ~80 | Dropdown state (useReducer) |
-| `api/src/services/templates.ts` | 192 | Template service (Supabase dual-write) |
-| `api/src/services/store.ts` | — | In-memory store (fallback) |
-| `api/src/services/supabase.ts` | — | Supabase admin client |
+| `src/hooks/useDockablePanel.ts` | — | Dockable panel state |
+| `src/hooks/useLayerTree.ts` | — | Layer tree builder |
+| `api/src/services/templates.ts` | ~270 | Template service (6s timeout + version strip) |
+| `api/src/routes/batch.ts` | ~170 | CSV batch generation ({{slot}} substitution) |
+| `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
+| `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~3600 | MCP server (135+ tools) |
+| `netlify/functions/mcp.mjs` | ~7800 | MCP server (145+ tools) |
 | `netlify.toml` | 22 | Build config + redirects |
-| `package.json` | 36 | Config + react-doctor ignore rules |
-| `vite.config.ts` | 12 | Vite + React plugin + alias |

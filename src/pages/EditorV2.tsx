@@ -1658,6 +1658,7 @@ export function EditorV2({ templateId, onBack }: EditorV2Props) {
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
+      if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); setShowBatch(v => !v); return; }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
       if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
       if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
