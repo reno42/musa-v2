@@ -788,7 +788,7 @@ function detectComponents(frames) {
       else return null;
 
       return {
-        selector: c.tag + "." + c.classList.join("."),
+        selector: c.tag + "." + (c.classList || []).join("."),
         tag: c.tag,
         classes: c.classList,
         frameCount: c.frameCount,
@@ -1079,7 +1079,7 @@ export function generateDesignMd(extraction, templateMeta) {
 
     lines.push("");
     lines.push("### Font Weights");
-    lines.push(extraction.typography.weights.join(", "));
+    lines.push((extraction.typography.weights || []).join(", "));
     lines.push("");
   }
 
@@ -1122,7 +1122,7 @@ export function generateDesignMd(extraction, templateMeta) {
     extraction.components.forEach(function (c) {
       lines.push("### " + c.selector);
       lines.push("- **Tag:** " + c.tag);
-      lines.push("- **Classes:** " + c.classes.join(", "));
+      lines.push("- **Classes:** " + (c.classes || []).join(", "));
       lines.push("- **Found in:** " + c.frameCount + "/" + c.totalFrames + " frames (" + Math.round(c.coverage * 100) + "%)");
       lines.push("- **Confidence:** " + c.confidence);
       if (c.sampleHtml) {
