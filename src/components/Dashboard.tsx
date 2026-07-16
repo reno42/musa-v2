@@ -64,7 +64,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data" | "settings">("templates");
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
@@ -322,6 +322,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
                 </svg>
               )},
+              { id: "settings", label: "Settings", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              )},
             ] as const).map(tab => (
               <button
                 key={tab.id}
@@ -471,43 +477,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* Template Grid */}
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-        {/* ── Metrics Bar ── */}
-        <div className="dash-metrics-bar">
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{templates.length}</div>
-            <div className="dash-metric-label">Templates</div>
-            <div className="dash-metric-sub">
-              {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
-            </div>
-          </div>
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{recipes.length}</div>
-            <div className="dash-metric-label">Key Visuals</div>
-            <div className="dash-metric-sub">
-              {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
-            </div>
-          </div>
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{workspaces.length}</div>
-            <div className="dash-metric-label">Workspaces</div>
-            <div className="dash-metric-sub">
-              {selectedWs ? "1 active" : "all shown"}
-            </div>
-          </div>
-          <div className="dash-metric-card" style={{ justifyContent: "center" }}>
-            <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
-            <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
-              {(() => {
-                const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
-                return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
-              })()}
-            </div>
-            <div className="dash-metric-sub">
-              Most frames
-            </div>
-          </div>
-        </div>
-
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
@@ -602,43 +571,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* Key Visuals / Recipes Grid */}
       {activeTab === "recipes" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-        {/* ── Metrics Bar ── */}
-        <div className="dash-metrics-bar">
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{templates.length}</div>
-            <div className="dash-metric-label">Templates</div>
-            <div className="dash-metric-sub">
-              {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
-            </div>
-          </div>
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{recipes.length}</div>
-            <div className="dash-metric-label">Key Visuals</div>
-            <div className="dash-metric-sub">
-              {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
-            </div>
-          </div>
-          <div className="dash-metric-card">
-            <div className="dash-metric-value">{workspaces.length}</div>
-            <div className="dash-metric-label">Workspaces</div>
-            <div className="dash-metric-sub">
-              {selectedWs ? "1 active" : "all shown"}
-            </div>
-          </div>
-          <div className="dash-metric-card" style={{ justifyContent: "center" }}>
-            <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
-            <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
-              {(() => {
-                const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
-                return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
-              })()}
-            </div>
-            <div className="dash-metric-sub">
-              Most frames
-            </div>
-          </div>
-        </div>
-
         {loadingRecipes ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading...</div>
         ) : recipes.length === 0 ? (
@@ -700,43 +632,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Data Tab ── */}
       {activeTab === "data" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 800, margin: "0 auto", width: "100%" }}>
-          {/* ── Metrics Bar ── */}
-          <div className="dash-metrics-bar" style={{ padding: 0, marginBottom: 24 }}>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{templates.length}</div>
-              <div className="dash-metric-label">Templates</div>
-              <div className="dash-metric-sub">
-                {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
-              </div>
-            </div>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{recipes.length}</div>
-              <div className="dash-metric-label">Key Visuals</div>
-              <div className="dash-metric-sub">
-                {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
-              </div>
-            </div>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{workspaces.length}</div>
-              <div className="dash-metric-label">Workspaces</div>
-              <div className="dash-metric-sub">
-                {selectedWs ? "1 active" : "all shown"}
-              </div>
-            </div>
-            <div className="dash-metric-card" style={{ justifyContent: "center" }}>
-              <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
-              <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
-                {(() => {
-                  const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
-                  return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
-                })()}
-              </div>
-              <div className="dash-metric-sub">
-                Most frames
-              </div>
-            </div>
-          </div>
-
           <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Your Data</h2>
           <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 24 }}>
             What Futuraria stores in your Supabase database.
@@ -777,6 +672,148 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       )}
+
+      {/* ── Settings Tab ── */}
+      {activeTab === "settings" && (() => {
+        const totalFrames = templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0);
+        const estimatedTokens = (templates.length * 2000) + (totalFrames * 500) + (recipes.length * 100);
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+        const supabaseConnected = !!(supabaseUrl && supabaseKey);
+        const handleDownloadSkill = async () => {
+          try {
+            const res = await fetch("/SKILL.md");
+            const text = await res.text();
+            const blob = new Blob([text], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = "SKILL.md"; a.click();
+            URL.revokeObjectURL(url);
+          } catch { alert("Could not download SKILL.md"); }
+        };
+
+        return (
+        <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 900, margin: "0 auto", width: "100%" }}>
+          <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Settings
+          </h2>
+
+          {/* ── Metrics ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Usage</h3>
+          <div className="dash-metrics-bar" style={{ marginBottom: 32 }}>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{templates.length}</div>
+              <div className="dash-metric-label">Templates</div>
+              <div className="dash-metric-sub">{totalFrames} frames</div>
+            </div>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{recipes.length}</div>
+              <div className="dash-metric-label">Key Visuals</div>
+              <div className="dash-metric-sub">{recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions</div>
+            </div>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{workspaces.length}</div>
+              <div className="dash-metric-label">Workspaces</div>
+              <div className="dash-metric-sub">{selectedWs ? "1 active" : "all shown"}</div>
+            </div>
+            <div className="dash-metric-card" style={{ justifyContent: "center" }}>
+              <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
+              <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
+                {(() => { const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0]; return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—"; })()}
+              </div>
+              <div className="dash-metric-sub">Most frames</div>
+            </div>
+          </div>
+
+          {/* ── Connection ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Connection</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
+            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>🗄️</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Supabase</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                    {supabaseConnected ? supabaseUrl : "Not configured"}
+                  </div>
+                </div>
+              </div>
+              <span style={{
+                fontSize: 11, fontWeight: 600,
+                padding: "4px 10px", borderRadius: 100,
+                background: supabaseConnected ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
+                color: supabaseConnected ? "#4ade80" : "rgba(255,255,255,0.35)",
+              }}>
+                {supabaseConnected ? "● Connected" : "○ Inactive"}
+              </span>
+            </div>
+            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>🤖</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>MCP API</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>/mcp — Model Context Protocol</div>
+                </div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100, background: "rgba(34,197,94,0.12)", color: "#4ade80" }}>● Active</span>
+            </div>
+          </div>
+
+          {/* ── AI Configuration ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>AI Configuration</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
+            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>🧠</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Model</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>Gemini (via MCP JSON-RPC)</div>
+                </div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100, background: "rgba(99,102,241,0.12)", color: "#818cf8" }}>AI-Ready</span>
+            </div>
+            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>📊</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Token Usage (est.)</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                    {templates.length} templates × 2k + {totalFrames} frames × 500
+                  </div>
+                </div>
+              </div>
+              <span style={{ fontSize: 16, fontWeight: 700, fontFamily: "'Instrument Serif', serif", color: "rgba(255,255,255,0.9)" }}>
+                ~{estimatedTokens.toLocaleString()} tokens
+              </span>
+            </div>
+          </div>
+
+          {/* ── Agent Onboarding ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Agent Onboarding</h3>
+          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14 }}>📄</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>SKILL.md</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>Agent capability manifest — download for your AI</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleDownloadSkill}
+              className="liquid-glass"
+              style={{ borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", cursor: "pointer", border: "none", transition: "all 0.2s ease" }}
+            >
+              Download
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", lineHeight: 1.6, marginTop: 4 }}>
+            Give SKILL.md to any AI agent. It teaches them Futuraria's tools, project structure, and design conventions — so they can design alongside you.
+          </div>
+        </div>
+        );
+      })()}
     </motion.div>
   );
 }
