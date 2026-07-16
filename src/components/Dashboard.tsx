@@ -277,6 +277,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={dashboardStyle}
       className="dash-atmosphere"
     >
+      {/* ── Background video ── */}
+      <video
+        src="/ditther-anim-160726-030817-814x1080.mp4"
+        muted
+        autoPlay
+        loop
+        playsInline
+        preload="auto"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "bottom",
+          pointerEvents: "none",
+          opacity: 1,
+          zIndex: 0,
+        }}
+      />
+
       {/* Header — matches landing navbar: brand left, tabs+dropdown centered, search right */}
       <div style={dashHeaderStyle}>
         <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
@@ -326,7 +347,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 onClick={() => setWsDropdownOpen(!wsDropdownOpen)}
                 style={{
                   borderRadius: 100, padding: "8px 14px", fontSize: 13, cursor: "pointer",
-                  fontWeight: 500, color: "rgba(0,0,0,0.6)",
+                  fontWeight: 500, color: "rgba(255,255,255,0.7)",
                   display: "flex", alignItems: "center", gap: 6,
                   transition: "all 0.25s ease",
                 }}
@@ -357,13 +378,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       onClick={() => { handleWsChange(null); setWsDropdownOpen(false); }}
                       style={{
                         ...dropdownItemStyle,
-                        color: !selectedWs ? "#1a1a1a" : "rgba(0,0,0,0.6)",
-                        background: !selectedWs ? "rgba(0,0,0,0.04)" : "transparent",
+                        color: !selectedWs ? "#ffffff" : "rgba(255,255,255,0.6)",
+                        background: !selectedWs ? "rgba(255,255,255,0.06)" : "transparent",
                       }}
                     >
                       All Templates
                     </button>
-                    <div style={{ height: 1, background: "rgba(0,0,0,0.06)", margin: "4px 8px" }} />
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
                     {workspaces.map(w => (
                       editingWsId === w.id ? (
                         <div key={w.id} style={{ padding: "4px 10px" }}>
@@ -386,15 +407,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                           title="Double-click to rename"
                           style={{
                             ...dropdownItemStyle,
-                            color: selectedWs === w.id ? "#1a1a1a" : "rgba(0,0,0,0.6)",
-                            background: selectedWs === w.id ? "rgba(0,0,0,0.04)" : "transparent",
+                            color: selectedWs === w.id ? "#ffffff" : "rgba(255,255,255,0.6)",
+                            background: selectedWs === w.id ? "rgba(255,255,255,0.06)" : "transparent",
                           }}
                         >
                           {w.name}
                         </button>
                       )
                     ))}
-                    <div style={{ height: 1, background: "rgba(0,0,0,0.06)", margin: "4px 8px" }} />
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
                     {creatingWs ? (
                       <div style={{ padding: "4px 10px" }}>
                         <input
@@ -415,7 +436,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                         onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }}
                         style={{
                           ...dropdownItemStyle,
-                          color: "rgba(0,0,0,0.35)",
+                          color: "rgba(255,255,255,0.4)",
                         }}
                       >
                         + New Workspace
@@ -437,9 +458,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               className="liquid-glass"
               style={{
                 borderRadius: 100, padding: "8px 20px", fontSize: 13,
-                color: "#1a1a1a", outline: "none",
+                color: "#ffffff", outline: "none",
                 width: 180,
-                background: "rgba(255,255,255,0.6)",
+                background: "rgba(255,255,255,0.01)",
                 border: "none",
               }}
             />
@@ -488,10 +509,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loading ? (
-          <div style={{ textAlign: "center", color: "rgba(0,0,0,0.3)", padding: 60 }}>Loading…</div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
-          <div style={{ textAlign: "center", color: "rgba(0,0,0,0.3)", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(0,0,0,0.2)" /></div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
@@ -511,8 +532,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 key={t.id}
                 className="dash-card"
                 style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,0,0,0.12)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,0,0,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
                 onClick={() => onSelectTemplate(t.id)}
               >
                 {/* Full-bleed blurred design background */}
@@ -564,11 +585,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
 
                 {/* Action buttons — visible on hover */}
-                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(0,0,0,0.04)", fontSize: 12 }}>
+                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
                   <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#d32f2f" }} className="dash-card-action-danger">Delete</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">Delete</button>
                 </div>
               </div>
               );
@@ -582,10 +603,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "recipes" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loadingRecipes ? (
-          <div style={{ textAlign: "center", color: "rgba(0,0,0,0.3)", padding: 60 }}>Loading...</div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading...</div>
         ) : recipes.length === 0 ? (
-          <div style={{ textAlign: "center", color: "rgba(0,0,0,0.3)", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}><IconTag size={40} color="rgba(0,0,0,0.2)" /></div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconTag size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>No Key Visuals saved yet.</div>
             <div style={{ fontSize: 11, marginTop: 4, opacity: 0.6 }}>
               Open a template in the editor and click the tag icon to save it as a Key Visual.
@@ -598,8 +619,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 key={r.id}
                 className="dash-card"
                 style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,0,0,0.12)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,0,0,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
                 onClick={() => handleCreateFromRecipe(r.id, r.name)}
               >
                 {/* Full-bleed background */}
@@ -624,11 +645,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
 
                 {/* Actions */}
-                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(0,0,0,0.04)", fontSize: 12 }}>
+                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
                   <button type="button" onClick={e => { e.stopPropagation(); handleCreateFromRecipe(r.id, r.name); }} style={cardAction}>
                     Create
                   </button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#d32f2f" }} className="dash-card-action-danger">
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">
                     Delete
                   </button>
                 </div>
@@ -687,7 +708,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 }
 
 const dashboardStyle: React.CSSProperties = {
-  height: "100vh", background: "#f5f0eb", color: "#1a1a1a",
+  height: "100vh", background: "#000000", color: "#ffffff",
   fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   display: "flex", flexDirection: "column",
   overflow: "hidden",
@@ -704,22 +725,22 @@ const dashHeaderStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
   background: "transparent",
-  border: "1px solid rgba(0, 0, 0, 0.12)",
-  color: "#1a1a1a",
+  border: "1px solid rgba(255, 255, 255, 0.12)",
+  color: "#ffffff",
   borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
   transition: "border-color 0.2s ease",
 };
 
 const btnPrimary: React.CSSProperties = {
-  background: "rgba(0, 0, 0, 0.05)",
-  border: "1px solid rgba(0, 0, 0, 0.12)", color: "#1a1a1a",
+  background: "rgba(255, 255, 255, 0.06)",
+  border: "1px solid rgba(255, 255, 255, 0.15)", color: "#ffffff",
   borderRadius: 100, padding: "8px 20px", fontSize: 13, cursor: "pointer", fontWeight: 500,
   transition: "all 0.2s ease",
 };
 
 const btnSecondary: React.CSSProperties = {
   background: "transparent",
-  border: "1px solid rgba(0, 0, 0, 0.08)", color: "rgba(0, 0, 0, 0.5)",
+  border: "1px solid rgba(255, 255, 255, 0.08)", color: "rgba(255, 255, 255, 0.6)",
   borderRadius: 100, padding: "8px 16px", fontSize: 13, cursor: "pointer",
   transition: "all 0.2s ease",
 };
@@ -728,14 +749,16 @@ const cardStyle: React.CSSProperties = {
   position: "relative", height: 200, borderRadius: 14,
   overflow: "hidden", cursor: "pointer",
   transition: "all 0.25s ease",
-  border: "1px solid rgba(0,0,0,0.06)",
-  boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)",
-  background: "#ffffff",
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.06)",
+  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)",
 };
 
 const cardOverlay: React.CSSProperties = {
   position: "absolute", inset: 0, zIndex: 0,
-  background: "rgba(255,255,255,0.15)",
+  background: "rgba(255,255,255,0.015)",
   backdropFilter: "blur(3px) saturate(0.4)",
   WebkitBackdropFilter: "blur(3px) saturate(0.4)",
 };
@@ -752,7 +775,7 @@ const cardInfoPanel: React.CSSProperties = {
 };
 
 const cardAction: React.CSSProperties = {
-  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(0,0,0,0.06)",
+  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
   color: "transparent", fontSize: 12, cursor: "pointer", padding: "6px 0",
   transition: "color 0.2s ease",
 };
@@ -761,7 +784,7 @@ const dropdownItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8,
   padding: "8px 12px", borderRadius: 8, fontSize: 13,
   background: "transparent", border: "none",
-  color: "rgba(0,0,0,0.6)",
+  color: "rgba(255,255,255,0.6)",
   cursor: "pointer", textAlign: "left" as const,
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
