@@ -273,7 +273,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     <div style={dashboardStyle} className="dash-atmosphere">
       {/* Header */}
       <div style={dashHeaderStyle}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
+        <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
         <div style={{ flex: 1 }} />
         {creatingWs ? (
           <input
@@ -356,7 +356,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       </div>
 
       {/* Tab Navigation */}
-      <div style={{ display: "flex", gap: 0, padding: "0 20px", marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 0, padding: "0 20px", marginTop: 4 }}>
         <button
           type="button"
           onClick={() => setActiveTab("templates")}
@@ -645,12 +645,12 @@ const dashboardStyle: React.CSSProperties = {
 };
 
 const dashHeaderStyle: React.CSSProperties = {
-  padding: "16px 20px",
+  padding: "8px 20px",
   background: "rgba(8, 8, 8, 0.85)",
   backdropFilter: "blur(20px) saturate(180%)",
   WebkitBackdropFilter: "blur(20px) saturate(180%)",
   borderBottom: "1px solid rgba(200, 184, 152, 0.08)",
-  display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, zIndex: 10,
+  display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 10,
 };
 
 const thumbnailStyle: React.CSSProperties = {
