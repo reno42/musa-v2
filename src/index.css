@@ -2041,6 +2041,7 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .flow-card {
   box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  scroll-snap-stop: always;
 }
 
 /* ===== DATA PANEL ===== */

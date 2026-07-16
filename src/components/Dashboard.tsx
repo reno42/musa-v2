@@ -70,14 +70,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   });
   const [flowIndex, setFlowIndex] = useState(0);
   const flowScrollRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const CARD_WIDTH = 220;
   const CARD_GAP = 16;
+
+  /* Scroll one card at a time to a specific index — no half-stops */
+  const scrollToCard = useCallback((idx: number) => {
+    const el = flowScrollRef.current;
+    if (!el) return;
+    const clamped = Math.max(0, Math.min(idx, templates.length - 1));
+    const target = clamped * (CARD_WIDTH + CARD_GAP);
+    el.scrollTo({ left: target, behavior: "smooth" });
+  }, [templates.length]);
+
+  /* Debounced scroll handler — prevents laggy state updates mid-scroll */
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleFlowScroll = useCallback(() => {
     const el = flowScrollRef.current;
     if (!el) return;
-    const center = el.scrollLeft + el.clientWidth / 2;
-    const idx = Math.round((center - CARD_WIDTH / 2) / (CARD_WIDTH + CARD_GAP));
-    setFlowIndex(Math.max(0, Math.min(idx, templates.length - 1)));
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      const center = el.scrollLeft + el.clientWidth / 2;
+      const idx = Math.round((center - CARD_WIDTH / 2) / (CARD_WIDTH + CARD_GAP));
+      setFlowIndex(Math.max(0, Math.min(idx, templates.length - 1)));
+    }, 60);
   }, [templates.length]);
   const handleCardModeChange = (mode: "grid" | "flow") => {
     setCardMode(mode);
@@ -162,6 +178,31 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         loadTemplatesRef.current();
       });
   }, [addToast]);
+
+  /* Global keyboard shortcuts: arrows for flow, Alt/Cmd+Space for search */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      /* Alt+Space (Windows) / Cmd+Space (Mac) → focus search */
+      if ((e.altKey || e.metaKey) && e.code === "Space") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+      /* Arrow keys → navigate flow (only when flow is active and search not focused) */
+      if (cardMode === "flow" && activeTab === "templates" && document.activeElement?.tagName !== "INPUT") {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          scrollToCard(flowIndex - 1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          scrollToCard(flowIndex + 1);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cardMode, activeTab, flowIndex, scrollToCard]);
 
   const loading = loadingRef.current;
 
@@ -622,8 +663,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Right: Search — replaces Enter Workspace button position */}
           <div style={{ flexShrink: 0 }}>
             <input
+              ref={searchInputRef}
               aria-label="Search templates"
-              placeholder="Search…"
+              placeholder="Search… (Alt+Space)"
               value={searchDisplay}
               onChange={e => handleSearch(e.target.value)}
               className="liquid-glass"
@@ -658,19 +700,57 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </button>
           </div>
         ) : cardMode === "flow" ? (
-          <div
-            ref={flowScrollRef}
-            onScroll={handleFlowScroll}
-            className="flow-track"
-            style={{
-              display: "flex", gap: CARD_GAP, overflowX: "auto", overflowY: "hidden",
-              scrollSnapType: "x mandatory", scrollBehavior: "smooth",
-              perspective: "1200px", perspectiveOrigin: "center",
-              padding: "60px 0", alignItems: "center",
-              WebkitOverflowScrolling: "touch",
-            }}
-          >
-            {templates.map((t, i) => renderTemplateCard(t, i))}
+          <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%" }}>
+            <div
+              ref={flowScrollRef}
+              onScroll={handleFlowScroll}
+              className="flow-track"
+              style={{
+                display: "flex", gap: CARD_GAP, overflowX: "auto", overflowY: "hidden",
+                scrollSnapType: "x mandatory", scrollBehavior: "smooth",
+                perspective: "1200px", perspectiveOrigin: "center",
+                padding: "60px 0 20px", alignItems: "center",
+                WebkitOverflowScrolling: "touch",
+                flex: 1,
+              }}
+            >
+              {templates.map((t, i) => renderTemplateCard(t, i))}
+            </div>
+            {/* Arrow buttons — glassmorphic, positioned at metadata height with spacing */}
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "40%", padding: "12px 0 24px" }}>
+              <button
+                type="button"
+                onClick={() => scrollToCard(flowIndex - 1)}
+                disabled={flowIndex <= 0}
+                className="liquid-glass"
+                aria-label="Previous"
+                style={{
+                  borderRadius: "50%", width: 44, height: 44, border: "none", cursor: flowIndex <= 0 ? "default" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  opacity: flowIndex <= 0 ? 0.2 : 0.7,
+                  transition: "all 0.2s ease", background: "rgba(255,255,255,0.03)",
+                  color: "rgba(255,255,255,0.8)", flexShrink: 0,
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToCard(flowIndex + 1)}
+                disabled={flowIndex >= templates.length - 1}
+                className="liquid-glass"
+                aria-label="Next"
+                style={{
+                  borderRadius: "50%", width: 44, height: 44, border: "none", cursor: flowIndex >= templates.length - 1 ? "default" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  opacity: flowIndex >= templates.length - 1 ? 0.2 : 0.7,
+                  transition: "all 0.2s ease", background: "rgba(255,255,255,0.03)",
+                  color: "rgba(255,255,255,0.8)", flexShrink: 0,
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
