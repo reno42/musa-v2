@@ -298,40 +298,103 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const scaleVal = isCenter ? 1.1 : Math.max(0.6, 1 - absDist * 0.12);
     const translateZ = isCenter ? 60 : -absDist * 50;
     const opacityVal = Math.max(0.2, 1 - absDist * 0.25);
-    const cardExtraStyle: React.CSSProperties = isFlow
-      ? { width: CARD_WIDTH, height: 300, borderRadius: 12, flexShrink: 0,
-          transform: `rotateY(${rotY}deg) scale(${scaleVal}) translateZ(${translateZ}px)`,
-          opacity: opacityVal,
-          transition: "transform 0.4s ease, opacity 0.4s ease, box-shadow 0.25s ease, border-color 0.25s ease",
-          scrollSnapAlign: "center" as any, transformStyle: "preserve-3d", zIndex: 100 - absDist }
-      : {};
+
+    /* Shared iframe markup */
+    const previewIframe = hasHtml ? (
+      <iframe
+        srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
+        sandbox="allow-same-origin allow-scripts"
+        className="card-preview"
+        style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+        title={t.name}
+      />
+    ) : (
+      <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />
+    );
+
+    /* Shared metadata + actions block (rendered inside card for grid, below for flow) */
+    const metaBlock = (
+      <>
+        {editingTplId === t.id ? (
+          <input
+            ref={editInputRef}
+            value={editingTplName}
+            onChange={e => setEditingTplName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingTplId(null); }}
+            onBlur={commitRename}
+            style={{ width: "100%", fontSize: 12, padding: "2px 4px", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6, outline: "none", background: "rgba(255,255,255,0.05)", color: "#fff" }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <div
+            style={{ fontFamily: "'Instrument Serif', serif", fontSize: 15, fontWeight: 400, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", letterSpacing: "-0.01em" }}
+            onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
+            title="Double-click to rename"
+          >{t.name}</div>
+        )}
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 6 }}>Edited {new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)" }}>Rename</button>
+          <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)" }}>Copy</button>
+          <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", color: "#f87171" }}>Delete</button>
+        </div>
+      </>
+    );
+
+    /* ── FLOW MODE: card is pure preview, metadata below outside ── */
+    if (isFlow) {
+      return (
+        <div
+          key={t.id}
+          style={{
+            width: CARD_WIDTH, flexShrink: 0,
+            transform: `rotateY(${rotY}deg) scale(${scaleVal}) translateZ(${translateZ}px)`,
+            opacity: opacityVal,
+            transition: "transform 0.4s ease, opacity 0.4s ease",
+            scrollSnapAlign: "center" as any,
+            transformStyle: "preserve-3d",
+            zIndex: 100 - absDist,
+            display: "flex", flexDirection: "column", alignItems: "center",
+          }}
+        >
+          {/* The card itself — clean preview, no overlay, no info inside */}
+          <div
+            className="dash-card flow-card"
+            style={{
+              ...cardStyle,
+              width: CARD_WIDTH, height: 300,
+              borderRadius: 12,
+              cursor: "pointer",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(0,0,0,0.6)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(0,0,0,0.5)"; }}
+            onClick={() => onSelectTemplate(t.id)}
+          >
+            <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
+              {previewIframe}
+            </div>
+          </div>
+
+          {/* Metadata + actions — below the card, outside */}
+          <div style={{ width: CARD_WIDTH, marginTop: 12, padding: "0 4px", textAlign: "center" }}>
+            {metaBlock}
+          </div>
+        </div>
+      );
+    }
+
+    /* ── GRID MODE: original layout with frosted info panel inside card */
     return (
     <div
       key={t.id}
-      className={isFlow ? "dash-card flow-card" : "dash-card"}
-      style={{ ...cardStyle, ...cardExtraStyle }}
-      onMouseEnter={e => {
-        if (isFlow) { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; }
-        else { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }
-      }}
-      onMouseLeave={e => {
-        if (isFlow) { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }
-        else { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }
-      }}
+      className="dash-card"
+      style={{ ...cardStyle }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
       onClick={() => onSelectTemplate(t.id)}
     >
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
-        {hasHtml ? (
-          <iframe
-            srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
-            sandbox="allow-same-origin allow-scripts"
-            className="card-preview"
-            style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
-            title={t.name}
-          />
-        ) : (
-          <div style={{ width:"100%", height:"100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />
-        )}
+        {previewIframe}
         <div style={cardOverlay} />
       </div>
       <div style={cardContentStyle}>
