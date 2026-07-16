@@ -2024,6 +2024,25 @@ html, body, #root { height: 100%; width: 100%; }
   transition: filter 0.45s ease;
 }
 
+/* ===== COVER FLOW ===== */
+.flow-track {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+.flow-track::-webkit-scrollbar {
+  height: 4px;
+}
+.flow-track::-webkit-scrollbar-track {
+  background: transparent;
+}
+.flow-track::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 100;
+}
+.flow-card {
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+
 /* ===== DATA PANEL ===== */
 .data-panel-overlay {
   position: fixed;

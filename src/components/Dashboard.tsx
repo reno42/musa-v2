@@ -65,6 +65,24 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data" | "settings">("templates");
+  const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
+    try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
+  });
+  const [flowIndex, setFlowIndex] = useState(0);
+  const flowScrollRef = useRef<HTMLDivElement>(null);
+  const CARD_WIDTH = 220;
+  const CARD_GAP = 16;
+  const handleFlowScroll = useCallback(() => {
+    const el = flowScrollRef.current;
+    if (!el) return;
+    const center = el.scrollLeft + el.clientWidth / 2;
+    const idx = Math.round((center - CARD_WIDTH / 2) / (CARD_WIDTH + CARD_GAP));
+    setFlowIndex(Math.max(0, Math.min(idx, templates.length - 1)));
+  }, [templates.length]);
+  const handleCardModeChange = (mode: "grid" | "flow") => {
+    setCardMode(mode);
+    try { localStorage.setItem("futuraria-card-mode", mode); } catch {}
+  };
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
@@ -268,6 +286,90 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     } catch {
       addToast(`Error al crear desde "${recipeName}". Intenta de nuevo.`, "error");
     }
+  };
+
+  const renderTemplateCard = (t: Template, i?: number) => {
+    const hasHtml = t.engine === "html" && t.frames?.[0]?.html;
+    const dist = i !== undefined ? i - flowIndex : 0;
+    const absDist = Math.abs(dist);
+    const isCenter = dist === 0;
+    const isFlow = i !== undefined && cardMode === "flow";
+    const rotY = isCenter ? 0 : dist > 0 ? -42 : 42;
+    const scaleVal = isCenter ? 1.1 : Math.max(0.6, 1 - absDist * 0.12);
+    const translateZ = isCenter ? 60 : -absDist * 50;
+    const opacityVal = Math.max(0.2, 1 - absDist * 0.25);
+    const cardExtraStyle: React.CSSProperties = isFlow
+      ? { width: CARD_WIDTH, height: 300, borderRadius: 12, flexShrink: 0,
+          transform: `rotateY(${rotY}deg) scale(${scaleVal}) translateZ(${translateZ}px)`,
+          opacity: opacityVal,
+          transition: "transform 0.4s ease, opacity 0.4s ease, box-shadow 0.25s ease, border-color 0.25s ease",
+          scrollSnapAlign: "center" as any, transformStyle: "preserve-3d", zIndex: 100 - absDist }
+      : {};
+    return (
+    <div
+      key={t.id}
+      className={isFlow ? "dash-card flow-card" : "dash-card"}
+      style={{ ...cardStyle, ...cardExtraStyle }}
+      onMouseEnter={e => {
+        if (isFlow) { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; }
+        else { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }
+      }}
+      onMouseLeave={e => {
+        if (isFlow) { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }
+        else { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }
+      }}
+      onClick={() => onSelectTemplate(t.id)}
+    >
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
+        {hasHtml ? (
+          <iframe
+            srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
+            sandbox="allow-same-origin allow-scripts"
+            className="card-preview"
+            style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+            title={t.name}
+          />
+        ) : (
+          <div style={{ width:"100%", height:"100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />
+        )}
+        <div style={cardOverlay} />
+      </div>
+      <div style={cardContentStyle}>
+        <div style={{ flex: 1 }} />
+        <div style={cardInfoPanel}>
+          {editingTplId === t.id ? (
+            <input
+              ref={editInputRef}
+              value={editingTplName}
+              onChange={e => setEditingTplName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingTplId(null); }}
+              onBlur={commitRename}
+              style={{ width: "100%", fontSize: 12, padding: "2px 4px", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6, outline: "none" }}
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <div
+              style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", cursor: "text", letterSpacing: "-0.01em" }}
+              onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
+              title="Double-click to rename"
+            >{t.name}</div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+            {t.engine === "html" && (
+              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontWeight: 500 }}>HTML</span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
+        <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
+        <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
+        <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
+        <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">Delete</button>
+      </div>
+    </div>
+    );
   };
 
   return (
@@ -492,77 +594,24 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               + New Template
             </button>
           </div>
+        ) : cardMode === "flow" ? (
+          <div
+            ref={flowScrollRef}
+            onScroll={handleFlowScroll}
+            className="flow-track"
+            style={{
+              display: "flex", gap: CARD_GAP, overflowX: "auto", overflowY: "hidden",
+              scrollSnapType: "x mandatory", scrollBehavior: "smooth",
+              perspective: "1200px", perspectiveOrigin: "center",
+              padding: "60px 0", alignItems: "center",
+              WebkitOverflowScrolling: "touch",
+            }}
+          >
+            {templates.map((t, i) => renderTemplateCard(t, i))}
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
-            {templates.map(t => {
-              const hasHtml = t.engine === "html" && t.frames?.[0]?.html;
-              return (
-              <div
-                key={t.id}
-                className="dash-card"
-                style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
-                onClick={() => onSelectTemplate(t.id)}
-              >
-                {/* Full-bleed blurred design background */}
-                <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
-                  {hasHtml ? (
-                    <iframe
-                      srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
-                      sandbox="allow-same-origin allow-scripts"
-                      className="card-preview"
-                      style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
-                      title={t.name}
-                    />
-                  ) : (
-                    <div style={{ width:"100%", height:"100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />
-                  )}
-                  {/* Frosted overlay */}
-                  <div style={cardOverlay} />
-                </div>
-
-                {/* Content overlay */}
-                <div style={cardContentStyle}>
-                  <div style={{ flex: 1 }} />
-                  {/* Info panel — glass on top of blurred design */}
-                  <div style={cardInfoPanel}>
-                    {editingTplId === t.id ? (
-                      <input
-                        ref={editInputRef}
-                        value={editingTplName}
-                        onChange={e => setEditingTplName(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingTplId(null); }}
-                        onBlur={commitRename}
-                        style={{ width: "100%", fontSize: 12, padding: "2px 4px", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6, outline: "none" }}
-                        onClick={e => e.stopPropagation()}
-                      />
-                    ) : (
-                      <div
-                        style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", cursor: "text", letterSpacing: "-0.01em" }}
-                        onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
-                        title="Double-click to rename"
-                      >{t.name}</div>
-                    )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
-                      {t.engine === "html" && (
-                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontWeight: 500 }}>HTML</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action buttons — visible on hover */}
-                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
-                  <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">Delete</button>
-                </div>
-              </div>
-              );
-            })}
+            {templates.map(t => renderTemplateCard(t))}
           </div>
         )}
       </div>
@@ -723,6 +772,42 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 {(() => { const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0]; return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—"; })()}
               </div>
               <div className="dash-metric-sub">Most frames</div>
+            </div>
+          </div>
+
+          {/* ── Display Mode ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Display</h3>
+          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14 }}>🎴</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Card View</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                  {cardMode === "grid" ? "Grid layout (current)" : "Cover Flow (perspective slider)"}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.03)", borderRadius: 100, padding: 3 }}>
+              <button
+                type="button"
+                onClick={() => handleCardModeChange("grid")}
+                style={{
+                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
+                  background: cardMode === "grid" ? "rgba(255,255,255,0.08)" : "transparent",
+                  color: cardMode === "grid" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
+                }}
+              >Grid</button>
+              <button
+                type="button"
+                onClick={() => handleCardModeChange("flow")}
+                style={{
+                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
+                  background: cardMode === "flow" ? "rgba(255,255,255,0.08)" : "transparent",
+                  color: cardMode === "flow" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
+                }}
+              >Flow</button>
             </div>
           </div>
 
