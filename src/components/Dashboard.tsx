@@ -327,14 +327,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
+                className={activeTab === tab.id ? "liquid-glass dash-tab-active" : "liquid-glass dash-tab"}
                 style={{
-                  background: activeTab === tab.id ? "rgba(255,255,255,0.06)" : "transparent",
-                  border: activeTab === tab.id ? "1px solid rgba(255,255,255,0.15)" : "1px solid transparent",
-                  color: activeTab === tab.id ? "#ffffff" : "rgba(255,255,255,0.45)",
                   borderRadius: 100, padding: "8px 18px", fontSize: 13, cursor: "pointer",
-                  fontWeight: activeTab === tab.id ? 500 : 400,
+                  fontWeight: 500,
                   display: "flex", alignItems: "center", gap: 6,
-                  transition: "all 0.2s ease",
+                  transition: "all 0.25s ease",
                 }}
               >
                 {tab.icon} {tab.label}

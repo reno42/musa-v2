@@ -1764,6 +1764,19 @@ html, body, #root { height: 100%; width: 100%; }
   pointer-events: none;
 }
 
+/* ── Dashboard tab buttons (same liquid-glass as landing) ── */
+.dash-tab {
+  color: rgba(255, 255, 255, 0.45);
+}
+.dash-tab:hover {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.03);
+}
+.dash-tab-active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .font-instrument {
   font-family: 'Instrument Serif', serif;
 }
