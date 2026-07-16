@@ -2074,6 +2074,38 @@ html, body, #root { height: 100%; width: 100%; }
 
 /* ═══════════════════════ HAMBURGER & MOBILE MENU ═══════════════════════ */
 
+/* ── Desktop inline nav links ── */
+.landing-nav-links {
+  display: none; /* hidden on mobile */
+  gap: 4px;
+  align-items: center;
+  flex: 1;
+  justify-content: center;
+}
+
+.landing-nav-link {
+  padding: 6px 14px;
+  border-radius: 100px;
+  color: rgba(255,255,255,0.45);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.landing-nav-link:hover {
+  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.04);
+}
+
+@media (min-width: 1024px) {
+  .landing-nav-links {
+    display: flex;
+  }
+}
+
+/* ── Hamburger ── */
 .landing-hamburger {
   display: none; /* hidden on desktop */
   background: none;

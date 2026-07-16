@@ -136,6 +136,16 @@ export function Landing({ onEnter }: LandingProps) {
             </motion.span>
           </motion.div>
 
+          {/* Desktop nav links — hidden on mobile, inline on desktop */}
+          <nav className="landing-nav-links">
+            <a href="#harness" className="landing-nav-link">What is a Harness?</a>
+            <a href="#install" className="landing-nav-link">Installation</a>
+            <a href="#features" className="landing-nav-link">Features</a>
+            <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 1 }} />
+            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-nav-link">GitHub</a>
+            <a href="#" className="landing-nav-link">Docs</a>
+          </nav>
+
           {/* Tab buttons — fade in on exit with stagger, matching dashboard */}
           <AnimatePresence>
             {isExiting && (
