@@ -1795,6 +1795,16 @@ html, body, #root { height: 100%; width: 100%; }
   z-index: 20;
   padding: 24px 24px 0;
   width: 100%;
+  transition: padding 0.5s ease;
+}
+
+/* ── Exit state: nav becomes the dashboard header bar ── */
+.landing-nav--exiting {
+  padding: 8px 16px 0;
+}
+
+.landing-nav--exiting .landing-nav-inner {
+  max-width: none;
 }
 
 .landing-nav-inner {

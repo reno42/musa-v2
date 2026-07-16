@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useReducer } from "react";
+import { motion } from "framer-motion";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
@@ -270,7 +271,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   return (
-    <div style={dashboardStyle} className="dash-atmosphere">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
+      style={dashboardStyle}
+      className="dash-atmosphere"
+    >
       {/* Header */}
       <div style={dashHeaderStyle}>
         <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
@@ -632,7 +639,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
