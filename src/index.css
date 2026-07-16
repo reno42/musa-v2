@@ -1783,13 +1783,14 @@ html, body, #root { height: 100%; width: 100%; }
 
 /* ===== LANDING PAGE ===== */
 .landing-root {
-  position: relative;
-  min-height: 100vh;
+  position: fixed;
+  inset: 0;
   width: 100vw;
   background: #000000;
   color: #ffffff;
   overflow-y: auto;
   overflow-x: hidden;
+  scroll-behavior: smooth;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -2092,6 +2093,10 @@ html, body, #root { height: 100%; width: 100%; }
   text-decoration: none;
   transition: all 0.15s ease;
   white-space: nowrap;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .landing-nav-link:hover {
@@ -2185,6 +2190,7 @@ html, body, #root { height: 100%; width: 100%; }
 
 .landing-menu-link {
   display: block;
+  width: 100%;
   padding: 14px 16px;
   border-radius: 10px;
   color: rgba(255,255,255,0.6);
@@ -2192,6 +2198,11 @@ html, body, #root { height: 100%; width: 100%; }
   font-weight: 500;
   text-decoration: none;
   transition: all 0.15s ease;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .landing-menu-link:hover {
@@ -2222,6 +2233,8 @@ html, body, #root { height: 100%; width: 100%; }
   background: rgba(255,255,255,0.03);
   border: 1px solid rgba(255,255,255,0.06);
   transition: all 0.2s ease;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .landing-hero-footer-link:hover {

@@ -18,6 +18,12 @@ export function Landing({ onEnter }: LandingProps) {
     setTimeout(() => onEnter(), 900);
   }, [isExiting, onEnter]);
 
+  // ── Scroll to a section by id (no hash pollution) ──
+  const scrollToSection = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
   // ── Video fade-in/fade-out loop ──
   useEffect(() => {
     const video = videoRef.current;
@@ -138,12 +144,12 @@ export function Landing({ onEnter }: LandingProps) {
 
           {/* Desktop nav links — hidden on mobile, inline on desktop */}
           <nav className="landing-nav-links">
-            <a href="#harness" className="landing-nav-link">What is a Harness?</a>
-            <a href="#install" className="landing-nav-link">Installation</a>
-            <a href="#features" className="landing-nav-link">Features</a>
+            <button onClick={() => scrollToSection("harness")} className="landing-nav-link">What is a Harness?</button>
+            <button onClick={() => scrollToSection("install")} className="landing-nav-link">Installation</button>
+            <button onClick={() => scrollToSection("features")} className="landing-nav-link">Features</button>
             <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 1 }} />
             <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-nav-link">GitHub</a>
-            <a href="#" className="landing-nav-link">Docs</a>
+            <button onClick={() => scrollToSection("features")} className="landing-nav-link">Docs</button>
           </nav>
 
           {/* Tab buttons — fade in on exit with stagger, matching dashboard */}
@@ -295,11 +301,11 @@ export function Landing({ onEnter }: LandingProps) {
                 </button>
               </div>
               <nav className="landing-menu-nav">
-                <a href="#harness" onClick={() => setMenuOpen(false)} className="landing-menu-link">What is a Harness?</a>
-                <a href="#install" onClick={() => setMenuOpen(false)} className="landing-menu-link">Installation</a>
-                <a href="#features" onClick={() => setMenuOpen(false)} className="landing-menu-link">Features</a>
+                <button onClick={() => { scrollToSection("harness"); setMenuOpen(false); }} className="landing-menu-link">What is a Harness?</button>
+                <button onClick={() => { scrollToSection("install"); setMenuOpen(false); }} className="landing-menu-link">Installation</button>
+                <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Features</button>
                 <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-menu-link">GitHub</a>
-                <a href="#" className="landing-menu-link">Docs</a>
+                <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Docs</button>
               </nav>
             </motion.div>
           </motion.div>
@@ -350,21 +356,9 @@ export function Landing({ onEnter }: LandingProps) {
 
       {/* ── Hero footer links (visible on desktop) ── */}
       <div className="landing-hero-footer">
-        {[
-          { label: "GitHub", href: "https://github.com/reno42/design" },
-          { label: "Docs", href: "#" },
-          { label: "Open Source", href: "#" },
-        ].map(({ label, href }) => (
-          <a
-            key={label}
-            href={href}
-            target={href.startsWith("http") ? "_blank" : undefined}
-            rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
-            className="landing-hero-footer-link"
-          >
-            {label}
-          </a>
-        ))}
+        <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-hero-footer-link">GitHub</a>
+        <button onClick={() => scrollToSection("features")} className="landing-hero-footer-link">Docs</button>
+        <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-hero-footer-link">Open Source</a>
       </div>
 
       {/* ── Scroll-down indicator ── */}
@@ -504,22 +498,9 @@ npm run dev`}</pre>
             Built for designers and developers who want AI-assisted, deterministic design output.
           </p>
           <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-            {[
-              { label: "GitHub", href: "https://github.com/reno42/design" },
-              { label: "Docs", href: "#" },
-              { label: "Open Source", href: "#" },
-            ].map(({ label, href }) => (
-              <a
-                key={label}
-                href={href}
-                target={href.startsWith("http") ? "_blank" : undefined}
-                rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
-                className="liquid-glass landing-footer-btn"
-                style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12 }}
-              >
-                {label}
-              </a>
-            ))}
+            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12 }}>GitHub</a>
+            <button onClick={() => scrollToSection("features")} className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Docs</button>
+            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12 }}>Open Source</a>
           </div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 8 }}>
             © {new Date().getFullYear()} Futuraria — MIT License
