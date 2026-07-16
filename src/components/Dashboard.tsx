@@ -340,18 +340,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const translateZ = isCenter ? 60 : -absDist * 50;
     const opacityVal = Math.max(0.2, 1 - absDist * 0.25);
 
-    /* Shared iframe markup */
-    const previewIframe = hasHtml ? (
-      <iframe
-        srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
-        sandbox="allow-same-origin allow-scripts"
-        className="card-preview"
-        style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
-        title={t.name}
-      />
-    ) : (
-      <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />
-    );
+    /* Virtualize: only render live iframe for cards within 3 of center in flow mode */
+    const FLOW_WINDOW = 3;
+    const renderLivePreview = !isFlow || absDist <= FLOW_WINDOW;
+
+    /* Shared iframe markup — static placeholder when virtualized out */
+    const previewContent = hasHtml
+      ? (renderLivePreview
+        ? (
+          <iframe
+            srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
+            sandbox="allow-same-origin"
+            className="card-preview"
+            style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+            title={t.name}
+          />
+        )
+        : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a" }} />
+      )
+      : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />;
 
     /* Shared metadata + actions block (rendered inside card for grid, below for flow) */
     const metaBlock = (
@@ -412,7 +419,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             onClick={() => onSelectTemplate(t.id)}
           >
             <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
-              {previewIframe}
+              {previewContent}
             </div>
           </div>
 
@@ -435,7 +442,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       onClick={() => onSelectTemplate(t.id)}
     >
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
-        {previewIframe}
+        {previewContent}
         <div style={cardOverlay} />
       </div>
       <div style={cardContentStyle}>
