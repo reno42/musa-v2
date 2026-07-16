@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useReducer } from "react";
+﻿import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { mcpCall } from "../lib/mcpClient";
@@ -278,9 +278,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={dashboardStyle}
       className="dash-atmosphere"
     >
+      {/* ── Background video (same as landing) ── */}
+      <video
+        src="/ditther-anim-160726-030817-814x1080.mp4"
+        muted
+        autoPlay
+        loop
+        playsInline
+        preload="auto"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "bottom",
+          pointerEvents: "none",
+          opacity: 1,
+          zIndex: 0,
+        }}
+      />
+
       {/* Header */}
       <div style={dashHeaderStyle}>
-        <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
+        <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: -0.5, color: "#ffffff" }}>Futuraria</h1>
         <div style={{ flex: 1 }} />
         {creatingWs ? (
           <input
@@ -354,7 +375,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <button
             type="button"
             onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
-            style={{ ...btnPrimary, background: "#3B82F6" }}
+            style={{ ...btnPrimary, background: "#3B82F6", color: "#ffffff", border: "none", boxShadow: "0 2px 8px rgba(59,130,246,0.3)" }}
             disabled={!selectedWs}
           >
             + HTML
@@ -370,9 +391,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           style={{
             ...btnSecondary,
             borderRadius: "8px 8px 0 0",
-            borderBottom: activeTab === "templates" ? "2px solid #c8b898" : "2px solid transparent",
-            background: activeTab === "templates" ? "rgba(200,184,152,0.08)" : "transparent",
-            color: activeTab === "templates" ? "#c8b898" : "#7a7668",
+            borderBottom: activeTab === "templates" ? "2px solid rgba(255,255,255,0.8)" : "2px solid transparent",
+            background: activeTab === "templates" ? "rgba(255,255,255,0.05)" : "transparent",
+            color: activeTab === "templates" ? "#ffffff" : "rgba(255,255,255,0.35)",
             marginRight: 4,
           }}
         >
@@ -384,9 +405,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           style={{
             ...btnSecondary,
             borderRadius: "8px 8px 0 0",
-            borderBottom: activeTab === "recipes" ? "2px solid #c8b898" : "2px solid transparent",
-            background: activeTab === "recipes" ? "rgba(200,184,152,0.08)" : "transparent",
-            color: activeTab === "recipes" ? "#c8b898" : "#7a7668",
+            borderBottom: activeTab === "recipes" ? "2px solid rgba(255,255,255,0.8)" : "2px solid transparent",
+            background: activeTab === "recipes" ? "rgba(255,255,255,0.05)" : "transparent",
+            color: activeTab === "recipes" ? "#ffffff" : "rgba(255,255,255,0.35)",
           }}
         >
           <IconTag size={14} style={{ marginRight: 4 }} /> Key Visuals
@@ -446,10 +467,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loading ? (
-          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading…</div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
-          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="#7a7668" /></div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconFile size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
@@ -466,8 +487,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div
                 key={t.id}
                 style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,184,152,0.25)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0, 0, 0, 0.2)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.03)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 12px rgba(0, 0, 0, 0.15)"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0, 0, 0, 0.3)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0, 0, 0, 0.2)"; }}
               >
                 <button
                   type="button"
@@ -491,7 +512,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                         </div>
                       )
                     ) : (
-                      <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:"#7a7668", fontSize:11 }}>{t.width}×{t.height}</div>
+                      <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,0.3)", fontSize:11 }}>{t.width}×{t.height}</div>
                     )}
                   </div>
                   <div style={{ padding: "8px 10px" }}>
@@ -513,7 +534,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       >{t.name}</div>
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{ fontSize: 12, color: "#7a7668" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
                       {t.engine === "html" && (
                         <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#3B82F6", color: "#fff", fontWeight: 600 }}>HTML</span>
                       )}
@@ -537,10 +558,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "recipes" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loadingRecipes ? (
-          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>Loading...</div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading...</div>
         ) : recipes.length === 0 ? (
-          <div style={{ textAlign: "center", color: "#7a7668", padding: 60 }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}><IconTag size={40} color="#7a7668" /></div>
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}><IconTag size={40} color="rgba(255,255,255,0.3)" /></div>
             <div>No Key Visuals saved yet.</div>
             <div style={{ fontSize: 11, marginTop: 4, opacity: 0.6 }}>
               Open a template in the editor and click the tag icon to save it as a Key Visual.
@@ -552,8 +573,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div
                 key={r.id}
                 style={cardStyle}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,184,152,0.25)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0, 0, 0, 0.2)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.03)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 12px rgba(0, 0, 0, 0.15)"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0, 0, 0, 0.3)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0, 0, 0, 0.2)"; }}
               >
                 <button
                   type="button"
@@ -563,16 +584,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 >
                   <div style={thumbnailStyle}>
                     <div style={{ textAlign: "center" }}>
-                      <IconTag size={28} color="#7a7668" />
-                      <div style={{ fontSize: 11, marginTop: 4, color: "#7a7668" }}>{r.templateWidth}×{r.templateHeight}</div>
+                      <IconTag size={28} color="rgba(255,255,255,0.3)" />
+                      <div style={{ fontSize: 11, marginTop: 4, color: "rgba(255,255,255,0.3)" }}>{r.templateWidth}×{r.templateHeight}</div>
                     </div>
                   </div>
                   <div style={{ padding: "8px 12px" }}>
                     <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                    <div style={{ fontSize: 11, color: "#7a7668", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {r.description || "No description"}
                     </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 11, color: "#7a7668" }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
                       <span>Used: {r.usageCount || 0}×</span>
                       <span>{new Date(r.createdAt).toLocaleDateString()}</span>
                     </div>
@@ -612,22 +633,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </thead>
               <tbody>
                 <tr>
-                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>templates</code></td>
+                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>templates</code></td>
                   <td>{templates.length}</td>
                   <td>Your design files — frames, HTML, CSS, metadata</td>
                 </tr>
                 <tr>
-                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>recipes</code></td>
+                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>recipes</code></td>
                   <td>{recipes.length}</td>
                   <td>Key Visuals — reusable design patterns with variables</td>
                 </tr>
                 <tr>
-                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>workspaces</code></td>
+                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>workspaces</code></td>
                   <td>{workspaces.length}</td>
                   <td>Organization folders for your projects</td>
                 </tr>
                 <tr>
-                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>design_assets</code></td>
+                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>design_assets</code></td>
                   <td>—</td>
                   <td>Extracted design tokens, styles, and artifacts</td>
                 </tr>
@@ -644,77 +665,79 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 }
 
 const dashboardStyle: React.CSSProperties = {
-  height: "100vh", background: "#080808", color: "#c4b898",
-  fontFamily: "Inter, system-ui, sans-serif", display: "flex", flexDirection: "column",
-  backgroundImage: "url(/bg-dashboard.webp)",
-  backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
-  backgroundAttachment: "fixed",
+  height: "100vh", background: "#000000", color: "#ffffff",
+  fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+  display: "flex", flexDirection: "column",
+  overflow: "hidden",
 };
 
 const dashHeaderStyle: React.CSSProperties = {
-  padding: "8px 20px",
-  background: "rgba(8, 8, 8, 0.7)",
-  backdropFilter: "blur(12px) saturate(140%)",
-  WebkitBackdropFilter: "blur(12px) saturate(140%)",
-  borderBottom: "1px solid rgba(200, 184, 152, 0.06)",
-  display: "flex", alignItems: "center", gap: 10, zIndex: 10,
+  padding: "24px 24px 0",
+  background: "transparent",
+  display: "flex", alignItems: "center", gap: 12, zIndex: 10,
 };
 
 const thumbnailStyle: React.CSSProperties = {
-  background: "rgba(15, 15, 15, 0.35)",
-  backdropFilter: "blur(4px) saturate(120%)",
-  WebkitBackdropFilter: "blur(4px) saturate(120%)",
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
   height: 140, borderRadius: "10px 10px 0 0",
   display: "flex", alignItems: "center", justifyContent: "center",
-  color: "#2a2a2a", fontSize: 32,
+  color: "rgba(255, 255, 255, 0.2)", fontSize: 32,
+  position: "relative",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const selectStyle: React.CSSProperties = {
-  background: "rgba(15, 15, 15, 0.35)",
-  backdropFilter: "blur(6px) saturate(120%)",
-  WebkitBackdropFilter: "blur(6px) saturate(120%)",
-  border: "1px solid rgba(255, 255, 255, 0.03)",
-  color: "#d4cbb8",
-  borderRadius: 8, padding: "5px 10px", fontSize: 12, outline: "none",
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
+  color: "#ffffff",
+  borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
   cursor: "pointer",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const inputStyle: React.CSSProperties = {
-  background: "rgba(15, 15, 15, 0.3)",
-  backdropFilter: "blur(6px) saturate(120%)",
-  WebkitBackdropFilter: "blur(6px) saturate(120%)",
-  border: "1px solid rgba(255, 255, 255, 0.03)",
-  color: "#d4cbb8",
-  borderRadius: 8, padding: "5px 10px", fontSize: 12, outline: "none",
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
+  color: "#ffffff",
+  borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
   transition: "border-color 0.2s ease",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const btnPrimary: React.CSSProperties = {
-  background: "rgba(200, 184, 152, 0.08)",
-  backdropFilter: "blur(4px) saturate(120%)",
-  WebkitBackdropFilter: "blur(4px) saturate(120%)",
-  border: "1px solid rgba(200, 184, 152, 0.4)", color: "#c8b898",
-  borderRadius: 8, padding: "6px 16px", fontSize: 12, cursor: "pointer", fontWeight: 500,
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.15)", color: "#ffffff",
+  borderRadius: 100, padding: "8px 20px", fontSize: 13, cursor: "pointer", fontWeight: 500,
   transition: "all 0.2s ease",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const btnSecondary: React.CSSProperties = {
-  background: "rgba(15, 15, 15, 0.35)",
-  backdropFilter: "blur(4px) saturate(120%)",
-  WebkitBackdropFilter: "blur(4px) saturate(120%)",
-  border: "1px solid rgba(255, 255, 255, 0.03)", color: "#a09888",
-  borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer",
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.06)", color: "rgba(255, 255, 255, 0.7)",
+  borderRadius: 100, padding: "8px 16px", fontSize: 13, cursor: "pointer",
   transition: "all 0.2s ease",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const cardStyle: React.CSSProperties = {
-  background: "rgba(12, 12, 12, 0.4)",
-  backdropFilter: "blur(6px) saturate(120%)",
-  WebkitBackdropFilter: "blur(6px) saturate(120%)",
-  border: "1px solid rgba(255, 255, 255, 0.03)", borderRadius: 12,
+  background: "rgba(255, 255, 255, 0.01)",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
+  border: "1px solid rgba(255, 255, 255, 0.06)", borderRadius: 14,
   cursor: "pointer", overflow: "hidden", transition: "all 0.25s ease",
   display: "flex", flexDirection: "column",
-  boxShadow: "0 2px 12px rgba(0, 0, 0, 0.15)",
+  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.2)",
 };
 
 const cardBtnStyle: React.CSSProperties = {
@@ -725,7 +748,7 @@ const cardBtnStyle: React.CSSProperties = {
 };
 
 const cardAction: React.CSSProperties = {
-  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.02)",
-  color: "#6b6355", fontSize: 12, cursor: "pointer", padding: "4px 0",
+  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
+  color: "rgba(255, 255, 255, 0.5)", fontSize: 12, cursor: "pointer", padding: "6px 0",
   transition: "all 0.15s ease",
 };
