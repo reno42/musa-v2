@@ -519,7 +519,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
                   {hasHtml ? (
                     <iframe
-                      srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#f5f0eb"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
+                      srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
                       sandbox="allow-same-origin allow-scripts"
                       className="card-preview"
                       style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
@@ -549,15 +549,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       />
                     ) : (
                       <div
-                        style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(0,0,0,0.85)", textShadow: "0 0 6px rgba(255,255,255,0.5)", cursor: "text", letterSpacing: "-0.01em" }}
+                        style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", cursor: "text", letterSpacing: "-0.01em" }}
                         onDoubleClick={e => { e.stopPropagation(); startRename(t.id, t.name); }}
                         title="Double-click to rename"
                       >{t.name}</div>
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{ fontSize: 11, color: "rgba(0,0,0,0.4)", textShadow: "0 0 4px rgba(255,255,255,0.4)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>{new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
                       {t.engine === "html" && (
-                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(0,0,0,0.06)", color: "rgba(0,0,0,0.5)", fontWeight: 500 }}>HTML</span>
+                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontWeight: 500 }}>HTML</span>
                       )}
                     </div>
                   </div>
@@ -612,11 +612,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div style={cardContentStyle}>
                   <div style={{ flex: 1 }} />
                   <div style={cardInfoPanel}>
-                    <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(0,0,0,0.85)", textShadow: "0 0 6px rgba(255,255,255,0.5)", letterSpacing: "-0.01em" }}>{r.name}</div>
-                    <div style={{ fontSize: 11, color: "rgba(0,0,0,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textShadow: "0 0 4px rgba(255,255,255,0.4)" }}>
+                    <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 16, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.9)", textShadow: "0 0 6px rgba(0,0,0,0.6)", letterSpacing: "-0.01em" }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textShadow: "0 0 4px rgba(0,0,0,0.5)" }}>
                       {r.description || "No description"}
                     </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 11, color: "rgba(0,0,0,0.35)", textShadow: "0 0 4px rgba(255,255,255,0.35)" }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textShadow: "0 0 4px rgba(0,0,0,0.4)" }}>
                       <span>Used: {r.usageCount || 0}×</span>
                       <span>{new Date(r.createdAt).toLocaleDateString()}</span>
                     </div>
