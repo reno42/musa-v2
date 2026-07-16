@@ -224,29 +224,34 @@ export function Landing({ onEnter }: LandingProps) {
       </AnimatePresence>
 
       {/* ── Footer ── */}
-      <motion.div
-        className="landing-footer"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: isExiting ? 0 : 1 }}
-        transition={{ duration: 0.4 }}
-      >
-        {[
-          { label: "GitHub", href: "https://github.com/reno42/design" },
-          { label: "Docs", href: "#" },
-          { label: "Open Source", href: "#" },
-        ].map(({ label, href }) => (
-          <a
-            key={label}
-            href={href}
-            target={href.startsWith("http") ? "_blank" : undefined}
-            rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
-            className="liquid-glass landing-footer-btn"
-            style={{ width: "auto", padding: "12px 24px", borderRadius: 100, textDecoration: "none", fontSize: 13 }}
+      <AnimatePresence>
+        {videoReady && (
+          <motion.div
+            className="landing-footer"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: isExiting ? 0 : 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
           >
-            {label}
-          </a>
-        ))}
-      </motion.div>
+            {[
+              { label: "GitHub", href: "https://github.com/reno42/design" },
+              { label: "Docs", href: "#" },
+              { label: "Open Source", href: "#" },
+            ].map(({ label, href }) => (
+              <a
+                key={label}
+                href={href}
+                target={href.startsWith("http") ? "_blank" : undefined}
+                rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
+                className="liquid-glass landing-footer-btn"
+                style={{ width: "auto", padding: "12px 24px", borderRadius: 100, textDecoration: "none", fontSize: 13 }}
+              >
+                {label}
+              </a>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

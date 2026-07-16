@@ -64,10 +64,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "recipes">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data">("templates");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
-  const [showDataPanel, setShowDataPanel] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -299,119 +298,106 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         }}
       />
 
-      {/* Header */}
+      {/* Header — matches landing navbar exactly */}
       <div style={dashHeaderStyle}>
-        <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: -0.5, color: "#ffffff" }}>Futuraria</h1>
-        <div style={{ flex: 1 }} />
-        {creatingWs ? (
-          <input
-            ref={newWsInputRef}
-            aria-label="New workspace name"
-            placeholder="Workspace name…"
-            value={newWsName}
-            onChange={e => setNewWsName(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleCreateWorkspace(); if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
-            onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
-            style={{ ...inputStyle, width: 160 }}
-            autoFocus
-          />
-        ) : (
-          <select
-            aria-label="Select workspace"
-            value={selectedWs || ""}
-            onChange={e => handleWsChange(e.target.value || null)}
-            style={selectStyle}
-          >
-            <option value=""><IconFolder size={14} style={{ marginRight: 4 }} />All Templates</option>
-            {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
-            {workspaces.map(w => {
-              if (editingWsId === w.id) {
-                return (
-                  <option key={w.id} value={w.id} disabled>
-                    Renaming...
-                  </option>
-                );
-              }
-              return <option key={w.id} value={w.id} onDoubleClick={() => startWsRename(w.id, w.name)} title="Double-click to rename">{w.name}</option>;
-            })}
-          </select>
-        )}
-        {editingWsId && (
-          <input
-            ref={editInputRef}
-            value={editingWsName}
-            onChange={e => setEditingWsName(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") commitWsRename(); if (e.key === "Escape") setEditingWsId(null); }}
-            onBlur={commitWsRename}
-            style={{ ...inputStyle, width: 160 }}
-            autoFocus
-          />
-        )}
-        {!creatingWs && !editingWsId && (
-          <button type="button" onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }} style={btnSecondary}>
-            + Workspace
-          </button>
-        )}
-        <input
-          aria-label="Search templates"
-          placeholder="Search templates…"
-          value={searchDisplay}
-          onChange={e => handleSearch(e.target.value)}
-          style={{ ...inputStyle, width: 200 }}
-        />
-        {creatingTpl ? (
-          <input
-            ref={newTplInputRef}
-            aria-label="New template name"
-            placeholder="Template name…"
-            value={newTplName}
-            onChange={e => setNewTplName(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleCreateWithName(); if (e.key === "Escape") { setCreatingTpl(false); setNewTplName(""); } }}
-            onBlur={() => { if (!newTplName.trim()) { setCreatingTpl(false); } }}
-            style={{ ...inputStyle, width: 140 }}
-            autoFocus
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => { setCreatingTpl(true); setTimeout(() => newTplInputRef.current?.focus(), 50); }}
-            style={{ ...btnPrimary, background: "#3B82F6", color: "#ffffff", border: "none", boxShadow: "0 2px 8px rgba(59,130,246,0.3)" }}
-            disabled={!selectedWs}
-          >
-            + HTML
-          </button>
-        )}
-      </div>
+        <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%" }}>
+          {/* Brand — identical to landing */}
+          <div className="landing-brand" style={{ flexShrink: 0 }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="4" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+            <span>Futuraria</span>
+          </div>
 
-      {/* Tab Navigation */}
-      <div style={{ display: "flex", gap: 0, padding: "0 20px", marginTop: 4 }}>
-        <button
-          type="button"
-          onClick={() => setActiveTab("templates")}
-          style={{
-            ...btnSecondary,
-            borderRadius: "8px 8px 0 0",
-            borderBottom: activeTab === "templates" ? "2px solid rgba(255,255,255,0.8)" : "2px solid transparent",
-            background: activeTab === "templates" ? "rgba(255,255,255,0.05)" : "transparent",
-            color: activeTab === "templates" ? "#ffffff" : "rgba(255,255,255,0.35)",
-            marginRight: 4,
-          }}
-        >
-          <IconFile size={14} style={{ marginRight: 4 }} /> Templates
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("recipes")}
-          style={{
-            ...btnSecondary,
-            borderRadius: "8px 8px 0 0",
-            borderBottom: activeTab === "recipes" ? "2px solid rgba(255,255,255,0.8)" : "2px solid transparent",
-            background: activeTab === "recipes" ? "rgba(255,255,255,0.05)" : "transparent",
-            color: activeTab === "recipes" ? "#ffffff" : "rgba(255,255,255,0.35)",
-          }}
-        >
-          <IconTag size={14} style={{ marginRight: 4 }} /> Key Visuals
-        </button>
+          {/* Centered tab navigation */}
+          <div style={{ display: "flex", gap: 4, justifyContent: "center", flex: 1 }}>
+            {([
+              { id: "templates", label: "Templates", icon: <IconFile size={14} /> },
+              { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
+              { id: "data", label: "Data", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                </svg>
+              )},
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  background: activeTab === tab.id ? "rgba(255,255,255,0.06)" : "transparent",
+                  border: activeTab === tab.id ? "1px solid rgba(255,255,255,0.15)" : "1px solid transparent",
+                  color: activeTab === tab.id ? "#ffffff" : "rgba(255,255,255,0.45)",
+                  borderRadius: 100, padding: "8px 18px", fontSize: 13, cursor: "pointer",
+                  fontWeight: activeTab === tab.id ? 500 : 400,
+                  display: "flex", alignItems: "center", gap: 6,
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right: Workspace + Search + Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {creatingWs ? (
+              <input
+                ref={newWsInputRef}
+                aria-label="New workspace name"
+                placeholder="Workspace name…"
+                value={newWsName}
+                onChange={e => setNewWsName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleCreateWorkspace(); if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
+                onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
+                style={{ ...inputStyle, width: 140 }}
+                autoFocus
+              />
+            ) : (
+              <select
+                aria-label="Select workspace"
+                value={selectedWs || ""}
+                onChange={e => handleWsChange(e.target.value || null)}
+                style={selectStyle}
+              >
+                <option value="">All Templates</option>
+                {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
+                {workspaces.map(w => {
+                  if (editingWsId === w.id) {
+                    return <option key={w.id} value={w.id} disabled>Renaming...</option>;
+                  }
+                  return <option key={w.id} value={w.id} onDoubleClick={() => startWsRename(w.id, w.name)} title="Double-click to rename">{w.name}</option>;
+                })}
+              </select>
+            )}
+            {editingWsId && (
+              <input
+                ref={editInputRef}
+                value={editingWsName}
+                onChange={e => setEditingWsName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") commitWsRename(); if (e.key === "Escape") setEditingWsId(null); }}
+                onBlur={commitWsRename}
+                style={{ ...inputStyle, width: 140 }}
+                autoFocus
+              />
+            )}
+            {!creatingWs && !editingWsId && (
+              <button type="button" onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }} style={btnSecondary}>
+                + Workspace
+              </button>
+            )}
+            <input
+              aria-label="Search templates"
+              placeholder="Search…"
+              value={searchDisplay}
+              onChange={e => handleSearch(e.target.value)}
+              style={{ ...inputStyle, width: 140 }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* ── Metrics Bar ── */}
@@ -449,18 +435,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             Most frames
           </div>
         </div>
-        <button
-          type="button"
-          className="dash-data-btn"
-          onClick={() => setShowDataPanel(true)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <ellipse cx="12" cy="5" rx="9" ry="3" />
-            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-          </svg>
-          Data
-        </button>
       </div>
 
       {/* Template Grid */}
@@ -636,49 +610,46 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       </div>
       )}
 
-      {/* ── Data Panel Overlay ── */}
-      {showDataPanel && (
-        <div className="data-panel-overlay" onClick={() => setShowDataPanel(false)}>
-          <div className="data-panel" onClick={e => e.stopPropagation()} style={{ position: "relative" }}>
-            <button className="data-panel-close" onClick={() => setShowDataPanel(false)}>×</button>
-            <h2>Your Data</h2>
-            <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 20 }}>
-              What Futuraria stores in your Supabase database.
-            </p>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Table</th>
-                  <th>Rows</th>
-                  <th>What it stores</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>templates</code></td>
-                  <td>{templates.length}</td>
-                  <td>Your design files — frames, HTML, CSS, metadata</td>
-                </tr>
-                <tr>
-                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>recipes</code></td>
-                  <td>{recipes.length}</td>
-                  <td>Key Visuals — reusable design patterns with variables</td>
-                </tr>
-                <tr>
-                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>workspaces</code></td>
-                  <td>{workspaces.length}</td>
-                  <td>Organization folders for your projects</td>
-                </tr>
-                <tr>
-                  <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>design_assets</code></td>
-                  <td>—</td>
-                  <td>Extracted design tokens, styles, and artifacts</td>
-                </tr>
-              </tbody>
-            </table>
-            <div style={{ marginTop: 20, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 10, fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.6 }}>
-              <strong style={{ color: "rgba(255,255,255,0.6)" }}>Tip:</strong> Notice patterns in your designs by watching which Key Visuals get reused. The more you create, the more you can automate.
-            </div>
+      {/* ── Data Tab ── */}
+      {activeTab === "data" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 800, margin: "0 auto", width: "100%" }}>
+          <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Your Data</h2>
+          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 24 }}>
+            What Futuraria stores in your Supabase database.
+          </p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Rows</th>
+                <th>What it stores</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>templates</code></td>
+                <td>{templates.length}</td>
+                <td>Your design files — frames, HTML, CSS, metadata</td>
+              </tr>
+              <tr>
+                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>recipes</code></td>
+                <td>{recipes.length}</td>
+                <td>Key Visuals — reusable design patterns with variables</td>
+              </tr>
+              <tr>
+                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>workspaces</code></td>
+                <td>{workspaces.length}</td>
+                <td>Organization folders for your projects</td>
+              </tr>
+              <tr>
+                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>design_assets</code></td>
+                <td>—</td>
+                <td>Extracted design tokens, styles, and artifacts</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ marginTop: 20, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 10, fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.6 }}>
+            <strong style={{ color: "rgba(255,255,255,0.6)" }}>Tip:</strong> Notice patterns in your designs by watching which Key Visuals get reused. The more you create, the more you can automate.
           </div>
         </div>
       )}
@@ -696,7 +667,10 @@ const dashboardStyle: React.CSSProperties = {
 const dashHeaderStyle: React.CSSProperties = {
   padding: "24px 24px 0",
   background: "transparent",
-  display: "flex", alignItems: "center", gap: 12, zIndex: 10,
+  zIndex: 10,
+  position: "relative",
+  width: "100%",
+  display: "flex", justifyContent: "center",
 };
 
 const thumbnailStyle: React.CSSProperties = {
