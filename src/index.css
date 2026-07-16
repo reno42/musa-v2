@@ -1723,7 +1723,7 @@ html, body, #root { height: 100%; width: 100%; }
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(ellipse at center, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.65) 100%);
+    radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0) 0%, rgba(245,240,235,0.3) 50%, rgba(230,225,218,0.55) 100%);
 }
 
 .dash-atmosphere > * {
@@ -1766,15 +1766,15 @@ html, body, #root { height: 100%; width: 100%; }
 
 /* ── Dashboard tab buttons (same liquid-glass as landing) ── */
 .dash-tab {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(0, 0, 0, 0.45);
 }
 .dash-tab:hover {
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(255, 255, 255, 0.03);
+  color: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.03);
 }
 .dash-tab-active {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.06);
+  color: #1a1a1a;
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .font-instrument {
@@ -1921,10 +1921,10 @@ html, body, #root { height: 100%; width: 100%; }
 .dash-metric-card {
   flex: 1;
   min-width: 140px;
-  background: rgba(255, 255, 255, 0.01);
+  background: rgba(255, 255, 255, 0.35);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 14px;
   padding: 12px 16px;
   display: flex;
@@ -1932,7 +1932,7 @@ html, body, #root { height: 100%; width: 100%; }
   gap: 4px;
   position: relative;
   overflow: hidden;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 
 .dash-metric-card::before {
@@ -1943,12 +1943,12 @@ html, body, #root { height: 100%; width: 100%; }
   padding: 1.4px;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.45) 0%,
-    rgba(255, 255, 255, 0.15) 20%,
-    rgba(255, 255, 255, 0) 40%,
-    rgba(255, 255, 255, 0) 60%,
-    rgba(255, 255, 255, 0.15) 80%,
-    rgba(255, 255, 255, 0.45) 100%
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.03) 20%,
+    rgba(0, 0, 0, 0) 40%,
+    rgba(0, 0, 0, 0) 60%,
+    rgba(0, 0, 0, 0.03) 80%,
+    rgba(0, 0, 0, 0.08) 100%
   );
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
@@ -1959,14 +1959,14 @@ html, body, #root { height: 100%; width: 100%; }
 .dash-metric-value {
   font-size: 28px;
   font-weight: 700;
-  color: #ffffff;
+  color: #1a1a1a;
   line-height: 1;
   letter-spacing: -0.02em;
 }
 
 .dash-metric-label {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(0, 0, 0, 0.35);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1974,7 +1974,7 @@ html, body, #root { height: 100%; width: 100%; }
 
 .dash-metric-sub {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.2);
+  color: rgba(0, 0, 0, 0.25);
 }
 
 .dash-data-btn {
@@ -2006,10 +2006,10 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .dash-card:hover .dash-card-actions button {
   opacity: 1;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(0, 0, 0, 0.5);
 }
 .dash-card:hover .dash-card-action-danger {
-  color: #f87171 !important;
+  color: #d32f2f !important;
 }
 .dash-card-actions {
   opacity: 0;
