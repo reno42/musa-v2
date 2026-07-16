@@ -278,27 +278,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={dashboardStyle}
       className="dash-atmosphere"
     >
-      {/* ── Background video (same as landing) ── */}
-      <video
-        src="/ditther-anim-160726-030817-814x1080.mp4"
-        muted
-        autoPlay
-        loop
-        playsInline
-        preload="auto"
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          objectPosition: "bottom",
-          pointerEvents: "none",
-          opacity: 1,
-          zIndex: 0,
-        }}
-      />
-
       {/* Header */}
       <div style={dashHeaderStyle}>
         <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: -0.5, color: "#ffffff" }}>Futuraria</h1>
@@ -665,7 +644,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 }
 
 const dashboardStyle: React.CSSProperties = {
-  height: "100vh", background: "#000000", color: "#ffffff",
+  height: "100vh", background: "#0d0d1a", color: "#ffffff",
   fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   display: "flex", flexDirection: "column",
   overflow: "hidden",
