@@ -270,7 +270,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   return (
-    <div style={dashboardStyle}>
+    <div style={dashboardStyle} className="dash-atmosphere">
       {/* Header */}
       <div style={dashHeaderStyle}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: -0.5 }}>Futuraria</h1>
@@ -639,7 +639,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 const dashboardStyle: React.CSSProperties = {
   height: "100vh", background: "#080808", color: "#f0ebe0",
   fontFamily: "Inter, system-ui, sans-serif", display: "flex", flexDirection: "column",
-  backgroundImage: "url(/bg-dashboard.jpg)",
+  backgroundImage: "url(/bg-dashboard.webp)",
   backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
   backgroundAttachment: "fixed",
 };
