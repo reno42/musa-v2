@@ -65,6 +65,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data">("templates");
+  const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -271,9 +272,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
       style={dashboardStyle}
       className="dash-atmosphere"
     >
@@ -298,9 +298,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         }}
       />
 
-      {/* Header — matches landing navbar exactly */}
+      {/* Header — matches landing navbar: brand left, tabs+dropdown centered, search right */}
       <div style={dashHeaderStyle}>
-        <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%" }}>
+        <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
           {/* Brand — identical to landing */}
           <div className="landing-brand" style={{ flexShrink: 0 }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -310,8 +310,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span>Futuraria</span>
           </div>
 
-          {/* Centered tab navigation */}
-          <div style={{ display: "flex", gap: 4, justifyContent: "center", flex: 1 }}>
+          {/* Centered: tabs + workspace dropdown */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Templates", icon: <IconFile size={14} /> },
               { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
@@ -338,61 +338,131 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 {tab.icon} {tab.label}
               </button>
             ))}
+
+            {/* ── Glassmorphic Workspace Dropdown ── */}
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                className="liquid-glass"
+                onClick={() => setWsDropdownOpen(!wsDropdownOpen)}
+                style={{
+                  borderRadius: 100, padding: "8px 14px", fontSize: 13, cursor: "pointer",
+                  fontWeight: 500, color: "rgba(255,255,255,0.7)",
+                  display: "flex", alignItems: "center", gap: 6,
+                  transition: "all 0.25s ease",
+                }}
+              >
+                {selectedWs ? (workspaces.find(w => w.id === selectedWs)?.name || "Workspace") : "All Templates"}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M2 3l3 4 3-4" />
+                </svg>
+              </button>
+              {wsDropdownOpen && (
+                <>
+                  {/* Backdrop to close */}
+                  <div
+                    style={{ position: "fixed", inset: 0, zIndex: 49 }}
+                    onClick={() => setWsDropdownOpen(false)}
+                  />
+                  {/* Dropdown menu */}
+                  <div
+                    className="liquid-glass"
+                    style={{
+                      position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
+                      minWidth: 180, borderRadius: 12, padding: 6, zIndex: 50,
+                      display: "flex", flexDirection: "column",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => { handleWsChange(null); setWsDropdownOpen(false); }}
+                      style={{
+                        ...dropdownItemStyle,
+                        color: !selectedWs ? "#ffffff" : "rgba(255,255,255,0.6)",
+                        background: !selectedWs ? "rgba(255,255,255,0.06)" : "transparent",
+                      }}
+                    >
+                      All Templates
+                    </button>
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
+                    {workspaces.map(w => (
+                      editingWsId === w.id ? (
+                        <div key={w.id} style={{ padding: "4px 10px" }}>
+                          <input
+                            ref={editInputRef}
+                            value={editingWsName}
+                            onChange={e => setEditingWsName(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") { commitWsRename(); setWsDropdownOpen(false); } if (e.key === "Escape") setEditingWsId(null); }}
+                            onBlur={() => { commitWsRename(); }}
+                            style={{ ...inputStyle, width: "100%", fontSize: 12, padding: "4px 8px" }}
+                            autoFocus
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          key={w.id}
+                          type="button"
+                          onClick={() => { handleWsChange(w.id); setWsDropdownOpen(false); }}
+                          onDoubleClick={() => startWsRename(w.id, w.name)}
+                          title="Double-click to rename"
+                          style={{
+                            ...dropdownItemStyle,
+                            color: selectedWs === w.id ? "#ffffff" : "rgba(255,255,255,0.6)",
+                            background: selectedWs === w.id ? "rgba(255,255,255,0.06)" : "transparent",
+                          }}
+                        >
+                          {w.name}
+                        </button>
+                      )
+                    ))}
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
+                    {creatingWs ? (
+                      <div style={{ padding: "4px 10px" }}>
+                        <input
+                          ref={newWsInputRef}
+                          aria-label="New workspace name"
+                          placeholder="Workspace name…"
+                          value={newWsName}
+                          onChange={e => setNewWsName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") { handleCreateWorkspace(); setWsDropdownOpen(false); } if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
+                          onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
+                          style={{ ...inputStyle, width: "100%", fontSize: 12, padding: "4px 8px" }}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }}
+                        style={{
+                          ...dropdownItemStyle,
+                          color: "rgba(255,255,255,0.4)",
+                        }}
+                      >
+                        + New Workspace
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          {/* Right: Workspace + Search + Controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {creatingWs ? (
-              <input
-                ref={newWsInputRef}
-                aria-label="New workspace name"
-                placeholder="Workspace name…"
-                value={newWsName}
-                onChange={e => setNewWsName(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") handleCreateWorkspace(); if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
-                onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
-                style={{ ...inputStyle, width: 140 }}
-                autoFocus
-              />
-            ) : (
-              <select
-                aria-label="Select workspace"
-                value={selectedWs || ""}
-                onChange={e => handleWsChange(e.target.value || null)}
-                style={selectStyle}
-              >
-                <option value="">All Templates</option>
-                {workspaces.length === 0 && <option value="" disabled>— No workspaces —</option>}
-                {workspaces.map(w => {
-                  if (editingWsId === w.id) {
-                    return <option key={w.id} value={w.id} disabled>Renaming...</option>;
-                  }
-                  return <option key={w.id} value={w.id} onDoubleClick={() => startWsRename(w.id, w.name)} title="Double-click to rename">{w.name}</option>;
-                })}
-              </select>
-            )}
-            {editingWsId && (
-              <input
-                ref={editInputRef}
-                value={editingWsName}
-                onChange={e => setEditingWsName(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") commitWsRename(); if (e.key === "Escape") setEditingWsId(null); }}
-                onBlur={commitWsRename}
-                style={{ ...inputStyle, width: 140 }}
-                autoFocus
-              />
-            )}
-            {!creatingWs && !editingWsId && (
-              <button type="button" onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }} style={btnSecondary}>
-                + Workspace
-              </button>
-            )}
+          {/* Right: Search — replaces Enter Workspace button position */}
+          <div style={{ flexShrink: 0 }}>
             <input
               aria-label="Search templates"
               placeholder="Search…"
               value={searchDisplay}
               onChange={e => handleSearch(e.target.value)}
-              style={{ ...inputStyle, width: 140 }}
+              className="liquid-glass"
+              style={{
+                borderRadius: 100, padding: "8px 20px", fontSize: 13,
+                color: "#ffffff", outline: "none",
+                width: 180,
+                background: "rgba(255,255,255,0.01)",
+                border: "none",
+              }}
             />
           </div>
         </div>
@@ -734,4 +804,14 @@ const cardAction: React.CSSProperties = {
   flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
   color: "transparent", fontSize: 12, cursor: "pointer", padding: "6px 0",
   transition: "color 0.2s ease",
+};
+
+const dropdownItemStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8,
+  padding: "8px 12px", borderRadius: 8, fontSize: 13,
+  background: "transparent", border: "none",
+  color: "rgba(255,255,255,0.6)",
+  cursor: "pointer", textAlign: "left" as const,
+  fontFamily: "inherit", fontWeight: 400,
+  transition: "all 0.15s ease",
 };

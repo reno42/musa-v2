@@ -213,6 +213,27 @@ export function Landing({ onEnter }: LandingProps) {
               </motion.div>
             )}
           </motion.button>
+
+          {/* Search bar — fades in where the CTA button was */}
+          <AnimatePresence>
+            {isExiting && (
+              <motion.input
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.35, delay: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+                className="liquid-glass"
+                placeholder="Search…"
+                readOnly
+                style={{
+                  borderRadius: 100, padding: "8px 20px", fontSize: 13,
+                  color: "#ffffff", outline: "none",
+                  width: 180, flexShrink: 0,
+                  background: "rgba(255,255,255,0.01)",
+                  border: "none",
+                }}
+              />
+            )}
+          </AnimatePresence>
         </motion.div>
       </nav>
 
