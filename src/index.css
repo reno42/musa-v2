@@ -1788,8 +1788,17 @@ html, body, #root { height: 100%; width: 100%; }
   width: 100vw;
   background: #000000;
   color: #ffffff;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ── Hero section — full viewport ── */
+.landing-hero-section {
+  position: relative;
+  min-height: 100vh;
+  width: 100%;
+  overflow: hidden;
 }
 
 .landing-video {
@@ -1880,6 +1889,160 @@ html, body, #root { height: 100%; width: 100%; }
 
 .landing-cta:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ═══════════════════════ LANDING CONTENT SECTIONS ═══════════════════════ */
+
+.landing-section {
+  position: relative;
+  z-index: 10;
+  padding: 80px 24px;
+  background: #000000;
+}
+
+.landing-section--alt {
+  background: #06060a;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.landing-section-inner {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.landing-section-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.3);
+  margin-bottom: 12px;
+  padding: 4px 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 100px;
+}
+
+.landing-section-title {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  color: #ffffff;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 24px 0;
+}
+
+.landing-section-text {
+  color: rgba(255,255,255,0.5);
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 680px;
+  margin: 0 0 20px 0;
+}
+
+.landing-section-text strong {
+  color: rgba(255,255,255,0.75);
+  font-weight: 600;
+}
+
+/* ── Compatibility grid ── */
+.landing-compat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 32px;
+}
+
+/* ── Installation steps ── */
+.landing-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin-top: 32px;
+}
+
+.landing-step {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.landing-step-num {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.5);
+}
+
+.landing-step-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 4px;
+}
+
+.landing-step-desc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.4);
+  line-height: 1.6;
+  margin: 0 0 12px 0;
+}
+
+.landing-step-desc code {
+  background: rgba(255,255,255,0.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+}
+
+.landing-code-block {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 16px 20px;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.6);
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* ── Features grid ── */
+.landing-features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 32px;
+}
+
+.landing-feature-card {
+  padding: 24px;
+  border-radius: 14px;
+  transition: background 0.2s ease;
+}
+
+.landing-feature-card:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+/* ── Footer section ── */
+.landing-footer-section {
+  position: relative;
+  z-index: 10;
+  padding: 64px 24px 48px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  background: #000000;
 }
 
 .landing-footer {
