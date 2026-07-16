@@ -78,7 +78,7 @@ async function listFromSupabase(
     // thumbnail) server-side. Pulling whole rows made the response grow
     // with every batch-generated design until Netlify answered 502.
     const queryPromise = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, first_frame:data->frames->0", { count: "exact" })
+      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -98,6 +98,7 @@ async function listFromSupabase(
       height: Number(r.height) || 1080,
       engine: (r.engine as "html") || "html",
       canvas: null,
+      thumbnail: r.thumbnail || null,
       frames: r.first_frame ? [thumbnailFrame(r.first_frame)] : [],
       styles: [],
       comments: [],

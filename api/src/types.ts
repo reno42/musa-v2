@@ -55,6 +55,7 @@ export interface DesignTemplate {
   components: Component[];
   metadata: TemplateMetadata;
   brandId?: string;
+  thumbnail?: string;
   designArtifacts?: DesignArtifacts;
 }
 

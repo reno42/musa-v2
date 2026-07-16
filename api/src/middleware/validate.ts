@@ -51,6 +51,7 @@ export const updateTemplateSchema = z.object({
   html: z.string().optional(),
   css: z.string().optional(),
   frames: z.array(z.any()).optional(),
+  thumbnail: z.string().optional(),
 });
 
 export const duplicateTemplateSchema = z.object({

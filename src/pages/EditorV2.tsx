@@ -1976,6 +1976,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     URL.revokeObjectURL(url);
   }, [selectedFrame, captureFrameToPng]);
 
+  /* Capture current frame as a thumbnail for the dashboard Cover Flow / grid */
+  const handleCaptureThumbnail = useCallback(async () => {
+    if (!selectedFrame) return;
+    try {
+      const blob = await captureFrameToPng(selectedFrame, 1.5, "png");
+      if (!blob) { addToast("No se pudo capturar el thumbnail.", "error"); return; }
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
+      addToast("Thumbnail actualizado.", "success");
+    } catch (err: any) {
+      addToast(`Error al guardar thumbnail: ${err.message || "desconocido"}`, "error");
+    }
+  }, [selectedFrame, templateId, captureFrameToPng, addToast]);
+
   const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
     setShowExportMenu(false);
     for (const frame of frames) {
@@ -2755,6 +2773,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <IconType size={14} />
         </button>
         {/* Export Dropdown */}
+        <div className="editor-v2-topbar-sep" />
+        {/* Capture Thumbnail */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleCaptureThumbnail}
+          title="Capture Thumbnail — Save a preview image for the dashboard"
+        >
+          <IconImage size={14} />
+        </button>
         <div style={{ position: "relative" }}>
           <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowExportMenu(!showExportMenu)} title="Export">
             <IconDownload size={14} />

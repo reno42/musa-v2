@@ -2321,6 +2321,18 @@ const MCP_TOOLS = [
       required: ["templateId", "name"],
     },
   },
+  {
+    name: "update_thumbnail",
+    description: "Set or update the preview thumbnail for a template. Pass a base64 data URL (data:image/png;base64,...) or a URL to an image. Thumbnails are used in the dashboard Cover Flow and grid views for instant preview without rendering live iframes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        thumbnail: { type: "string", description: "Base64 data URL or HTTPS image URL for the thumbnail preview" },
+      },
+      required: ["templateId", "thumbnail"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -7995,6 +8007,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       await templates.updateTemplate(params.templateId, { name: params.name });
       return { success: true, templateId: params.templateId, name: params.name };
+    }
+
+    // ── update_thumbnail: set a preview thumbnail for dashboard views ──
+    case "update_thumbnail": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      /* Accept base64 data URLs (max ~1MB after base64) or regular HTTPS URLs */
+      const thumb = params.thumbnail || "";
+      if (thumb.startsWith("data:image/") && thumb.length > 1_200_000) {
+        throw { code: -32602, message: "Thumbnail too large. Max 1MB base64 string." };
+      }
+      await templates.updateTemplate(params.templateId, { thumbnail: thumb });
+      autoSnapshot(params.templateId, "update_thumbnail");
+      return { success: true, templateId: params.templateId };
     }
 
     default:
