@@ -1723,7 +1723,7 @@ html, body, #root { height: 100%; width: 100%; }
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(ellipse at center, rgba(13,13,26,0) 0%, rgba(13,13,26,0.5) 60%, rgba(0,0,0,0.7) 100%);
+    radial-gradient(ellipse at center, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.65) 100%);
 }
 
 .dash-atmosphere > * {
@@ -1984,6 +1984,26 @@ html, body, #root { height: 100%; width: 100%; }
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.65);
   border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* ── Card action buttons: hidden until hover ── */
+.dash-card-actions button {
+  opacity: 0;
+  transition: opacity 0.2s ease, color 0.2s ease;
+}
+.dash-card:hover .dash-card-actions button {
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.45);
+}
+.dash-card:hover .dash-card-action-danger {
+  color: #f87171 !important;
+}
+.dash-card-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.dash-card:hover .dash-card-actions {
+  opacity: 1;
 }
 
 /* ===== DATA PANEL ===== */

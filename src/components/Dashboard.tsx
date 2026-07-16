@@ -278,6 +278,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={dashboardStyle}
       className="dash-atmosphere"
     >
+      {/* ── Background video ── */}
+      <video
+        src="/ditther-anim-160726-030817-814x1080.mp4"
+        muted
+        autoPlay
+        loop
+        playsInline
+        preload="auto"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "bottom",
+          pointerEvents: "none",
+          opacity: 1,
+          zIndex: 0,
+        }}
+      />
+
       {/* Header */}
       <div style={dashHeaderStyle}>
         <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: -0.5, color: "#ffffff" }}>Futuraria</h1>
@@ -461,10 +482,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </button>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
             {templates.map(t => (
               <div
                 key={t.id}
+                className="dash-card"
                 style={cardStyle}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0, 0, 0, 0.3)"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0, 0, 0, 0.2)"; }}
@@ -475,14 +497,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   onClick={() => onSelectTemplate(t.id)}
                   style={cardBtnStyle}
                 >
-                  {/* Thumbnail — render actual frame content at 0.15x scale */}
+                  {/* Thumbnail — frosted/blurred preview */}
                   <div style={thumbnailStyle}>
                     {t.engine === "html" ? (
                       t.frames?.[0]?.html ? (
                         <iframe
                           srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.15);transform-origin:top left;background:${t.frames[0].background || "#1a1a2e"}}${t.frames[0].css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames[0].html || ""}</body></html>`}
                           sandbox="allow-same-origin allow-scripts"
-                          style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
+                          style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none", filter: "blur(3px) brightness(0.7)" }}
                           title={t.name}
                         />
                       ) : (
@@ -493,6 +515,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     ) : (
                       <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,0.3)", fontSize:11 }}>{t.width}×{t.height}</div>
                     )}
+                    {/* Frosted glass diffuser — jaspeado effect */}
+                    <div style={{
+                      position: "absolute", inset: 0,
+                      borderRadius: "10px 10px 0 0",
+                      backdropFilter: "blur(4px) saturate(0.6)",
+                      WebkitBackdropFilter: "blur(4px) saturate(0.6)",
+                      background: "rgba(255,255,255,0.015)",
+                      pointerEvents: "none",
+                      zIndex: 1,
+                    }} />
                   </div>
                   <div style={{ padding: "8px 10px" }}>
                     {editingTplId === t.id ? (
@@ -520,11 +552,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     </div>
                   </div>
                 </button>
-                <div style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
+                <div className="dash-card-actions" style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
                   <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
                   <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }}>Delete</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">Delete</button>
                 </div>
               </div>
             ))}
@@ -547,10 +579,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </div>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
             {recipes.map(r => (
               <div
                 key={r.id}
+                className="dash-card"
                 style={cardStyle}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0, 0, 0, 0.3)"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0, 0, 0, 0.2)"; }}
@@ -566,6 +599,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       <IconTag size={28} color="rgba(255,255,255,0.3)" />
                       <div style={{ fontSize: 11, marginTop: 4, color: "rgba(255,255,255,0.3)" }}>{r.templateWidth}×{r.templateHeight}</div>
                     </div>
+                    {/* Frosted glass diffuser */}
+                    <div style={{
+                      position: "absolute", inset: 0,
+                      borderRadius: "10px 10px 0 0",
+                      backdropFilter: "blur(4px) saturate(0.6)",
+                      WebkitBackdropFilter: "blur(4px) saturate(0.6)",
+                      background: "rgba(255,255,255,0.015)",
+                      pointerEvents: "none",
+                      zIndex: 1,
+                    }} />
                   </div>
                   <div style={{ padding: "8px 12px" }}>
                     <div style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
@@ -578,11 +621,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     </div>
                   </div>
                 </button>
-                <div style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
+                <div className="dash-card-actions" style={{ display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
                   <button type="button" onClick={e => { e.stopPropagation(); handleCreateFromRecipe(r.id, r.name); }} style={cardAction}>
                     Create
                   </button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#f87171" }}>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">
                     Delete
                   </button>
                 </div>
@@ -644,7 +687,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 }
 
 const dashboardStyle: React.CSSProperties = {
-  height: "100vh", background: "#0d0d1a", color: "#ffffff",
+  height: "100vh", background: "#000000", color: "#ffffff",
   fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   display: "flex", flexDirection: "column",
   overflow: "hidden",
@@ -717,6 +760,6 @@ const cardBtnStyle: React.CSSProperties = {
 
 const cardAction: React.CSSProperties = {
   flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
-  color: "rgba(255, 255, 255, 0.5)", fontSize: 12, cursor: "pointer", padding: "6px 0",
-  transition: "all 0.15s ease",
+  color: "transparent", fontSize: 12, cursor: "pointer", padding: "6px 0",
+  transition: "color 0.2s ease",
 };
