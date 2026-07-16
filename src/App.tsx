@@ -1,9 +1,10 @@
 import { useReducer, useEffect } from "react";
+import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { useToast } from "./components/Toast";
 
-type ViewMode = "dashboard" | "editor-v2";
+type ViewMode = "landing" | "dashboard" | "editor-v2";
 
 type AppState = {
   view: ViewMode;
@@ -13,18 +14,21 @@ type AppState = {
 type AppAction =
   | { type: "SET_VIEW"; view: ViewMode }
   | { type: "OPEN_TEMPLATE_V2"; id: string }
-  | { type: "BACK_TO_DASHBOARD" };
+  | { type: "BACK_TO_DASHBOARD" }
+  | { type: "ENTER_WORKSPACE" };
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "SET_VIEW": return { ...state, view: action.view };
     case "OPEN_TEMPLATE_V2": return { ...state, view: "editor-v2", templateId: action.id };
     case "BACK_TO_DASHBOARD": return { ...state, view: "dashboard", templateId: null };
+    case "ENTER_WORKSPACE": return { ...state, view: "dashboard" };
+    default: return state;
   }
 }
 
 const initialAppState: AppState = {
-  view: "dashboard",
+  view: "landing",
   templateId: null,
 };
 
@@ -64,10 +68,26 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tplId = params.get("template");
+    const hash = window.location.hash.replace("#", "");
     if (tplId) {
       dispatch({ type: "OPEN_TEMPLATE_V2", id: tplId });
+    } else if (hash === "workspace") {
+      dispatch({ type: "ENTER_WORKSPACE" });
     }
+    // else stays on landing (default)
   }, []);
+
+  // Landing view
+  if (view === "landing") {
+    return (
+      <Landing
+        onEnter={() => {
+          dispatch({ type: "ENTER_WORKSPACE" });
+          window.history.replaceState(null, "", "/#workspace");
+        }}
+      />
+    );
+  }
 
   // Dashboard view
   if (view === "dashboard") {

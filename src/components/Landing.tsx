@@ -1,0 +1,186 @@
+import { useRef, useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+
+interface LandingProps {
+  onEnter: () => void;
+}
+
+export function Landing({ onEnter }: LandingProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoReady, setVideoReady] = useState(false);
+
+  // ── Video fade-in/fade-out loop ──
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let animFrameId: number;
+
+    const fade = (
+      start: number,
+      end: number,
+      duration: number,
+      callback?: () => void
+    ) => {
+      const startTime = performance.now();
+      const animate = (now: number) => {
+        const progress = Math.min((now - startTime) / duration, 1);
+        video.style.opacity = String(start + (end - start) * progress);
+        if (progress < 1) {
+          animFrameId = requestAnimationFrame(animate);
+        } else if (callback) {
+          callback();
+        }
+      };
+      animFrameId = requestAnimationFrame(animate);
+    };
+
+    const handleCanPlay = () => {
+      setVideoReady(true);
+      video.play().catch(() => {});
+      fade(0, 1, 500);
+    };
+
+    const handleTimeUpdate = () => {
+      const remaining = video.duration - video.currentTime;
+      if (remaining <= 0.55 && video.style.opacity !== "0" && !(video as any).dataset.fadingOut) {
+        (video as any).dataset.fadingOut = "true";
+        fade(parseFloat(video.style.opacity) || 1, 0, 500);
+      }
+    };
+
+    const handleEnded = () => {
+      video.style.opacity = "0";
+      delete (video as any).dataset.fadingOut;
+      setTimeout(() => {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+        fade(0, 1, 500);
+      }, 100);
+    };
+
+    video.addEventListener("canplay", handleCanPlay);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    video.addEventListener("ended", handleEnded);
+
+    return () => {
+      video.removeEventListener("canplay", handleCanPlay);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeEventListener("ended", handleEnded);
+      cancelAnimationFrame(animFrameId);
+    };
+  }, []);
+
+  return (
+    <div className="landing-root">
+      {/* ── Background video ── */}
+      <video
+        ref={videoRef}
+        src="/ditther-anim-160726-030817-814x1080.mp4"
+        muted
+        autoPlay
+        playsInline
+        preload="auto"
+        className="landing-video"
+        style={{ opacity: 0 }}
+      />
+
+      {/* ── Subtle overlay for readability ── */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "radial-gradient(ellipse at center, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.65) 100%)",
+          pointerEvents: "none",
+          zIndex: 5,
+        }}
+      />
+
+      {/* ── Navbar ── */}
+      <nav className="landing-nav">
+        <div className="landing-nav-inner">
+          <div className="landing-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="4" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+            <span>Futuraria</span>
+          </div>
+          <button
+            onClick={onEnter}
+            className="liquid-glass landing-cta"
+            style={{ padding: "10px 28px", borderRadius: 100, fontSize: 14 }}
+          >
+            Enter Workspace
+          </button>
+        </div>
+      </nav>
+
+      {/* ── Hero content ── */}
+      <AnimatePresence>
+        {videoReady && (
+          <motion.div
+            className="landing-hero"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1.2, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            <motion.h1
+              className="landing-title font-instrument"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.9, delay: 0.3 }}
+            >
+              Design with <em style={{ fontWeight: 400, fontStyle: "italic" }}>intention</em>.
+            </motion.h1>
+
+            <motion.p
+              className="landing-subtitle"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.8, delay: 0.7 }}
+            >
+              Your open-source design workspace.
+              Create, iterate, and automate with AI-powered tools.
+            </motion.p>
+
+            <motion.button
+              onClick={onEnter}
+              className="liquid-glass landing-cta"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 1 }}
+            >
+              Start Creating
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Footer ── */}
+      <motion.div
+        className="landing-footer"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.8, delay: 1.3 }}
+      >
+        {[
+          { label: "GitHub", href: "https://github.com/reno42/design" },
+          { label: "Docs", href: "#" },
+          { label: "Open Source", href: "#" },
+        ].map(({ label, href }) => (
+          <a
+            key={label}
+            href={href}
+            target={href.startsWith("http") ? "_blank" : undefined}
+            rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
+            className="liquid-glass landing-footer-btn"
+            style={{ width: "auto", padding: "12px 24px", borderRadius: 100, textDecoration: "none", fontSize: 13 }}
+          >
+            {label}
+          </a>
+        ))}
+      </motion.div>
+    </div>
+  );
+}

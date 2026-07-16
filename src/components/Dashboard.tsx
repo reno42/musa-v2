@@ -66,6 +66,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [activeTab, setActiveTab] = useState<"templates" | "recipes">("templates");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
+  const [showDataPanel, setShowDataPanel] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -385,6 +386,55 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </button>
       </div>
 
+      {/* ── Metrics Bar ── */}
+      <div className="dash-metrics-bar">
+        <div className="dash-metric-card">
+          <div className="dash-metric-value">{templates.length}</div>
+          <div className="dash-metric-label">Templates</div>
+          <div className="dash-metric-sub">
+            {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
+          </div>
+        </div>
+        <div className="dash-metric-card">
+          <div className="dash-metric-value">{recipes.length}</div>
+          <div className="dash-metric-label">Key Visuals</div>
+          <div className="dash-metric-sub">
+            {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
+          </div>
+        </div>
+        <div className="dash-metric-card">
+          <div className="dash-metric-value">{workspaces.length}</div>
+          <div className="dash-metric-label">Workspaces</div>
+          <div className="dash-metric-sub">
+            {selectedWs ? "1 active" : "all shown"}
+          </div>
+        </div>
+        <div className="dash-metric-card" style={{ justifyContent: "center" }}>
+          <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
+          <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
+            {(() => {
+              const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
+              return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
+            })()}
+          </div>
+          <div className="dash-metric-sub">
+            Most frames
+          </div>
+        </div>
+        <button
+          type="button"
+          className="dash-data-btn"
+          onClick={() => setShowDataPanel(true)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3" />
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+          </svg>
+          Data
+        </button>
+      </div>
+
       {/* Template Grid */}
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
@@ -534,6 +584,53 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         )}
       </div>
+      )}
+
+      {/* ── Data Panel Overlay ── */}
+      {showDataPanel && (
+        <div className="data-panel-overlay" onClick={() => setShowDataPanel(false)}>
+          <div className="data-panel" onClick={e => e.stopPropagation()} style={{ position: "relative" }}>
+            <button className="data-panel-close" onClick={() => setShowDataPanel(false)}>×</button>
+            <h2>Your Data</h2>
+            <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 20 }}>
+              What Futuraria stores in your Supabase database.
+            </p>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Table</th>
+                  <th>Rows</th>
+                  <th>What it stores</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>templates</code></td>
+                  <td>{templates.length}</td>
+                  <td>Your design files — frames, HTML, CSS, metadata</td>
+                </tr>
+                <tr>
+                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>recipes</code></td>
+                  <td>{recipes.length}</td>
+                  <td>Key Visuals — reusable design patterns with variables</td>
+                </tr>
+                <tr>
+                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>workspaces</code></td>
+                  <td>{workspaces.length}</td>
+                  <td>Organization folders for your projects</td>
+                </tr>
+                <tr>
+                  <td><code style={{ color: "#c8b898", fontSize: 11 }}>design_assets</code></td>
+                  <td>—</td>
+                  <td>Extracted design tokens, styles, and artifacts</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style={{ marginTop: 20, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 10, fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.6 }}>
+              <strong style={{ color: "rgba(255,255,255,0.6)" }}>Tip:</strong> Notice patterns in your designs by watching which Key Visuals get reused. The more you create, the more you can automate.
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
