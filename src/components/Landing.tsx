@@ -168,7 +168,7 @@ export function Landing({ onEnter }: LandingProps) {
             )}
           </AnimatePresence>
 
-          {/* CTA button — fades/shrinks on exit */}
+          {/* CTA button — stretches, shows nav placeholder, then fades */}
           <motion.button
             layout
             onClick={handleEnter}
@@ -176,18 +176,43 @@ export function Landing({ onEnter }: LandingProps) {
             animate={{
               borderRadius: isExiting ? 14 : 100,
               padding: isExiting ? "8px 20px" : "10px 28px",
+              width: isExiting ? "100%" : undefined,
+              maxWidth: isExiting ? 600 : undefined,
+              justifyContent: isExiting ? "flex-start" : "center",
               opacity: isExiting ? 0 : 1,
-              scale: isExiting ? 0.9 : 1,
             }}
             transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
             style={{ display: "flex", alignItems: "center", cursor: isExiting ? "default" : "pointer" }}
             disabled={isExiting}
           >
-            Enter Workspace
-          </motion.button>
+            <motion.span
+              animate={{ opacity: isExiting ? 0 : 1 }}
+              transition={{ duration: 0.2 }}
+            >
+              Enter Workspace
+            </motion.span>
 
-          {/* Spacer for layout when button shrinks */}
-          <div style={{ flex: 1 }} />
+            {/* Nav placeholder text — appears after button stretches */}
+            {isExiting && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3, delay: 0.35 }}
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                  marginLeft: "auto",
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.45)",
+                }}
+              >
+                <span>Templates</span>
+                <span>Key Visuals</span>
+                <span>Data</span>
+              </motion.div>
+            )}
+          </motion.button>
         </motion.div>
       </nav>
 
