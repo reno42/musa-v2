@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
+import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
@@ -75,14 +76,24 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const CARD_WIDTH = 220;
   const CARD_GAP = 16;
 
-  /* Scroll one card at a time to a specific index — no half-stops */
+  /* Scroll one card at a time — centers the target card in the viewport */
   const scrollToCard = useCallback((idx: number) => {
     const el = flowScrollRef.current;
     if (!el) return;
     const clamped = Math.max(0, Math.min(idx, templates.length - 1));
-    const target = clamped * (CARD_WIDTH + CARD_GAP);
-    el.scrollTo({ left: target, behavior: "smooth" });
+    // Card center = clamped * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2
+    // Subtract half viewport to center the card
+    const target = clamped * (CARD_WIDTH + CARD_GAP) - el.clientWidth / 2 + CARD_WIDTH / 2;
+    el.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
   }, [templates.length]);
+
+  /* Auto-center first card when entering flow mode */
+  useEffect(() => {
+    if (cardMode === "flow" && templates.length > 0) {
+      const timer = setTimeout(() => scrollToCard(0), 150);
+      return () => clearTimeout(timer);
+    }
+  }, [cardMode, templates.length, scrollToCard]);
 
   /* Debounced scroll handler — prevents laggy state updates mid-scroll */
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,6 +317,40 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setNewTplName("");
     onCreateHtmlTemplate(selectedWs, name);
   };
+
+  /* Snapshot all templates: capture each frame via html2canvas → save as base64 thumbnail */
+  const [snapshotProgress, setSnapshotProgress] = useState({ running: false, done: 0, total: 0 });
+  const handleSnapshotAll = useCallback(async () => {
+    const htmlTemplates = templates.filter(t => t.frames?.[0]?.html);
+    if (htmlTemplates.length === 0) { addToast("No templates with HTML content to snapshot.", "error"); return; }
+    setSnapshotProgress({ running: true, done: 0, total: htmlTemplates.length });
+    for (let i = 0; i < htmlTemplates.length; i++) {
+      const t = htmlTemplates[i];
+      const frame = t.frames![0];
+      try {
+        const container = document.createElement("div");
+        container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
+        document.body.appendChild(container);
+        const target = document.createElement("div");
+        target.style.cssText = `width:${t.width}px;height:${t.height}px;overflow:hidden;position:relative;`;
+        const style = document.createElement("style");
+        style.textContent = frame.css || "";
+        target.appendChild(style);
+        const content = document.createElement("div");
+        content.innerHTML = frame.html || "";
+        target.appendChild(content);
+        container.appendChild(target);
+        const canvas = await html2canvas(target, { width: t.width, height: t.height, scale: 0.5, useCORS: true, allowTaint: true, backgroundColor: frame.background || "#0d0d1a" });
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        container.remove();
+        await mcpCall("update_thumbnail", { templateId: t.id, thumbnail: dataUrl });
+      } catch { /* skip failures, continue */ }
+      setSnapshotProgress(prev => ({ ...prev, done: i + 1 }));
+    }
+    setSnapshotProgress({ running: false, done: 0, total: 0 });
+    addToast(`${htmlTemplates.length} thumbnails captured.`, "success");
+    loadTemplatesRef.current(selectedWs ?? undefined);
+  }, [templates, selectedWs, addToast]);
 
   const handleDeleteRecipe = async (id: string) => {
     try {
@@ -713,7 +758,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               className="flow-track"
               style={{
                 display: "flex", gap: CARD_GAP, overflowX: "auto", overflowY: "hidden",
-                scrollSnapType: "x mandatory", scrollBehavior: "smooth",
+                scrollSnapType: "x mandatory",
                 perspective: "1200px", perspectiveOrigin: "center",
                 padding: "60px 0 20px", alignItems: "center",
                 WebkitOverflowScrolling: "touch",
@@ -958,6 +1003,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 }}
               >Flow</button>
             </div>
+          </div>
+
+          {/* ── Thumbnails ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Thumbnails</h3>
+          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>📸</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Preview Thumbnails</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                    {snapshotProgress.running
+                      ? `Capturing ${snapshotProgress.done}/${snapshotProgress.total}…`
+                      : `${templates.filter(t => t.thumbnail).length} of ${templates.length} templates have thumbnails`}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSnapshotAll}
+                disabled={snapshotProgress.running}
+                style={{
+                  borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 500,
+                  border: "none", cursor: snapshotProgress.running ? "wait" : "pointer",
+                  background: snapshotProgress.running ? "rgba(255,255,255,0.03)" : "rgba(99,102,241,0.15)",
+                  color: snapshotProgress.running ? "rgba(255,255,255,0.3)" : "#a5b4fc",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {snapshotProgress.running ? "Capturing…" : "Snapshot All"}
+              </button>
+            </div>
+            {snapshotProgress.running && (
+              <div style={{ marginTop: 10, height: 4, borderRadius: 100, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 100, background: "linear-gradient(90deg, #818cf8, #a78bfa)", width: `${Math.round((snapshotProgress.done / snapshotProgress.total) * 100)}%`, transition: "width 0.3s ease" }} />
+              </div>
+            )}
           </div>
 
           {/* ── Connection ── */}
