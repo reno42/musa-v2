@@ -84,7 +84,7 @@ export function Landing({ onEnter }: LandingProps) {
       {/* ── Background video ── */}
       <video
         ref={videoRef}
-        src="/ditther-anim-160726-030817-814x1080.mp4"
+        src="/animated-bg.mp4"
         muted
         autoPlay
         playsInline
