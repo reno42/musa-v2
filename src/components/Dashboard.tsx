@@ -877,7 +877,7 @@ const cardOverlay: React.CSSProperties = {
 const cardContentStyle: React.CSSProperties = {
   position: "relative", zIndex: 2,
   display: "flex", flexDirection: "column",
-  height: "100%", padding: 12,
+  height: "100%", padding: 0,
 };
 
 const cardInfoPanel: React.CSSProperties = {
