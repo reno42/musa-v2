@@ -2021,11 +2021,7 @@ html, body, #root { height: 100%; width: 100%; }
 
 /* Card design preview — monochrome + blurred default, full-color sharp on hover */
 .card-preview {
-  filter: blur(5px) brightness(1.05) saturate(0.7) grayscale(1);
   transition: filter 0.45s ease;
-}
-.dash-card:hover .card-preview {
-  filter: blur(0px) brightness(1) saturate(1) grayscale(0);
 }
 
 /* ===== DATA PANEL ===== */

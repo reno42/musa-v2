@@ -883,6 +883,10 @@ const cardContentStyle: React.CSSProperties = {
 const cardInfoPanel: React.CSSProperties = {
   marginTop: "auto",
   borderRadius: 10, padding: "10px 12px",
+  background: "rgba(255, 255, 255, 0.04)",
+  backdropFilter: "blur(12px) saturate(1.2)",
+  WebkitBackdropFilter: "blur(12px) saturate(1.2)",
+  border: "1px solid rgba(255, 255, 255, 0.06)",
 };
 
 const cardAction: React.CSSProperties = {
