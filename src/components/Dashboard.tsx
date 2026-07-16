@@ -474,7 +474,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       t.frames?.[0]?.html ? (
                         <iframe
                           srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.15);transform-origin:top left;background:${t.frames[0].background || "#1a1a2e"}}${t.frames[0].css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames[0].html || ""}</body></html>`}
-                          sandbox="allow-same-origin"
+                          sandbox="allow-same-origin allow-scripts"
                           style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
                           title={t.name}
                         />
