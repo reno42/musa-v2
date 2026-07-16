@@ -9,6 +9,7 @@ export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -236,8 +237,64 @@ export function Landing({ onEnter }: LandingProps) {
               />
             )}
           </AnimatePresence>
+
+          {/* Hamburger — visible on tablet/mobile, hidden on desktop ≥1024 */}
+          <button
+            className="landing-hamburger"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Open menu"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+            </svg>
+          </button>
         </motion.div>
       </nav>
+
+      {/* ── Slide-out menu (mobile/tablet) ── */}
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            className="landing-menu-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setMenuOpen(false)}
+          >
+            <motion.div
+              className="landing-menu-panel"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 26, stiffness: 260 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="landing-menu-header">
+                <span className="font-instrument" style={{ fontSize: 18, color: "rgba(255,255,255,0.8)" }}>Futuraria</span>
+                <button
+                  className="landing-menu-close"
+                  onClick={() => setMenuOpen(false)}
+                  aria-label="Close menu"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <nav className="landing-menu-nav">
+                <a href="#harness" onClick={() => setMenuOpen(false)} className="landing-menu-link">What is a Harness?</a>
+                <a href="#install" onClick={() => setMenuOpen(false)} className="landing-menu-link">Installation</a>
+                <a href="#features" onClick={() => setMenuOpen(false)} className="landing-menu-link">Features</a>
+                <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-menu-link">GitHub</a>
+                <a href="#" className="landing-menu-link">Docs</a>
+              </nav>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Hero content ── */}
       <AnimatePresence>
@@ -280,10 +337,36 @@ export function Landing({ onEnter }: LandingProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Hero footer links (visible on desktop) ── */}
+      <div className="landing-hero-footer">
+        {[
+          { label: "GitHub", href: "https://github.com/reno42/design" },
+          { label: "Docs", href: "#" },
+          { label: "Open Source", href: "#" },
+        ].map(({ label, href }) => (
+          <a
+            key={label}
+            href={href}
+            target={href.startsWith("http") ? "_blank" : undefined}
+            rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
+            className="landing-hero-footer-link"
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+
+      {/* ── Scroll-down indicator ── */}
+      <div className="landing-scroll-hint">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </div>
       </section>
 
       {/* ═══════════════════════════════ DESIGN HARNESS ═══════════════════════════════ */}
-      <section className="landing-section">
+      <section id="harness" className="landing-section">
         <div className="landing-section-inner">
           <div className="landing-section-badge">What is a Design Harness?</div>
           <h2 className="landing-section-title font-instrument">
@@ -317,7 +400,7 @@ export function Landing({ onEnter }: LandingProps) {
       </section>
 
       {/* ═══════════════════════════════ INSTALLATION ═══════════════════════════════ */}
-      <section className="landing-section landing-section--alt">
+      <section id="install" className="landing-section landing-section--alt">
         <div className="landing-section-inner">
           <div className="landing-section-badge">Get Started</div>
           <h2 className="landing-section-title font-instrument">
@@ -368,7 +451,7 @@ npm run dev`}</pre>
       </section>
 
       {/* ═══════════════════════════════ FEATURES ═══════════════════════════════ */}
-      <section className="landing-section">
+      <section id="features" className="landing-section">
         <div className="landing-section-inner">
           <div className="landing-section-badge">Capabilities</div>
           <h2 className="landing-section-title font-instrument">

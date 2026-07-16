@@ -2072,6 +2072,167 @@ html, body, #root { height: 100%; width: 100%; }
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* ═══════════════════════ HAMBURGER & MOBILE MENU ═══════════════════════ */
+
+.landing-hamburger {
+  display: none; /* hidden on desktop */
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  padding: 6px;
+  border-radius: 8px;
+  transition: color 0.2s ease;
+}
+
+.landing-hamburger:hover {
+  color: rgba(255,255,255,0.9);
+}
+
+@media (max-width: 1023px) {
+  .landing-hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ── Slide-out menu ── */
+.landing-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.landing-menu-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(320px, 85vw);
+  background: rgba(10,10,20,0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.landing-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.landing-menu-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.5);
+  padding: 6px;
+  border-radius: 8px;
+  transition: color 0.2s ease;
+}
+
+.landing-menu-close:hover {
+  color: rgba(255,255,255,0.85);
+}
+
+.landing-menu-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px;
+  gap: 4px;
+}
+
+.landing-menu-link {
+  display: block;
+  padding: 14px 16px;
+  border-radius: 10px;
+  color: rgba(255,255,255,0.6);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.landing-menu-link:hover {
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.9);
+}
+
+/* ═══════════════════════ HERO FOOTER LINKS ═══════════════════════ */
+
+.landing-hero-footer {
+  position: absolute;
+  bottom: 60px;
+  left: 0;
+  right: 0;
+  z-index: 15;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.landing-hero-footer-link {
+  padding: 10px 22px;
+  border-radius: 100px;
+  color: rgba(255,255,255,0.45);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: all 0.2s ease;
+}
+
+.landing-hero-footer-link:hover {
+  color: rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.12);
+}
+
+@media (max-width: 600px) {
+  .landing-hero-footer {
+    bottom: 40px;
+    gap: 8px;
+  }
+  .landing-hero-footer-link {
+    padding: 8px 16px;
+    font-size: 12px;
+  }
+}
+
+/* ═══════════════════════ SCROLL-DOWN INDICATOR ═══════════════════════ */
+
+.landing-scroll-hint {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  color: rgba(255,255,255,0.3);
+  animation: scroll-bounce 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes scroll-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.3; }
+  50% { transform: translateX(-50%) translateY(8px); opacity: 0.7; }
+}
+
+@media (max-width: 600px) {
+  .landing-scroll-hint {
+    bottom: 12px;
+  }
+}
+
 /* ===== DASHBOARD METRICS ===== */
 .dash-metrics-bar {
   display: flex;
