@@ -689,45 +689,34 @@ const thumbnailStyle: React.CSSProperties = {
 };
 
 const selectStyle: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.01)",
-  backdropFilter: "blur(4px)",
-  WebkitBackdropFilter: "blur(4px)",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
+  background: "transparent",
+  border: "1px solid rgba(255, 255, 255, 0.12)",
   color: "#ffffff",
   borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
   cursor: "pointer",
-  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
+  transition: "border-color 0.2s ease",
 };
 
 const inputStyle: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.01)",
-  backdropFilter: "blur(4px)",
-  WebkitBackdropFilter: "blur(4px)",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
+  background: "transparent",
+  border: "1px solid rgba(255, 255, 255, 0.12)",
   color: "#ffffff",
   borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
   transition: "border-color 0.2s ease",
-  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const btnPrimary: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.01)",
-  backdropFilter: "blur(4px)",
-  WebkitBackdropFilter: "blur(4px)",
+  background: "rgba(255, 255, 255, 0.06)",
   border: "1px solid rgba(255, 255, 255, 0.15)", color: "#ffffff",
   borderRadius: 100, padding: "8px 20px", fontSize: 13, cursor: "pointer", fontWeight: 500,
   transition: "all 0.2s ease",
-  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const btnSecondary: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.01)",
-  backdropFilter: "blur(4px)",
-  WebkitBackdropFilter: "blur(4px)",
-  border: "1px solid rgba(255, 255, 255, 0.06)", color: "rgba(255, 255, 255, 0.7)",
+  background: "transparent",
+  border: "1px solid rgba(255, 255, 255, 0.08)", color: "rgba(255, 255, 255, 0.6)",
   borderRadius: 100, padding: "8px 16px", fontSize: 13, cursor: "pointer",
   transition: "all 0.2s ease",
-  boxShadow: "inset 0 1px 1px rgba(255, 255, 255, 0.1)",
 };
 
 const cardStyle: React.CSSProperties = {
