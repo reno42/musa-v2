@@ -468,46 +468,46 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
       </div>
 
-      {/* ── Metrics Bar ── */}
-      <div className="dash-metrics-bar">
-        <div className="dash-metric-card">
-          <div className="dash-metric-value">{templates.length}</div>
-          <div className="dash-metric-label">Templates</div>
-          <div className="dash-metric-sub">
-            {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
-          </div>
-        </div>
-        <div className="dash-metric-card">
-          <div className="dash-metric-value">{recipes.length}</div>
-          <div className="dash-metric-label">Key Visuals</div>
-          <div className="dash-metric-sub">
-            {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
-          </div>
-        </div>
-        <div className="dash-metric-card">
-          <div className="dash-metric-value">{workspaces.length}</div>
-          <div className="dash-metric-label">Workspaces</div>
-          <div className="dash-metric-sub">
-            {selectedWs ? "1 active" : "all shown"}
-          </div>
-        </div>
-        <div className="dash-metric-card" style={{ justifyContent: "center" }}>
-          <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
-          <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
-            {(() => {
-              const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
-              return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
-            })()}
-          </div>
-          <div className="dash-metric-sub">
-            Most frames
-          </div>
-        </div>
-      </div>
-
       {/* Template Grid */}
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        {/* ── Metrics Bar ── */}
+        <div className="dash-metrics-bar">
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{templates.length}</div>
+            <div className="dash-metric-label">Templates</div>
+            <div className="dash-metric-sub">
+              {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
+            </div>
+          </div>
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{recipes.length}</div>
+            <div className="dash-metric-label">Key Visuals</div>
+            <div className="dash-metric-sub">
+              {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
+            </div>
+          </div>
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{workspaces.length}</div>
+            <div className="dash-metric-label">Workspaces</div>
+            <div className="dash-metric-sub">
+              {selectedWs ? "1 active" : "all shown"}
+            </div>
+          </div>
+          <div className="dash-metric-card" style={{ justifyContent: "center" }}>
+            <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
+            <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
+              {(() => {
+                const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
+                return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
+              })()}
+            </div>
+            <div className="dash-metric-sub">
+              Most frames
+            </div>
+          </div>
+        </div>
+
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
@@ -602,6 +602,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* Key Visuals / Recipes Grid */}
       {activeTab === "recipes" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        {/* ── Metrics Bar ── */}
+        <div className="dash-metrics-bar">
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{templates.length}</div>
+            <div className="dash-metric-label">Templates</div>
+            <div className="dash-metric-sub">
+              {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
+            </div>
+          </div>
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{recipes.length}</div>
+            <div className="dash-metric-label">Key Visuals</div>
+            <div className="dash-metric-sub">
+              {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
+            </div>
+          </div>
+          <div className="dash-metric-card">
+            <div className="dash-metric-value">{workspaces.length}</div>
+            <div className="dash-metric-label">Workspaces</div>
+            <div className="dash-metric-sub">
+              {selectedWs ? "1 active" : "all shown"}
+            </div>
+          </div>
+          <div className="dash-metric-card" style={{ justifyContent: "center" }}>
+            <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
+            <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
+              {(() => {
+                const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
+                return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
+              })()}
+            </div>
+            <div className="dash-metric-sub">
+              Most frames
+            </div>
+          </div>
+        </div>
+
         {loadingRecipes ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading...</div>
         ) : recipes.length === 0 ? (
@@ -663,6 +700,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Data Tab ── */}
       {activeTab === "data" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 800, margin: "0 auto", width: "100%" }}>
+          {/* ── Metrics Bar ── */}
+          <div className="dash-metrics-bar" style={{ padding: 0, marginBottom: 24 }}>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{templates.length}</div>
+              <div className="dash-metric-label">Templates</div>
+              <div className="dash-metric-sub">
+                {templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0)} frames
+              </div>
+            </div>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{recipes.length}</div>
+              <div className="dash-metric-label">Key Visuals</div>
+              <div className="dash-metric-sub">
+                {recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions
+              </div>
+            </div>
+            <div className="dash-metric-card">
+              <div className="dash-metric-value">{workspaces.length}</div>
+              <div className="dash-metric-label">Workspaces</div>
+              <div className="dash-metric-sub">
+                {selectedWs ? "1 active" : "all shown"}
+              </div>
+            </div>
+            <div className="dash-metric-card" style={{ justifyContent: "center" }}>
+              <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
+              <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
+                {(() => {
+                  const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0];
+                  return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—";
+                })()}
+              </div>
+              <div className="dash-metric-sub">
+                Most frames
+              </div>
+            </div>
+          </div>
+
           <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Your Data</h2>
           <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 24 }}>
             What Futuraria stores in your Supabase database.
