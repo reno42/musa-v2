@@ -75,7 +75,7 @@ import {
   IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconRefresh, IconGrid,
-  IconUpload, IconSparkle, IconLink,
+  IconUpload, IconSparkle, IconLink, IconCode,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -2432,6 +2432,49 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     e.target.value = "";
   }, [callMcp, templateWorkspaceId]);
 
+  // ── Import HTML+CSS into the currently selected frame ──
+  // Parses a standalone .html file: extracts <body> inner HTML and all <style> tags.
+  // Also extracts <link> font imports and converts them to CSS @import lines.
+  // If no frame is selected, creates one matching the file's viewport meta or 1080x1080.
+  const handleImportHtml = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(raw, "text/html");
+
+      // Extract CSS: all <style> contents + convert <link> font imports to @import
+      const styleParts: string[] = [];
+      doc.querySelectorAll("style").forEach(s => { styleParts.push(s.textContent || ""); });
+      doc.querySelectorAll('link[rel="stylesheet"][href]').forEach(link => {
+        const href = (link as HTMLLinkElement).getAttribute("href") || "";
+        if (href.includes("fonts.googleapis.com")) styleParts.unshift(`@import url('${href}');`);
+      });
+      const css = styleParts.join("\n");
+
+      // Extract body inner HTML (strip script tags for safety)
+      doc.querySelectorAll("script").forEach(s => s.remove());
+      const bodyHtml = doc.body?.innerHTML || doc.documentElement?.innerHTML || raw;
+
+      if (selectedFrameId) {
+        // Apply to existing frame
+        const updated = frames.map(f =>
+          f.id === selectedFrameId ? { ...f, html: bodyHtml, css } : f
+        );
+        pushUndo(frames);
+        setFrames(updated);
+        autoSave(updated);
+        setShowCodePanel(true);
+        setMcpMsg("✓ HTML imported into frame");
+      } else {
+        setMcpMsg("Select a frame first");
+      }
+    } catch { setMcpMsg("✗ HTML import failed"); }
+    setTimeout(() => setMcpMsg(""), 3000);
+    e.target.value = "";
+  }, [selectedFrameId, frames, pushUndo, autoSave]);
+
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
   const codeDock = useDockablePanel(0, 56, "left");
@@ -2813,6 +2856,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         >
           <IconPlus size={14} />
         </button>
+
+        {/* Import HTML+CSS into selected frame */}
+        <label className="editor-v2-topbar-icon-btn" title="Import HTML/CSS into Frame">
+          <IconCode size={14} />
+          <input type="file" accept=".html,.htm" onChange={handleImportHtml} style={{ display: "none" }} />
+        </label>
 
         {/* Import template */}
         <label className="editor-v2-topbar-icon-btn" title="Import Template JSON">

@@ -253,6 +253,13 @@ export function DesignFrame({
     // Without this, static content paints beneath all positioned elements (white frame bug).
     content.style.position = "relative";
     content.style.zIndex = "2";
+    // CRITICAL: set explicit dimensions so bottom/right/flex/percent positioning
+    // always resolves against the frame size, not the viewport or auto height.
+    // Without this, body { } CSS remapped by mapBodySelectors can be absent or
+    // use viewport units (vh/vw), causing children to escape the frame.
+    content.style.width = frame.width + "px";
+    content.style.height = frame.height + "px";
+    content.style.overflow = "hidden";
     shadow.appendChild(content);
 
     // Slot — distributes light DOM chrome (background, border, label) into shadow tree
