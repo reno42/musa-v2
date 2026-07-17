@@ -568,9 +568,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml } : f
     );
-    // Coalesce: only push undo if >800ms since last push (avoids one-undo-per-keystroke)
+    // Coalesce: only push undo if >300ms since last push (avoids one-undo-per-keystroke)
     const now = Date.now();
-    if (now - lastPushTimeRef.current > 800) {
+    if (now - lastPushTimeRef.current > 300) {
       pushUndo(frames);
       lastPushTimeRef.current = now;
     }
@@ -584,7 +584,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       f.id === selectedFrameId ? { ...f, css: newCss } : f
     );
     const now = Date.now();
-    if (now - lastPushTimeRef.current > 800) {
+    if (now - lastPushTimeRef.current > 300) {
       pushUndo(frames);
       lastPushTimeRef.current = now;
     }

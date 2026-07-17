@@ -7,7 +7,7 @@ import {
   setTransformFunction,
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
-import { createLayerId, duplicateLayerInHtml } from "../lib/htmlMutations";
+import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
 import {
   computeBounds,
   createSmoothPoint,
@@ -175,6 +175,7 @@ export function DesignFrame({
   // Comparing content ensures we only skip when React feeds back the exact CSS
   // we just emitted via onCssChange.
   const lastEmittedCssRef = useRef<string | null>(null);
+  const lastEmittedHtmlRef = useRef<string | null>(null);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
   const onAddPrimitiveRef = useRef(onAddPrimitive);
@@ -242,7 +243,7 @@ export function DesignFrame({
     // but individual children capture them. Click on empty space passes through
     // content → hits background div (frame select/drag). Click on element → element.
     const peStyle = document.createElement("style");
-    peStyle.textContent = `#__df_content { pointer-events: none; } #__df_content * { pointer-events: auto; }`;
+    peStyle.textContent = `#__df_content { width: 100%; height: 100%; pointer-events: none; } #__df_content * { pointer-events: auto; }`;
     shadow.appendChild(peStyle);
 
     // Content container
@@ -328,18 +329,62 @@ export function DesignFrame({
 
   // ── Code → DOM: HTML update ──
   useEffect(() => {
-    htmlRef.current = frame.html;
+    // Echo suppression: skip if React feeds back the exact HTML we just emitted.
+    // This prevents a full DOM rebuild + selection reset when the parent echoes
+    // our own onHtmlChange back to us (identical to the CSS echo-suppression above).
+    if (lastEmittedHtmlRef.current === frame.html) {
+      lastEmittedHtmlRef.current = null; // consume the echo
+      return;
+    }
+
+    let html = frame.html;
+
+    // Ensure every element carries a data-layer-id so mousedown never has to
+    // create one reactively — that was the root cause of janky selection (S2a).
+    // Wrapping text nodes in <span data-layer-id> also guarantees clickable
+    // inline text for tools (pen, text-box, text-path).
+    if (html.trim()) {
+      const ensured = ensureLayerIds(html, createLayerId);
+      if (ensured !== html) {
+        html = ensured;
+        // Mark this HTML as ours so the echo-suppression gate above consumes
+        // the feedback round-trip.
+        lastEmittedHtmlRef.current = ensured;
+      }
+    }
+
+    htmlRef.current = html;
     const shadow = shadowRef.current;
     if (!shadow) return;
     const content = shadow.getElementById("__df_content");
     if (!content) return;
-    content.innerHTML = frame.html;
+
+    // Save current selection's layer-id so we can re-resolve it after the
+    // innerHTML rewrite (Sprint-0.3). Without this, every external HTML
+    // update (undo, variables panel, brand panel) silently clears selection.
+    const savedLayerId = selectedRef.current?.getAttribute("data-layer-id") || null;
+
+    content.innerHTML = html;
     selectedRef.current = null;
     selectedSourceRef.current = null;
     clearOverlay();
     // Clear pen state on HTML update
     penPointsRef.current = [];
     penSvgRef.current = null;
+
+    // Re-resolve selection by data-layer-id so the user never notices that
+    // the DOM was rebuilt — the overlay, computed-style panel, and keyboard
+    // shortcuts all stay wired to the same logical element.
+    if (savedLayerId) {
+      const resolved = content.querySelector(`[data-layer-id="${savedLayerId}"]`);
+      if (resolved) selectElement(resolved);
+    }
+
+    // If ensureLayerIds enriched the HTML, push the enriched version upstream
+    // so the canonical HTML in state matches what is actually in the DOM.
+    if (html !== frame.html) {
+      onHtmlChangeRef.current?.(frame.id, html);
+    }
   }, [frame.html]);
 
   useEffect(() => {
@@ -362,6 +407,7 @@ export function DesignFrame({
     if (!element.hasAttribute("data-layer-id")) {
       element.setAttribute("data-layer-id", createLayerId());
       htmlRef.current = content.innerHTML;
+      lastEmittedHtmlRef.current = content.innerHTML;
       onHtmlChangeRef.current?.(frame.id, htmlRef.current);
     }
     selectElement(element);
@@ -1339,11 +1385,6 @@ export function DesignFrame({
       const parentSvg = target.closest?.("svg");
       if (parentSvg && parentSvg !== (target as Element)) {
         dragTarget = parentSvg;
-      }
-      if (!dragTarget.hasAttribute("data-layer-id")) {
-        dragTarget.setAttribute("data-layer-id", createLayerId());
-        htmlRef.current = content.innerHTML;
-        onHtmlChangeRef.current?.(frame.id, htmlRef.current);
       }
 
       selectElement(dragTarget, target);
