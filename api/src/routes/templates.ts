@@ -136,6 +136,30 @@ templateRoutes.get("/", async (req, res) => {
 });
 
 /**
+ * GET /api/templates/trash
+ * ──────────────────────────────────────────────────────────────
+ * List soft-deleted templates (Trash view). Returns lean summaries
+ * with deletedAt timestamp so the UI can show "X days remaining".
+ *
+ * NOTE: Registered BEFORE /:id so "trash" isn't captured as an ID param.
+ *
+ * @query {number} [limit=50]   Max items
+ * @query {number} [offset=0]   Skip N items
+ *
+ * @returns {200} { success, data: DesignTemplate[], total, limit, offset }
+ */
+templateRoutes.get("/trash", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const result = await templates.listTrash(limit, offset);
+    res.json({ success: true, data: result.data, total: result.total, limit, offset });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/templates/:id
  * ──────────────────────────────────────────────────────────────
  * Fetch a single template by ID.
@@ -246,21 +270,83 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
 /**
  * DELETE /api/templates/:id
  * ──────────────────────────────────────────────────────────────
- * Permanently delete a template and all related data (cascading:
- * versions, comments, render_logs, variables).
+ * Soft-delete a template (move to Trash). Sets deleted_at so the
+ * template is hidden from listings but recoverable for 30 days.
  *
  * @param {string} id  Template ID
  * @returns {200} { success: true }
  * @returns {404} Template not found
  *
- * DB: DELETE FROM templates WHERE id = :id
- *     CASCADE: template_versions, comments, render_logs, variables
+ * DB: UPDATE templates SET deleted_at = NOW() WHERE id = :id
  */
 templateRoutes.delete("/:id", async (req, res) => {
   try {
     const ok = await templates.deleteTemplate(req.params.id);
     if (!ok) return res.status(404).json({ success: false, error: "Template not found" });
     res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Trash / Soft-delete routes ────────────────────────────
+
+/**
+ * PUT /api/templates/:id/restore
+ * ──────────────────────────────────────────────────────────────
+ * Restore a soft-deleted template from Trash (clears deleted_at).
+ *
+ * @param {string} id  Template ID
+ * @returns {200} { success: true }
+ * @returns {404} Template not found or not in trash
+ */
+templateRoutes.put("/:id/restore", async (req, res) => {
+  try {
+    const ok = await templates.restoreTemplate(req.params.id);
+    if (!ok) return res.status(404).json({ success: false, error: "Template not found in trash" });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/templates/:id/permanent
+ * ──────────────────────────────────────────────────────────────
+ * Permanently delete a template (cannot be restored). Use only
+ * from the Trash view for explicit user-initiated purge.
+ *
+ * @param {string} id  Template ID
+ * @returns {200} { success: true }
+ * @returns {404} Template not found
+ *
+ * DB: DELETE FROM templates WHERE id = :id
+ */
+templateRoutes.delete("/:id/permanent", async (req, res) => {
+  try {
+    const ok = await templates.purgeTemplate(req.params.id);
+    if (!ok) return res.status(404).json({ success: false, error: "Template not found" });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/templates/trash/purge-expired
+ * ──────────────────────────────────────────────────────────────
+ * Purge all templates that have been in trash for more than 30 days.
+ * Called by a cron/scheduled job.
+ *
+ * @body {number} [olderThanDays=30]  Days threshold for purge
+ *
+ * @returns {200} { success, purged: number }
+ */
+templateRoutes.post("/trash/purge-expired", async (req, res) => {
+  try {
+    const olderThanDays = parseInt(req.body.olderThanDays as string) || 30;
+    const count = await templates.purgeExpiredTemplates(olderThanDays);
+    res.json({ success: true, purged: count });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

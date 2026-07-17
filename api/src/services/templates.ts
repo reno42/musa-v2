@@ -79,6 +79,7 @@ async function listFromSupabase(
     // with every batch-generated design until Netlify answered 502.
     const queryPromise = sb.from("templates")
       .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -180,10 +181,109 @@ async function deleteFromSupabase(id: string) {
   const sb = getSupabase();
   if (!sb) return;
   try {
+    // Soft-delete: set deleted_at column
+    await sb.from("templates").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  } catch (e) {
+    console.warn("[templates] Supabase soft-delete failed:", (e as Error).message);
+  }
+}
+
+async function restoreSupabase(id: string) {
+  const sb = getSupabase();
+  if (!sb) return;
+  try {
+    await sb.from("templates").update({ deleted_at: null }).eq("id", id);
+  } catch (e) {
+    console.warn("[templates] Supabase restore failed:", (e as Error).message);
+  }
+}
+
+async function purgeFromSupabase(id: string) {
+  const sb = getSupabase();
+  if (!sb) return;
+  try {
     await sb.from("templates").delete().eq("id", id);
   } catch (e) {
-    console.warn("[templates] Supabase delete failed:", (e as Error).message);
+    console.warn("[templates] Supabase purge failed:", (e as Error).message);
   }
+}
+
+async function listTrashFromSupabase(limit: number, offset: number): Promise<{ data: DesignTemplate[]; total: number } | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    const queryPromise = sb.from("templates")
+      .select("id, name, workspace_id, created_at, updated_at, deleted_at, data", { count: "exact" })
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    const result = await withTimeout(queryPromise as any, 6000);
+    if (!result) return null;
+    const { data, count, error } = result as any;
+    if (error) throw error;
+    const items = (data || []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      workspaceId: r.workspace_id,
+      width: 1080,
+      height: 1080,
+      engine: "html" as const,
+      canvas: null,
+      frames: [],
+      styles: [],
+      comments: [],
+      versions: [],
+      variables: { collections: [], variables: [], bindings: {} } as DesignTemplate["variables"],
+      components: [],
+      metadata: {
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        deletedAt: r.deleted_at,
+      },
+      data: r.data ? (typeof r.data === "string" ? JSON.parse(r.data) : r.data) : {},
+    }));
+    return { data: items, total: count || items.length };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generate a simple SVG placeholder thumbnail from frame metadata.
+ * Produces a lightweight data:image/svg+xml URI so the dashboard
+ * always has something to show. Real PNGs replace these via the
+ * browser-side handleSnapshotAll → update_thumbnail flow.
+ */
+function generatePlaceholderThumbnail(
+  name: string, width: number, height: number, background?: string
+): string {
+  const bg = background || "#0d0d1a";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="${bg}"/>
+  <text x="50%" y="45%" text-anchor="middle" fill="rgba(255,255,255,0.15)" font-family="sans-serif" font-size="${Math.max(14, Math.round(width / 15))}px">${escapeXml(name)}</text>
+  <text x="50%" y="58%" text-anchor="middle" fill="rgba(255,255,255,0.08)" font-family="sans-serif" font-size="${Math.max(10, Math.round(width / 30))}px">${width}×${height}</text>
+</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Ensure a template has a thumbnail. Generate one from the first frame if missing. */
+function ensureThumbnail(tpl: DesignTemplate): DesignTemplate {
+  if (tpl.thumbnail) return tpl;
+  const first = tpl.frames?.[0];
+  if (first?.html) {
+    // Extract background from first frame or CSS
+    let bg = (first as any).background || first.fill || "#0d0d1a";
+    const css = first.css || tpl.css || "";
+    const bgMatch = css.match(/body\s*\{[^}]*background(?:-color)?\s*:\s*([^;}]+)[;}]/i)
+      || css.match(/background(?:-color)?\s*:\s*([^;}]+)[;}]/i);
+    if (bgMatch) bg = bgMatch[1].trim();
+    tpl.thumbnail = generatePlaceholderThumbnail(tpl.name, tpl.width, tpl.height, bg);
+  }
+  return tpl;
 }
 
 export async function createTemplate(
@@ -251,6 +351,8 @@ export async function updateTemplate(
     tpl = fromDb;
   }
   if (tpl) {
+    // Auto-generate thumbnail from first frame if missing (pipeline)
+    ensureThumbnail(tpl);
     await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
   }
   return tpl || null;
@@ -259,6 +361,40 @@ export async function updateTemplate(
 export async function deleteTemplate(id: string): Promise<boolean> {
   await deleteFromSupabase(id);
   return store.deleteTemplate(id);
+}
+
+export async function restoreTemplate(id: string): Promise<boolean> {
+  await restoreSupabase(id);
+  return store.restoreTemplate(id);
+}
+
+export async function purgeTemplate(id: string): Promise<boolean> {
+  await purgeFromSupabase(id);
+  return store.purgeTemplate(id);
+}
+
+export async function listTrash(limit = 50, offset = 0): Promise<{ data: DesignTemplate[]; total: number }> {
+  const fromSb = await listTrashFromSupabase(limit, offset);
+  const fromStore = store.listTrash();
+  const merged = new Map<string, DesignTemplate>();
+  if (fromSb) for (const t of fromSb.data) merged.set(t.id, t);
+  for (const t of fromStore) merged.set(t.id, t);
+  const data = [...merged.values()];
+  const total = data.length;
+  return { data: data.slice(offset, offset + limit), total };
+}
+
+export async function purgeExpiredTemplates(olderThanDays = 30): Promise<number> {
+  const count = store.purgeExpiredTemplates(olderThanDays);
+  // Also purge from Supabase
+  const sb = getSupabase();
+  if (sb) {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    try {
+      await sb.from("templates").delete().lt("deleted_at", cutoff);
+    } catch { /* best-effort */ }
+  }
+  return count;
 }
 
 export async function duplicateTemplate(

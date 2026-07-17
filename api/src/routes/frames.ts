@@ -44,10 +44,27 @@ frameRoutes.put("/:id/frames/:frameId", validate(updateFrameSchema), async (req,
   try {
     const tpl = await templates.getTemplate(req.params.id);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
-    const frame = store.updateFrame(req.params.id, req.params.frameId, req.body);
-    if (!frame) return res.status(404).json({ success: false, error: "Template or frame not found" });
+    const frame = tpl.frames.find(f => f.id === req.params.frameId);
+    if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
+
+    // Concurrency check: if ifRevision is provided, reject if it doesn't match
+    const ifRevision = req.body.ifRevision as number | undefined;
+    if (ifRevision !== undefined && frame.revision !== undefined && ifRevision !== frame.revision) {
+      return res.status(409).json({
+        success: false,
+        error: "conflict",
+        currentRevision: frame.revision,
+        message: "Frame was modified since you last read it. Re-read and retry.",
+      });
+    }
+
+    // Increment revision on every update
+    frame.revision = (frame.revision || 0) + 1;
+
+    const updated = store.updateFrame(req.params.id, req.params.frameId, req.body);
+    if (!updated) return res.status(404).json({ success: false, error: "Template or frame not found" });
     await templates.updateTemplate(req.params.id, { frames: tpl.frames });
-    res.json({ success: true, data: frame });
+    res.json({ success: true, data: updated });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

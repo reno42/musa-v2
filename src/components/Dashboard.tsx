@@ -95,6 +95,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     }
   }, [cardMode, templates.length, scrollToCard]);
 
+  /* Fetch storage health when Settings tab is active */
+  useEffect(() => {
+    if (activeTab !== "settings") return;
+    let cancelled = false;
+    fetch("/api/health/storage")
+      .then(r => r.json())
+      .then(data => { if (!cancelled) setStorageHealth(data); })
+      .catch(() => { if (!cancelled) setStorageHealth(null); });
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
   /* Debounced scroll handler — prevents laggy state updates mid-scroll */
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleFlowScroll = useCallback(() => {
@@ -114,6 +125,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
+  const [storageHealth, setStorageHealth] = useState<{ supabase: boolean; mode: string; realtime: boolean } | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -376,7 +388,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   const renderTemplateCard = (t: Template, i?: number) => {
-    const hasHtml = t.engine === "html" && t.frames?.[0]?.html;
     const dist = i !== undefined ? i - flowIndex : 0;
     const absDist = Math.abs(dist);
     const isCenter = dist === 0;
@@ -386,23 +397,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const translateZ = isCenter ? 60 : -absDist * 50;
     const opacityVal = Math.max(0.2, 1 - absDist * 0.25);
 
-    /* Thumbnail preview: in flow mode, always use static image or color (no iframes).
-       In grid mode, use live iframes (lighter GPU load without 3D transforms). */
-    const previewContent = isFlow
-      ? (t.thumbnail
-        ? <img src={t.thumbnail} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a" }} />)
-      : (hasHtml
-        ? (
-          <iframe
-            srcDoc={`<!DOCTYPE html><html><head><style>body{margin:0;overflow:hidden;width:${t.width}px;height:${t.height}px;transform:scale(0.22);transform-origin:top left;background:${t.frames?.[0]?.background || "#0d0d1a"}}${t.frames?.[0]?.css || ""}</style></head><body style="width:${t.width}px;height:${t.height}px">${t.frames?.[0]?.html || ""}</body></html>`}
-            sandbox="allow-same-origin"
-            className="card-preview"
-            style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }}
-            title={t.name}
-          />
-        )
-        : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, #e8e4df, #d5cfc8)" }} />);
+    /* Thumbnail preview: both flow and grid modes use static <img> thumbnails.
+       Server-side pipeline generates SVG placeholders on commit; browser-side
+       handleSnapshotAll replaces them with real PNGs via html2canvas. */
+    const previewContent = t.thumbnail
+      ? <img src={t.thumbnail} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 14, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
+        </div>;
 
     /* Shared metadata + actions block (rendered inside card for grid, below for flow) */
     const metaBlock = (
@@ -920,9 +922,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "settings" && (() => {
         const totalFrames = templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0);
         const estimatedTokens = (templates.length * 2000) + (totalFrames * 500) + (recipes.length * 100);
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-        const supabaseConnected = !!(supabaseUrl && supabaseKey);
+        // Honest indicators: data persistence comes from the server (SUPABASE_URL/SERVICE_KEY),
+        // realtime comes from browser-side VITE_* vars. Previous check only looked at VITE_*.
+        const dataConnected = storageHealth?.supabase ?? false;
+        const dataMode = storageHealth?.mode ?? "unknown";
         const handleDownloadSkill = async () => {
           try {
             const res = await fetch("/SKILL.md");
@@ -1049,19 +1052,38 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 14 }}>🗄️</span>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Supabase</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Data Persistence</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {supabaseConnected ? supabaseUrl : "Not configured"}
+                    {dataConnected ? "Supabase" : dataMode === "unknown" ? "Checking…" : "In-memory (data lost on restart)"}
                   </div>
                 </div>
               </div>
               <span style={{
                 fontSize: 11, fontWeight: 600,
                 padding: "4px 10px", borderRadius: 100,
-                background: supabaseConnected ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
-                color: supabaseConnected ? "#4ade80" : "rgba(255,255,255,0.35)",
+                background: dataConnected ? "rgba(34,197,94,0.12)" : dataMode === "unknown" ? "rgba(255,255,255,0.03)" : "rgba(234,179,8,0.12)",
+                color: dataConnected ? "#4ade80" : dataMode === "unknown" ? "rgba(255,255,255,0.35)" : "#facc15",
               }}>
-                {supabaseConnected ? "● Connected" : "○ Inactive"}
+                {dataConnected ? "Connected" : dataMode === "unknown" ? "Checking…" : "Memory Only"}
+              </span>
+            </div>
+            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>🔄</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Real-time Collaboration</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                    {storageHealth?.realtime ? "VITE_SUPABASE_* configured" : "Not configured (set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY)"}
+                  </div>
+                </div>
+              </div>
+              <span style={{
+                fontSize: 11, fontWeight: 600,
+                padding: "4px 10px", borderRadius: 100,
+                background: storageHealth?.realtime ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
+                color: storageHealth?.realtime ? "#4ade80" : "rgba(255,255,255,0.35)",
+              }}>
+                {storageHealth?.realtime ? "Enabled" : "Inactive"}
               </span>
             </div>
             <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>

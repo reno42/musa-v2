@@ -1301,6 +1301,16 @@ const MCP_TOOLS = [
     description: "Broadcast a section change via Supabase Realtime",
     inputSchema: { type: "object", properties: { channelId: { type: "string" }, sectionId: { type: "string" }, html: { type: "string" }, css: { type: "string" }, agentId: { type: "string" } }, required: ["channelId", "sectionId"] },
   },
+  {
+    name: "claim_section",
+    description: "Claim a section/frame for exclusive editing (soft lock, 60s TTL). Returns 409 if already claimed by another agent.",
+    inputSchema: { type: "object", properties: { templateId: { type: "string" }, frameId: { type: "string" }, agentId: { type: "string" }, agentName: { type: "string" } }, required: ["templateId", "frameId", "agentId"] },
+  },
+  {
+    name: "release_section",
+    description: "Release a section/frame claim previously acquired with claim_section.",
+    inputSchema: { type: "object", properties: { templateId: { type: "string" }, frameId: { type: "string" }, agentId: { type: "string" } }, required: ["templateId", "frameId", "agentId"] },
+  },
   // ── Fase 5: Brand Guardian ──
   {
     name: "register_brand",
@@ -4647,6 +4657,40 @@ async function handleMethod(method, params, userId) {
 
     case "broadcast_section_change": {
       return { broadcast: true, channelId: params.channelId, sectionId: params.sectionId };
+    }
+
+    case "claim_section": {
+      const claim = store.claimSection(params.templateId, params.frameId, params.agentId, params.agentName || params.agentId);
+      if (!claim) {
+        const existing = store.getClaims(params.templateId).find(c => c.frameId === params.frameId);
+        throw {
+          code: 409,
+          message: "Section already claimed",
+          data: { claimedBy: existing ? { agentId: existing.agentId, agentName: existing.agentName } : null },
+        };
+      }
+      // Also persist to Supabase section_locks if available
+      const sb = getSupabase();
+      if (sb) {
+        sb.from("section_locks").upsert({
+          id: `${params.templateId}_${params.frameId}`,
+          template_id: params.templateId,
+          section_id: params.frameId,
+          agent_id: params.agentId,
+          acquired_at: claim.claimedAt,
+          expires_at: claim.expiresAt,
+        }).then(() => {}).catch(() => {});
+      }
+      return { success: true, claim };
+    }
+
+    case "release_section": {
+      const released = store.releaseSection(params.templateId, params.frameId, params.agentId);
+      const sb = getSupabase();
+      if (sb) {
+        sb.from("section_locks").delete().eq("template_id", params.templateId).eq("section_id", params.frameId).eq("agent_id", params.agentId).then(() => {}).catch(() => {});
+      }
+      return { success: released };
     }
 
     // ═══════════════════════════════════════════════════════════

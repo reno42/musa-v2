@@ -35,6 +35,8 @@ export interface Frame {
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
+  // Concurrency control
+  revision?: number;
 }
 
 export interface DesignTemplate {
@@ -143,6 +145,7 @@ export interface TemplateMetadata {
   updatedAt: string;
   createdBy?: string;
   designArtifactsGeneratedAt?: string;
+  deletedAt?: string;
 }
 
 // ─── Brand Guidelines ─────────────────────────────────────
@@ -283,4 +286,15 @@ export interface RenderOptions {
   scale?: number;
   width?: number;
   height?: number;
+}
+
+// ─── Concurrency Types ─────────────────────────────────────
+
+export interface SectionClaim {
+  frameId: string;
+  templateId: string;
+  agentId: string;
+  agentName: string;
+  claimedAt: string;
+  expiresAt: string;
 }

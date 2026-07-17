@@ -21,6 +21,8 @@ import { componentRoutes } from "./routes/components.js";
 import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
 import { designSystemRoutes } from "./routes/designSystem.js";
+import { sectionRoutes } from "./routes/sections.js";
+import { getSupabase } from "./services/supabase.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -51,6 +53,31 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Storage health: answers "is Supabase actually connected?" so the
+// Settings UI can show honest indicators for data persistence vs realtime.
+app.get("/api/health/storage", (_req, res) => {
+  const sb = getSupabase();
+  const supabaseConnected = sb !== null;
+
+  // Realtime requires the browser-side VITE_* vars, which we can't check
+  // server-side. The Dashboard queries this to show the correct status.
+  const hasRealtimeVars = !!(
+    process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY
+  );
+
+  // Also check Netlify-side env vars as fallback
+  const hasFallbackVars = !!(
+    (process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN) &&
+    (process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN)
+  );
+
+  res.json({
+    supabase: supabaseConnected,
+    mode: supabaseConnected ? "supabase" : "memory",
+    realtime: hasRealtimeVars || hasFallbackVars,
+  });
+});
+
 // Route groups
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/templates", templateRoutes);
@@ -71,6 +98,7 @@ app.use("/api/recipes", recipeRoutes);
 app.use("/api/assets", assetRoutes);
 app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
+app.use("/api/templates", sectionRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse 94 popular Google Fonts by name or category

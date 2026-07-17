@@ -1,7 +1,7 @@
 import { v4 as uuid } from "uuid";
 import type {
   Workspace, Frame, DesignTemplate, CanvasData,
-  Webhook, RenderJob,
+  Webhook, RenderJob, SectionClaim,
 } from "../types.js";
 
 interface SnapshotEntry {
@@ -20,6 +20,7 @@ class Store {
   webhooks = new Map<string, Webhook>();
   renderJobs = new Map<string, RenderJob>();
   snapshots = new Map<string, SnapshotEntry[]>();
+  sectionClaims = new Map<string, SectionClaim[]>(); // templateId → claims
 
   // ─── Workspaces ─────────────────────────────────
 
@@ -104,7 +105,7 @@ class Store {
   }
 
   listTemplates(workspaceId?: string, limit = 50, offset = 0): { data: DesignTemplate[]; total: number } {
-    let entries = [...this.templates.values()];
+    let entries = [...this.templates.values()].filter(t => !t.metadata.deletedAt);
     if (workspaceId) entries = entries.filter(t => t.workspaceId === workspaceId);
     entries.sort((a, b) =>
       new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime()
@@ -125,7 +126,47 @@ class Store {
   }
 
   deleteTemplate(id: string): boolean {
+    // Soft-delete: set deletedAt instead of removing
+    const tpl = this.templates.get(id);
+    if (!tpl) return false;
+    tpl.metadata.deletedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** Restore a soft-deleted template. */
+  restoreTemplate(id: string): boolean {
+    const tpl = this.templates.get(id);
+    if (!tpl || !tpl.metadata.deletedAt) return false;
+    delete tpl.metadata.deletedAt;
+    tpl.metadata.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** Trash: list soft-deleted templates. */
+  listTrash(): DesignTemplate[] {
+    return [...this.templates.values()]
+      .filter(t => t.metadata.deletedAt)
+      .sort((a, b) =>
+        new Date(b.metadata.deletedAt!).getTime() - new Date(a.metadata.deletedAt!).getTime()
+      );
+  }
+
+  /** Permanently delete a template (cannot be restored). */
+  purgeTemplate(id: string): boolean {
     return this.templates.delete(id);
+  }
+
+  /** Purge templates deleted more than `olderThanDays` ago. Returns count. */
+  purgeExpiredTemplates(olderThanDays = 30): number {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000);
+    let count = 0;
+    for (const [id, tpl] of this.templates) {
+      if (tpl.metadata.deletedAt && new Date(tpl.metadata.deletedAt) < cutoff) {
+        this.templates.delete(id);
+        count++;
+      }
+    }
+    return count;
   }
 
   // ─── Frames ─────────────────────────────────────
@@ -280,6 +321,69 @@ class Store {
     arr.push(entry);
     if (arr.length > 50) arr = arr.slice(arr.length - 50);
     this.snapshots.set(templateId, arr);
+  }
+
+  // ─── Section Claims (concurrency) ───────────────
+
+  /** Claim a section/frame for an agent. Returns the claim or null if already claimed. */
+  claimSection(templateId: string, frameId: string, agentId: string, agentName: string, ttlMs = 60_000): SectionClaim | null {
+    const now = Date.now();
+    this.cleanupExpiredClaims(templateId);
+
+    const claims = this.sectionClaims.get(templateId) || [];
+    const existing = claims.find(c => c.frameId === frameId && c.expiresAt > new Date().toISOString());
+    if (existing) return null; // already claimed
+
+    const claim: SectionClaim = {
+      templateId,
+      frameId,
+      agentId,
+      agentName,
+      claimedAt: new Date().toISOString(),
+      expiresAt: new Date(now + ttlMs).toISOString(),
+    };
+    claims.push(claim);
+    this.sectionClaims.set(templateId, claims);
+    return claim;
+  }
+
+  /** Release a section claim. Returns true if released. */
+  releaseSection(templateId: string, frameId: string, agentId: string): boolean {
+    const claims = this.sectionClaims.get(templateId);
+    if (!claims) return false;
+    const idx = claims.findIndex(c => c.frameId === frameId && c.agentId === agentId);
+    if (idx === -1) return false;
+    claims.splice(idx, 1);
+    return true;
+  }
+
+  /** Renew a claim's TTL. Returns the updated claim or null if not found/expired. */
+  renewClaim(templateId: string, frameId: string, agentId: string, ttlMs = 60_000): SectionClaim | null {
+    const claims = this.sectionClaims.get(templateId);
+    if (!claims) return null;
+    const claim = claims.find(c => c.frameId === frameId && c.agentId === agentId);
+    if (!claim || new Date(claim.expiresAt) < new Date()) return null;
+    claim.expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    return claim;
+  }
+
+  /** Get all active claims for a template. */
+  getClaims(templateId: string): SectionClaim[] {
+    this.cleanupExpiredClaims(templateId);
+    return [...(this.sectionClaims.get(templateId) || [])];
+  }
+
+  /** Remove expired claims from all templates. */
+  cleanupExpiredClaims(templateId?: string) {
+    const now = new Date();
+    const ids = templateId ? [templateId] : [...this.sectionClaims.keys()];
+    for (const id of ids) {
+      const claims = this.sectionClaims.get(id);
+      if (!claims) continue;
+      const active = claims.filter(c => new Date(c.expiresAt) > now);
+      if (active.length === 0) this.sectionClaims.delete(id);
+      else this.sectionClaims.set(id, active);
+    }
   }
 }
 

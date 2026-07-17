@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:all": "node scripts/dev-all.mjs",
     "build": "tsc && vite build",
     "test:regression": "node --experimental-strip-types --test QA/css-mutations.test.mjs QA/bezier-math.test.mjs QA/shape-paths.test.mjs QA/deck-generator.test.mjs",
+    "test:editor": "node QA/editor-interactions/run.mjs",
     "preview": "vite preview",
     "build:functions": "cd api && npm install && npx tsc"
   },
@@ -27,6 +29,7 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "puppeteer-core": "^23.11.1",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
   },
