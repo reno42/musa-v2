@@ -58,6 +58,7 @@ export interface DesignTemplate {
   metadata: TemplateMetadata;
   brandId?: string;
   thumbnail?: string;
+  tags?: string[];
   designArtifacts?: DesignArtifacts;
 }
 

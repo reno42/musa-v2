@@ -323,6 +323,15 @@ class Store {
     this.snapshots.set(templateId, arr);
   }
 
+  /** Aggregate all snapshots across templates for activity metrics (M1) */
+  listAllSnapshots(): SnapshotEntry[] {
+    const all: SnapshotEntry[] = [];
+    for (const [, entries] of this.snapshots) {
+      all.push(...entries);
+    }
+    return all.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }
+
   // ─── Section Claims (concurrency) ───────────────
 
   /** Claim a section/frame for an agent. Returns the claim or null if already claimed. */

@@ -22,6 +22,7 @@ import { recipeRoutes } from "./routes/recipes.js";
 import { assetRoutes } from "./routes/assets.js";
 import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
+import { metricsRoutes } from "./routes/metrics.js";
 import { getSupabase } from "./services/supabase.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
@@ -99,6 +100,7 @@ app.use("/api/assets", assetRoutes);
 app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/templates", sectionRoutes);
+app.use("/api/metrics", metricsRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse 94 popular Google Fonts by name or category

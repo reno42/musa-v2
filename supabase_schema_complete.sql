@@ -171,3 +171,18 @@ ALTER PUBLICATION supabase_realtime ADD TABLE recipes;
 ALTER PUBLICATION supabase_realtime ADD TABLE batch_jobs;
 ALTER PUBLICATION supabase_realtime ADD TABLE section_locks;
 ALTER PUBLICATION supabase_realtime ADD TABLE brands;
+
+-- ============================================================
+-- TABLE 8: api_keys (F5 — API key management)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  label TEXT DEFAULT 'API Key',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
