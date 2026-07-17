@@ -150,6 +150,7 @@ Cuatro parches quirúrgicos que alivian HOY mientras se construye lo demás:
 | 0.2 | Eliminar asignación de `data-layer-id` + `onHtmlChange` dentro del mousedown; mover a `ensureLayerIds` al cargar el frame | `DesignFrame.tsx:1243`, nuevo helper en `htmlMutations.ts` | S2a |
 | 0.3 | Tras cualquier `innerHTML` sync, re-resolver `selectedRef` por `data-layer-id` en vez de anularla | `DesignFrame.tsx:311-324` | "no puedo volver a poner las cosas en su lugar" |
 | 0.4 | Coalescing de undo por gesto: debounce 300ms por control en el panel; el drag ya commitea 1 vez | `EditorV2.tsx` (`handleContextualCssChange`) | S3 parcial |
+| 0.5 | `#__df_content` con `width/height: 100%` — hoy no tiene altura explícita y en frames vacíos/cortos media área del frame NO recibe clicks (por eso "el cuadro de texto no siempre se genera") | `DesignFrame.tsx` shadow init | Texto/pen/formas en toda el área |
 
 **Aceptación Sprint 0**: mover 10 objetos seguidos en un post replicado del batch sin
 ningún congelamiento perceptible; la selección sobrevive a cada movimiento; Ctrl+Z
@@ -181,6 +182,14 @@ capas y 10 imágenes base64, medidos por la suite automatizada.
 - Normalizador + hit-testing + drill-down + hover preview según 3.3.
 - Panel de capas sincronizado: la capa seleccionada se resalta; click en el árbol =
   misma semántica que en canvas.
+
+### Sprint 3.5 — Texto profesional (2-3 días) · ver PLAN_PRODUCTO.md §1
+- La herramienta texto crea SIEMPRE (click o drag), aunque haya elementos debajo;
+  entra directo en edición con placeholder seleccionado; `Esc` confirma.
+- Mini-barra flotante sobre el texto seleccionado: fuente, tamaño, peso, spacing,
+  line-height, color — sin viajar al panel lateral. Doble click en cualquier texto = editar.
+- Herramientas sobre canvas vacío crean un auto-frame transparente del tamaño del
+  elemento (simetría: ya se puede jalar afuera; ahora también crear afuera).
 
 **Aceptación**: sobre un post replicado del batch: (1) click en la imagen selecciona
 la CARD top-level y el hover lo anticipó; (2) doble click + click selecciona SOLO la
