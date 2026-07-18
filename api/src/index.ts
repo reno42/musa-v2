@@ -24,6 +24,7 @@ import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes } from "./routes/designMeta.js";
+import { storageRoutes } from "./routes/storage.js";
 import { getSupabase } from "./services/supabase.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
@@ -168,6 +169,7 @@ app.get("/api/graph", async (req, res) => {
 });
 
 app.use("/api/meta", designMetaRoutes);
+app.use("/api/storage", storageRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse 94 popular Google Fonts by name or category

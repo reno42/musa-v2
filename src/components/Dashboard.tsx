@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
+import { StorageTab } from "./StorageTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
@@ -68,7 +69,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data" | "settings" | "graph">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "storage" | "settings" | "graph">("templates");
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
@@ -721,7 +722,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             {([
               { id: "templates", label: "Templates", icon: <IconFile size={14} /> },
               { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
-              { id: "data", label: "Data", icon: (
+              { id: "storage", label: "Storage", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <ellipse cx="12" cy="5" rx="9" ry="3" />
                   <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
@@ -1060,49 +1061,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       </div>
       )}
 
-      {/* ── Data Tab ── */}
-      {activeTab === "data" && (
-        <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 800, margin: "0 auto", width: "100%" }}>
-          <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Your Data</h2>
-          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 24 }}>
-            What Futuraria stores in your Supabase database.
-          </p>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Table</th>
-                <th>Rows</th>
-                <th>What it stores</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>templates</code></td>
-                <td>{templates.length}</td>
-                <td>Your design files — frames, HTML, CSS, metadata</td>
-              </tr>
-              <tr>
-                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>recipes</code></td>
-                <td>{recipes.length}</td>
-                <td>Key Visuals — reusable design patterns with variables</td>
-              </tr>
-              <tr>
-                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>workspaces</code></td>
-                <td>{workspaces.length}</td>
-                <td>Organization folders for your projects</td>
-              </tr>
-              <tr>
-                <td><code style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>design_assets</code></td>
-                <td>—</td>
-                <td>Extracted design tokens, styles, and artifacts</td>
-              </tr>
-            </tbody>
-          </table>
-          <div style={{ marginTop: 20, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 10, fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.6 }}>
-            <strong style={{ color: "rgba(255,255,255,0.6)" }}>Tip:</strong> Notice patterns in your designs by watching which Key Visuals get reused. The more you create, the more you can automate.
-          </div>
-        </div>
-      )}
+      {/* ── Storage Tab ── */}
+      {activeTab === "storage" && <StorageTab />}
 
       {/* ── Settings Tab ── */}
       {activeTab === "settings" && (() => {
@@ -1240,7 +1200,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Delete Mode</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {deleteMode === "soft" ? "Move to Trash (recoverable from Data tab)" : "Permanent delete from database"}
+                    {deleteMode === "soft" ? "Move to Trash (recoverable from Storage tab)" : "Permanent delete from database"}
                   </div>
                 </div>
               </div>
@@ -1569,7 +1529,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </p>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
               {deleteMode === "soft"
-                ? "It will be moved to Trash and recoverable from the Data tab for 30 days."
+                ? "It will be moved to Trash and recoverable from the Storage tab for 30 days."
                 : "This action cannot be undone. The template will be removed from the database."}
             </p>
 

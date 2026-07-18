@@ -62,14 +62,14 @@ assetRoutes.post("/upload", async (req, res) => {
   }
 });
 
-/** GET /api/assets — list assets */
+/** GET /api/assets — list active (non-deleted) assets */
 assetRoutes.get("/", async (req, res) => {
   try {
     const supabase = getSupabase();
     if (!supabase) return res.json({ success: true, assets: [], total: 0 });
 
     const { workspaceId, search, mimeType, limit, offset } = req.query as Record<string, string>;
-    let q = supabase.from("assets").select("*", { count: "exact" });
+    let q = supabase.from("assets").select("*", { count: "exact" }).is("deleted_at", null);
     if (workspaceId) q = q.eq("workspace_id", workspaceId);
     if (mimeType) q = q.eq("mime_type", mimeType);
     if (search) q = q.ilike("name", `%${search}%`);
@@ -90,18 +90,103 @@ assetRoutes.get("/", async (req, res) => {
   }
 });
 
-/** DELETE /api/assets/:id — delete asset */
+/** DELETE /api/assets/:id — soft-delete asset (move to Trash) */
 assetRoutes.delete("/:id", async (req, res) => {
   try {
     const supabase = getSupabase();
-    if (!supabase) throw new Error("Supabase not configured");
+    if (!supabase) return res.status(500).json({ success: false, error: "Supabase not configured" });
+    const { data: asset } = await supabase.from("assets").select("id").eq("id", req.params.id).is("deleted_at", null).single();
+    if (!asset) return res.status(404).json({ success: false, error: "Asset not found" });
+    await supabase.from("assets").update({ deleted_at: new Date().toISOString() }).eq("id", req.params.id);
+    res.json({ success: true, deleted: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** GET /api/assets/trash — list soft-deleted assets */
+assetRoutes.get("/trash", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return res.json({ success: true, data: [], total: 0 });
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const { data, count, error } = await supabase.from("assets")
+      .select("id, name, filename, mime_type, size_bytes, url, workspace_id, created_at, deleted_at", { count: "exact" })
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+    const items = (data || []).map((r: any) => ({
+      id: r.id, name: r.name, filename: r.filename, mimeType: r.mime_type,
+      sizeBytes: r.size_bytes, url: r.url, workspaceId: r.workspace_id,
+      createdAt: r.created_at, deletedAt: r.deleted_at,
+    }));
+    res.json({ success: true, data: items, total: count || items.length, limit, offset });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** PUT /api/assets/:id/restore — restore asset from Trash */
+assetRoutes.put("/:id/restore", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: "Supabase not configured" });
+    const { data: asset } = await supabase.from("assets").select("id").eq("id", req.params.id).not("deleted_at", "is", null).single();
+    if (!asset) return res.status(404).json({ success: false, error: "Asset not found in trash" });
+    await supabase.from("assets").update({ deleted_at: null }).eq("id", req.params.id);
+    res.json({ success: true, restored: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** DELETE /api/assets/:id/permanent — permanently delete asset from storage + DB */
+assetRoutes.delete("/:id/permanent", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: "Supabase not configured" });
     const { data: asset } = await supabase.from("assets").select("*").eq("id", req.params.id).single();
     if (!asset) return res.status(404).json({ success: false, error: "Asset not found" });
     if (asset.filename && asset.workspace_id) {
-      await supabase.storage.from("design-assets").remove([`${asset.workspace_id}/${asset.filename}`]);
+      try {
+        await supabase.storage.from("design-assets").remove([`${asset.workspace_id}/${asset.filename}`]);
+      } catch { /* file may already be gone */ }
     }
     await supabase.from("assets").delete().eq("id", req.params.id);
-    res.json({ success: true });
+    res.json({ success: true, purged: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** POST /api/assets/trash/purge-expired — purge assets in trash >30 days */
+assetRoutes.post("/trash/purge-expired", async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return res.json({ success: true, purged: 0 });
+    const olderThanDays = parseInt(req.body?.olderThanDays as string) || 30;
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    // Get expired assets
+    const { data: expired } = await supabase.from("assets")
+      .select("id, filename, workspace_id")
+      .not("deleted_at", "is", null)
+      .lt("deleted_at", cutoff);
+    // Remove from storage
+    for (const asset of (expired || [])) {
+      if (asset.filename && asset.workspace_id) {
+        try {
+          await supabase.storage.from("design-assets").remove([`${asset.workspace_id}/${asset.filename}`]);
+        } catch { /* skip */ }
+      }
+    }
+    // Delete from DB
+    const ids = (expired || []).map((a: any) => a.id);
+    if (ids.length > 0) {
+      await supabase.from("assets").delete().in("id", ids);
+    }
+    res.json({ success: true, purged: ids.length });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
