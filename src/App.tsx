@@ -3,6 +3,7 @@ import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { useToast } from "./components/Toast";
+import { getApiHeaders } from "./lib/apiKey";
 
 type ViewMode = "landing" | "dashboard" | "editor-v2";
 
@@ -43,7 +44,7 @@ function App() {
     try {
       const res = await fetch("/api/templates", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ workspaceId, name, width: 1080, height: 1080, engine: "html" }),
       });
       const json = await res.json();

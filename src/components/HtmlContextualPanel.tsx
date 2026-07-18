@@ -3,6 +3,7 @@ import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
+import { getApiHeaders } from "../lib/apiKey";
 
 /**
  * HtmlContextualPanel — Full design properties panel.
@@ -439,7 +440,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
 
       const result = await fetch(`/api/assets/upload`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64 }),
       }).then(r => r.json());
 

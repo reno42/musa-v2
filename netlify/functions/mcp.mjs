@@ -2559,9 +2559,10 @@ function getUserId(event) {
  * Only the first 8 chars are stored as lookup; full key is never stored raw.
  */
 function keyHash(rawKey) {
-  // For simplicity and debuggability in dev: store raw key
-  // In production, hash with SHA-256
-  return rawKey;
+  // SHA-256 hex — keys are stored hashed, never in plain text
+  const hash = crypto.createHash("sha256");
+  hash.update(rawKey);
+  return hash.digest("hex");
 }
 
 /**
@@ -2585,6 +2586,37 @@ async function validateApiKey(apiKey) {
   } catch {
     return { valid: false };
   }
+}
+
+/**
+ * Auth gate for MCP tools/call. Called before any tool execution.
+ * - If MCP_ADMIN_KEY env var is NOT set → dev mode, accept all (backward compat)
+ * - If MCP_ADMIN_KEY IS set → require valid x-api-key (admin key or api_keys row)
+ * Returns { valid, userId, isAdmin, keyLabel } or { valid: false }
+ */
+async function checkAuth(event) {
+  const adminKey = process.env.MCP_ADMIN_KEY;
+  if (!adminKey) {
+    // Dev mode: no auth required
+    return { valid: true, userId: getUserId(event), isAdmin: true, keyLabel: "dev" };
+  }
+
+  const headers = event.headers || {};
+  const apiKey = headers["x-api-key"] || "";
+  if (!apiKey) return { valid: false };
+
+  // Admin key — bypasses api_keys table entirely
+  if (apiKey === adminKey) {
+    return { valid: true, userId: "admin", isAdmin: true, keyLabel: "admin" };
+  }
+
+  // Check api_keys table
+  const result = await validateApiKey(apiKey);
+  if (result.valid) {
+    return { valid: true, userId: result.userId, isAdmin: false, keyLabel: result.label };
+  }
+
+  return { valid: false };
 }
 
 /**
@@ -2637,6 +2669,47 @@ async function listApiKeys(userId) {
     id: k.id, label: k.label, createdAt: k.created_at,
     preview: `fdr_...${k.id.slice(-4)}`,
   }));
+}
+
+/**
+ * Best-effort session tracking. Never blocks the request.
+ * Upserts into client_sessions: key_label + client_info + user_agent + ip.
+ */
+async function trackSession(keyLabel, event) {
+  try {
+    const sb = getSupabase();
+    if (!sb) return;
+    const headers = event.headers || {};
+    const clientInfo = headers["x-client-info"] || headers["user-agent"] || "unknown";
+    const userAgent = (headers["user-agent"] || "unknown").slice(0, 256);
+    const ip = (headers["x-forwarded-for"] || headers["client-ip"] || "unknown").split(",")[0].trim();
+
+    // Upsert: update last_seen + increment request_count if exists, insert if new
+    const { data: existing } = await sb.from("client_sessions")
+      .select("id, request_count")
+      .eq("key_label", keyLabel || "unknown")
+      .eq("client_info", clientInfo.slice(0, 128))
+      .eq("ip", ip)
+      .maybeSingle();
+
+    if (existing) {
+      await sb.from("client_sessions")
+        .update({ last_seen: new Date().toISOString(), request_count: (existing.request_count || 0) + 1 })
+        .eq("id", existing.id);
+    } else {
+      await sb.from("client_sessions").insert({
+        key_label: keyLabel || "unknown",
+        client_info: clientInfo.slice(0, 128),
+        user_agent: userAgent,
+        ip,
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        request_count: 1,
+      });
+    }
+  } catch {
+    // Best-effort — never fails the request
+  }
 }
 
 function jsonRpcError(id, code, message) {
@@ -8708,8 +8781,20 @@ export const handler = async (event) => {
   }
 
   if (method === "tools/call") {
+    // ── Auth enforcement ──
+    const auth = await checkAuth(event);
+    if (!auth.valid) {
+      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
+    }
+    // Admin-only tools
+    const ADMIN_TOOLS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
+    if (ADMIN_TOOLS.has(params.name) && !auth.isAdmin) {
+      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: admin key required for this tool")) };
+    }
+    trackSession(auth.keyLabel, event);
+
     try {
-      const result = await handleMethod(params.name, params.arguments || {}, userId);
+      const result = await handleMethod(params.name, params.arguments || {}, auth.userId);
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
@@ -8726,8 +8811,18 @@ export const handler = async (event) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
+    const auth = await checkAuth(event);
+    if (!auth.valid) {
+      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
+    }
+    const ADMIN_TOOLS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
+    if (ADMIN_TOOLS.has(method) && !auth.isAdmin) {
+      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: admin key required for this tool")) };
+    }
+    trackSession(auth.keyLabel, event);
+
     try {
-      const result = await handleMethod(method, params || {}, userId);
+      const result = await handleMethod(method, params || {}, auth.userId);
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,

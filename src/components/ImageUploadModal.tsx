@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { imageStorageWarning } from "../lib/storageHealth";
+import { getApiHeaders } from "../lib/apiKey";
 
 interface Asset {
   id: string;
@@ -30,7 +31,7 @@ function formatSize(bytes: number): string {
 
 async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
-    headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+    headers: getApiHeaders(),
     ...options,
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);

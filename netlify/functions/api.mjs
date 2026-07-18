@@ -1,6 +1,23 @@
 import { Readable } from "node:stream";
 import app from "../../api/src/index.js";
 
+// ── Lightweight auth check (defense-in-depth, Express middleware does full validation) ──
+
+function checkAdminKey(event) {
+  const adminKey = process.env.MCP_ADMIN_KEY;
+  if (!adminKey) return true; // Dev mode: no auth required
+
+  const headers = event.headers || {};
+  const apiKey = headers["x-api-key"] || "";
+
+  // Admin key bypass
+  if (apiKey === adminKey) return true;
+
+  // For non-admin keys: allow through; Express middleware validates against api_keys table
+  // At minimum require *some* key header
+  return apiKey.length > 0;
+}
+
 function createRequest(event) {
   const { path, httpMethod, headers, body, queryStringParameters, isBase64Encoded } = event;
 
@@ -35,6 +52,18 @@ function createRequest(event) {
 }
 
 export const handler = async (event, context) => {
+  // ── Auth enforcement for write operations ──
+  const writeMethods = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+  if (writeMethods.has(event.httpMethod)) {
+    if (!checkAdminKey(event)) {
+      return {
+        statusCode: 401,
+        headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ success: false, error: "Unauthorized: valid x-api-key required" }),
+      };
+    }
+  }
+
   const req = createRequest(event);
 
   const chunks = [];

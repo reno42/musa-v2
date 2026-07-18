@@ -15,6 +15,20 @@
 
 const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
+// ─── Auth ─────────────────────────────────────────────────
+
+function checkApiKey(event) {
+  const adminKey = process.env.MCP_ADMIN_KEY;
+  if (!adminKey) return true; // Dev mode: no auth required
+
+  const apiKey = (event.headers || {})["x-api-key"] || "";
+  if (apiKey === adminKey) return true;
+
+  // For non-admin keys: at minimum require *some* key header
+  // Full api_keys table validation happens at the Express layer
+  return apiKey.length > 0;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 /** Fetch template from REST API (reads Supabase across containers) */
@@ -220,6 +234,11 @@ export const handler = async (event) => {
 
   // POST render
   if (event.httpMethod === "POST" && templateId && action === "render") {
+    // ── Auth enforcement ──
+    if (!checkApiKey(event)) {
+      return { statusCode: 401, headers: jsonHeaders, body: JSON.stringify({ error: "Unauthorized: valid x-api-key required" }) };
+    }
+
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
     const format = ["png", "jpg"].includes(body.format) ? body.format : "png";

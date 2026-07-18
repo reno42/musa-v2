@@ -1,5 +1,6 @@
 import { useReducer, useRef, useState, useEffect, useCallback } from "react";
 import { IconX, IconFolder } from "../shared/icons";
+import { getApiHeaders } from "../lib/apiKey";
 
 interface BatchAMatorProps {
   templateId: string | null;
@@ -228,7 +229,7 @@ export function BatchAMator({ templateId, onClose, onOpenTemplate, onBackToDashb
     try {
       const valRes = await fetch(`${API_BASE}/templates/${activeTplId}/batch/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ data: rows }),
       });
       const valJson = await valRes.json();
@@ -248,7 +249,7 @@ export function BatchAMator({ templateId, onClose, onOpenTemplate, onBackToDashb
     try {
       const res = await fetch(`${API_BASE}/templates/${activeTplId}/batch/${mode}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ data: rows }),
       });
       const json = await res.json();

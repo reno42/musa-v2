@@ -5,6 +5,7 @@ import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
+import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 
 interface Template {
   id: string;
@@ -46,7 +47,7 @@ const API_BASE = "/api";
 
 async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
-    headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+    headers: getApiHeaders(),
     ...options,
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -145,6 +146,54 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
+
+  // ── Security / API Key ──
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
+  const [apiKeyRotating, setApiKeyRotating] = useState(false);
+  const [sessions, setSessions] = useState<Array<{ key_label: string; client_info: string; user_agent: string; ip: string; first_seen: string; last_seen: string; request_count: number }>>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+
+  const handleSaveApiKey = () => {
+    if (apiKeyValue.trim()) {
+      setApiKey(apiKeyValue.trim());
+      setShowApiKeyInput(false);
+      addToast("API key saved.", "success");
+    }
+  };
+
+  const handleRemoveApiKey = () => {
+    clearApiKey();
+    setApiKeyValue("");
+    addToast("API key removed.", "info");
+  };
+
+  const handleRotateKey = async () => {
+    setApiKeyRotating(true);
+    try {
+      // Call MCP to create a new key (requires admin key in current key slot)
+      const result = await mcpCall("create_api_key", { label: "ren-browser" });
+      if (result?.key) {
+        setApiKey(result.key);
+        setApiKeyValue(result.key);
+        addToast("Key rotated successfully.", "success");
+      }
+    } catch {
+      addToast("Rotate requires admin key. Paste a new key manually.", "info");
+    }
+    setApiKeyRotating(false);
+  };
+
+  const loadSessions = async () => {
+    setSessionsLoading(true);
+    try {
+      const result = await mcpCall("list_api_keys", {});
+      // list_api_keys returns key info; sessions would need a dedicated endpoint
+      // For now show a placeholder; session tracking endpoint will be added later
+      setSessions([]);
+    } catch { setSessions([]); }
+    setSessionsLoading(false);
+  };
 
   const setLoading = useCallback((v: boolean) => {
     loadingRef.current = v;
@@ -282,9 +331,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleDelete = async (id: string) => {
     try {
       if (deleteMode === "hard") {
-        await fetch(`${API_BASE}/templates/${id}/permanent`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+        await fetch(`${API_BASE}/templates/${id}/permanent`, { method: "DELETE", headers: getApiHeaders() });
       } else {
-        await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+        await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: getApiHeaders() });
       }
       setTemplates(prev => prev.filter(t => t.id !== id));
     } catch {
@@ -842,6 +891,35 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
       </div>
 
+      {/* ── API Key Banner (shown when no key configured) ── */}
+      {!hasApiKey() && (
+        <div style={{
+          margin: "0 20px", padding: "12px 18px", borderRadius: 12,
+          background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>🔑</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>Configure your API key</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Required for MCP tools, AI generation, and data persistence. Set it in Settings → Security.</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("settings")}
+            style={{
+              borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500,
+              border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: "rgba(234,179,8,0.15)", color: "#facc15",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Open Settings
+          </button>
+        </div>
+      )}
+
       {/* Template Grid */}
       {activeTab === "templates" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
@@ -1281,6 +1359,166 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 ~{estimatedTokens.toLocaleString()} tokens
               </span>
             </div>
+          </div>
+
+          {/* ── Security ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Security</h3>
+
+          {/* API Key Status */}
+          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14 }}>🔑</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>API Key</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                  {hasApiKey() ? `Configured · ${getApiKey().slice(0, 4)}…${getApiKey().slice(-4)}` : "Not configured — MCP tools and AI features require a key"}
+                </div>
+              </div>
+            </div>
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
+              background: hasApiKey() ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+              color: hasApiKey() ? "#4ade80" : "#facc15",
+            }}>
+              {hasApiKey() ? "Active" : "Missing"}
+            </span>
+          </div>
+
+          {/* API Key Input / Rotate */}
+          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
+            {showApiKeyInput || !hasApiKey() ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  autoFocus
+                  value={apiKeyValue}
+                  onChange={e => setApiKeyValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleSaveApiKey(); if (e.key === "Escape") setShowApiKeyInput(false); }}
+                  placeholder="Paste your API key (fdr_…)"
+                  style={{
+                    flex: 1, padding: "8px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                    color: "#fff", fontSize: 12, outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveApiKey}
+                  disabled={!apiKeyValue.trim()}
+                  style={{
+                    borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
+                    border: "none", cursor: apiKeyValue.trim() ? "pointer" : "not-allowed",
+                    background: apiKeyValue.trim() ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
+                    color: apiKeyValue.trim() ? "#a5b4fc" : "rgba(255,255,255,0.3)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Save
+                </button>
+                {hasApiKey() && (
+                  <button
+                    type="button"
+                    onClick={() => { setShowApiKeyInput(false); setApiKeyValue(getApiKey()); }}
+                    style={{
+                      borderRadius: 100, padding: "8px 12px", fontSize: 12,
+                      border: "none", cursor: "pointer",
+                      background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Key saved in this browser</span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKeyInput(true)}
+                    style={{
+                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
+                      border: "none", cursor: "pointer",
+                      background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)",
+                    }}
+                  >
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRotateKey}
+                    disabled={apiKeyRotating}
+                    style={{
+                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
+                      border: "none", cursor: apiKeyRotating ? "wait" : "pointer",
+                      background: "rgba(99,102,241,0.1)", color: "#a5b4fc",
+                    }}
+                  >
+                    {apiKeyRotating ? "Rotating…" : "Rotate Key"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveApiKey}
+                    style={{
+                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
+                      border: "none", cursor: "pointer",
+                      background: "rgba(220,38,38,0.08)", color: "#f87171",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* What the key unlocks */}
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", lineHeight: 1.6, marginBottom: 20, padding: "0 4px" }}>
+            Your API key unlocks: MCP design tools · AI image generation · CSV batch processing · Template creation & editing.
+            External APIs (Gemini, OpenAI, Brave, Quiver) use your own keys configured in Netlify environment variables.
+          </div>
+
+          {/* Sessions */}
+          <h3 style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Active Sessions</h3>
+          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
+            {sessionsLoading ? (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", padding: 16 }}>Loading sessions…</div>
+            ) : sessions.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 16 }}>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>No active sessions yet.</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginTop: 4 }}>
+                  Sessions appear here when MCP clients or browsers connect with your API key.
+                </div>
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr style={{ color: "rgba(255,255,255,0.35)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Client</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Key</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Last Seen</th>
+                    <th style={{ padding: "4px 8px", fontWeight: 500, textAlign: "right" }}>Requests</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.map((s, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.7)" }} title={s.user_agent}>
+                        {s.client_info || s.user_agent?.slice(0, 30) || "Unknown"}
+                      </td>
+                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.5)" }}>{s.key_label}</td>
+                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.4)" }}>
+                        {new Date(s.last_seen).toLocaleString()}
+                      </td>
+                      <td style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.5)", fontFamily: "monospace" }}>
+                        {s.request_count}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {/* ── Agent Onboarding ── */}
