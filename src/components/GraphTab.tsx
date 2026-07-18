@@ -45,6 +45,9 @@ interface SimNode {
   y: number;
   vx: number;
   vy: number;
+  /** Rendered position = physics + visual float wobble (kept in sync each frame). */
+  wx: number;
+  wy: number;
   radius: number;
   degree: number;
   name: string;
@@ -62,7 +65,8 @@ const GRAVITY = 0.035;
 const DAMPING = 0.88;
 const ALPHA_DECAY = 0.03;
 const ALPHA_FLOOR = 0.02;
-const WANDER = 0.055;
+// Physics wander removed: macroscopic drift reads as slow chaos. The float
+// the eye sees is the bounded visual Lissajous wobble applied at render time.
 const WARMUP_TICKS = 140;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3.5;
@@ -128,6 +132,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         x: r * Math.cos(golden),
         y: r * Math.sin(golden),
         vx: 0, vy: 0,
+        wx: r * Math.cos(golden),
+        wy: r * Math.sin(golden),
         radius: 5 + Math.min(12, Math.sqrt(deg) * 1.7),
         degree: deg,
         name: n.name,
@@ -168,6 +174,9 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     let moved = false;
     let raf = 0;
     let cssW = 0, cssH = 0;
+    // Until the user pans/zooms, every canvas resize re-fits the view — the
+    // tab often mounts before layout settles, so the first fit uses a stale size.
+    let userMovedView = false;
 
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
@@ -178,10 +187,9 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (!userMovedView) fitView();
     };
-    resize();
     const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
 
     const toWorld = (sx: number, sy: number) => ({ x: (sx - view.x) / view.k, y: (sy - view.y) / view.k });
 
@@ -221,9 +229,9 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         l.b.vx -= fx; l.b.vy -= fy;
       }
       for (const n of sim) {
-        // Center gravity + gentle perpetual wander (the "float")
-        n.vx += -n.x * GRAVITY * a + Math.sin(t * 0.00045 + n.phase) * WANDER;
-        n.vy += -n.y * GRAVITY * a + Math.cos(t * 0.00038 + n.phase * 1.3) * WANDER;
+        // Center gravity (the visible "float" is the render-time wobble)
+        n.vx += -n.x * GRAVITY * a;
+        n.vy += -n.y * GRAVITY * a;
         if (n === dragging) { n.vx = 0; n.vy = 0; continue; }
         n.vx *= DAMPING; n.vy *= DAMPING;
         const vmax = 14;
@@ -234,9 +242,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       alpha += (alphaTarget - alpha) * ALPHA_DECAY;
     };
 
-    // Warm up off-screen so the first paint is already a good layout, then fit.
-    for (let i = 0; i < WARMUP_TICKS; i++) tick(i * 16);
-    const fitView = () => {
+    function fitView() {
+      if (!cssW || !cssH) return;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const n of sim) {
         minX = Math.min(minX, n.x - n.radius); maxX = Math.max(maxX, n.x + n.radius);
@@ -249,8 +256,12 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       view.k = k;
       view.x = cssW / 2 - ((minX + maxX) / 2) * k;
       view.y = cssH / 2 - ((minY + maxY) / 2) * k;
-    };
-    fitView();
+    }
+
+    // Warm up off-screen so the first paint is already a good layout, then fit.
+    for (let i = 0; i < WARMUP_TICKS; i++) tick(i * 16);
+    resize();
+    ro.observe(wrap);
 
     // ── Draw ──
     const draw = (t: number) => {
@@ -262,14 +273,23 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       const focus = dragging || hovered;
       const focusSet = focus ? neighbors.get(focus.id) || new Set<string>() : null;
 
+      // Visual float: slow Lissajous drift on the RENDERED position. Dense
+      // graphs (966 springs) brace the physics rigid, so the "floating" the
+      // eye sees is decoupled from layout. The dragged node stays pinned.
+      for (const n of sim) {
+        if (n === dragging) { n.wx = n.x; n.wy = n.y; continue; }
+        n.wx = n.x + 3.5 * Math.sin(t / 1300 + n.phase);
+        n.wy = n.y + 3.5 * Math.cos(t / 1750 + n.phase * 1.31);
+      }
+
       // Edges: one dim batch + one highlighted batch (screen-constant width)
       ctx.lineWidth = 0.8 / view.k;
       ctx.strokeStyle = focus ? "rgba(160,175,200,0.04)" : "rgba(160,175,200,0.10)";
       ctx.beginPath();
       for (const l of links) {
         if (focus && (l.a === focus || l.b === focus)) continue;
-        ctx.moveTo(l.a.x, l.a.y);
-        ctx.lineTo(l.b.x, l.b.y);
+        ctx.moveTo(l.a.wx, l.a.wy);
+        ctx.lineTo(l.b.wx, l.b.wy);
       }
       ctx.stroke();
       if (focus) {
@@ -279,8 +299,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         ctx.beginPath();
         for (const l of links) {
           if (l.a !== focus && l.b !== focus) continue;
-          ctx.moveTo(l.a.x, l.a.y);
-          ctx.lineTo(l.b.x, l.b.y);
+          ctx.moveTo(l.a.wx, l.a.wy);
+          ctx.lineTo(l.b.wx, l.b.wy);
         }
         ctx.stroke();
       }
@@ -302,23 +322,23 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         const haloAlpha = isFocus ? 0.32 : isNeighbor ? 0.15 : focus ? 0 : 0.045;
         if (haloAlpha > 0.01) {
           const haloR = r * (isFocus ? 2.5 : 1.9);
-          const halo = ctx.createRadialGradient(n.x, n.y, r * 0.7, n.x, n.y, haloR);
+          const halo = ctx.createRadialGradient(n.wx, n.wy, r * 0.7, n.wx, n.wy, haloR);
           halo.addColorStop(0, `rgba(${cr},${cg},${cb},${haloAlpha})`);
           halo.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
           ctx.fillStyle = halo;
           ctx.beginPath();
-          ctx.arc(n.x, n.y, haloR, 0, Math.PI * 2);
+          ctx.arc(n.wx, n.wy, haloR, 0, Math.PI * 2);
           ctx.fill();
         }
 
         // Orb body: bright core → brand color → deep edge
-        const body = ctx.createRadialGradient(n.x - r * 0.3, n.y - r * 0.35, r * 0.1, n.x, n.y, r);
+        const body = ctx.createRadialGradient(n.wx - r * 0.3, n.wy - r * 0.35, r * 0.1, n.wx, n.wy, r);
         body.addColorStop(0, `rgba(${Math.min(255, cr + 110)},${Math.min(255, cg + 110)},${Math.min(255, cb + 110)},${coreAlpha})`);
         body.addColorStop(0.55, `rgba(${cr},${cg},${cb},${coreAlpha})`);
         body.addColorStop(1, `rgba(${Math.round(cr * 0.55)},${Math.round(cg * 0.55)},${Math.round(cb * 0.55)},${coreAlpha})`);
         ctx.fillStyle = body;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        ctx.arc(n.wx, n.wy, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.lineWidth = 1 / view.k;
         ctx.strokeStyle = `rgba(255,255,255,${dim ? 0.06 : 0.28})`;
@@ -335,11 +355,11 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         let a = isFocus ? 1 : isNeighbor ? 0.85 : zoomLabelAlpha * (focus ? 0.12 : 0.55);
         if (a <= 0.02) continue;
         const label = n.name.length > 18 ? n.name.slice(0, 17) + "…" : n.name;
-        const ly = n.y + n.radius * n.hoverScale + 15 / view.k;
+        const ly = n.wy + n.radius * n.hoverScale + 15 / view.k;
         ctx.fillStyle = `rgba(8,10,16,${a * 0.7})`;
-        ctx.fillText(label, n.x + 1 / view.k, ly + 1 / view.k);
+        ctx.fillText(label, n.wx + 1 / view.k, ly + 1 / view.k);
         ctx.fillStyle = `rgba(226,232,240,${a})`;
-        ctx.fillText(label, n.x, ly);
+        ctx.fillText(label, n.wx, ly);
       }
       ctx.restore();
     };
@@ -368,7 +388,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       const w = toWorld(sx, sy);
       let best: SimNode | null = null, bestD = Infinity;
       for (const n of sim) {
-        const dx = w.x - n.x, dy = w.y - n.y;
+        const dx = w.x - n.wx, dy = w.y - n.wy;
         const d = Math.sqrt(dx * dx + dy * dy);
         if (d < n.radius + 6 / view.k && d < bestD) { best = n; bestD = d; }
       }
@@ -391,6 +411,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         canvas.style.cursor = "grabbing";
       } else {
         panning = true;
+        userMovedView = true;
         downView = { x: view.x, y: view.y };
         canvas.style.cursor = "grabbing";
       }
@@ -432,6 +453,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     const onLeave = () => { hovered = null; if (!dragging && !panning) canvas.style.cursor = "grab"; };
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
+      userMovedView = true;
       const p = localXY(ev);
       const factor = Math.exp(-ev.deltaY * 0.0016);
       const k2 = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, view.k * factor));
@@ -442,7 +464,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     };
     const onDblClick = (ev: MouseEvent) => {
       const p = localXY(ev);
-      if (!hitTest(p.x, p.y)) fitView();
+      if (!hitTest(p.x, p.y)) { fitView(); userMovedView = false; }
     };
 
     canvas.style.cursor = "grab";
@@ -456,7 +478,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     // Expose a tiny probe so QA agents can verify the graph without guessing.
     (window as any).__graphProbe = {
       nodeCount: sim.length,
-      positions: () => sim.map(n => ({ id: n.id, x: Math.round(n.x * 10) / 10, y: Math.round(n.y * 10) / 10 })),
+      positions: () => sim.map(n => ({ id: n.id, x: Math.round(n.wx * 10) / 10, y: Math.round(n.wy * 10) / 10 })),
+      raw: () => sim.map(n => ({ id: n.id, x: Math.round(n.x * 10) / 10, y: Math.round(n.y * 10) / 10 })),
       view: () => ({ ...view }),
       alpha: () => alpha,
     };
