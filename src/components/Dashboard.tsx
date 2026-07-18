@@ -2,6 +2,7 @@
 import { motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
+import { GraphTab } from "./GraphTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 
@@ -66,7 +67,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data" | "settings">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "data" | "settings" | "graph">("templates");
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
@@ -126,6 +127,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
   const [storageHealth, setStorageHealth] = useState<{ supabase: boolean; mode: string; realtime: boolean } | null>(null);
+  const [metaCovers, setMetaCovers] = useState<Map<string, string>>(new Map());
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -148,12 +150,29 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
       setTemplates(res.data || []);
+      loadMetaCovers(wsId);
     } catch {
       setTemplates([]);
       addToast("Error al cargar las plantillas.", "error");
     }
     setLoading(false);
   }, [setLoading, addToast]);
+
+  // Fetch cover metadata after template load (prefer cover_image_url over thumbnail)
+  const loadMetaCovers = useCallback(async (wsId?: string) => {
+    try {
+      const params = new URLSearchParams();
+      if (wsId) params.set("workspaceId", wsId);
+      const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null }> } }>(`/graph?${params.toString()}`);
+      if (res.success) {
+        const map = new Map<string, string>();
+        for (const n of res.data.nodes) {
+          if (n.cover) map.set(n.id, n.cover);
+        }
+        setMetaCovers(map);
+      }
+    } catch { /* covers are optional; fail silently */ }
+  }, []);
 
   loadTemplatesRef.current = loadTemplates;
 
@@ -399,9 +418,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
     /* Thumbnail preview: both flow and grid modes use static <img> thumbnails.
        Server-side pipeline generates SVG placeholders on commit; browser-side
-       handleSnapshotAll replaces them with real PNGs via html2canvas. */
-    const previewContent = t.thumbnail
-      ? <img src={t.thumbnail} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+       handleSnapshotAll replaces them with real PNGs via html2canvas.
+       Prefer curated cover_image_url from design_file_meta over auto thumbnail. */
+    const coverUrl = metaCovers.get(t.id) || t.thumbnail;
+    const previewContent = coverUrl
+      ? <img src={coverUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
       : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 14, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
         </div>;
@@ -465,7 +486,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             onClick={() => onSelectTemplate(t.id)}
           >
             <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
-              {previewContent}
+              {/* Virtualization: only mount <img> for center ±4 cards (9 max).
+                  Distant cards get a plain placeholder — avoids 100+ concurrent image decodes. */}
+              {absDist <= 4 ? previewContent : (
+                <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ color: "rgba(255,255,255,0.08)", fontSize: 12, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -585,6 +612,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="12" cy="12" r="3" />
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              )},
+              { id: "graph", label: "Graph", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="6" cy="6" r="2" />
+                  <circle cx="18" cy="6" r="2" />
+                  <circle cx="12" cy="18" r="2" />
+                  <line x1="7.5" y1="7.5" x2="11" y2="16" />
+                  <line x1="16.5" y1="7.5" x2="13" y2="16" />
+                  <line x1="8" y1="6" x2="16" y2="6" />
                 </svg>
               )},
             ] as const).map(tab => (
@@ -1152,6 +1189,18 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </div>
         );
       })()}
+
+      {/* ── Graph Tab ── */}
+      {activeTab === "graph" && (
+        <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
+          <GraphTab
+            workspaceId={selectedWs}
+            onOpenTemplate={(id) => {
+              onSelectTemplate(id);
+            }}
+          />
+        </div>
+      )}
     </motion.div>
   );
 }

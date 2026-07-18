@@ -21,6 +21,7 @@ class Store {
   renderJobs = new Map<string, RenderJob>();
   snapshots = new Map<string, SnapshotEntry[]>();
   sectionClaims = new Map<string, SectionClaim[]>(); // templateId → claims
+  meta = new Map<string, Record<string, any>>();       // templateId → design_file_meta
 
   // ─── Workspaces ─────────────────────────────────
 
@@ -393,6 +394,17 @@ class Store {
       if (active.length === 0) this.sectionClaims.delete(id);
       else this.sectionClaims.set(id, active);
     }
+  }
+
+  // ─── Design File Meta (memory fallback) ─────
+
+  getMeta(templateId: string): Record<string, any> | null {
+    return this.meta.get(templateId) ?? null;
+  }
+
+  setMeta(templateId: string, patch: Record<string, any>): void {
+    const existing = this.meta.get(templateId) || {};
+    this.meta.set(templateId, { ...existing, ...patch, updated_at: new Date().toISOString() });
   }
 }
 

@@ -2458,6 +2458,62 @@ const MCP_TOOLS = [
       required: ["tags"],
     },
   },
+  // ── Design File Metadata (Sprint: Design Knowledge Graph) ──
+  {
+    name: "get_file_meta",
+    description: "Get curated metadata for a template: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Returns null if no metadata has been set yet for this template.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (tpl_xxxxxxxx)" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "set_file_meta",
+    description: "Set or update metadata for a template (upsert). Accepts any subset of fields: brand, tags, theme, format, file_type, cover_image_url, obsidian_link. Only provided fields are updated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (tpl_xxxxxxxx)" },
+        brand: { type: "string", description: "Brand name, e.g. BMW, Nike" },
+        tags: { type: "array", items: { type: "string" }, description: "Tags for categorization, e.g. [\"hero\",\"dark\",\"landing\"]" },
+        theme: { type: "string", description: "Visual theme, e.g. corporate, minimal, brutalist" },
+        format: { type: "string", enum: ["web", "mobile", "social", "print", "email"], description: "Target format" },
+        file_type: { type: "string", enum: ["frame", "deck", "template", "export"], description: "File type classification" },
+        cover_image_url: { type: "string", description: "Custom cover image URL (Supabase Storage public URL)" },
+        obsidian_link: { type: "string", description: "Obsidian deep-link: obsidian://open?vault=...&file=..." },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "query_design_graph",
+    description: "Query the design knowledge graph. Returns nodes (templates with metadata) and edges (connections via shared brand/tags). Filter by workspace, brand, tag, or format to explore design patterns.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Filter by workspace ID" },
+        brand: { type: "string", description: "Filter by brand name" },
+        tag: { type: "string", description: "Filter by tag (templates containing this tag)" },
+        format: { type: "string", enum: ["web", "mobile", "social", "print", "email"], description: "Filter by target format" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "upload_cover_image",
+    description: "Upload a cover image (PNG/JPEG base64, max 1MB) for a template. Stored in Supabase Storage design-covers bucket. Returns the public URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (tpl_xxxxxxxx)" },
+        imageBase64: { type: "string", description: "Base64-encoded image data (data:image/png;base64,...). Max 1MB decoded." },
+      },
+      required: ["templateId", "imageBase64"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -8436,6 +8492,140 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         total: results.length,
         tags: searchTags,
       };
+    }
+
+    // ── Design File Metadata ──
+    case "get_file_meta": {
+      const sbMeta = getSupabase();
+      if (!sbMeta) return null;
+      const { data: meta, error: metaErr } = await sbMeta
+        .from("design_file_meta")
+        .select("*")
+        .eq("template_id", params.templateId)
+        .maybeSingle();
+      if (metaErr) throw metaErr;
+      if (!meta) return null;
+      return {
+        brand: meta.brand || "",
+        tags: meta.tags || [],
+        theme: meta.theme || "",
+        format: meta.format || "",
+        file_type: meta.file_type || "",
+        cover_image_url: meta.cover_image_url || "",
+        obsidian_link: meta.obsidian_link || "",
+        templateId: meta.template_id,
+        workspaceId: meta.workspace_id,
+      };
+    }
+
+    case "set_file_meta": {
+      const sbSet = getSupabase();
+      if (!sbSet) throw { code: -32000, message: "Supabase not connected" };
+      const patch = {};
+      if (params.brand !== undefined) patch.brand = params.brand;
+      if (params.tags !== undefined) patch.tags = params.tags;
+      if (params.theme !== undefined) patch.theme = params.theme;
+      if (params.format !== undefined) patch.format = params.format;
+      if (params.file_type !== undefined) patch.file_type = params.file_type;
+      if (params.cover_image_url !== undefined) patch.cover_image_url = params.cover_image_url;
+      if (params.obsidian_link !== undefined) patch.obsidian_link = params.obsidian_link;
+
+      const { data: existing } = await sbSet
+        .from("design_file_meta")
+        .select("id")
+        .eq("template_id", params.templateId)
+        .maybeSingle();
+
+      if (existing) {
+        patch.updated_at = new Date().toISOString();
+        const { error } = await sbSet
+          .from("design_file_meta")
+          .update(patch)
+          .eq("template_id", params.templateId);
+        if (error) throw error;
+      } else {
+        const { data: tpl } = await sbSet
+          .from("templates")
+          .select("workspace_id")
+          .eq("id", params.templateId)
+          .maybeSingle();
+        patch.template_id = params.templateId;
+        patch.workspace_id = tpl?.workspace_id || null;
+        const { error } = await sbSet.from("design_file_meta").insert(patch);
+        if (error) throw error;
+      }
+      return { success: true, templateId: params.templateId };
+    }
+
+    case "query_design_graph": {
+      const sbGraph = getSupabase();
+      if (!sbGraph) return { nodes: [], edges: [] };
+      let query = sbGraph.from("design_file_meta").select("*, templates!inner(id, name, thumbnail)");
+      if (params.workspaceId) query = query.eq("workspace_id", params.workspaceId);
+      if (params.brand) query = query.eq("brand", params.brand);
+      if (params.tag) query = query.contains("tags", [params.tag]);
+      if (params.format) query = query.eq("format", params.format);
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const nodes = (data || []).map(r => ({
+        id: r.template_id,
+        name: r.templates?.name || r.template_id,
+        brand: r.brand || "",
+        tags: r.tags || [],
+        theme: r.theme || "",
+        format: r.format || "",
+        file_type: r.file_type || "",
+        cover: r.cover_image_url || r.templates?.thumbnail || null,
+        obsidian_link: r.obsidian_link || "",
+      }));
+
+      const edges = [];
+      const brandGroups = new Map();
+      const tagGroups = new Map();
+      for (const n of nodes) {
+        if (n.brand) {
+          const g = brandGroups.get(n.brand) || [];
+          g.push(n.id);
+          brandGroups.set(n.brand, g);
+        }
+        for (const t of n.tags) {
+          const g = tagGroups.get(t) || [];
+          g.push(n.id);
+          tagGroups.set(t, g);
+        }
+      }
+      for (const [, ids] of brandGroups) {
+        for (let i = 0; i < ids.length; i++)
+          for (let j = i + 1; j < ids.length; j++)
+            edges.push({ source: ids[i], target: ids[j], kind: "brand" });
+      }
+      for (const [, ids] of tagGroups) {
+        for (let i = 0; i < ids.length; i++)
+          for (let j = i + 1; j < ids.length; j++)
+            edges.push({ source: ids[i], target: ids[j], kind: "tag" });
+      }
+      return { nodes, edges };
+    }
+
+    case "upload_cover_image": {
+      const sbUp = getSupabase();
+      if (!sbUp) throw { code: -32000, message: "Supabase not connected" };
+      const b64 = params.imageBase64;
+      const mimeMatch = b64.match(/^data:(image\/\w+);base64,(.*)$/);
+      let mimeType = "image/png";
+      let b64Data = b64;
+      if (mimeMatch) { mimeType = mimeMatch[1]; b64Data = mimeMatch[2]; }
+      const buf = Buffer.from(b64Data, "base64");
+      if (buf.length > 1_048_576) throw { code: -32000, message: "Cover image exceeds 1MB limit" };
+      const ext = mimeType === "image/jpeg" ? "jpg" : "png";
+      const path = `covers/${params.templateId}.${ext}`;
+      const { error: upErr } = await sbUp.storage.from("design-covers").upload(path, buf, { contentType: mimeType, upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = sbUp.storage.from("design-covers").getPublicUrl(path);
+      const coverUrl = urlData?.publicUrl || "";
+      await sbUp.from("design_file_meta").upsert({ template_id: params.templateId, cover_image_url: coverUrl, updated_at: new Date().toISOString() }, { onConflict: "template_id" });
+      return { success: true, cover_image_url: coverUrl, templateId: params.templateId };
     }
 
     default:

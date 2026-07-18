@@ -4,6 +4,7 @@ import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
+import { FileInfoPanel } from "../components/FileInfoPanel";
 import { StructurePanel } from "../components/StructurePanel";
 import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
@@ -1963,6 +1964,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [selectedFrame, templateId, captureFrameToPng, addToast]);
 
+  /* Capture first frame as PNG base64 — for FileInfoPanel cover */
+  const handleCoverCapture = useCallback(async (): Promise<string | null> => {
+    if (!selectedFrame) return null;
+    try {
+      const blob = await captureFrameToPng(selectedFrame, 1.5, "png");
+      if (!blob) return null;
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch { return null; }
+  }, [selectedFrame, captureFrameToPng]);
+
   const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
     setShowExportMenu(false);
     for (const frame of frames) {
@@ -2620,6 +2635,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     { id: "format", icon: <IconFile size={14} />, title: "Format" },
     { id: "history", icon: <IconHistory size={14} />, title: "History" },
     { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
+    { id: "meta", icon: <IconTag size={14} />, title: "Meta" },
   ];
 
   return (
@@ -3173,6 +3189,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           )}
           {rightPanelTab === "agents" && (
             <ActiveAgentsPanel agents={activeAgents} />
+          )}
+          {rightPanelTab === "meta" && (
+            <FileInfoPanel
+              templateId={templateId}
+              onCoverCapture={handleCoverCapture}
+            />
           )}
         </div>
       )}
