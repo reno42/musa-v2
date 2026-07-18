@@ -128,6 +128,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [loadingRecipes, setLoadingRecipes] = useState(false);
   const [storageHealth, setStorageHealth] = useState<{ supabase: boolean; mode: string; realtime: boolean } | null>(null);
   const [metaCovers, setMetaCovers] = useState<Map<string, string>>(new Map());
+  const [deleteMode, setDeleteMode] = useState<"soft" | "hard">(() => {
+    try { return localStorage.getItem("futuraria-delete-mode") as "soft" | "hard" || "soft"; } catch { return "soft"; }
+  });
+  const [deleteConfirmEnabled, setDeleteConfirmEnabled] = useState(() => {
+    try { return localStorage.getItem("futuraria-delete-confirm") !== "false"; } catch { return true; }
+  });
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteInputName, setDeleteInputName] = useState("");
+  const [deleteSkipUntil, setDeleteSkipUntil] = useState(0);
+  const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef("");
@@ -271,11 +281,32 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+      if (deleteMode === "hard") {
+        await fetch(`${API_BASE}/templates/${id}/permanent`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+      } else {
+        await fetch(`${API_BASE}/templates/${id}`, { method: "DELETE", headers: { "x-api-key": "dev-key" } });
+      }
       setTemplates(prev => prev.filter(t => t.id !== id));
     } catch {
       addToast("Error al eliminar la plantilla.", "error");
     }
+  };
+
+  const confirmDelete = (id: string, name: string) => {
+    // Skip confirmation if disabled or within skip window
+    if (!deleteConfirmEnabled || Date.now() < deleteSkipUntil) {
+      handleDelete(id);
+      return;
+    }
+    setDeleteTarget({ id, name });
+    setDeleteInputName("");
+  };
+
+  const executeDelete = () => {
+    if (!deleteTarget || deleteInputName !== deleteTarget.name) return;
+    handleDelete(deleteTarget.id);
+    setDeleteTarget(null);
+    setDeleteInputName("");
   };
 
   const handleDuplicate = async (id: string) => {
@@ -448,10 +479,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           >{t.name}</div>
         )}
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 6 }}>Edited {new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)" }}>Rename</button>
-          <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)" }}>Copy</button>
-          <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", color: "#f87171" }}>Delete</button>
+        {/* Dropdown actions: Duplicate / Delete / Info */}
+        <div style={{ position: "relative", display: "inline-block" }}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
+            style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", padding: "4px 12px", color: "rgba(255,255,255,0.6)", fontSize: 12, minWidth: 28 }}
+            title="Actions"
+          >
+            ···
+          </button>
+          {actionDropdownId === t.id && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
+              <div className="liquid-glass" style={{
+                position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
+                display: "flex", flexDirection: "column",
+              }}>
+                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
+                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
+                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+              </div>
+            </>
+          )}
         </div>
       </>
     );
@@ -546,11 +597,31 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       </div>
-      <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
-        <button type="button" onClick={e => { e.stopPropagation(); startRename(t.id, t.name); }} style={cardAction}>Rename</button>
-        <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); }} style={cardAction}>Copy</button>
-        <button type="button" onClick={e => { e.stopPropagation(); handleExport(t.id, t.name); }} style={cardAction}>Export</button>
-        <button type="button" onClick={e => { e.stopPropagation(); handleDelete(t.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">Delete</button>
+      <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12, justifyContent: "center", alignItems: "center", padding: "4px 0" }}>
+        <div style={{ position: "relative", display: "inline-block" }}>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
+            style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", padding: "3px 12px", color: "rgba(255,255,255,0.5)", fontSize: 11, flex: "none", borderRight: "1px solid rgba(255,255,255,0.08)" }}
+            title="Actions"
+          >
+            ···
+          </button>
+          {actionDropdownId === t.id && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
+              <div className="liquid-glass" style={{
+                position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
+                display: "flex", flexDirection: "column",
+              }}>
+                <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
+                <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
+                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
     );
@@ -1082,6 +1153,54 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             )}
           </div>
 
+          {/* ── Delete Behavior ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Delete Behavior</h3>
+          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>🗑️</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Delete Mode</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                    {deleteMode === "soft" ? "Move to Trash (recoverable from Data tab)" : "Permanent delete from database"}
+                  </div>
+                </div>
+              </div>
+              <select
+                value={deleteMode}
+                onChange={e => { setDeleteMode(e.target.value as "soft" | "hard"); try { localStorage.setItem("futuraria-delete-mode", e.target.value); } catch {} }}
+                style={{
+                  padding: "6px 12px", fontSize: 12, borderRadius: 100,
+                  background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+                  color: "#ccc", outline: "none", cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                <option value="soft">Move to Trash</option>
+                <option value="hard">Permanent Delete</option>
+              </select>
+            </div>
+          </div>
+          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14 }}>⚠️</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Delete Confirmation</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                  {deleteConfirmEnabled ? "Requires typing template name to confirm" : "Deletes immediately without confirmation"}
+                </div>
+              </div>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={deleteConfirmEnabled}
+                onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
+                style={{ accentColor: "#818cf8" }}
+              />
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Enabled</span>
+            </label>
+          </div>
+
           {/* ── Connection ── */}
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Connection</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
@@ -1201,6 +1320,72 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           />
         </div>
       )}
+
+      {/* ── Delete Confirmation Modal ── */}
+      {deleteTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }} onClick={() => { setDeleteTarget(null); setDeleteInputName(""); }}>
+          <div className="liquid-glass" style={{ maxWidth: 420, width: "90%", borderRadius: 16, padding: 28 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px", color: "#f87171" }}>Delete Template</h3>
+            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 0 4px", lineHeight: 1.5 }}>
+              You are about to <strong style={{ color: "#f87171" }}>permanently delete</strong> <em>{deleteTarget.name}</em>.
+            </p>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
+              {deleteMode === "soft"
+                ? "It will be moved to Trash and recoverable from the Data tab for 30 days."
+                : "This action cannot be undone. The template will be removed from the database."}
+            </p>
+
+            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Type the template name to confirm:</label>
+            <input
+              autoFocus
+              value={deleteInputName}
+              onChange={e => setDeleteInputName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && deleteInputName === deleteTarget.name) executeDelete(); if (e.key === "Escape") { setDeleteTarget(null); setDeleteInputName(""); } }}
+              placeholder={deleteTarget.name}
+              style={{
+                width: "100%", padding: "10px 14px", borderRadius: 8,
+                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                color: "#fff", fontSize: 13, outline: "none", marginBottom: 12,
+              }}
+            />
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 16, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                onChange={e => {
+                  if (e.target.checked) setDeleteSkipUntil(Date.now() + 5 * 60 * 1000);
+                  else setDeleteSkipUntil(0);
+                }}
+                style={{ accentColor: "#818cf8" }}
+              />
+              Don't show this confirmation for the next 5 minutes
+            </label>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => { setDeleteTarget(null); setDeleteInputName(""); }}
+                className="liquid-glass"
+                style={{ borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.03)" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDelete}
+                disabled={deleteInputName !== deleteTarget.name}
+                style={{
+                  borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 600, border: "none", cursor: deleteInputName === deleteTarget.name ? "pointer" : "not-allowed",
+                  color: "#fff", background: deleteInputName === deleteTarget.name ? "#dc2626" : "rgba(220,38,38,0.3)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -1287,6 +1472,16 @@ const dropdownItemStyle: React.CSSProperties = {
   padding: "8px 12px", borderRadius: 8, fontSize: 13,
   background: "transparent", border: "none",
   color: "rgba(255,255,255,0.6)",
+  cursor: "pointer", textAlign: "left" as const,
+  fontFamily: "inherit", fontWeight: 400,
+  transition: "all 0.15s ease",
+};
+
+const ddItemStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 6,
+  padding: "8px 12px", borderRadius: 6, fontSize: 12,
+  background: "transparent", border: "none",
+  color: "rgba(255,255,255,0.7)",
   cursor: "pointer", textAlign: "left" as const,
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
