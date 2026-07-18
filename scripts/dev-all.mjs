@@ -16,13 +16,13 @@ const API_DIR = resolve(ROOT, "api");
 const isWindows = process.platform === "win32";
 const shell = isWindows;
 
-function run(label, command, args, cwd) {
+function run(label, command, args, cwd, extraEnv = {}) {
   console.log(`[dev:all] Starting ${label}…`);
   const child = spawn(command, args, {
     cwd,
     shell,
     stdio: "inherit",
-    env: { ...process.env, FORCE_COLOR: "1" },
+    env: { ...process.env, FORCE_COLOR: "1", ...extraEnv },
   });
 
   child.on("error", (err) => {
@@ -44,7 +44,10 @@ const apiArgs = isWindows
   : ["run", "dev"];
 const apiCmd = isWindows ? "cmd" : "npm";
 
-const api = run("API (:3001)", apiCmd, apiArgs, API_DIR);
+// PORT must be pinned: launchers (preview harnesses, IDEs) often inject their
+// own PORT env, and the API honors process.env.PORT — without this it steals
+// Vite's port and the whole proxy chain breaks.
+const api = run("API (:3001)", apiCmd, apiArgs, API_DIR, { PORT: "3001" });
 
 // Small delay so the API starts before Vite
 setTimeout(() => {
