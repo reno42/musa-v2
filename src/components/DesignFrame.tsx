@@ -647,6 +647,11 @@ export function DesignFrame({
       const fontSize = parseFloat(computed.fontSize) || 16;
       const isBold = parseInt(computed.fontWeight, 10) >= 600;
       const textColor = computed.color || "#333";
+      const currentFont = (computed.fontFamily || "Inter").split(",")[0].replace(/['"]/g, "").trim();
+      const letterSpacing = parseFloat(computed.letterSpacing) || 0;
+      const lineHeight = parseFloat(computed.lineHeight) || 1.4;
+
+      const FONT_LIST = ["Inter", "system-ui", "Georgia", "'Courier New'", "Trebuchet MS", "Arial", "Impact", "'Comic Sans MS'"];
 
       const bar = document.createElement("div");
       Object.assign(bar.style, {
@@ -680,6 +685,21 @@ export function DesignFrame({
         refreshOverlay(el); // re-render the bar with updated values
       };
 
+      // Font-family cycle button
+      const fontBtn = document.createElement("button");
+      const fontAbbr = currentFont.length > 8 ? currentFont.slice(0, 7) + "…" : currentFont;
+      fontBtn.textContent = fontAbbr;
+      fontBtn.style.cssText = "width:auto;padding:0 6px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:4px;background:rgba(255,255,255,0.08);color:#93c5fd;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:10px;line-height:1;white-space:nowrap";
+      fontBtn.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });
+      fontBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const idx = FONT_LIST.findIndex(f => f.replace(/['"]/g, "").trim() === currentFont);
+        const next = FONT_LIST[(idx + 1) % FONT_LIST.length];
+        applyCss("font-family", next);
+      });
+      fontBtn.addEventListener("mouseenter", () => { fontBtn.style.background = "rgba(255,255,255,0.15)"; });
+      fontBtn.addEventListener("mouseleave", () => { fontBtn.style.background = "rgba(255,255,255,0.08)"; });
+
       // Font size stepper
       const sizeDown = mkBtn("−", () => applyCss("font-size", `${Math.max(8, fontSize - 2)}px`));
       const sizeLabel = document.createElement("span");
@@ -692,6 +712,28 @@ export function DesignFrame({
       const boldBtn = mkBtn("B", () => applyCss("font-weight", isBold ? "400" : "700"));
       boldBtn.style.fontWeight = isBold ? "700" : "400";
       boldBtn.style.color = isBold ? "#93c5fd" : "#aaa";
+
+      // Letter-spacing stepper
+      const lsDown = mkBtn("←→", () => applyCss("letter-spacing", `${Math.max(-5, +(letterSpacing - 0.5).toFixed(2))}px`));
+      lsDown.style.width = "auto"; lsDown.style.padding = "0 4px"; lsDown.style.fontSize = "8px";
+      const lsLabel = document.createElement("span");
+      lsLabel.textContent = `${letterSpacing.toFixed(1)}`;
+      lsLabel.style.minWidth = "20px";
+      lsLabel.style.textAlign = "center";
+      lsLabel.style.fontSize = "10px";
+      const lsUp = mkBtn("→←", () => applyCss("letter-spacing", `${Math.min(20, +(letterSpacing + 0.5).toFixed(2))}px`));
+      lsUp.style.width = "auto"; lsUp.style.padding = "0 4px"; lsUp.style.fontSize = "8px";
+
+      // Line-height stepper
+      const lhDown = mkBtn("↕", () => applyCss("line-height", `${Math.max(0.5, +(lineHeight - 0.1).toFixed(2))}`));
+      lhDown.style.width = "auto"; lhDown.style.padding = "0 4px"; lhDown.style.fontSize = "8px";
+      const lhLabel = document.createElement("span");
+      lhLabel.textContent = `${lineHeight.toFixed(1)}`;
+      lhLabel.style.minWidth = "20px";
+      lhLabel.style.textAlign = "center";
+      lhLabel.style.fontSize = "10px";
+      const lhUp = mkBtn("↕", () => applyCss("line-height", `${Math.min(5, +(lineHeight + 0.1).toFixed(2))}`));
+      lhUp.style.width = "auto"; lhUp.style.padding = "0 4px"; lhUp.style.fontSize = "8px";
 
       // Color swatches
       const swatches = ["#111", "#333", "#3B82F6", "#EF4444", "#10B981", "#F59E0B"];
@@ -714,14 +756,26 @@ export function DesignFrame({
         swatchRow.appendChild(dot);
       }
 
-      const spacer = document.createElement("div");
-      spacer.style.width = "6px";
+      const sep = document.createElement("div");
+      sep.style.width = "1px";
+      sep.style.height = "16px";
+      sep.style.background = "rgba(255,255,255,0.12)";
+      sep.style.margin = "0 1px";
 
+      bar.appendChild(fontBtn);
       bar.appendChild(sizeDown);
       bar.appendChild(sizeLabel);
       bar.appendChild(sizeUp);
-      bar.appendChild(spacer);
+      bar.appendChild(sep.cloneNode());
       bar.appendChild(boldBtn);
+      bar.appendChild(sep.cloneNode());
+      bar.appendChild(lsDown);
+      bar.appendChild(lsLabel);
+      bar.appendChild(lsUp);
+      bar.appendChild(sep.cloneNode());
+      bar.appendChild(lhDown);
+      bar.appendChild(lhLabel);
+      bar.appendChild(lhUp);
       bar.appendChild(swatchRow);
       overlay.appendChild(bar);
     }
