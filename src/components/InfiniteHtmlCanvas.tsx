@@ -57,6 +57,8 @@ interface InfiniteHtmlCanvasProps {
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
   /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
+  /** Sprint 3.5: auto-create frame when drawing tools click on empty canvas. */
+  onAutoFrameForTool?: (x: number, y: number, w: number, h: number) => void;
   // Sprint 3.5: auto-edit newly created text layers
   autoEditLayerId?: string | null;
   onAutoEditHandled?: () => void;
@@ -74,7 +76,7 @@ export function InfiniteHtmlCanvas({
   layerSelectionRequest, selectedElement,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame,
-  autoEditLayerId, onAutoEditHandled,
+  autoEditLayerId, onAutoEditHandled, onAutoFrameForTool,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -191,9 +193,15 @@ export function InfiniteHtmlCanvas({
       setFrameDrawRect(null);
       return;
     }
-    // Primitive tools: don't deselect the frame when clicking canvas background
-    if (["rect", "circle", "text", "pen"].includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
-      // Keep frame selected so primitive can be added
+    // Drawing tools on empty canvas: auto-create a frame (Sprint 3.5)
+    // Click → default frame; drag → custom-size frame (handled in mouseup)
+    const drawingTools = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "text-path"];
+    if (drawingTools.includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
+      // Start tracking for drag-to-size (same as frame tool), or create on click
+      frameDrawStartRef.current = screenToCanvas(e.clientX, e.clientY);
+      frameDrawRectRef.current = null;
+      setFrameDrawRect(null);
+      return;
     }
   }, [activeTool, onSelectFrame, onElementSelect, screenToCanvas]);
 
@@ -304,17 +312,21 @@ export function InfiniteHtmlCanvas({
       multiDragRef.current = null;
       setIsDraggingFrame(false);
     }
-    // Frame tool commit: drag = custom size, click = default 100×100
+    // Frame tool / drawing-tool auto-frame commit: drag = custom size, click = default
     if (frameDrawStartRef.current) {
       const start = frameDrawStartRef.current;
       frameDrawStartRef.current = null;
       const rect = frameDrawRectRef.current;
       frameDrawRectRef.current = null;
       setFrameDrawRect(null);
+      const isDrawingTool = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "text-path"].includes(activeTool);
       if (rect && rect.w >= 4 && rect.h >= 4) {
-        onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
+        if (isDrawingTool) onAutoFrameForTool?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
+        else onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
       } else {
-        onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
+        // Click (no drag): default-size frame
+        if (isDrawingTool) onAutoFrameForTool?.(Math.round(start.x - 200), Math.round(start.y - 150), 400, 300);
+        else onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
       }
       return;
     }
@@ -335,7 +347,7 @@ export function InfiniteHtmlCanvas({
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onCreateFrame, frames, marqueeRect, frameDrawRect]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onCreateFrame, onAutoFrameForTool, activeTool, frames, marqueeRect, frameDrawRect]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {

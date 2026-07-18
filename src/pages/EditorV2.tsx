@@ -1075,6 +1075,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setActiveTool("select");
   }, [frames, autoSave]);
 
+  // ── Sprint 3.5: Auto-frame for drawing tools on empty canvas ──
+  // Same as handleCreateFrameAt but keeps the active drawing tool so the user
+  // can immediately draw inside the newly created frame.
+  const handleAutoFrameForTool = useCallback((x: number, y: number, w: number, h: number) => {
+    const newFrame: FrameData = {
+      id: createFrameId(),
+      name: `Frame ${nextFrameNumber(frames)}`,
+      x, y, width: w, height: h,
+      html: "",
+      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n`,
+      background: "#ffffff",
+    };
+    const updated = [...frames, newFrame];
+    store.replaceAllWithUndo(updated, "edit");
+    setSelectedFrameId(newFrame.id);
+    setSelectedFrameIds(new Set([newFrame.id]));
+    autoSave(updated);
+    // Keep the drawing tool active — don't switch to select
+  }, [frames, autoSave]);
+
   // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
   const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number) => {
     if (!selectedFrameId) return;
@@ -3072,6 +3092,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onElementDuplicate={handleDuplicateElement}
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
+                        onAutoFrameForTool={handleAutoFrameForTool}
             autoEditLayerId={autoEditLayerId}
             onAutoEditHandled={() => setAutoEditLayerId(null)}
           />
