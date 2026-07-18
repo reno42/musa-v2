@@ -57,6 +57,9 @@ interface InfiniteHtmlCanvasProps {
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
   /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
+  // Sprint 3.5: auto-edit newly created text layers
+  autoEditLayerId?: string | null;
+  onAutoEditHandled?: () => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -71,6 +74,7 @@ export function InfiniteHtmlCanvas({
   layerSelectionRequest, selectedElement,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame,
+  autoEditLayerId, onAutoEditHandled,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -493,6 +497,8 @@ export function InfiniteHtmlCanvas({
               onRenameCommit={handleRenameCommit}
               onRenameCancel={handleRenameCancel}
               onFrameResize={onFrameResize}
+              autoEditLayerId={autoEditLayerId}
+              onAutoEditHandled={onAutoEditHandled}
             />
           </div>
         ))}

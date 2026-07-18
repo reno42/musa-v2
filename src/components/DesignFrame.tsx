@@ -8,6 +8,7 @@ import {
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
+import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
   computeBounds,
   createSmoothPoint,
@@ -113,6 +114,9 @@ interface DesignFrameProps {
   onEnterContentMode?: (frameId: string) => void;
   // ── Phase 5: Frame resize handles ──
   onFrameResize?: (frameId: string, width: number, height: number, x: number, y: number) => void;
+  // Sprint 3.5: auto-edit newly created text layers
+  autoEditLayerId?: string | null;
+  onAutoEditHandled?: () => void;
 }
 
 const SEL = "#3B82F6";
@@ -162,6 +166,7 @@ export function DesignFrame({
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
+  autoEditLayerId, onAutoEditHandled,
 }: DesignFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -208,6 +213,10 @@ export function DesignFrame({
   const onFrameResizeRef = useRef(onFrameResize);
   onFrameResizeRef.current = onFrameResize;
 
+  // ── Sprint 3: Scope-based selection + hover preview ──
+  const scopeRef = useRef<Element | null>(null);   // drill-down scope (null = root)
+  const hoverPreviewRef = useRef<HTMLElement | null>(null);
+
   function emitFrameChange(updatedCss: string, updatedHtml?: string) {
     cssRef.current = updatedCss;
     lastEmittedCssRef.current = updatedCss;
@@ -215,6 +224,66 @@ export function DesignFrame({
     if (style) style.textContent = mapBodySelectors(updatedCss);
     onCssChangeRef.current?.(frame.id, updatedCss, updatedHtml);
   }
+
+  // ── Sprint 3.5: Enter text edit mode on an element ──
+  function enterTextEditMode(target: HTMLElement) {
+    if (editingTextRef.current) return; // already editing
+    editingTextRef.current = target;
+    target.setAttribute("contenteditable", "true");
+    target.style.outline = `2px solid ${SEL}`;
+    target.style.outlineOffset = "2px";
+    target.style.cursor = "text";
+    // Select all text so the user can immediately type over the placeholder
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    target.focus();
+
+    const onBlur = () => {
+      target.removeEventListener("blur", onBlur);
+      target.removeAttribute("contenteditable");
+      target.style.outline = "";
+      target.style.outlineOffset = "";
+      target.style.cursor = "";
+      editingTextRef.current = null;
+
+      const layerId = target.getAttribute("data-layer-id");
+      if (layerId) {
+        const newText = target.textContent || "";
+        onTextChangeRef.current?.(layerId, newText);
+      }
+    };
+    target.addEventListener("blur", onBlur);
+
+    // Prevent Enter/Escape from bubbling
+    target.addEventListener("keydown", (ke: Event) => {
+      const kbe = ke as KeyboardEvent;
+      if (kbe.key === "Escape") target.blur();
+      kbe.stopPropagation();
+    });
+  }
+
+  // ── Sprint 3.5: Auto-edit newly created text layers ──
+  useEffect(() => {
+    if (!autoEditLayerId) return;
+    const shadow = shadowRef.current;
+    if (!shadow) return;
+    const content = shadow.getElementById("__df_content");
+    if (!content) return;
+    // Wait a tick for the reconciler to finish DOM patching
+    requestAnimationFrame(() => {
+      const el = content.querySelector(`[data-layer-id="${autoEditLayerId}"]`) as HTMLElement | null;
+      if (el) {
+        enterTextEditMode(el);
+        selectElement(el);
+      }
+      onAutoEditHandled?.();
+    });
+  }, [autoEditLayerId]);
 
   // ── Shadow DOM init (once) ──
   useEffect(() => {
@@ -364,7 +433,14 @@ export function DesignFrame({
     // update (undo, variables panel, brand panel) silently clears selection.
     const savedLayerId = selectedRef.current?.getAttribute("data-layer-id") || null;
 
-    content.innerHTML = html;
+    // Incremental DOM patch (Sprint 2): only replace layers whose content changed.
+    // This preserves untouched elements with their event listeners intact.
+    // Falls back to full innerHTML for empty content (no layers to diff).
+    if (html.trim() && html.includes("data-layer-id")) {
+      reconcileFrameHtml(content, html);
+    } else {
+      content.innerHTML = html;
+    }
     selectedRef.current = null;
     selectedSourceRef.current = null;
     clearOverlay();
@@ -478,6 +554,26 @@ export function DesignFrame({
     return [...element.children].flatMap(child => collectMovableElements(child));
   }
 
+  /** Mini-button for the floating text bar. */
+  function mkBtn(label: string, onClick: () => void): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });
+    btn.addEventListener("click", (ev) => { ev.stopPropagation(); onClick(); });
+    Object.assign(btn.style, {
+      width: "22px", height: "22px",
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      border: "none", borderRadius: "4px",
+      background: "rgba(255,255,255,0.08)",
+      color: "#ccc", cursor: "pointer",
+      fontFamily: "Inter, system-ui, sans-serif", fontSize: "11px",
+      lineHeight: "1", padding: "0",
+    });
+    btn.addEventListener("mouseenter", () => { btn.style.background = "rgba(255,255,255,0.15)"; });
+    btn.addEventListener("mouseleave", () => { btn.style.background = "rgba(255,255,255,0.08)"; });
+    return btn;
+  }
+
   function getVisualRect(element: Element): DOMRect {
     const ownRect = element.getBoundingClientRect();
     if (ownRect.width > 0 || ownRect.height > 0) return ownRect;
@@ -541,6 +637,94 @@ export function DesignFrame({
       boxSizing: "border-box",
     });
     overlay.appendChild(box);
+
+    // ── Sprint 3.5: Mini floating text bar above text elements ──
+    const textElTag = el.tagName.toLowerCase();
+    const isTextLike = el.getAttribute("data-layer-kind") === "text"
+      || ["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "div"].includes(textElTag);
+    if (isTextLike && !el.closest("svg") && el.textContent?.trim()) {
+      const computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(el);
+      const fontSize = parseFloat(computed.fontSize) || 16;
+      const isBold = parseInt(computed.fontWeight, 10) >= 600;
+      const textColor = computed.color || "#333";
+
+      const bar = document.createElement("div");
+      Object.assign(bar.style, {
+        position: "absolute",
+        left: `${x}px`,
+        top: `${Math.max(0, y - 36)}px`,
+        height: "28px",
+        display: "flex",
+        alignItems: "center",
+        gap: "4px",
+        padding: "0 6px",
+        background: "rgba(30,30,35,0.95)",
+        backdropFilter: "blur(12px)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: "6px",
+        pointerEvents: "auto",
+        zIndex: "10001",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: "11px",
+        color: "#e0e0e0",
+        whiteSpace: "nowrap",
+        userSelect: "none",
+      });
+
+      // Helper: apply a CSS property change from the mini bar
+      const applyCss = (prop: string, val: string) => {
+        (el as HTMLElement).style[prop as any] = val;
+        const sel = getSelector(el);
+        const updated = updateCssRule(cssRef.current, sel, importantProperties({ [prop]: val }));
+        emitFrameChange(updated);
+        refreshOverlay(el); // re-render the bar with updated values
+      };
+
+      // Font size stepper
+      const sizeDown = mkBtn("−", () => applyCss("font-size", `${Math.max(8, fontSize - 2)}px`));
+      const sizeLabel = document.createElement("span");
+      sizeLabel.textContent = `${Math.round(fontSize)}px`;
+      sizeLabel.style.minWidth = "28px";
+      sizeLabel.style.textAlign = "center";
+      const sizeUp = mkBtn("+", () => applyCss("font-size", `${Math.min(200, fontSize + 2)}px`));
+
+      // Bold toggle
+      const boldBtn = mkBtn("B", () => applyCss("font-weight", isBold ? "400" : "700"));
+      boldBtn.style.fontWeight = isBold ? "700" : "400";
+      boldBtn.style.color = isBold ? "#93c5fd" : "#aaa";
+
+      // Color swatches
+      const swatches = ["#111", "#333", "#3B82F6", "#EF4444", "#10B981", "#F59E0B"];
+      const swatchRow = document.createElement("div");
+      swatchRow.style.display = "flex";
+      swatchRow.style.gap = "3px";
+      swatchRow.style.marginLeft = "4px";
+      for (const sw of swatches) {
+        const dot = document.createElement("div");
+        Object.assign(dot.style, {
+          width: "14px", height: "14px",
+          borderRadius: "3px",
+          background: sw,
+          border: sw === textColor ? "2px solid #fff" : "1px solid rgba(255,255,255,0.2)",
+          cursor: "pointer",
+          boxSizing: "border-box",
+        });
+        dot.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });
+        dot.addEventListener("click", (ev) => { ev.stopPropagation(); applyCss("color", sw); });
+        swatchRow.appendChild(dot);
+      }
+
+      const spacer = document.createElement("div");
+      spacer.style.width = "6px";
+
+      bar.appendChild(sizeDown);
+      bar.appendChild(sizeLabel);
+      bar.appendChild(sizeUp);
+      bar.appendChild(spacer);
+      bar.appendChild(boldBtn);
+      bar.appendChild(swatchRow);
+      overlay.appendChild(bar);
+    }
 
     // If this is an SVG path, render point editing overlay
     if (hasPath && pathData && targetPath) {
@@ -893,30 +1077,112 @@ export function DesignFrame({
 
   }
 
-  // ── Path parsing helpers for point editing ──
   function setupInteraction(shadow: ShadowRoot, content: HTMLElement, overlay: HTMLElement) {
     const DRAG_THRESHOLD = 4;
+
+    // ── Sprint 3: Scope-based hit testing ──
+    // Resolves what element a click should select based on current scope.
+    // - Normal click → top-level ancestor within scope (child of scope/content)
+    // - Ctrl/Cmd+click → deep select (exact element under cursor)
+    function resolveHitTarget(target: Element, scope: Element | null, ctrlKey: boolean): Element | null {
+      if (target === content || target.closest?.("#__df_overlay")) return null;
+      // Ctrl/Cmd+click: deep select — nearest ancestor with data-layer-id
+      if (ctrlKey) {
+        let el: Element | null = target;
+        while (el && el !== content) {
+          if (el.hasAttribute("data-layer-id")) return el;
+          el = el.parentElement;
+        }
+        return target as Element;
+      }
+      const root = scope || content;
+      // Walk up to find direct child of root
+      let el: Element | null = target as Element;
+      while (el && el.parentElement && el.parentElement !== root) {
+        el = el.parentElement;
+      }
+      if (el && el.parentElement === root && el.hasAttribute("data-layer-id")) return el;
+      // Fallback: nearest ancestor with data-layer-id
+      el = target as Element;
+      while (el && el !== content) {
+        if (el.hasAttribute("data-layer-id")) return el;
+        el = el.parentElement;
+      }
+      return target as Element;
+    }
+
+    function showHoverPreview(el: Element) {
+      hideHoverPreview();
+      const cRect = content.getBoundingClientRect();
+      const elRect = getVisualRect(el);
+      const z = zoomRef.current || 1;
+      const preview = document.createElement("div");
+      preview.id = "__df_hover_preview";
+      Object.assign(preview.style, {
+        position: "absolute",
+        left: `${(elRect.left - cRect.left) / z}px`,
+        top: `${(elRect.top - cRect.top) / z}px`,
+        width: `${elRect.width / z}px`,
+        height: `${elRect.height / z}px`,
+        border: "1px solid rgba(59,130,246,0.5)",
+        background: "rgba(59,130,246,0.04)",
+        pointerEvents: "none",
+        boxSizing: "border-box",
+        zIndex: "9998",
+      });
+      overlay.appendChild(preview);
+      hoverPreviewRef.current = preview;
+    }
+
+    function hideHoverPreview() {
+      if (hoverPreviewRef.current) {
+        hoverPreviewRef.current.remove();
+        hoverPreviewRef.current = null;
+      }
+    }
 
     // ── Pen rubber band: preview the prospective segment between clicks ──
     // While the mouse is up, the next segment follows the cursor (Illustrator-style),
     // so the curve pulled by the previous drag is visible before committing a point.
     content.addEventListener("mousemove", (e: Event) => {
       const me = e as MouseEvent;
-      if (activeToolRef.current !== "pen" || me.buttons !== 0) return;
-      const pts = penPointsRef.current;
-      if (pts.length === 0) return;
-      const rect = content.getBoundingClientRect();
-      const z = zoomRef.current || 1;
-      const cursor = {
-        x: Math.round((me.clientX - rect.left) / z),
-        y: Math.round((me.clientY - rect.top) / z),
-      };
-      const closing = pts.length >= 2
-        && Math.hypot(cursor.x - pts[0].x, cursor.y - pts[0].y) < 12;
-      const draft: PathPoint = closing
-        ? { type: "anchor", x: pts[0].x, y: pts[0].y, cpIn: pts[0].cpIn ? { ...pts[0].cpIn } : undefined }
-        : { type: "anchor", ...cursor };
-      drawPenPreview(content, pts, draft);
+
+      // ── Pen rubber band ──
+      if (activeToolRef.current === "pen" && me.buttons === 0) {
+        const pts = penPointsRef.current;
+        if (pts.length > 0) {
+          const rect = content.getBoundingClientRect();
+          const z = zoomRef.current || 1;
+          const cursor = {
+            x: Math.round((me.clientX - rect.left) / z),
+            y: Math.round((me.clientY - rect.top) / z),
+          };
+          const closing = pts.length >= 2
+            && Math.hypot(cursor.x - pts[0].x, cursor.y - pts[0].y) < 12;
+          const draft: PathPoint = closing
+            ? { type: "anchor", x: pts[0].x, y: pts[0].y, cpIn: pts[0].cpIn ? { ...pts[0].cpIn } : undefined }
+            : { type: "anchor", ...cursor };
+          drawPenPreview(content, pts, draft);
+        }
+        return;
+      }
+
+      // ── Hover preview (select/hand tool, no buttons pressed) ──
+      if ((!activeToolRef.current || activeToolRef.current === "select" || activeToolRef.current === "hand") && me.buttons === 0) {
+        const target = me.target as HTMLElement;
+        if (!target || target === content) { hideHoverPreview(); return; }
+        const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
+        if (hit && hit !== selectedRef.current) {
+          showHoverPreview(hit);
+        } else if (!hit) {
+          hideHoverPreview();
+        }
+      }
+    });
+
+    // ── Hide hover preview when mouse leaves the frame ──
+    content.addEventListener("mouseleave", () => {
+      hideHoverPreview();
     });
 
     // ── Unified mousedown handler ──
@@ -1358,7 +1624,8 @@ export function DesignFrame({
 
       // ── Select tool (default) ──
       if (!target || target === content) {
-        // Click on empty area: if pen is active with points, finalize path
+        // Click on empty area: exit scope + finalize pen path
+        scopeRef.current = null;
         if (penPointsRef.current.length >= 2) {
           finalizePenPath(content);
         }
@@ -1376,14 +1643,19 @@ export function DesignFrame({
         finalizePenPath(content);
       }
 
+      // ── Scope-based hit-testing (Sprint 3) ──
+      // Click → top-level ancestor within scope. Ctrl/Cmd+click → deep select.
+      const hitTarget = resolveHitTarget(target as Element, scopeRef.current, me.ctrlKey || me.metaKey);
+      if (!hitTarget) return;
+
       // If target is an SVG child element (path, circle, rect, etc.), walk up
       // to the <svg data-layer-id="..."> wrapper so we operate on the whole
       // SVG object — dragging, CSS changes, and selection should target the
       // wrapper, not the individual path child.
-      let dragTarget: Element = target as Element;
+      let dragTarget: Element = hitTarget;
       let dragSource: Element = target as Element;
-      const parentSvg = target.closest?.("svg");
-      if (parentSvg && parentSvg !== (target as Element)) {
+      const parentSvg = hitTarget.closest?.("svg");
+      if (parentSvg && parentSvg !== hitTarget) {
         dragTarget = parentSvg;
       }
 
@@ -1590,11 +1862,30 @@ export function DesignFrame({
       document.addEventListener("mouseup", onDragUp);
     });
 
-    // ── Double-click: inline text editing ──
+    // ── Double-click: scope drill-down or inline text editing ──
     content.addEventListener("dblclick", (e: Event) => {
       const me = e as MouseEvent;
       const target = me.target as HTMLElement;
       if (!target || target === content) return;
+
+      // ── Scope drill-down (Sprint 3): enter container as new scope ──
+      const tool = activeToolRef.current;
+      if (!tool || tool === "select" || tool === "hand") {
+        const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
+        if (hit && hit !== content) {
+          const kind = hit.getAttribute("data-layer-kind");
+          // Drill into groups or containers with children
+          if (kind === "group" || (!kind && hit.children.length > 0)) {
+            e.stopPropagation();
+            e.preventDefault();
+            hideHoverPreview();
+            scopeRef.current = hit;
+            selectElement(hit);
+            return;
+          }
+        }
+      }
+
       if (editingTextRef.current) return; // already editing
 
       // Only allow editing on text-like elements
@@ -1642,19 +1933,39 @@ export function DesignFrame({
       });
     });
 
-    // ── Finalize pen path on Enter key (within shadow host context) ──
+    // ── Keyboard shortcuts (within shadow host context) ──
     shadow.host.addEventListener("keydown", (e: Event) => {
       const kbe = e as KeyboardEvent;
+
+      // ── Escape: exit scope → cancel pen → deselect ──
+      if (kbe.key === "Escape") {
+        hideHoverPreview();
+        if (scopeRef.current) {
+          // Exit current scope (go up one level toward root)
+          const parent = scopeRef.current.parentElement;
+          scopeRef.current = (parent && parent !== content && parent.closest?.("#__df_content")) ? parent : null;
+          if (scopeRef.current) {
+            selectElement(scopeRef.current);
+          } else {
+            selectedRef.current = null;
+            clearOverlay();
+            onElementSelect?.(null);
+          }
+          return;
+        }
+        if (penPointsRef.current.length > 0) {
+          // Cancel pen path
+          penPointsRef.current = [];
+          if (penSvgRef.current) {
+            penSvgRef.current.remove();
+            penSvgRef.current = null;
+          }
+        }
+        return;
+      }
+
       if (kbe.key === "Enter" && penPointsRef.current.length >= 2) {
         finalizePenPath(content);
-      }
-      if (kbe.key === "Escape" && penPointsRef.current.length > 0) {
-        // Cancel pen path
-        penPointsRef.current = [];
-        if (penSvgRef.current) {
-          penSvgRef.current.remove();
-          penSvgRef.current = null;
-        }
       }
     });
   }

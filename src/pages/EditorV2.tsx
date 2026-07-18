@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import html2canvas from "html2canvas";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
@@ -66,6 +66,7 @@ import {
 import { analyzePathData } from "../lib/pathData";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
+import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
@@ -137,14 +138,6 @@ function parseTranslate(value: string): { x: number; y: number } {
   if (!value || value === "none") return { x: 0, y: 0 };
   const parts = value.split(/\s+/).map(part => parseFloat(part) || 0);
   return { x: parts[0] || 0, y: parts[1] || 0 };
-}
-
-function snapshotFrames(frames: FrameData[]): FrameData[] {
-  return frames.map(frame => ({ ...frame }));
-}
-
-function frameSnapshotsMatch(first: FrameData[], second: FrameData[]): boolean {
-  return JSON.stringify(first) === JSON.stringify(second);
 }
 
 interface PenStyle {
@@ -226,22 +219,25 @@ p {
 
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
-  // ── Multi-frame state ──
-  const [frames, setFrames] = useState<FrameData[]>([]);
+  // ── DocumentStore (transactional single source of truth, replaces 77 manual pushUndo calls) ──
+  const storeRef = useRef<DocumentStore | null>(null);
+  if (!storeRef.current) storeRef.current = createDocumentStore();
+  const store = storeRef.current;
+  const frames = useSyncExternalStore(store.subscribe, store.getSnapshot) as FrameData[];
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const [templateName, setTemplateName] = useState("New Design");
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [zoom, setZoom] = useState(0.5);
+  // Sprint 3.5: auto-edit newly created text layers
+  const [autoEditLayerId, setAutoEditLayerId] = useState<string | null>(null);
 
   // Agent bridge: window.futurariaAgent gives AI agents frame snapshots + layout lint
   useEffect(() => { installAgentBridge(); }, []);
 
-  // ── Undo/Redo ──
-  const undoStack = useRef<FrameData[][]>([]);
-  const redoStack = useRef<FrameData[][]>([]);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
+  // ── Undo/Redo via DocumentStore (canUndo/canRedo synced below) ──
 
   // ── UI state ──
   const [loading, setLoading] = useState(true);
@@ -294,59 +290,44 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const activeHtml = selectedFrame?.html ?? DEFAULT_HTML;
   const activeCss = selectedFrame?.css ?? DEFAULT_CSS;
 
-  // ── Undo/Redo helpers ──
-  const pushUndo = useCallback((current: FrameData[]) => {
-    const snapshot = snapshotFrames(current);
-    const previous = undoStack.current[undoStack.current.length - 1];
-    if (previous && frameSnapshotsMatch(previous, snapshot)) return;
-    undoStack.current.push(snapshot);
-    if (undoStack.current.length > 50) undoStack.current.shift();
-    redoStack.current = [];
-    setCanUndo(true);
-    setCanRedo(false);
-  }, []);
+  // ── Undo/Redo via DocumentStore ──
+  // canUndo/canRedo derived from store, synced via useEffect below
 
   const handleUndo = useCallback(() => {
-    if (undoStack.current.length === 0) {
-      return;
-    }
-    const prev = undoStack.current.pop()!;
-    redoStack.current.push(snapshotFrames(framesRef.current));
-    setFrames(prev);
-    setCanUndo(undoStack.current.length > 0);
-    setCanRedo(true);
+    if (!store.canUndo) return;
+    const success = store.undo();
+    if (!success) return;
+    const cur = store.frames as FrameData[];
     lastPushTimeRef.current = 0;
     setSelectedElement(null);
-    setContentFrameId(current => current && prev.some(frame => frame.id === current) ? current : null);
-    setSelectedFrameId(current => current && prev.some(frame => frame.id === current) ? current : prev[0]?.id || null);
+    setContentFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : null);
+    setSelectedFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : cur[0]?.id ?? null);
     setSelectedFrameIds(current => {
-      const valid = new Set([...current].filter(id => prev.some(frame => frame.id === id)));
-      if (valid.size === 0 && prev[0]) valid.add(prev[0].id);
+      const valid = new Set([...current].filter(id => cur.some(f => f.id === id)));
+      if (valid.size === 0 && cur[0]) valid.add(cur[0].id);
       return valid;
     });
     isDirtyRef.current = true;
-    autoSaveRef.current(prev);
-  }, []);
+    autoSaveRef.current(cur);
+  }, [store]);
 
   const handleRedo = useCallback(() => {
-    if (redoStack.current.length === 0) return;
-    const next = redoStack.current.pop()!;
-    undoStack.current.push(snapshotFrames(framesRef.current));
-    setFrames(next);
-    setCanUndo(true);
-    setCanRedo(redoStack.current.length > 0);
+    if (!store.canRedo) return;
+    const success = store.redo();
+    if (!success) return;
+    const cur = store.frames as FrameData[];
     lastPushTimeRef.current = 0;
     setSelectedElement(null);
-    setContentFrameId(current => current && next.some(frame => frame.id === current) ? current : null);
-    setSelectedFrameId(current => current && next.some(frame => frame.id === current) ? current : next[0]?.id || null);
+    setContentFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : null);
+    setSelectedFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : cur[0]?.id ?? null);
     setSelectedFrameIds(current => {
-      const valid = new Set([...current].filter(id => next.some(frame => frame.id === id)));
-      if (valid.size === 0 && next[0]) valid.add(next[0].id);
+      const valid = new Set([...current].filter(id => cur.some(f => f.id === id)));
+      if (valid.size === 0 && cur[0]) valid.add(cur[0].id);
       return valid;
     });
     isDirtyRef.current = true;
-    autoSaveRef.current(next);
-  }, []);
+    autoSaveRef.current(cur);
+  }, [store]);
 
   // ── Load template → parse into frames ──
   useEffect(() => {
@@ -378,11 +359,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             css: f.css || "",
             background: f.background || "#ffffff",
           }));
-          setFrames(loaded);
+          store.replaceAll(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
           // Loaded data is the baseline, not an undoable user action.
-          undoStack.current = [];
-          redoStack.current = [];
           lastPushTimeRef.current = 0;
           setCanUndo(false);
           setCanRedo(false);
@@ -398,11 +377,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             css: t.css || DEFAULT_CSS,
             background: "#ffffff",
           };
-          setFrames([single]);
+          store.replaceAll([single]);
           setSelectedFrameId(single.id);
           // Loaded data is the baseline, not an undoable user action.
-          undoStack.current = [];
-          redoStack.current = [];
           lastPushTimeRef.current = 0;
           setCanUndo(false);
           setCanRedo(false);
@@ -508,7 +485,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           lastBroadcastRef.current.css === newCss) {
         return;
       }
-      setFrames(prev => prev.map(f =>
+      const curFrames = store.frames as FrameData[];
+      store.replaceAll(curFrames.map(f =>
         f.id === targetFrameId
           ? { ...f, html: newHtml, css: newCss }
           : f
@@ -535,13 +513,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 const localJson = JSON.stringify(framesRef.current);
                 const remoteJson = JSON.stringify(t.frames);
                 if (localJson !== remoteJson) {
-                  setFrames(t.frames);
+                  store.replaceAll(t.frames as FrameData[]);
                 }
               } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
                 // Remote has no frames but we do → re-save our frames as recovery
                 autoSave(framesRef.current);
               } else if (t.html !== undefined || t.css !== undefined) {
-                setFrames(prev => prev.map(f =>
+                const _pf = store.frames as FrameData[];
+                store.replaceAll(_pf.map(f =>
                   f.id === selectedFrameId
                     ? { ...f, html: t.html || f.html, css: t.css || f.css }
                     : f
@@ -571,12 +550,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // Coalesce: only push undo if >300ms since last push (avoids one-undo-per-keystroke)
     const now = Date.now();
     if (now - lastPushTimeRef.current > 300) {
-      pushUndo(frames);
-      lastPushTimeRef.current = now;
+            lastPushTimeRef.current = now;
     }
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "code edit");
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   const handleCssChange = useCallback((newCss: string) => {
     if (!selectedFrameId) return;
@@ -585,31 +563,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     );
     const now = Date.now();
     if (now - lastPushTimeRef.current > 300) {
-      pushUndo(frames);
-      lastPushTimeRef.current = now;
+            lastPushTimeRef.current = now;
     }
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "code edit");
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Frame CSS (+ optional HTML) change from DesignFrame (drag/resize) ──
   const handleFrameCssChange = useCallback((frameId: string, newCss: string, newHtml?: string) => {
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, css: newCss, ...(newHtml ? { html: newHtml } : {}) } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleFrameHtmlChange = useCallback((frameId: string, newHtml: string) => {
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, html: newHtml } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Figma-style frame selection handlers ──
   const handleSelectFrame = useCallback((id: string | null) => {
@@ -652,21 +627,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, []);
 
   const handleRenameFrame = useCallback((frameId: string, newName: string) => {
-    pushUndo(frames);
-    const updated = frames.map(f => f.id === frameId ? { ...f, name: newName } : f);
-    setFrames(updated);
+        const updated = frames.map(f => f.id === frameId ? { ...f, name: newName } : f);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleMultiFrameMove = useCallback((moves: { id: string; x: number; y: number }[]) => {
-    pushUndo(frames);
+
     const moveMap = new Map(moves.map(m => [m.id, { x: m.x, y: m.y }]));
     const updated = frames.map(f =>
       moveMap.has(f.id) ? { ...f, x: moveMap.get(f.id)!.x, y: moveMap.get(f.id)!.y } : f
     );
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Frame operations ──
   const addFrame = useCallback((preset: { name: string; width: number; height: number }) => {
@@ -682,39 +656,35 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${preset.width}px;\n  height: ${preset.height}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n.card {\n  position: absolute;\n  left: 50%;\n  top: 50%;\n  transform: translate(-50%, -50%);\n  text-align: center;\n  padding: 40px;\n}\nh1 {\n  font-size: 48px;\n  font-weight: 700;\n  color: #1a1a2e;\n  margin: 0 0 16px;\n}\np {\n  font-size: 20px;\n  color: #666;\n  margin: 0;\n}`,
       background: "#ffffff",
     };
-    pushUndo(frames);
-    const updated = [...frames, newFrame];
-    setFrames(updated);
+        const updated = [...frames, newFrame];
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(newFrame.id);
     setSelectedFrameIds(new Set([newFrame.id]));
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleFrameMove = useCallback((id: string, x: number, y: number) => {
     const updated = frames.map(f =>
       f.id === id ? { ...f, x: Math.round(x), y: Math.round(y) } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleFrameResize = useCallback((id: string, width: number, height: number, x: number, y: number) => {
     const updated = frames.map(f =>
       f.id === id ? { ...f, x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const deleteFrames = useCallback((frameIds: Set<string>): boolean => {
     if (frameIds.size === 0) return false;
     const updated = frames.filter(frame => !frameIds.has(frame.id));
     if (updated.length === 0 || updated.length === frames.length) return false;
 
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(updated[0]?.id ?? null);
     setSelectedFrameIds(updated[0]?.id ? new Set([updated[0].id]) : new Set());
     setContentFrameId(null);
@@ -722,7 +692,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setLayerSelectionRequest(null);
     autoSave(updated);
     return true;
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const deleteSelectedFrame = useCallback(() => {
     if (!selectedFrameId) return;
@@ -733,15 +703,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const src = frames.find(f => f.id === selectedFrameId);
     if (!src) return;
     const clone = cloneFrame(src, src.x + src.width + FRAME_GAP, src.y, `Frame ${nextFrameNumber(frames)}`);
-    pushUndo(frames);
-    const updated = [...frames, clone];
-    setFrames(updated);
+        const updated = [...frames, clone];
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(clone.id);
     setSelectedFrameIds(new Set([clone.id]));
     setContentFrameId(null);
     setSelectedElement(null);
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   const handleDuplicateFramesAtPositions = useCallback((copies: { sourceId: string; x: number; y: number }[]) => {
     if (copies.length === 0) return;
@@ -753,14 +722,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     if (clones.length === 0) return;
 
-    pushUndo(frames);
-    const updated = [...frames, ...clones];
-    setFrames(updated);
+        const updated = [...frames, ...clones];
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(clones[0].id);
     setSelectedFrameIds(new Set(clones.map(frame => frame.id)));
     setSelectedElement(null);
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleLayerStackChange = useCallback((frameId: string, change: LayerStackChange) => {
     const frame = frames.find(item => item.id === frameId);
@@ -770,10 +738,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(item => item.id === frameId
       ? { ...item, html: change.html, css: stackedCss }
       : item);
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   const handleLayerDrop = useCallback((
     sourceFrameId: string,
@@ -795,8 +762,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const updated = frames.map(frame => frame.id === sourceFrameId
         ? { ...frame, html: change.html, css: applyLayerStack(frame.css, change.siblingLayerIds) }
         : frame);
-      pushUndo(frames);
-      setFrames(updated);
+      store.replaceAllWithUndo(updated, "edit");
       setSelectedElement(null);
       autoSave(updated);
       return;
@@ -827,14 +793,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return frame;
     });
 
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(targetFrameId);
     setSelectedFrameIds(new Set());
     setContentFrameId(targetFrameId);
     setSelectedElement(null);
     autoSave(updated);
-  }, [frames, autoSave, pushUndo, addToast]);
+  }, [frames, autoSave, addToast]);
 
   const handleFrameReorder = useCallback((
     sourceFrameId: string,
@@ -849,10 +814,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const targetIndex = reordered.findIndex(frame => frame.id === targetFrameId);
     if (targetIndex < 0) return;
     reordered.splice(placement === "above" ? targetIndex : targetIndex + 1, 0, source);
-    pushUndo(frames);
-    setFrames(reordered);
+    store.replaceAllWithUndo(reordered, "edit");
     autoSave(reordered);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Zoom helpers ──
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + 0.1)), []);
@@ -987,7 +951,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
-      html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Text</div>`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Type something</div>`;
       css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -995,11 +959,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
+    setAutoEditLayerId(layerId); // Sprint 3.5: auto-edit new text
     setActiveTool("select"); // Switch back to select after placing
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase C: Draw shape with exact dimensions (drag-to-draw) ──
   const handleDrawShape = useCallback((type: "rect" | "circle" | "triangle" | "star" | "polygon", x: number, y: number, w: number, h: number, sides?: number) => {
@@ -1034,11 +998,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setActiveTool("select");
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase C: Inline text editing ──
   const handleTextChange = useCallback((layerId: string, newText: string) => {
@@ -1050,10 +1013,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, html: newHtml } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   const handleEditPathPoints = useCallback((frameId: string, layerId: string, newPathD: string) => {
     const frame = frames.find(candidate => candidate.id === frameId);
@@ -1067,10 +1029,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     if (newHtml === null || newHtml === frame.html) return;
     const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
@@ -1086,8 +1047,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? { ...f, html: f.html + "\n" + svgHtml, css: f.css + "\n" + css }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setActiveTool("select");
     if (analysis.degeneracy === "point") {
@@ -1095,7 +1055,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } else if (analysis.selfIntersections > 0 || analysis.singularities > 0) {
       addToast(`Trazado creado con ${analysis.selfIntersections} auto-intersección(es) y ${analysis.singularities} punto(s) singular(es).`, "info");
     }
-  }, [selectedFrameId, frames, autoSave, pushUndo, addToast]);
+  }, [selectedFrameId, frames, autoSave, addToast]);
 
   // ── Frame tool (F/A): click = 100×100 frame, drag = custom dimensions ──
   const handleCreateFrameAt = useCallback((x: number, y: number, w: number, h: number) => {
@@ -1107,31 +1067,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n`,
       background: "#ffffff",
     };
-    pushUndo(frames);
-    const updated = [...frames, newFrame];
-    setFrames(updated);
+        const updated = [...frames, newFrame];
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(newFrame.id);
     setSelectedFrameIds(new Set([newFrame.id]));
     autoSave(updated);
     setActiveTool("select");
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
   const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number) => {
     if (!selectedFrameId) return;
     const layerId = createLayerId();
-    const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">Text</div>`;
+    const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">Type something</div>`;
     const css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: hidden;\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
         ? { ...f, html: f.html + "\n" + html, css: f.css + "\n" + css }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
+    setAutoEditLayerId(layerId); // Sprint 3.5: auto-edit new text
     setActiveTool("select");
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Wrap selection in a frame (Ctrl+Alt+G) — Figma-style "frame selection" ──
   // Measures rendered layer bounds through the frame's shadow DOM, then nests
@@ -1203,12 +1162,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(candidate =>
       candidate.id === selectedFrameId ? { ...candidate, html: newHtml } : candidate
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setMultiSelectLayerIds([]);
     addToast(`${rects.length} capa(s) envuelta(s) en un frame.`, "success");
-  }, [selectedFrameId, multiSelectLayerIds, selectedElement, frames, zoom, autoSave, pushUndo, addToast]);
+  }, [selectedFrameId, multiSelectLayerIds, selectedElement, frames, zoom, autoSave, addToast]);
 
   // ── Parametric shape options: star/polygon count, star ratio, corner radius ──
   const handleShapeOptionsChange = useCallback((layerId: string, frameId: string, options: ShapeOptions) => {
@@ -1228,10 +1186,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     if (newHtml === null || newHtml === frame.html) return;
     const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [frames, autoSave, pushUndo]);
+  }, [frames, autoSave]);
 
   // ── Text on Path: write text along an existing SVG path ──
   const handleAddTextPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => {
@@ -1257,11 +1214,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? { ...f, html: f.html + "\n" + svgHtml, css: f.css + "\n" + css }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setActiveTool("select");
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase F: Pathfinder boolean operations ──
   const handlePathfinder = useCallback(async (op: "union" | "subtract" | "intersect" | "exclude") => {
@@ -1285,15 +1241,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             css: f.css || "",
           }));
           if (updated.length > 0) {
-            pushUndo(frames);
-            setFrames(updated);
+            store.replaceAllWithUndo(updated, "edit");
             autoSave(updated);
           }
         }
       }
     } catch (err) { console.warn("[Pathfinder] Failed:", err); }
     setMultiSelectLayerIds([]);
-  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave]);
 
   // ── Phase G: SVG Import ──
   const handleSvgImportOpen = useCallback(() => setShowSvgImport(true), []);
@@ -1365,12 +1320,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       ? { ...item, html: inserted.html, css: mergeCssRules(item.css, imageCss) }
       : item);
 
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     handleSelectLayerElement(frame.id, layerId);
     addToast("Imagen insertada en el frame.", "success");
-  }, [frames, selectedFrameId, pushUndo, autoSave, handleSelectLayerElement, addToast, templateWorkspaceId]);
+  }, [frames, selectedFrameId, autoSave, handleSelectLayerElement, addToast, templateWorkspaceId]);
 
   // ── Phase C: Delete element inside frame ──
   const handleDeleteElement = useCallback((layerId: string, frameId = selectedFrameId) => {
@@ -1383,11 +1337,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(f =>
       f.id === frameId ? { ...f, html: newHtml, css: newCss } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setSelectedElement(null);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Phase C: Duplicate element inside frame ──
   const handleDuplicateElement = useCallback((layerId: string, frameId = selectedFrameId) => {
@@ -1402,10 +1355,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? { ...f, html: duplicated.html, css: newCss }
         : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
-  }, [selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Change semantic tag of selected element ──
   const captureSelection = useCallback((): DesignClipboard | null => {
@@ -1532,8 +1484,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const updated = frames.map(frame => frame.id === targetFrameId
         ? { ...frame, html: pasted.html, css: newCss }
         : frame);
-      pushUndo(frames);
-      setFrames(updated);
+      store.replaceAllWithUndo(updated, "edit");
       setSelectedFrameId(targetFrameId);
       setSelectedFrameIds(new Set([targetFrameId]));
       setContentFrameId(targetFrameId);
@@ -1551,16 +1502,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       source.y + offset,
       `Frame ${frameNumber++}`,
     ));
-    pushUndo(frames);
-    const updated = [...frames, ...clones];
-    setFrames(updated);
+        const updated = [...frames, ...clones];
+    store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(clones[0].id);
     setSelectedFrameIds(new Set(clones.map(frame => frame.id)));
     setContentFrameId(null);
     setSelectedElement(null);
     autoSave(updated);
     addToast(`${clones.length} frame${clones.length === 1 ? "" : "s"} pegado${clones.length === 1 ? "" : "s"}.`, "success");
-  }, [selectedFrameId, frames, autoSave, pushUndo, addToast]);
+  }, [selectedFrameId, frames, autoSave, addToast]);
 
   const handleChangeTag = useCallback((newTag: string) => {
     if (!selectedElement || !selectedFrameId) return;
@@ -1574,11 +1524,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(f =>
       f.id === selectedElement.frameId ? { ...f, html: newHtml } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
     setSelectedElement(prev => prev ? { ...prev, tag: newTag } : null);
-  }, [selectedElement, selectedFrameId, frames, autoSave, pushUndo]);
+  }, [selectedElement, selectedFrameId, frames, autoSave]);
 
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
@@ -1589,15 +1538,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         // Reload template to get updated frames
         const tpl = await getTemplate(templateId);
         if (tpl && tpl.frames) {
-          pushUndo(frames);
-          setFrames(tpl.frames);
+
+          store.replaceAll(tpl.frames as FrameData[]);
           autoSave(tpl.frames);
         }
       }
     } catch (err) {
       console.error("[ConvertToPath] Error:", err);
     }
-  }, [templateId, frames, autoSave, pushUndo]);
+  }, [templateId, frames, autoSave]);
 
   // ── Outline stroke: convert stroke to filled outline path ──
   const handleOutlineStroke = useCallback(async (layerId: string, frameId: string) => {
@@ -1607,15 +1556,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (result?.success) {
         const tpl = await getTemplate(templateId);
         if (tpl && tpl.frames) {
-          pushUndo(frames);
-          setFrames(tpl.frames);
+
+          store.replaceAll(tpl.frames as FrameData[]);
           autoSave(tpl.frames);
         }
       }
     } catch (err) {
       console.error("[OutlineStroke] Error:", err);
     }
-  }, [templateId, frames, autoSave, pushUndo]);
+  }, [templateId, frames, autoSave]);
 
   // ── Offset path: inset/outset by distance ──
   const handleOffsetPath = useCallback(async (layerId: string, frameId: string, offset: number) => {
@@ -1625,15 +1574,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (result?.success) {
         const tpl = await getTemplate(templateId);
         if (tpl && tpl.frames) {
-          pushUndo(frames);
-          setFrames(tpl.frames);
+
+          store.replaceAll(tpl.frames as FrameData[]);
           autoSave(tpl.frames);
         }
       }
     } catch (err) {
       console.error("[OffsetPath] Error:", err);
     }
-  }, [templateId, frames, autoSave, pushUndo]);
+  }, [templateId, frames, autoSave]);
 
 
   // ── Keyboard shortcuts ──
@@ -2163,11 +2112,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(f =>
       f.id === selectedFrameId ? { ...f, name: trimmed } : f
     );
-    pushUndo(frames);
-    setFrames(updated);
+    store.replaceAllWithUndo(updated, "edit");
     setEditingFrameName(null);
     autoSave(updated);
-  }, [selectedFrameId, editingFrameName, frames, autoSave, pushUndo]);
+  }, [selectedFrameId, editingFrameName, frames, autoSave]);
 
   // ── Template (workspace) rename ──
   const commitTemplateRename = useCallback(async () => {
@@ -2285,12 +2233,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         css: f.css || "",
       }));
       if (updated.length > 0) {
-        pushUndo(framesRef.current);
-        setFrames(updated);
+        store.replaceAllWithUndo(updated, "edit");
         autoSaveRef.current(updated);
       }
     }
-  }, [templateId, pushUndo]);
+  }, [templateId]);
 
   // ── Element operations (align/group/reorder/copy-as) ──
   const handleAlign = useCallback(async (alignment: string) => {
@@ -2480,8 +2427,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         const updated = frames.map(f =>
           f.id === selectedFrameId ? { ...f, html: bodyHtml, css } : f
         );
-        pushUndo(frames);
-        setFrames(updated);
+        store.replaceAllWithUndo(updated, "edit");
         autoSave(updated);
         setShowCodePanel(true);
         setMcpMsg("✓ HTML imported into frame");
@@ -2491,7 +2437,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } catch { setMcpMsg("✗ HTML import failed"); }
     setTimeout(() => setMcpMsg(""), 3000);
     e.target.value = "";
-  }, [selectedFrameId, frames, pushUndo, autoSave]);
+  }, [selectedFrameId, frames, autoSave]);
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
@@ -3126,6 +3072,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onElementDuplicate={handleDuplicateElement}
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
+            autoEditLayerId={autoEditLayerId}
+            onAutoEditHandled={() => setAutoEditLayerId(null)}
           />
         </div>
       </div>

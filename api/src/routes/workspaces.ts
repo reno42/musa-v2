@@ -32,10 +32,59 @@ async function listFromSupabase(userId: string): Promise<Workspace[] | null> {
   try {
     const { data, error } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
     if (error) throw error;
-    return (data || []).map((r: any) => rowToWorkspace(r));
+    const workspaces = (data || []).map((r: any) => rowToWorkspace(r));
+
+    // If the workspaces table is empty but templates reference workspace IDs,
+    // auto-create workspace records so the Dashboard Data tab isn't blank.
+    if (workspaces.length === 0) {
+      await syncWorkspacesFromTemplates(sb);
+      // Re-fetch after sync
+      const { data: refetched, error: refetchErr } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
+      if (refetchErr) throw refetchErr;
+      return (refetched || []).map((r: any) => rowToWorkspace(r));
+    }
+
+    return workspaces;
   } catch (e) {
     console.warn("[workspaces] Supabase list failed:", (e as Error).message);
     return null;
+  }
+}
+
+/** Auto-creates workspace records from template workspace_id references. */
+async function syncWorkspacesFromTemplates(sb: ReturnType<typeof getSupabase>) {
+  if (!sb) return;
+  try {
+    // Get all unique workspace_ids from templates
+    const { data: tpls, error: tplErr } = await sb.from("templates")
+      .select("workspace_id, name")
+      .not("workspace_id", "is", null);
+    if (tplErr || !tpls?.length) return;
+
+    // Deduplicate by workspace_id, using the first template's name as workspace name
+    const seen = new Map<string, string>();
+    for (const t of tpls as any[]) {
+      if (!seen.has(t.workspace_id) && t.workspace_id) {
+        seen.set(t.workspace_id, t.name || "Workspace");
+      }
+    }
+
+    // Upsert workspaces
+    const rows = [...seen.entries()].map(([id, tplName]) => ({
+      id,
+      name: tplName.replace(/^(.+?)\s*[-–—].*$/, "$1").trim() || "Workspace",
+      owner_id: "dev_user_default",
+      data: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    if (rows.length > 0) {
+      const { error: upsertErr } = await sb.from("workspaces").upsert(rows);
+      if (upsertErr) console.warn("[workspaces] sync upsert failed:", upsertErr.message);
+    }
+  } catch (e) {
+    console.warn("[workspaces] sync failed:", (e as Error).message);
   }
 }
 
