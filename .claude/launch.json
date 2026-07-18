@@ -4,7 +4,7 @@
     {
       "name": "editor-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev:all"],
       "port": 5173
     }
   ]

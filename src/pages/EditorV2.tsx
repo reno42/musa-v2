@@ -680,6 +680,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [frames, autoSave]);
 
+  const handleFrameBackgroundChange = useCallback((bg: string) => {
+    if (!selectedFrameId) return;
+    const updated = frames.map(f =>
+      f.id === selectedFrameId ? { ...f, background: bg } : f
+    );
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [selectedFrameId, frames, autoSave]);
+
+  const handleFrameDimensionChange = useCallback((field: "width" | "height", value: number) => {
+    if (!selectedFrameId || !value || value < 10) return;
+    const updated = frames.map(f =>
+      f.id === selectedFrameId ? { ...f, [field]: Math.round(value) } : f
+    );
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [selectedFrameId, frames, autoSave]);
+
   const deleteFrames = useCallback((frameIds: Set<string>): boolean => {
     if (frameIds.size === 0) return false;
     const updated = frames.filter(frame => !frameIds.has(frame.id));
@@ -1614,7 +1632,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         setShowFontPicker(false);
         return;
       }
-      if (isEditableTarget(e.target)) return;
+      if (isEditableTarget(e.target) || (document.activeElement as HTMLElement | null)?.isContentEditable) return;
       const mod = e.metaKey || e.ctrlKey;
       // Ctrl/⌘+Alt combos: wrap in frame + boolean operations (Figma-style)
       if (mod && e.altKey) {
@@ -3153,19 +3171,99 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </button>
           </div>
           {rightPanelTab === "contextual" && (
-            <HtmlContextualPanel
-              element={selectedElement}
-              css={activeCss}
-              onCssChange={handleContextualCssChange}
-              onChangeTag={handleChangeTag}
-              onCopyStyle={handleCopyStyle}
-              onPasteStyle={handlePasteStyle}
-              hasClipboardStyle={!!clipboardStyle}
-              onConvertToPath={handleConvertToPath}
-              onOutlineStroke={handleOutlineStroke}
-              onOffsetPath={handleOffsetPath}
-              onShapeOptionsChange={handleShapeOptionsChange}
-            />
+            selectedElement ? (
+              <HtmlContextualPanel
+                element={selectedElement}
+                css={activeCss}
+                onCssChange={handleContextualCssChange}
+                onChangeTag={handleChangeTag}
+                onCopyStyle={handleCopyStyle}
+                onPasteStyle={handlePasteStyle}
+                hasClipboardStyle={!!clipboardStyle}
+                onConvertToPath={handleConvertToPath}
+                onOutlineStroke={handleOutlineStroke}
+                onOffsetPath={handleOffsetPath}
+                onShapeOptionsChange={handleShapeOptionsChange}
+              />
+            ) : selectedFrame ? (
+              <div style={{ padding: "4px", display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1 }}>
+                {/* Frame Name */}
+                <div style={{ padding: "6px 10px", fontSize: 13, fontWeight: 600, color: "#f0ebe0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  {selectedFrame.name}
+                </div>
+
+                {/* Dimensions */}
+                <div style={{ padding: "0 10px" }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Dimensions</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input
+                      type="number"
+                      value={selectedFrame.width}
+                      onChange={(e) => { const v = Number(e.target.value); if (v >= 10) handleFrameDimensionChange("width", v); }}
+                      style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
+                      min={10}
+                    />
+                    <span style={{ color: "#555", fontSize: 11, flexShrink: 0 }}>×</span>
+                    <input
+                      type="number"
+                      value={selectedFrame.height}
+                      onChange={(e) => { const v = Number(e.target.value); if (v >= 10) handleFrameDimensionChange("height", v); }}
+                      style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
+                      min={10}
+                    />
+                  </div>
+                </div>
+
+                {/* Background */}
+                <div style={{ padding: "0 10px" }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Background</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      type="color"
+                      value={(selectedFrame.background && selectedFrame.background.match(/^#[0-9a-fA-F]{3,8}$/)) ? selectedFrame.background : "#000000"}
+                      onChange={(e) => handleFrameBackgroundChange(e.target.value)}
+                      style={{ width: 28, height: 24, border: "1px solid rgba(255,255,255,0.06)", borderRadius: 4, cursor: "pointer", padding: 0, flexShrink: 0, background: "none" }}
+                    />
+                    <input
+                      type="text"
+                      value={selectedFrame.background || ""}
+                      onChange={(e) => handleFrameBackgroundChange(e.target.value)}
+                      style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
+                      placeholder="transparent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleFrameBackgroundChange("transparent")}
+                      style={{ padding: "3px 8px", fontSize: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#888", cursor: "pointer", fontFamily: "inherit" }}
+                      title="Make background fully transparent"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {/* Quick color swatches */}
+                  <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+                    {["#ffffff", "#000000", "#1a1a2e", "#16213e", "#0f3460", "#e94560", "#f5f5f5", "#333333", "#ff6b6b", "#51cf66", "#339af0", "#fcc419"].map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => handleFrameBackgroundChange(c)}
+                        style={{ width: 18, height: 18, borderRadius: 3, border: "1px solid rgba(255,255,255,0.1)", background: c, cursor: "pointer", padding: 0, flexShrink: 0 }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Position (read-only) */}
+                <div style={{ padding: "0 10px", fontSize: 10, color: "#555" }}>
+                  Position: {selectedFrame.x}, {selectedFrame.y}
+                </div>
+              </div>
+            ) : (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a7668", fontSize: 12, padding: 24, textAlign: "center", lineHeight: 1.6 }}>
+                Select a frame or element<br />to edit its properties
+              </div>
+            )
           )}
           {rightPanelTab === "structure" && (
             <StructurePanel templateId={templateId} onSelectElement={(id: string) => {

@@ -13,7 +13,7 @@
 CREATE TABLE IF NOT EXISTS design_file_meta (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   template_id     TEXT NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
-  workspace_id    TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  workspace_id    TEXT,
   brand           TEXT,
   tags            TEXT[] DEFAULT '{}',
   theme           TEXT,
