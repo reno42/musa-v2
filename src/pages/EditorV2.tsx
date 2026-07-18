@@ -155,6 +155,25 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.matches("input, textarea, select, [contenteditable='true']") || target.isContentEditable;
 }
 
+/**
+ * Robust Shadow DOM contenteditable detection using composedPath().
+ * In Shadow DOM, `e.target` is retargeted to the shadow host during capture phase,
+ * and `document.activeElement` may be null or the shadow host between keystrokes.
+ * `composedPath()` preserves the full event path including elements inside the shadow tree.
+ */
+function isEditingInShadowDOM(e: KeyboardEvent): boolean {
+  const path = e.composedPath();
+  for (let i = 0; i < path.length; i++) {
+    const el = path[i];
+    if (el instanceof HTMLElement) {
+      if (el.isContentEditable || el.matches("input, textarea, select, [contenteditable='true']")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 const GEOMETRY_PROPERTIES = new Set([
   "position", "top", "right", "bottom", "left", "z-index",
   "width", "height", "min-width", "min-height", "max-width", "max-height",
@@ -1667,7 +1686,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         setShowFontPicker(false);
         return;
       }
-      if (isEditableTarget(e.target) || (document.activeElement as HTMLElement | null)?.isContentEditable) return;
+      if (isEditingInShadowDOM(e)) return;
       const mod = e.metaKey || e.ctrlKey;
       // Ctrl/⌘+Alt combos: wrap in frame + boolean operations (Figma-style)
       if (mod && e.altKey) {

@@ -2412,14 +2412,25 @@ function importantProperties(properties: Record<string, string>): Record<string,
 /**
  * Maps `body` and `html` selectors to `#__df_content` so that CSS written for
  * full-page documents works inside the Shadow DOM (which has no <body>).
- * Covers: `body { ... }`, `html { ... }`, `body.class`, `body > ...`, etc.
+ *
+ * Covers:
+ *   body { }                — line start / after brace
+ *   .foo, body { }          — after comma
+ *   } body { }              — after closing brace
+ *   @media (...) { body {} } — inside at-rules (via multiline ^)
+ *   body.class { }           — compound class
+ *   body > .x { }            — combinator
+ *   html body { }            — descendant (whitespace-preceded)
+ *   body.dark { }            — compound class with dot
  */
 function mapBodySelectors(css: string): string {
-  // Replace standalone `body` and `html` at the start of selectors,
- // or after commas. Preserves pseudo-classes, combinators, and descendants.
+  // Pass 1 — body / html at selector start (line start, after brace, after comma)
   return css
-    .replace(/(^|,\s*)html\b/g, "$1#__df_content")
-    .replace(/(^|,\s*)body\b/g, "$1#__df_content");
+    .replace(/([{}]\s*|,\s*|^\s*)html\b/gm, "$1#__df_content")
+    .replace(/([{}]\s*|,\s*|^\s*)body\b/gm, "$1#__df_content")
+    // Pass 2 — descendant selectors (whitespace-preceded, e.g. "div body", "html body")
+    .replace(/(\s)html\b/g, "$1#__df_content")
+    .replace(/(\s)body\b/g, "$1#__df_content");
 }
 
 function extractFontImports(css: string): string[] {

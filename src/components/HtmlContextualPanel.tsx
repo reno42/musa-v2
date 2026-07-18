@@ -423,6 +423,39 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
     setCustomCssText("");
   }, [css, element, onCssChange]);
 
+  // ── Background image upload (reuses /api/assets/upload → design-assets bucket) ──
+  const bgImageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBgImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !element) return;
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const result = await fetch(`/api/assets/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": "dev-key" },
+        body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64 }),
+      }).then(r => r.json());
+
+      if (!result.url) throw new Error("Upload succeeded but no URL returned");
+
+      const bgValue = `url(${result.url}) center/cover no-repeat`;
+      let updated = updateElementCssProperty(css, element.selector, "background-image", bgValue);
+      updated = updateElementCssProperty(updated, element.selector, "background-size", "cover");
+      onCssChange(updated);
+
+      e.target.value = ""; // reset for re-upload of same file
+    } catch (err: any) {
+      console.error("[BG_IMAGE] Upload failed:", err);
+    }
+  }, [css, element, onCssChange]);
+
   if (!element) {
     return (
       <div style={{ ...panelStyle, padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -581,6 +614,20 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
                 value={s["background-image"] || ""}
                 onChange={(v) => update(element.selector, "background-image", v)}
               />
+              {/* Background image upload */}
+              <PropRow label="Img">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  style={{ display: "none" }}
+                  onChange={handleBgImageUpload}
+                  ref={bgImageInputRef}
+                />
+                <button type="button" onClick={() => bgImageInputRef.current?.click()}
+                  style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)", color: "#c8b898", cursor: "pointer" }}>
+                  🖼 Image
+                </button>
+              </PropRow>
               {/* Blend Mode */}
               <SelectRow label="Blend" value={s["mix-blend-mode"] || "normal"} options={BLEND_MODES.map(b => ({ label: b, value: b }))} onChange={v => update(element.selector, "mix-blend-mode", v)} />
             </>
