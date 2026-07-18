@@ -330,6 +330,8 @@ export function DesignFrame({
     content.style.width = frame.width + "px";
     content.style.height = frame.height + "px";
     content.style.overflow = "hidden";
+    // Apply frame background as inline style — overrides CSS body background remapped to #__df_content
+    content.style.background = frame.background || "transparent";
     shadow.appendChild(content);
 
     // Slot — distributes light DOM chrome (background, border, label) into shadow tree
@@ -395,6 +397,17 @@ export function DesignFrame({
     const needsInteractive = contentMode || (activeTool && activeTool !== "select" && activeTool !== "hand");
     content.style.pointerEvents = needsInteractive ? "auto" : "";
   }, [contentMode, activeTool]);
+
+  // ── Sync frame.background to #__df_content inline style ──
+  // This overrides CSS body background remapped to #__df_content,
+  // allowing the properties panel to control the frame's visible background.
+  useEffect(() => {
+    const shadow = shadowRef.current;
+    if (!shadow) return;
+    const content = shadow.getElementById("__df_content");
+    if (!content) return;
+    content.style.background = frame.background || "transparent";
+  }, [frame.background]);
 
   // ── Code → DOM: HTML update ──
   useEffect(() => {

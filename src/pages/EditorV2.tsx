@@ -698,6 +698,41 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave]);
 
+  const handleFrameBackgroundImage = useCallback(async (file: File) => {
+    if (!selectedFrameId) return;
+    try {
+      // Read file as base64
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
+      });
+      // Upload to Supabase Storage via API
+      const res = await apiFetch<{ url: string }>("/api/assets/upload-file", {
+        method: "POST",
+        body: JSON.stringify({
+          name: file.name,
+          data: b64,
+          filename: file.name,
+          mimeType: file.type,
+          workspaceId: templateWorkspaceId || undefined,
+        }),
+      });
+      // Set frame background to cover image
+      const bgValue = `url(${res.url}) center/cover no-repeat`;
+      const updated = frames.map(f =>
+        f.id === selectedFrameId ? { ...f, background: bgValue } : f
+      );
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      addToast("Background image applied", "success");
+    } catch (err: any) {
+      console.error("[BG_IMAGE] Upload failed:", err);
+      addToast("Failed to upload background image", "error");
+    }
+  }, [selectedFrameId, frames, autoSave, templateWorkspaceId, addToast]);
+
   const deleteFrames = useCallback((frameIds: Set<string>): boolean => {
     if (frameIds.size === 0) return false;
     const updated = frames.filter(frame => !frameIds.has(frame.id));
@@ -3239,6 +3274,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     >
                       Clear
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => { const inp = document.getElementById("__frame_bg_image_input"); inp?.click(); }}
+                      style={{ padding: "3px 8px", fontSize: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#888", cursor: "pointer", fontFamily: "inherit" }}
+                      title="Upload background image"
+                    >
+                      🖼
+                    </button>
+                    <input
+                      id="__frame_bg_image_input"
+                      type="file"
+                      accept="image/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFrameBackgroundImage(file);
+                        e.target.value = "";
+                      }}
+                    />
                   </div>
                   {/* Quick color swatches */}
                   <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>

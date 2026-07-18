@@ -296,3 +296,28 @@ toolRoutes.post("/:id/tools/align-elements", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// POST /api/templates/:id/tools/set-frame-background — set frame background color/image
+toolRoutes.post("/:id/tools/set-frame-background", async (req, res) => {
+  try {
+    const tpl = store.getTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    if (tpl.engine !== "html") return res.status(400).json({ success: false, error: "Not an HTML template" });
+
+    const { frameId, background } = req.body;
+    if (!frameId) return res.status(400).json({ success: false, error: "frameId required" });
+    if (background === undefined) return res.status(400).json({ success: false, error: "background required" });
+
+    const frames = tpl.frames || [];
+    const frame: any = frames.find((f: any) => f.id === frameId);
+    if (!frame) return res.status(404).json({ success: false, error: "Frame not found" });
+
+    // Accept CSS background values: hex color, rgb(), linear-gradient(), url(), "transparent", etc.
+    frame.background = String(background);
+    tpl.metadata.updatedAt = new Date().toISOString();
+
+    res.json({ success: true, data: { frameId, background: frame.background } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
