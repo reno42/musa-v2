@@ -173,6 +173,7 @@ export function DesignFrame({
   const overlayRef = useRef<HTMLElement | null>(null);
   const selectedRef = useRef<Element | null>(null);
   const selectedSourceRef = useRef<Element | null>(null);
+  const multiSelectedElsRef = useRef<Element[]>([]);
   const cssRef = useRef(frame.css);
   const htmlRef = useRef(frame.html);
   // Track the last CSS we wrote to React so we can skip ONLY our own echo.
@@ -1691,12 +1692,13 @@ export function DesignFrame({
 
       // ── Select tool (default) ──
       if (!target || target === content) {
-        // Click on empty area: exit scope + finalize pen path
+        // Click on empty area: exit scope, finalize pen path, clear multi-select
         scopeRef.current = null;
         if (penPointsRef.current.length >= 2) {
           finalizePenPath(content);
         }
         selectedRef.current = null;
+        multiSelectedElsRef.current = [];
         clearOverlay();
         onElementSelect?.(null);
         return;
@@ -1726,30 +1728,158 @@ export function DesignFrame({
         dragTarget = parentSvg;
       }
 
-      selectElement(dragTarget, target);
+      // ── Shift+click: toggle multi-selection ──
+      if (me.shiftKey) {
+        const lid = dragTarget.getAttribute("data-layer-id");
+        if (!lid) return;
+        const idx = multiSelectedElsRef.current.findIndex(el => el.getAttribute("data-layer-id") === lid);
+        if (idx >= 0) {
+          multiSelectedElsRef.current.splice(idx, 1);
+        } else {
+          multiSelectedElsRef.current.push(dragTarget);
+        }
+        if (multiSelectedElsRef.current.length === 0) {
+          selectedRef.current = null;
+          clearOverlay();
+          onElementSelect?.(null);
+        } else {
+          const last = multiSelectedElsRef.current[multiSelectedElsRef.current.length - 1];
+          selectedRef.current = last;
+          selectedSourceRef.current = dragSource;
+          refreshOverlay(last);
+          emitElementSelection(last, dragSource);
+        }
+        return;
+      }
 
-      let computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(dragTarget);
+      // ── Click on a multi-selected element → start multi-drag ──
+      const isInMultiSelect = multiSelectedElsRef.current.length > 1
+        && multiSelectedElsRef.current.some(el => el === dragTarget);
 
-      // ── Drag to move (with snap/guides) ──
+      if (!isInMultiSelect) {
+        // Regular click: clear multi-select, select single element
+        multiSelectedElsRef.current = [];
+        selectElement(dragTarget, target);
+      }
+
+      // ═══════════════════════════════════════════════════
+      // DRAG SETUP (single or multi)
+      // ═══════════════════════════════════════════════════
       const SNAP = 8; // snap threshold in pixels
       const startDragX = me.clientX;
       const startDragY = me.clientY;
       const contentRect = content.getBoundingClientRect();
-      const initialRect = getVisualRect(dragTarget);
-      const origVisualX = (initialRect.left - contentRect.left) / z;
-      const origVisualY = (initialRect.top - contentRect.top) / z;
-      let origLeft = parseFloat(computed.left) || (dragTarget as HTMLElement).offsetLeft || 0;
-      let origTop = parseFloat(computed.top) || (dragTarget as HTMLElement).offsetTop || 0;
-      let baseTranslate = parseCssTranslate(computed.translate);
-      let preservesFlow = computed.position === "static";
+
+      // Build drag items — one for single drag, many for multi-drag.
+      // Each item caches its initial visual position and dimensions
+      // so getBoundingClientRect() is never called inside mousemove.
+      interface DragItem {
+        el: Element;
+        origVisualX: number;
+        origVisualY: number;
+        origLeft: number;
+        origTop: number;
+        baseTranslate: { x: number; y: number };
+        preservesFlow: boolean;
+        elW: number;
+        elH: number;
+      }
+      const buildDragItem = (el: Element): DragItem => {
+        const c = el.ownerDocument.defaultView!.getComputedStyle(el);
+        const rect = getVisualRect(el);
+        return {
+          el,
+          origVisualX: (rect.left - contentRect.left) / z,
+          origVisualY: (rect.top - contentRect.top) / z,
+          origLeft: parseFloat(c.left) || (el as HTMLElement).offsetLeft || 0,
+          origTop: parseFloat(c.top) || (el as HTMLElement).offsetTop || 0,
+          baseTranslate: parseCssTranslate(c.translate),
+          preservesFlow: c.position === "static",
+          elW: rect.width / z,
+          elH: rect.height / z,
+        };
+      };
+
+      const dragItems: DragItem[] = isInMultiSelect
+        ? multiSelectedElsRef.current.map(buildDragItem)
+        : [buildDragItem(dragTarget)];
+
       let duplicatedForDrag = false;
       let moved = false;
-      let guideLines: HTMLElement[] = [];
       let cachedGuides: ReturnType<typeof collectGuides> | null = null;
       let rafPending = false;
 
+      // ── Reusable snap guide elements (persistent, toggled via display) ──
+      let snapGuideContainer: HTMLElement | null = null;
+
+      const showSnapGuides = (snapX: number | null, snapY: number | null) => {
+        if (!snapGuideContainer) {
+          snapGuideContainer = document.createElement("div");
+          Object.assign(snapGuideContainer.style, {
+            position: "absolute", left: "0", top: "0",
+            width: "100%", height: "100%",
+            pointerEvents: "none", zIndex: "9997",
+          });
+          overlay.appendChild(snapGuideContainer);
+        }
+        snapGuideContainer.innerHTML = "";
+        if (snapX !== null) {
+          const lineX = document.createElement("div");
+          Object.assign(lineX.style, {
+            position: "absolute", left: `${snapX}px`, top: "0",
+            width: "1px", height: "100%",
+            background: "#EF4444", opacity: "0.5",
+          });
+          snapGuideContainer.appendChild(lineX);
+        }
+        if (snapY !== null) {
+          const lineY = document.createElement("div");
+          Object.assign(lineY.style, {
+            position: "absolute", left: "0", top: `${snapY}px`,
+            width: "100%", height: "1px",
+            background: "#EF4444", opacity: "0.5",
+          });
+          snapGuideContainer.appendChild(lineY);
+        }
+      };
+
+      const hideSnapGuides = () => {
+        if (snapGuideContainer) {
+          snapGuideContainer.innerHTML = "";
+        }
+      };
+
+      // ── Lightweight overlay update during drag ──
+      // Only repositions selection boxes; skips text bar, font controls,
+      // point edit overlay, and all the heavy DOM construction in refreshOverlay.
+      const updateDragOverlay = (items: DragItem[]) => {
+        const overlay = overlayRef.current;
+        const contentEl = shadowRef.current?.getElementById("__df_content");
+        if (!overlay || !contentEl) return;
+        overlay.innerHTML = "";
+        const zz = zoomRef.current || 1;
+        const cr = contentEl.getBoundingClientRect();
+        for (const item of items) {
+          const rect = getVisualRect(item.el);
+          const box = document.createElement("div");
+          Object.assign(box.style, {
+            position: "absolute",
+            left: `${(rect.left - cr.left) / zz}px`,
+            top: `${(rect.top - cr.top) / zz}px`,
+            width: `${rect.width / zz}px`,
+            height: `${rect.height / zz}px`,
+            border: `2px solid ${SEL}`,
+            pointerEvents: "none",
+            boxSizing: "border-box",
+          });
+          overlay.appendChild(box);
+        }
+      };
+
       const duplicateForDrag = () => {
-        const sourceLayerId = dragTarget.getAttribute("data-layer-id");
+        if (dragItems.length !== 1) return; // multi-drag doesn't support Alt-duplicate
+        const item = dragItems[0];
+        const sourceLayerId = item.el.getAttribute("data-layer-id");
         if (!sourceLayerId) return;
         const duplicated = duplicateLayerInHtml(content.innerHTML, sourceLayerId, createLayerId);
         if (!duplicated) return;
@@ -1771,23 +1901,21 @@ export function DesignFrame({
           ? content.querySelector(`[data-layer-id="${clonedSourceId}"]`)
           : clonedTarget.querySelector(sourceTag);
 
-        if (preservesFlow) {
+        if (item.preservesFlow) {
           clonedTarget.style.position = "absolute";
-          clonedTarget.style.left = `${Math.round(origVisualX)}px`;
-          clonedTarget.style.top = `${Math.round(origVisualY)}px`;
-          clonedTarget.style.width = `${Math.round(initialRect.width / z)}px`;
+          clonedTarget.style.left = `${Math.round(item.origVisualX)}px`;
+          clonedTarget.style.top = `${Math.round(item.origVisualY)}px`;
+          clonedTarget.style.width = `${Math.round(item.elW)}px`;
         } else {
-          clonedTarget.style.left = `${origLeft}px`;
-          clonedTarget.style.top = `${origTop}px`;
+          clonedTarget.style.left = `${item.origLeft}px`;
+          clonedTarget.style.top = `${item.origTop}px`;
         }
 
+        const newItem = buildDragItem(clonedTarget);
+        newItem.preservesFlow = false; // cloned element is explicitly absolute
+        dragItems[0] = newItem;
         dragTarget = clonedTarget;
         dragSource = clonedSource || clonedTarget;
-        computed = shadow.host.ownerDocument.defaultView!.getComputedStyle(clonedTarget);
-        origLeft = parseFloat(computed.left) || 0;
-        origTop = parseFloat(computed.top) || 0;
-        baseTranslate = parseCssTranslate(computed.translate);
-        preservesFlow = false;
         duplicatedForDrag = true;
         selectedRef.current = clonedTarget;
         selectedSourceRef.current = dragSource;
@@ -1819,93 +1947,69 @@ export function DesignFrame({
       }
 
       const onDragMove = (ev: MouseEvent) => {
-        const z = zoomRef.current || 1;
-        const dx = (ev.clientX - startDragX) / z;
-        const dy = (ev.clientY - startDragY) / z;
+        const zz = zoomRef.current || 1;
+        const dx = (ev.clientX - startDragX) / zz;
+        const dy = (ev.clientY - startDragY) / zz;
         if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
         if (!moved && (me.altKey || ev.altKey)) duplicateForDrag();
         moved = true;
 
         // Snap to guides (computed once — other elements are static)
-        if (!cachedGuides) cachedGuides = collectGuides(dragTarget);
+        if (!cachedGuides) cachedGuides = collectGuides(dragItems[0].el);
         const guides = cachedGuides;
-        let snapX = origVisualX + dx;
-        let snapY = origVisualY + dy;
-        const elRect = dragTarget.getBoundingClientRect();
-        const elW = elRect.width / z;
-        const elH = elRect.height / z;
 
-        let snappedX = false, snappedY = false;
-        for (const g of guides) {
-          // Snap left edge to guide left/right
-          if (!snappedX && Math.abs(snapX - g.x) < SNAP) { snapX = g.x; snappedX = true; }
-          if (!snappedX && Math.abs(snapX - (g.x + g.w)) < SNAP) { snapX = g.x + g.w; snappedX = true; }
-          // Snap right edge to guide left/right
-          if (!snappedX && Math.abs(snapX + elW - g.x) < SNAP) { snapX = g.x - elW; snappedX = true; }
-          if (!snappedX && Math.abs(snapX + elW - (g.x + g.w)) < SNAP) { snapX = g.x + g.w - elW; snappedX = true; }
-          // Snap center to guide center
-          if (!snappedX && Math.abs(snapX + elW / 2 - (g.x + g.w / 2)) < SNAP) { snapX = g.x + g.w / 2 - elW / 2; snappedX = true; }
-          // Snap top edge to guide top/bottom
-          if (!snappedY && Math.abs(snapY - g.y) < SNAP) { snapY = g.y; snappedY = true; }
-          if (!snappedY && Math.abs(snapY - (g.y + g.h)) < SNAP) { snapY = g.y + g.h; snappedY = true; }
-          // Snap bottom edge to guide top/bottom
-          if (!snappedY && Math.abs(snapY + elH - g.y) < SNAP) { snapY = g.y - elH; snappedY = true; }
-          if (!snappedY && Math.abs(snapY + elH - (g.y + g.h)) < SNAP) { snapY = g.y + g.h - elH; snappedY = true; }
-          // Snap middle to guide middle
-          if (!snappedY && Math.abs(snapY + elH / 2 - (g.y + g.h / 2)) < SNAP) { snapY = g.y + g.h / 2 - elH / 2; snappedY = true; }
-        }
+        for (const item of dragItems) {
+          let snapX = item.origVisualX + dx;
+          let snapY = item.origVisualY + dy;
 
-        // Show visual guide lines
-        guideLines.forEach(l => l.remove());
-        guideLines = [];
-        if (snappedX || snappedY) {
-          // Create guide indicator in overlay
-          const guideDiv = document.createElement("div");
-          Object.assign(guideDiv.style, {
-            position: "absolute",
-            left: "0", top: "0",
-            width: "100%", height: "100%",
-            pointerEvents: "none",
-            zIndex: "9997",
-          });
-          overlay.appendChild(guideDiv);
-          guideLines.push(guideDiv);
-
-          if (snappedX) {
-            const gLine = document.createElement("div");
-            Object.assign(gLine.style, {
-              position: "absolute",
-              left: `${snapX}px`, top: "0",
-              width: "1px", height: "100%",
-              background: "#EF4444",
-              opacity: "0.5",
-            });
-            guideDiv.appendChild(gLine);
+          let snappedX = false, snappedY = false;
+          for (const g of guides) {
+            // Snap left edge to guide left/right
+            if (!snappedX && Math.abs(snapX - g.x) < SNAP) { snapX = g.x; snappedX = true; }
+            if (!snappedX && Math.abs(snapX - (g.x + g.w)) < SNAP) { snapX = g.x + g.w; snappedX = true; }
+            // Snap right edge to guide left/right
+            if (!snappedX && Math.abs(snapX + item.elW - g.x) < SNAP) { snapX = g.x - item.elW; snappedX = true; }
+            if (!snappedX && Math.abs(snapX + item.elW - (g.x + g.w)) < SNAP) { snapX = g.x + g.w - item.elW; snappedX = true; }
+            // Snap center to guide center
+            if (!snappedX && Math.abs(snapX + item.elW / 2 - (g.x + g.w / 2)) < SNAP) { snapX = g.x + g.w / 2 - item.elW / 2; snappedX = true; }
+            // Snap top edge to guide top/bottom
+            if (!snappedY && Math.abs(snapY - g.y) < SNAP) { snapY = g.y; snappedY = true; }
+            if (!snappedY && Math.abs(snapY - (g.y + g.h)) < SNAP) { snapY = g.y + g.h; snappedY = true; }
+            // Snap bottom edge to guide top/bottom
+            if (!snappedY && Math.abs(snapY + item.elH - g.y) < SNAP) { snapY = g.y - item.elH; snappedY = true; }
+            if (!snappedY && Math.abs(snapY + item.elH - (g.y + g.h)) < SNAP) { snapY = g.y + g.h - item.elH; snappedY = true; }
+            // Snap middle to guide middle
+            if (!snappedY && Math.abs(snapY + item.elH / 2 - (g.y + g.h / 2)) < SNAP) { snapY = g.y + g.h / 2 - item.elH / 2; snappedY = true; }
           }
-          if (snappedY) {
-            const gLine = document.createElement("div");
-            Object.assign(gLine.style, {
-              position: "absolute",
-              left: "0", top: `${snapY}px`,
-              width: "100%", height: "1px",
-              background: "#EF4444",
-              opacity: "0.5",
-            });
-            guideDiv.appendChild(gLine);
+
+          // Show snap guides for the primary item only
+          if (item === dragItems[0]) {
+            if (snappedX || snappedY) {
+              showSnapGuides(snappedX ? snapX : null, snappedY ? snapY : null);
+            } else {
+              hideSnapGuides();
+            }
+          }
+
+          // ── Unified GPU-only positioning: use transform:translate() for ALL elements ──
+          // No more branching on preservesFlow with left/top (which triggers layout).
+          // The delta is computed relative to the element's initial visual position,
+          // preserving any existing translate on flow elements.
+          const deltaX = snapX - item.origVisualX;
+          const deltaY = snapY - item.origVisualY;
+          const targetStyle = (item.el as HTMLElement).style;
+          if (item.preservesFlow) {
+            targetStyle.translate = `${Math.round(item.baseTranslate.x + deltaX)}px ${Math.round(item.baseTranslate.y + deltaY)}px`;
+          } else {
+            targetStyle.translate = `${Math.round(deltaX)}px ${Math.round(deltaY)}px`;
           }
         }
 
-        const targetStyle = (dragTarget as HTMLElement).style;
-        if (preservesFlow) {
-          targetStyle.translate = `${Math.round(baseTranslate.x + snapX - origVisualX)}px ${Math.round(baseTranslate.y + snapY - origVisualY)}px`;
-        } else {
-          targetStyle.left = `${Math.round(origLeft + snapX - origVisualX)}px`;
-          targetStyle.top = `${Math.round(origTop + snapY - origVisualY)}px`;
-        }
+        // Lightweight overlay update — only repositions selection boxes (no text bar, no point edit)
         if (!rafPending) {
           rafPending = true;
           requestAnimationFrame(() => {
-            refreshOverlay(dragTarget);
+            updateDragOverlay(dragItems);
             rafPending = false;
           });
         }
@@ -1914,15 +2018,40 @@ export function DesignFrame({
       const onDragUp = () => {
         document.removeEventListener("mousemove", onDragMove);
         document.removeEventListener("mouseup", onDragUp);
+        hideSnapGuides();
         if (!moved) return;
-        const sel = getSelector(dragTarget);
-        const dt = dragTarget as HTMLElement;
-        const properties: Record<string, string> = preservesFlow
-          ? { translate: dt.style.translate }
-          : { left: dt.style.left, top: dt.style.top };
-        if (duplicatedForDrag) properties.position = "absolute";
-        const updated = updateCssRule(cssRef.current, sel, importantProperties(properties));
-        emitFrameChange(updated, duplicatedForDrag ? content.innerHTML : undefined);
+
+        // Commit: translate transform deltas back to CSS left/top for all dragged items
+        let updatedCss = cssRef.current;
+        let updatedHtml: string | undefined;
+
+        for (const item of dragItems) {
+          const sel = getSelector(item.el);
+          const dt = item.el as HTMLElement;
+          const tx = dt.style.translate;
+          // Reset inline transform so it doesn't persist on the DOM element
+          dt.style.translate = "";
+
+          const properties: Record<string, string> = {};
+          if (item.preservesFlow) {
+            properties.translate = tx;
+          } else {
+            // Convert transform delta back to explicit left/top for CSS persistence
+            const parsed = parseCssTranslate(tx);
+            properties.left = `${Math.round(item.origLeft + parsed.x)}px`;
+            properties.top = `${Math.round(item.origTop + parsed.y)}px`;
+          }
+          if (duplicatedForDrag) properties.position = "absolute";
+          updatedCss = updateCssRule(updatedCss, sel, importantProperties(properties));
+        }
+
+        if (duplicatedForDrag) updatedHtml = content.innerHTML;
+        emitFrameChange(updatedCss, updatedHtml);
+
+        // Restore full overlay with text bar / point edit after commit
+        if (dragItems.length > 0) {
+          refreshOverlay(dragItems[dragItems.length - 1].el);
+        }
       };
 
       document.addEventListener("mousemove", onDragMove);
