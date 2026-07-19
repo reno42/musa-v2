@@ -1,8 +1,10 @@
 -- ═══════════════════════════════════════════════════════════════
 -- Futuraria Design — Complete Database Schema
 -- Run in Supabase SQL Editor or via Management API.
--- Idempotent: safe to re-run (all CREATE IF NOT EXISTS).
+-- Idempotent: safe to re-run (all CREATE IF NOT EXISTS,
+-- ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE).
 -- 7 tables + 4 indexes + 1 storage bucket + 5 RLS policies
+-- + slug columns + slugify() function + 2 unique indexes (v7)
 -- ═══════════════════════════════════════════════════════════════
 
 -- ============================================================
@@ -187,3 +189,86 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
+
+-- ============================================================
+-- v7: URL slugs for workspaces + templates
+-- ============================================================
+
+-- Slug columns (idempotent)
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS slug TEXT;
+ALTER TABLE templates   ADD COLUMN IF NOT EXISTS slug TEXT;
+
+-- slugify() function: NFD normalize → strip diacritics
+-- (U+0300–U+036F) → em-dash→hyphen → lowercase →
+-- collapse hyphens → reserved-word guard
+CREATE OR REPLACE FUNCTION slugify(input TEXT) RETURNS TEXT AS $$
+DECLARE
+  result    TEXT;
+  reserved  TEXT[] := ARRAY[
+    'api','mcp','w','dashboard','assets','covers',
+    'exports','storage','settings','graph','login',
+    'admin','health','trash','landing','editor'
+  ];
+BEGIN
+  result := regexp_replace(normalize(input, 'NFD'), '[\u0300-\u036f]', '', 'g');
+  result := regexp_replace(result, '[–—―]', '-', 'g');
+  result := lower(result);
+  result := regexp_replace(result, '[^a-z0-9\-]', '-', 'g');
+  result := regexp_replace(result, '-+', '-', 'g');
+  result := trim('-' FROM result);
+  IF length(result) = 0 THEN result := 'untitled'; END IF;
+  IF result = ANY(reserved) THEN result := result || '-1'; END IF;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Backfill: workspaces (idempotent — only NULL slugs)
+UPDATE workspaces SET slug = slugify(name) WHERE slug IS NULL;
+
+-- Backfill: templates (idempotent — only NULL slugs)
+UPDATE templates SET slug = slugify(name) WHERE slug IS NULL;
+
+-- Dedup: templates within each workspace (ROW_NUMBER suffix)
+DO $$
+DECLARE
+  rec RECORD;
+BEGIN
+  FOR rec IN
+    SELECT id, slug, rn FROM (
+      SELECT id, slug,
+        ROW_NUMBER() OVER (
+          PARTITION BY workspace_id, slug
+          ORDER BY created_at, id
+        ) AS rn
+      FROM templates WHERE slug IS NOT NULL
+    ) sub WHERE sub.rn > 1
+  LOOP
+    UPDATE templates SET slug = rec.slug || '-' || rec.rn
+    WHERE id = rec.id;
+  END LOOP;
+END $$;
+
+-- Dedup: workspaces (global scope, ROW_NUMBER suffix)
+DO $$
+DECLARE
+  rec RECORD;
+BEGIN
+  FOR rec IN
+    SELECT id, slug, rn FROM (
+      SELECT id, slug,
+        ROW_NUMBER() OVER (
+          PARTITION BY slug ORDER BY created_at, id
+        ) AS rn
+      FROM workspaces WHERE slug IS NOT NULL
+    ) sub WHERE sub.rn > 1
+  LOOP
+    UPDATE workspaces SET slug = rec.slug || '-' || rec.rn
+    WHERE id = rec.id;
+  END LOOP;
+END $$;
+
+-- Unique indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_slug
+  ON workspaces(slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_slug_ws
+  ON templates(workspace_id, slug);

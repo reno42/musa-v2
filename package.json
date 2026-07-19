@@ -10,7 +10,8 @@
     "test:regression": "node --experimental-strip-types --test QA/css-mutations.test.mjs QA/bezier-math.test.mjs QA/shape-paths.test.mjs QA/deck-generator.test.mjs",
     "test:editor": "node QA/editor-interactions/run.mjs",
     "preview": "vite preview",
-    "build:functions": "cd api && npm install && npx tsc"
+    "build:functions": "cd api && npm install && npx tsc",
+    "prebuild:functions": "node scripts/check-migrations.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
