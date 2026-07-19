@@ -4,9 +4,9 @@
 --
 -- What this does:
 --   1. Adds `slug` column to workspaces & templates
---   2. Creates a slugify() function: NFD normalize → strip
---      diacritics → em-dash→hyphen → lowercase → collapse
---      hyphens → reserved-word guard
+--   2. Creates a slugify() function: unaccent → em-dash→hyphen →
+--      lowercase → collapse hyphens → reserved-word guard
+--      (uses unaccent extension — compatible PG 12+)
 --   3. Backfills slugs with per-workspace dedup (suffix -2,-3)
 --   4. Adds unique indexes
 --
@@ -35,8 +35,8 @@ DECLARE
     'admin','health','trash','landing','editor'
   ];
 BEGIN
-  -- NFD normalize + remove combining diacritical marks
-  result := regexp_replace(normalize(input, 'NFD'), '[\u0300-\u036f]', '', 'g');
+  -- Remove accents/diacritics via unaccent (compatible PG 12+)
+  result := unaccent(input);
   -- Em dash, en dash, horizontal bar → plain hyphen
   result := regexp_replace(result, '[–—―]', '-', 'g');
   -- Lowercase

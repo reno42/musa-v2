@@ -198,8 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS slug TEXT;
 ALTER TABLE templates   ADD COLUMN IF NOT EXISTS slug TEXT;
 
--- slugify() function: NFD normalize → strip diacritics
--- (U+0300–U+036F) → em-dash→hyphen → lowercase →
+-- slugify() function: unaccent → em-dash→hyphen → lowercase →
 -- collapse hyphens → reserved-word guard
 CREATE OR REPLACE FUNCTION slugify(input TEXT) RETURNS TEXT AS $$
 DECLARE
@@ -210,7 +209,7 @@ DECLARE
     'admin','health','trash','landing','editor'
   ];
 BEGIN
-  result := regexp_replace(normalize(input, 'NFD'), '[\u0300-\u036f]', '', 'g');
+  result := unaccent(input);
   result := regexp_replace(result, '[–—―]', '-', 'g');
   result := lower(result);
   result := regexp_replace(result, '[^a-z0-9\-]', '-', 'g');
