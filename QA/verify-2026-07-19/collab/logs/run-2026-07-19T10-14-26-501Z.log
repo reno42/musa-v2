@@ -1,0 +1,13 @@
+[2026-07-19T10:14:26.503Z] ═══ ÍTEM 2b: LAST-WRITE-WINS con interceptación de PUT ═══
+[2026-07-19T10:14:27.495Z] reset hecho (frame1 left:40, frame2 AI-BASE)
+[2026-07-19T10:14:32.186Z] SCREENSHOT 01-item2b-loaded.png
+[2026-07-19T10:14:32.187Z] (a) drag humano #1 (+60px)
+[2026-07-19T10:14:34.652Z] PUT interceptado #1 — frames: [{"id":"vc_frame1","htmlHasProbe2":false,"htmlHasAiBase":false,"htmlLeft40":true,"cssSnippet":"\n\n[data-layer-id=\"hum_card\"] {\n  left: 100px !important;\n  top: 40px !important;\n}"},{"id":"vc_frame2","htmlHasProbe2":false,"htmlHasAiBase":true,"htmlLeft40":true,"cssSnippet":""},{"id":"vc_frame3","htmlHasProbe2":false,"htmlHasAiBase":false,"htmlLeft40":true,"cssSnippet":""}]
+[2026-07-19T10:14:35.353Z] PUT → HTTP 200
+[2026-07-19T10:14:37.658Z] (b) MCP update_html_frame frame2 → MCP-PROBE-2
+[2026-07-19T10:14:38.682Z] server frame2 tiene PROBE-2: true
+[2026-07-19T10:14:40.685Z] (c) drag humano #2 (+60px)
+[2026-07-19T10:14:43.064Z] PUT interceptado #2 — frames: [{"id":"vc_frame1","htmlHasProbe2":false,"htmlHasAiBase":false,"htmlLeft40":true,"cssSnippet":"\n\n[data-layer-id=\"hum_card\"] {\n  left: 160px !important;\n  top: 40px !important;\n}"},{"id":"vc_frame2","htmlHasProbe2":false,"htmlHasAiBase":true,"htmlLeft40":true,"cssSnippet":""},{"id":"vc_frame3","htmlHasProbe2":false,"htmlHasAiBase":false,"htmlLeft40":true,"cssSnippet":""}]
+[2026-07-19T10:14:43.436Z] PUT → HTTP 200
+[2026-07-19T10:14:46.870Z] RESULTADO ÍTEM 2b: {"putsCapturados":2,"algunPutConProbe2":false,"putsConFrame2StaleAiBase":2,"serverF1HtmlLeft40AlFinal":true,"serverF1CssTienePosicion":true,"serverF2TieneProbe2AlFinal":false,"serverF2H1AlFinal":"AI-BASE"}
+[2026-07-19T10:14:47.070Z] SCREENSHOT 02-item2b-final.png

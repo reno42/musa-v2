@@ -1,0 +1,15 @@
+[2026-07-19T10:08:47.725Z] ═══ ÍTEM 2: LAST-WRITE-WINS ═══
+[2026-07-19T10:08:47.726Z] reset de frames a estado conocido (hum_card left:40, frame2 AI-BASE)
+[2026-07-19T10:08:52.445Z] SCREENSHOT 01-item2-loaded.png
+[2026-07-19T10:08:52.445Z] (a) edición humana #1: drag hum_card +60,+40
+[2026-07-19T10:08:52.456Z] drag #1: {"ok":true}
+[2026-07-19T10:08:56.999Z] server frame1 hum_card left tras autosave #1: 40 (esperado ≈100)
+[2026-07-19T10:08:57.000Z] (b) MCP update_html_frame frame2 → MCP-PROBE-2
+[2026-07-19T10:08:57.638Z] server frame2 contiene MCP-PROBE-2 tras escritura MCP: true
+[2026-07-19T10:08:59.648Z] (c) edición humana #2: drag hum_card +60,0
+[2026-07-19T10:08:59.654Z] drag #2: {"ok":true}
+[2026-07-19T10:08:59.827Z] SCREENSHOT 02-item2-after-human-edit2.png
+[2026-07-19T10:09:04.320Z] server frame1 hum_card left tras autosave #2: 40 (esperado ≈160)
+[2026-07-19T10:09:04.629Z] (d) server frame2 contiene MCP-PROBE-2 al final: false
+[2026-07-19T10:09:04.720Z] SCREENSHOT 03-item2-final-browser-view.png
+[2026-07-19T10:09:04.721Z] RESULTADO ÍTEM 2: {"humanEdit1Persistio":false,"probe2ExistiaTrasMcp":true,"humanEdit2Persistio":false,"probe2Sobrevivio":false,"afirmacion":"MCP-PROBE-2 desaparece: el PUT del editor pisa el trabajo de la IA","veredicto":"REFUTADO (ver detalle)"}

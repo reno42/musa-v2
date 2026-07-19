@@ -1,0 +1,85 @@
+[2026-07-19T10:08:47.454Z] template creado verify-a2-debounce → tpl_49ba29b1-2e2
+[2026-07-19T10:08:47.763Z] server baseline: box1" data-layer-name="Box1" style="position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;"></div>
+[2026-07-19T10:08:49.663Z] screenshot shots/01-01-editor-cargado.png
+[2026-07-19T10:08:49.666Z] rect inicial {"layerId":"box1","name":"Box1","kind":"container","x":100,"y":100,"width":200,"height":200,"outsideFrame":false,"clippedText":false,"overlapsText":[]}
+[2026-07-19T10:08:49.878Z] [control] drag hecho en 212ms, rect ahora x=249
+[2026-07-19T10:08:50.100Z] screenshot shots/01-02-control-edit-hecho.png
+[2026-07-19T10:08:53.314Z] [control] PUTs tras edición: 1 delayMs: 2021 status: [200]
+[2026-07-19T10:08:53.859Z] [control] server html: box1" data-layer-name="Box1" style="position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;" data-layer-kind="container"></div>
+[2026-07-19T10:08:53.939Z] screenshot shots/01-03-control-put-disparado.png
+[2026-07-19T10:08:53.948Z] [test] segundo drag en 5ms, rect ahora x=400
+[2026-07-19T10:08:54.040Z] screenshot shots/01-04-test-edit-antes-de-cerrar.png
+[2026-07-19T10:08:54.667Z] [test] pestaña cerrada 705ms tras la edición (<2000ms)
+[2026-07-19T10:08:58.185Z] [test] PUTs tras 2ª edición: 0 (afirmación: 0)
+[2026-07-19T10:08:58.678Z] [test] server html tras cierre: box1" data-layer-name="Box1" style="position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;" data-layer-kind="container"></div>
+[2026-07-19T10:09:00.288Z] [mismo perfil] rect al reabrir x=400 (localStorage resiliente si ~400)
+[2026-07-19T10:09:00.359Z] screenshot shots/01-05-reapertura-mismo-perfil.png
+[2026-07-19T10:09:02.810Z] [perfil limpio] rect al abrir x=249 (pérdida si 250, sobrevive si 400)
+[2026-07-19T10:09:02.871Z] screenshot shots/01-06-apertura-perfil-limpio.png
+[2026-07-19T10:09:03.771Z] cleanup verify-a2-debounce {"soft":200,"purge":200}
+
+===== RESULT ITEM-1 =====
+{
+  "item": "1-DEBOUNCE-LOSS",
+  "phases": {
+    "control": {
+      "editAt": "2026-07-19T10:08:49.666Z",
+      "rectAfterDrag": 249,
+      "putFired": 1,
+      "putStatus": [
+        200
+      ],
+      "putDelayMs": 2021
+    },
+    "fastClose": {
+      "editAt": "2026-07-19T10:08:53.944Z",
+      "closeAt": "2026-07-19T10:08:54.649Z",
+      "msEditToClose": 705,
+      "rectAfterDrag": 400,
+      "putFiredAfterEdit": 0,
+      "lsCharsBeforeClose": 929,
+      "serverHtmlAfterClose": "box1\" data-layer-name=\"Box1\" style=\"position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;\" data-layer-kind=\"container\"></div>"
+    },
+    "sameProfile": {
+      "rectOnReopen": 400,
+      "lsChars": 929,
+      "lsTemplates": [
+        "tpl_49ba29b1-2e2"
+      ]
+    },
+    "cleanProfile": {
+      "rectOnOpen": 249,
+      "lsChars": 2,
+      "lsTemplates": []
+    }
+  },
+  "templateId": "tpl_49ba29b1-2e2",
+  "consoleErrs": [],
+  "netPutTimeline": [
+    {
+      "tag": "A",
+      "t": "2026-07-19T10:08:51.687Z",
+      "phase": "req",
+      "bytes": 845,
+      "bodySnippet": "{\"frames\":[{\"id\":\"frame_a2_deb\",\"name\":\"Deb\",\"x\":0,\"y\":0,\"width\":1080,\"height\":1080,\"html\":\"<div data-layer-id=\\\"box1\\\" data-layer-name=\\\"Box1\\\" style=\\\"position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;\\\" data-layer-kind=\\\"container\\\"></div>\",\"css"
+    },
+    {
+      "tag": "A",
+      "t": "2026-07-19T10:08:53.248Z",
+      "phase": "res",
+      "status": 200
+    }
+  ],
+  "cleanedUp": {
+    "soft": 200,
+    "purge": 200
+  },
+  "verdict": {
+    "controlPutFired": true,
+    "controlPersistedServerSide": true,
+    "fastClosePutFired": false,
+    "survivedSameProfile": true,
+    "lostInCleanProfile": true,
+    "confirmsClaim": true
+  }
+}

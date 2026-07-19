@@ -1,0 +1,33 @@
+{
+  "startedAt": "2026-07-19T10:07:54.877Z",
+  "now": "2026-07-19T10:12:47.393Z",
+  "cold_delete": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_9c1f895d-a79\"\n}"
+  },
+  "cold_delete_conclusion": "REFUTADO-en-esta-corrida: delete devolvio 200 (no prueba que nunca pase)",
+  "delete_noopId": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_91514170-0a1\"\n}"
+  },
+  "delete_verId": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_e05e143b-6e6\"\n}"
+  },
+  "list_verify_b_after_deletes": [
+    {
+      "id": "tpl_8708807b-d8b",
+      "name": "verify-b-payload3"
+    }
+  ],
+  "sweep_delete_tpl_8708807b-d8b": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_8708807b-d8b\"\n}"
+  },
+  "final_remaining": [],
+  "final_conclusion": "LIMPIEZA COMPLETA"
+}

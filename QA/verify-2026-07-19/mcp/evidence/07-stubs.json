@@ -1,0 +1,50 @@
+{
+  "enhance_template": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"success\": true,\n  \"templateId\": \"tpl_91514170-0a1\",\n  \"instruction\": \"Hazlo mas moderno\"\n}"
+  },
+  "preview_font": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"created\": true,\n  \"fontFamily\": \"Inter\",\n  \"pangram\": \"The quick brown fox jumps over the lazy dog\",\n  \"note\": \"Font preview loaded. Use create_html_frame + add_element to place text with this font.\"\n}"
+  },
+  "optimize_image": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"optimizedUrl\": \"https://example.com/pic.png\",\n  \"originalBytes\": 0,\n  \"optimizedBytes\": 0,\n  \"reduction\": \"0%\",\n  \"_note\": \"Optimization requires Sharp or external service\"\n}"
+  },
+  "search_stock_image": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"results\": []\n}"
+  },
+  "ai_generate_image": {
+    "httpStatus": 200,
+    "rpcError": {
+      "code": -32000,
+      "message": "OPENROUTER_API_KEY not configured."
+    },
+    "responseTruncated": "{\"jsonrpc\":\"2.0\",\"id\":5,\"error\":{\"code\":-32000,\"message\":\"OPENROUTER_API_KEY not configured.\"}}"
+  },
+  "export_pdf": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"exported\": 2,\n  \"orientation\": \"landscape\",\n  \"pageFormat\": \"screen\",\n  \"pages\": [\n    {\n      \"frameName\": \"SinID-1\",\n      \"url\": \"https://futuraria.app/render/tpl_91514170-0a1/undefined?format=pdf&orientation=landscape&format=screen\",\n      \"width\": 800,\n      \"height\": 600\n    },\n    {\n      \"frameName\": \"SinID-1\",\n      \"url\": \"https://futuraria.app/render/tpl_91514170-0a1/undefined?format=pdf&orientation=landscape&format=screen\",\n      \"width\": 800,\n      \"height\": 600\n    }\n  ],\n  \"note\": \"PDF render URLs ready for the render pipeline.\"\n}"
+  },
+  "get_font_details": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"family\": \"Zxyq Notarealfont\",\n  \"category\": \"sans-serif\",\n  \"variants\": [\n    \"400\",\n    \"700\"\n  ],\n  \"subsets\": [\n    \"latin\"\n  ],\n  \"previewUrl\": \"https://fonts.google.com/specimen/Zxyq+Notarealfont\",\n  \"cssImport\": \"https://fonts.googleapis.com/css2?family=Zxyq+Notarealfont:wght@400;700&display=swap\"\n}"
+  },
+  "subscribe_template": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"channelId\": \"template:tpl_91514170-0a1:changes\",\n  \"endpoint\": \"Supabase Realtime\"\n}"
+  },
+  "broadcast_section_change": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "responseTruncated": "{\n  \"broadcast\": true,\n  \"channelId\": \"template:tpl_91514170-0a1:changes\",\n  \"sectionId\": \"sec1\"\n}"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "create_api_key": {
+    "httpStatus": 200,
+    "rpcError": {
+      "code": -32000,
+      "message": "crypto.createHash is not a function"
+    },
+    "rawBodyTruncated": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"crypto.createHash is not a function\"}}"
+  },
+  "conclusion": "VERIFICADO: create_api_key falla con crypto.createHash is not a function"
+}

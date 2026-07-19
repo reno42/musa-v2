@@ -1,0 +1,142 @@
+[2026-07-19T10:16:06.171Z] template creado verify-a2-t1 → tpl_76a7814e-d88
+[2026-07-19T10:16:07.166Z] template creado verify-a2-t2 → tpl_07349bb0-777
+[2026-07-19T10:16:09.142Z] screenshot shots/02-01-t1-cargado.png
+[2026-07-19T10:16:09.142Z] t1 editor listo {"t1":"tpl_76a7814e-d88"}
+[2026-07-19T10:16:09.199Z] edición en t1 (drag +120) {"rectX":220}
+[2026-07-19T10:16:09.538Z] click Back to Dashboard {"msTrasEdicion":396}
+[2026-07-19T10:16:10.791Z] dashboard visible con card de t2 {}
+[2026-07-19T10:16:11.428Z] screenshot shots/02-02-dashboard-con-cards.png
+[2026-07-19T10:16:11.435Z] click card t2 {"msTrasEdicion":2293}
+[2026-07-19T10:16:12.094Z] t2 editor listo {"msTrasEdicion":2951}
+[2026-07-19T10:16:12.194Z] screenshot shots/02-03-t2-recien-abierto.png
+[2026-07-19T10:16:16.801Z] fin ventana de observación {"badgeSightings":0}
+[2026-07-19T10:16:16.883Z] screenshot shots/02-04-t2-tras-ventana.png
+[2026-07-19T10:16:16.886Z] frames visibles en t2 {"framesInT2":["frame_a2_t2"]}
+[2026-07-19T10:16:16.886Z] PUTs tras la edición {"aT1":0,"aT2":0}
+[2026-07-19T10:16:16.888Z] localStorage {"chars":927,"templates":["tpl_76a7814e-d88"]}
+[2026-07-19T10:16:19.264Z] t1 en perfil limpio: rect {"rectX":100,"esperadoSiPerdido":100,"esperadoSiGuardado":220}
+[2026-07-19T10:16:19.344Z] screenshot shots/02-05-t1-en-perfil-limpio.png
+[2026-07-19T10:16:20.706Z] cleanup t1 {"soft":200,"purge":200}
+[2026-07-19T10:16:21.289Z] cleanup t2 {"soft":200,"purge":200}
+
+===== RESULT ITEM-2 =====
+{
+  "item": "2-TEMPLATE-SWITCH",
+  "timeline": [
+    {
+      "t": "2026-07-19T10:16:09.142Z",
+      "ms": 1784456169142,
+      "label": "t1 editor listo",
+      "t1": "tpl_76a7814e-d88"
+    },
+    {
+      "t": "2026-07-19T10:16:09.199Z",
+      "ms": 1784456169199,
+      "label": "edición en t1 (drag +120)",
+      "rectX": 220
+    },
+    {
+      "t": "2026-07-19T10:16:09.538Z",
+      "ms": 1784456169538,
+      "label": "click Back to Dashboard",
+      "msTrasEdicion": 396
+    },
+    {
+      "t": "2026-07-19T10:16:10.791Z",
+      "ms": 1784456170791,
+      "label": "dashboard visible con card de t2"
+    },
+    {
+      "t": "2026-07-19T10:16:11.435Z",
+      "ms": 1784456171435,
+      "label": "click card t2",
+      "msTrasEdicion": 2293
+    },
+    {
+      "t": "2026-07-19T10:16:12.094Z",
+      "ms": 1784456172094,
+      "label": "t2 editor listo",
+      "msTrasEdicion": 2951
+    },
+    {
+      "t": "2026-07-19T10:16:16.801Z",
+      "ms": 1784456176801,
+      "label": "fin ventana de observación",
+      "badgeSightings": 0
+    },
+    {
+      "t": "2026-07-19T10:16:16.885Z",
+      "ms": 1784456176886,
+      "label": "frames visibles en t2",
+      "framesInT2": [
+        "frame_a2_t2"
+      ]
+    },
+    {
+      "t": "2026-07-19T10:16:16.886Z",
+      "ms": 1784456176886,
+      "label": "PUTs tras la edición",
+      "aT1": 0,
+      "aT2": 0
+    },
+    {
+      "t": "2026-07-19T10:16:16.888Z",
+      "ms": 1784456176888,
+      "label": "localStorage",
+      "chars": 927,
+      "templates": [
+        "tpl_76a7814e-d88"
+      ]
+    },
+    {
+      "t": "2026-07-19T10:16:19.264Z",
+      "ms": 1784456179264,
+      "label": "t1 en perfil limpio: rect",
+      "rectX": 100,
+      "esperadoSiPerdido": 100,
+      "esperadoSiGuardado": 220
+    }
+  ],
+  "ids": {
+    "t1": "tpl_76a7814e-d88",
+    "t2": "tpl_07349bb0-777"
+  },
+  "network": {
+    "putsTrasEdicion": [],
+    "putT1": 0,
+    "putT2": 0
+  },
+  "localStorage": {
+    "totalChars": 952,
+    "localTemplatesChars": 927,
+    "templateIds": [
+      "tpl_76a7814e-d88"
+    ],
+    "perTemplateChars": {
+      "tpl_76a7814e-d88": 906
+    }
+  },
+  "cleanProfileT1": {
+    "rectX": 100
+  },
+  "serverT1HtmlSnippet": "boxT1\" data-layer-name=\"BoxT1\" style=\"position:absolute;left:100px;top:100px;width:200px;height:200px;background:#C8B898;border-radius:12px;\"></div>",
+  "observations": {
+    "pendingPutOfT1Fired": false,
+    "putToT2WithT1Content": false,
+    "savingBadgeSightingsInT2": [],
+    "framesInT2": [
+      "frame_a2_t2"
+    ],
+    "t1EditSurvivesLocalStorage": true,
+    "t1EditInServerCleanProfile": 100
+  },
+  "cleanedUp": true,
+  "verdict": {
+    "pendingPutCancelledOnSwitch": true,
+    "noCrossContaminationToT2": true,
+    "noSavingFlickerInT2": true,
+    "t2ShowsOwnFrames": true,
+    "t1EditLostOnServer": true,
+    "t1EditKeptLocally": true
+  }
+}

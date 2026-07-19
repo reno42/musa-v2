@@ -1,0 +1,34 @@
+{
+  "create": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"id\": \"tpl_e05e143b-6e6\",\n  \"workspaceId\": \"ws_c804a39e-f0a\",\n  \"name\": \"verify-b-ver\",\n  \"width\": 1080,\n  \"height\": 1080,\n  \"engine\": \"html\",\n  \"canvas\": null,\n  \"frames\": [\n    {\n      \"id\": \"frame_ceeffdef-edb\",\n      \"name\": \"verify-b-ver\",\n      \"x\": 0,\n      \"y\": 0,\n      \"width\": 1080,\n      \"height\": 1080,\n      \"html\": \"<div>V1</div>\",\n      \"css\": \".v{color:#111}\",\n      \"background\": \"#ffffff\"\n    }\n  ],\n  \"styles\": [],\n  \"comments\": [],\n  \"versions\": [],\n  \"variables\": {\n    \"collections\": [],\n    \"variables\": [],\n    \"bindings\": {}\n  },\n  \"components\": [],\n  \"metadata\": {\n    …[TRUNCADO 790 chars de 1390 totales]"
+  },
+  "update_v2": {
+    "httpStatus": 200,
+    "rpcError": null
+  },
+  "update_v3": {
+    "httpStatus": 200,
+    "rpcError": null
+  },
+  "list_versions": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"templateId\": \"tpl_e05e143b-6e6\",\n  \"versions\": [\n    {\n      \"id\": \"snap_f9bff3f4-0b6\",\n      \"version\": 1,\n      \"timestamp\": \"2026-07-19T10:09:31.802Z\",\n      \"label\": \"ia · update_template\",\n      \"type\": \"ia\",\n      \"trigger\": \"update_template\",\n      \"objectCount\": 1,\n      \"frameCount\": 1\n    },\n    {\n      \"id\": \"snap_6983d12d-a6b\",\n      \"version\": 2,\n      \"timestamp\": \"2026-07-19T10:09:31.443Z\",\n      \"label\": \"ia · update_template\",\n      \"type\": \"ia\",\n      \"trigger\": \"update_template\",\n      \"objectCount\": 1,\n      \"frameCount\": 1\n    },\n    {\n      \"id\": \"snap_4913130c-94c\",\n      \"version\": 3,\n      \"timestamp\": \"2026-07-19T10:09:31.136Z\",\n      \"label\": \"ia · create_template\",\n      \"type\": \"ia\",\n      \"trigger\": \"create_template\",\n      \"objectCount\": 1,\n      \"frameCount\": 1\n    }\n  ],\n  \"total\": 3\n}"
+  },
+  "restore_by_versionId": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"restored\": true,\n  \"templateId\": \"tpl_e05e143b-6e6\",\n  \"versionId\": \"snap_f9bff3f4-0b6\",\n  \"template\": {\n    \"id\": \"tpl_e05e143b-6e6\",\n    \"workspaceId\": \"ws_c804a39e-f0a\",\n    \"name\": \"verify-b-ver\",\n    \"width\": 1080,\n    \"height\": 1080,\n    \"engine\": \"html\",\n    \"canvas\": null,\n    \"frames\": [\n      {\n        \"x\": 0,\n        \"y\": 0,\n        \"id\": \"frame_ceeffdef-edb\",\n        \"css\": \".v{color:#113}\",\n        \"html\": \"<div>V3</div>\",\n        \"name\": \"F1\",\n        \"width\": 1080,\n        \"height\": 1080,\n        \"background\": \"#ffffff\"\n      }\n    ],\n    \"styles\": [],\n    \"comments\": [],\n    \"versions\": [],\n    \"variables\": {\n      \"bindings\": {},\n      \"variables\": [],\n      \"collections\": []\n    },\n    \"components\": [],\n    \"metadata\": {\n      \"createdAt\": \"2026-07-19T10:09:31.108137+00:00\",\n      \"updatedAt\": \"2026-07-19T10:09:32.519Z\",\n      \"createdBy\": \"dev_user_default\"\n    },…[TRUNCADO 702 chars de 1602 totales]"
+  },
+  "restore_by_numeric_version": {
+    "httpStatus": 200,
+    "rpcError": {
+      "code": -32000,
+      "message": "Version not found: undefined"
+    },
+    "rawBodyTruncated": "{\"jsonrpc\":\"2.0\",\"id\":6,\"error\":{\"code\":-32000,\"message\":\"Version not found: undefined\"}}"
+  },
+  "conclusion": "MIXTO: list_versions devolvio 3 versiones (snapshots en memoria de la instancia). restore_version con versionId -> 200 restored:true (REFUTA el error \"Version has no canvas data\") PERO el snapshot se toma DESPUES de la mutacion (restauro html V3, no un estado previo). restore_version con version numerico (panel UI) -> -32000 \"Version not found: undefined\" (roto)."
+}

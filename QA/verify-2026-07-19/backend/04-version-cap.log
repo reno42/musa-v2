@@ -1,0 +1,27 @@
+[0] POST create → 201 id=tpl_a6b71008-60a
+[1] PUT #1 → 200 versions en respuesta: 1
+[1] PUT #2 → 200 versions en respuesta: 2
+[1] PUT #3 → 200 versions en respuesta: 3
+[1] PUT #4 → 200 versions en respuesta: 4
+[1] PUT #5 → 200 versions en respuesta: 5
+[1] PUT #6 → 200 versions en respuesta: 6
+[1] PUT #7 → 200 versions en respuesta: 7
+[1] PUT #8 → 200 versions en respuesta: 8
+[1] PUT #9 → 200 versions en respuesta: 9
+[1] PUT #10 → 200 versions en respuesta: 10
+[1] PUT #11 → 200 versions en respuesta: 10
+[1] PUT #12 → 200 versions en respuesta: 10
+
+[2] GET /versions → 200 total=10
+    primera conservada: id=ver_3cd471a2-7ed html="<div>v3</div>" label="HTML save 19/7/2026, 5:01:15 a.m."
+    última conservada:  id=ver_3b7faac0-26b html="<div>v12</div>"
+
+[2b] MCP list_versions → 200 (truncado): {   "templateId": "tpl_a6b71008-60a",   "versions": [     {       "id": "ver_3cd471a2-7ed",       "version": 1,       "timestamp": "2026-07-19T10:01:15.181Z",       "label": "HTML save 19/7/2026, 5:01:15 a.m.",       "ca
+
+[3] PUT grande: html.length=210011 (>200000)
+    PUT grande → 200; versions en respuesta: 10; html almacenado length=210011
+
+[4] GET /versions tras PUT grande → total=10
+    primera: html="<div>v3</div>"
+    última:  html="<div>v12</div>" label="HTML save 19/7/2026, 5:01:15 a.m."
+    template actual html.length=210011 (el PUT grande SÍ se aplicó)

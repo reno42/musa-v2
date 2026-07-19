@@ -1,0 +1,27 @@
+{
+  "before": {
+    "frameCount": 1,
+    "frame0html": "<div class='box'>CONTENIDO-INICIAL-NOOP</div>"
+  },
+  "update_toplevel": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"id\": \"tpl_91514170-0a1\",\n  \"workspaceId\": \"ws_c804a39e-f0a\",\n  \"name\": \"verify-b-noop\",\n  \"width\": 800,\n  \"height\": 600,\n  \"engine\": \"html\",\n  \"canvas\": null,\n  \"frames\": [\n    {\n      \"x\": 0,\n      \"y\": 0,\n      \"id\": \"frame_c12d204f-5ea\",\n      \"css\": \".box{color:#123456}\",\n      \"html\": \"<div class='box'>CONTENIDO-INICIAL-NOOP</div>\",\n      \"name\": \"verify-b-noop\",\n      \"width\": 800,\n      \"height\": 600,\n      \"background\": \"#ffffff\"\n    }\n  ],\n  \"styles\": [],\n  \"comments\": [],\n  \"versions\": [],\n  \"variables\": {\n    \"bindings\": {},\n    \"variables\": [],\n    \"collections\": []\n  },\n  \"components\": [],\n  \"metadata\": {\n    \"createdAt\": \"2026-07-19T10:07:53.684591+00:00\",\n    \"updatedAt\": \"2026-07-19T10:08:31.943Z\",\n    \"createdBy\": \"dev_user_default\"\n  },\n  \"html\": \"<div>MARCADOR-NOOP-123</div>\",\n  \"css\": \".x{color:red}\",\n  \"thumbnail\": \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiB2aWV3Qm94PSIwIDAgODAwIDYwMCI+CiAgPHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iI2ZmZmZmZiIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDUlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMTUpIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIg…[TRUNCADO 266 chars de 1466 totales]"
+  },
+  "after_toplevel": {
+    "marker_in_frames0_html": false,
+    "marker_in_toplevel_html": true,
+    "frame0html": "<div class='box'>CONTENIDO-INICIAL-NOOP</div>",
+    "toplevel_html": "<div>MARCADOR-NOOP-123</div>"
+  },
+  "update_frames": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"id\": \"tpl_91514170-0a1\",\n  \"workspaceId\": \"ws_c804a39e-f0a\",\n  \"name\": \"verify-b-noop\",\n  \"width\": 800,\n  \"height\": 600,\n  \"engine\": \"html\",\n  \"canvas\": null,\n  \"frames\": [\n    {\n      \"id\": \"frame_c12d204f-5ea\",\n      \"name\": \"verify-b-noop\",\n      \"x\": 0,\n      \"y\": 0,\n      \"width\": 800,\n      \"height\": 600,\n      \"html\": \"<div>MARCADOR-NOOP-123-VIA-FRAMES</div>\",\n      \"css\": \".x{color:red}\",\n      \"background\": \"#ffffff\"\n    }\n  ],\n  \"styles\": [],\n  \"comments\": [],\n  \"versions\": [],\n  \"variables\": {\n    \"bindings\": {},\n    \"variables\": [],\n    \"collections\": []\n  },\n  \"components\": [],\n  \"metadata\": {\n    \"createdAt\": \"2026-07-19T10:07:53.684591+00:00\",\n    \"updatedAt\": \"2026-07-19T10:08:32.676Z\",\n    \"createdBy\": \"dev_user_default\"\n  },\n  \"html\": \"<div>MARCADOR-NOOP-123</div>\",\n…[TRUNCADO 654 chars de 1454 totales]"
+  },
+  "after_frames": {
+    "marker_via_frames": true,
+    "frame0html": "<div>MARCADOR-NOOP-123-VIA-FRAMES</div>"
+  },
+  "conclusion": "VERIFICADO: update top-level html/css es no-op silencioso (200); frames[] si escribe"
+}

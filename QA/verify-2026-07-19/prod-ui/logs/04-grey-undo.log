@@ -1,0 +1,68 @@
+[2026-07-19T10:25:21.396Z] template creado verify-a2-undo → tpl_fca8f243-dac
+[2026-07-19T10:25:23.451Z] undo ANTES de editar: {"found":true,"disabled":true,"opacity":"0.4","color":"rgba(122, 118, 104, 0.3)","cursor":"not-allowed","rect":{"x":7,"y":466,"w":46,"h":36}}
+[2026-07-19T10:25:23.626Z] screenshot shots/04-01-undo-antes-de-editar.png
+[2026-07-19T10:25:23.952Z] rect tras drag: 280
+[2026-07-19T10:25:23.955Z] undo DESPUÉS de editar: {"found":true,"disabled":true,"opacity":"0.4","color":"rgba(122, 118, 104, 0.3)","cursor":"not-allowed","rect":{"x":7,"y":466,"w":46,"h":36}} redo: {"disabled":true,"opacity":"0.4"}
+[2026-07-19T10:25:24.080Z] screenshot shots/04-02-undo-despues-de-editar-full.png
+[2026-07-19T10:25:24.161Z] screenshot shots/04-03-undo-boton-crop.png
+[2026-07-19T10:25:24.485Z] rect tras Ctrl+Z: 280 | botón undo ahora: {"found":true,"disabled":true,"opacity":"0.4","color":"rgba(122, 118, 104, 0.3)","cursor":"not-allowed","rect":{"x":7,"y":466,"w":46,"h":36}}
+[2026-07-19T10:25:24.563Z] screenshot shots/04-04-tras-ctrl-z.png
+[2026-07-19T10:25:25.284Z] cleanup {"soft":200,"purge":200}
+
+===== RESULT ITEM-4 =====
+{
+  "item": "4-GREY-UNDO-PROD",
+  "states": {
+    "beforeEdit": {
+      "found": true,
+      "disabled": true,
+      "opacity": "0.4",
+      "color": "rgba(122, 118, 104, 0.3)",
+      "cursor": "not-allowed",
+      "rect": {
+        "x": 7,
+        "y": 466,
+        "w": 46,
+        "h": 36
+      }
+    },
+    "afterEdit": {
+      "found": true,
+      "disabled": true,
+      "opacity": "0.4",
+      "color": "rgba(122, 118, 104, 0.3)",
+      "cursor": "not-allowed",
+      "rect": {
+        "x": 7,
+        "y": 466,
+        "w": 46,
+        "h": 36
+      },
+      "redo": {
+        "disabled": true,
+        "opacity": "0.4"
+      }
+    },
+    "rectAfterDrag": 280,
+    "rectAfterCtrlZ": 280,
+    "undoBtnAfterCtrlZ": {
+      "found": true,
+      "disabled": true,
+      "opacity": "0.4",
+      "color": "rgba(122, 118, 104, 0.3)",
+      "cursor": "not-allowed",
+      "rect": {
+        "x": 7,
+        "y": 466,
+        "w": 46,
+        "h": 36
+      }
+    }
+  },
+  "verdict": {
+    "undoDisabledBeforeEdit": true,
+    "undoStillDisabledAfterEdit": true,
+    "ctrlZRevertedEdit": false,
+    "corroboratesGreyUndo": true
+  }
+}

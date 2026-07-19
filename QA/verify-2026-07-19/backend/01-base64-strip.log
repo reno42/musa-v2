@@ -1,0 +1,24 @@
+[setup] base64 generado: 5120 chars; dataUri: data:image/png;base64,Csiy4aBekiljHEi/FzNVBCZZakJrL9u8vcmaAP…[5142 chars]
+
+[1] POST /api/templates → 201
+    id=tpl_7d741a5d-1e8 engine=html
+    frameId=frame_3c458288-494
+    frame[0].html tras create: <div><img src="data:image/png;base64,Csiy4aBekiljHEi/FzNVBCZZakJrL9u8vcmaAPl/elx…[5177 chars]
+
+[2] PUT /api/templates/tpl_7d741a5d-1e8 → 200
+
+[3] GET /api/templates/tpl_7d741a5d-1e8 → 200
+    top html: <div><img src="" alt="pixel"></div>
+    top html contiene "data:image"? false
+    frame[0].html: <section><img src="" alt="pixel"></section>
+    frame[0] contiene "data:image"? false
+    frame[0] <img> resultante: <img src="" alt="pixel">
+
+[4] POST /mcp tools/call update_template → 200
+    respuesta MCP (truncada): {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"id\": \"tpl_7d741a5d-1e8\",\n  \"workspaceId\": \"ws_qa_verify\",\n  \"name\": \"qa-base64-strip\",\n  \"width\": 1080,\n  \"height\": 1080,\n  \"engine\": \"html\",\n  \"canv…[12201 chars]
+
+[5] GET tras MCP → 200
+    top html contiene "data:image"? true
+    frame[0] contiene "data:image"? true
+    frame[0] <img> resultante: <img src="data:image/png;base64,Csiy4aBekiljHEi/FzNVBCZZakJrL9u8vcmaAPl/elx6yq0QwCkD6Jj992…[5166 chars]
+    top html (truncado): <div><img src="data:image/png;base64,Csiy4aBekiljHEi/FzNVBCZZakJrL9u8vcmaAPl/elx6yq0QwCkD6…[5177 chars]

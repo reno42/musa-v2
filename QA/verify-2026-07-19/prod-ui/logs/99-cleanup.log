@@ -1,0 +1,13 @@
+[2026-07-19T10:29:19.724Z] workspace borrado verify-a2-ws ws_c804a39e-f0a 200
+
+===== CLEANUP =====
+{
+  "purgedTemplates": 0,
+  "deletedWorkspaces": 1,
+  "leftovers": {
+    "live": [],
+    "trashed": [],
+    "workspaces": []
+  },
+  "clean": true
+}

@@ -1,0 +1,41 @@
+{
+  "render_batch": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"format\": \"png\",\n  \"scale\": 1,\n  \"total\": 1,\n  \"ready\": 1,\n  \"results\": [\n    {\n      \"templateId\": \"tpl_91514170-0a1\",\n      \"name\": \"verify-b-noop\",\n      \"status\": \"ready\",\n      \"_links\": {\n        \"render\": \"/api/templates/tpl_91514170-0a1/render\",\n        \"view\": \"/api/render/tpl_91514170-0a1\"\n      },\n      \"renderParams\": {\n        \"format\": \"png\",\n        \"scale\": 1,\n        \"width\": 800,\n        \"height\": 600,\n        \"transparent\": false\n      }\n    }\n  ]\n}"
+  },
+  "_links": {
+    "render": "/api/templates/tpl_91514170-0a1/render",
+    "view": "/api/render/tpl_91514170-0a1"
+  },
+  "isBinaryPng": false,
+  "follow_render": {
+    "url": "https://design.futuraria.com/api/templates/tpl_91514170-0a1/render",
+    "httpStatus": 400,
+    "contentType": "application/json; charset=utf-8",
+    "bytes": 52,
+    "isPngBinary": false,
+    "bodyPreview": "{\"error\":\"POST /api/templates/:id/render to render\"}",
+    "mentions_html2canvas": false
+  },
+  "follow_view": {
+    "url": "https://design.futuraria.com/api/render/tpl_91514170-0a1",
+    "httpStatus": 400,
+    "contentType": "application/json; charset=utf-8",
+    "bytes": 52,
+    "bodyPreview": "{\"error\":\"POST /api/templates/:id/render to render\"}"
+  },
+  "conclusion": "VERIFICADO: render_batch devuelve solo JSON con _links. GET /api/templates/:id/render -> 400 (pide POST). POST /api/templates/:id/render -> 200 JSON cuyo campo html es una pagina completa que carga html2canvas@1.4.1 desde CDN (render client-side). NO hay PNG binario server-side por ninguna via.",
+  "follow_render_POST": {
+    "httpStatus": 200,
+    "contentType": "application/json; charset=utf-8",
+    "bytes": 3245,
+    "isPngBinary": false,
+    "mentions_html2canvas": true,
+    "bodyPreview": "{\"status\":\"complete\",\"templateId\":\"tpl_91514170-0a1\",...\"html\":\"<!DOCTYPE html>...<script src=\"https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js\">...</script>...(pagina HTML completa con toolbar)\"}"
+  },
+  "follow_view_POST": {
+    "httpStatus": 404,
+    "body": "{\"error\":\"Template not found\",\"templateId\":\"api\"}"
+  }
+}

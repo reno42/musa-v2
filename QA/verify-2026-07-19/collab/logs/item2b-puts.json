@@ -1,0 +1,56 @@
+[
+  {
+    "ts": "2026-07-19T10:14:34.652Z",
+    "topCssSnippet": "\n\n[data-layer-id=\"hum_card\"] {\n  left: 100px !important;\n  top: 40px !important;\n}",
+    "frames": [
+      {
+        "id": "vc_frame1",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": false,
+        "htmlLeft40": true,
+        "cssSnippet": "\n\n[data-layer-id=\"hum_card\"] {\n  left: 100px !important;\n  top: 40px !important;\n}"
+      },
+      {
+        "id": "vc_frame2",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": true,
+        "htmlLeft40": true,
+        "cssSnippet": ""
+      },
+      {
+        "id": "vc_frame3",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": false,
+        "htmlLeft40": true,
+        "cssSnippet": ""
+      }
+    ]
+  },
+  {
+    "ts": "2026-07-19T10:14:43.064Z",
+    "topCssSnippet": "\n\n[data-layer-id=\"hum_card\"] {\n  left: 160px !important;\n  top: 40px !important;\n}",
+    "frames": [
+      {
+        "id": "vc_frame1",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": false,
+        "htmlLeft40": true,
+        "cssSnippet": "\n\n[data-layer-id=\"hum_card\"] {\n  left: 160px !important;\n  top: 40px !important;\n}"
+      },
+      {
+        "id": "vc_frame2",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": true,
+        "htmlLeft40": true,
+        "cssSnippet": ""
+      },
+      {
+        "id": "vc_frame3",
+        "htmlHasProbe2": false,
+        "htmlHasAiBase": false,
+        "htmlLeft40": true,
+        "cssSnippet": ""
+      }
+    ]
+  }
+]

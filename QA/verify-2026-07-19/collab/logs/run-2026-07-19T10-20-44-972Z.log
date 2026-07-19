@@ -1,0 +1,26 @@
+[2026-07-19T10:20:44.973Z] ═══ ÍTEM 5: BROWSER↔BROWSER ═══
+[2026-07-19T10:20:46.216Z] reset hecho
+[2026-07-19T10:20:50.148Z] esperando carga de ambos editores...
+[2026-07-19T10:20:52.670Z] ctx2 hum_card ANTES: {"inlineLeft":40,"computedLeft":40}
+[2026-07-19T10:20:52.740Z] SCREENSHOT 01-item5-ctx1-before.png
+[2026-07-19T10:20:52.817Z] SCREENSHOT 02-item5-ctx2-before.png
+[2026-07-19T10:20:52.817Z] edición humana en ctx1: drag hum_card +300px
+[2026-07-19T10:20:53.839Z] ctx1 hum_card tras drag: {"inlineLeft":340,"computedLeft":340}
+[2026-07-19T10:20:53.993Z] SCREENSHOT 03-item5-ctx1-after-drag.png
+[2026-07-19T10:20:54.996Z] t+1s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:20:56.000Z] t+2s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:20:57.009Z] t+3s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:20:58.023Z] t+4s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:20:59.041Z] t+5s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:00.047Z] t+6s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:01.059Z] t+7s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:02.067Z] t+8s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:03.071Z] t+9s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:04.077Z] t+10s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:05.089Z] t+11s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:06.106Z] t+12s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:07.123Z] t+13s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:08.126Z] t+14s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:09.137Z] t+15s ctx2 hum_card: {"inlineLeft":40,"computedLeft":40} 
+[2026-07-19T10:21:09.210Z] SCREENSHOT 04-item5-ctx2-after-15s.png
+[2026-07-19T10:21:09.210Z] RESULTADO ÍTEM 5: {"ctx1Movio":true,"ctx2SeActualizoSolo":false,"latenciaSegundos":null,"afirmacion":"ctx2 se actualiza solo vía broadcast del editor","veredicto":"REFUTADO — sin Supabase en el bundle no hay broadcast; el polling está roto (ítem 1b); ctx2 queda ciego hasta recargar"}

@@ -3,6 +3,7 @@ import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { useToast } from "./components/Toast";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 
 type ViewMode = "landing" | "dashboard" | "editor-v2";
@@ -133,43 +134,50 @@ function App() {
   // Landing view
   if (view === "landing") {
     if (resolving) {
-      // Show landing skeleton while resolving slug
       return (
+        <ErrorBoundary>
         <Landing
           onEnter={() => {
             dispatch({ type: "ENTER_WORKSPACE" });
             window.history.replaceState(null, "", "/#workspace");
           }}
         />
+        </ErrorBoundary>
       );
     }
     return (
+      <ErrorBoundary>
       <Landing
         onEnter={() => {
           dispatch({ type: "ENTER_WORKSPACE" });
           window.history.replaceState(null, "", "/#workspace");
         }}
       />
+      </ErrorBoundary>
     );
   }
 
   // Dashboard view
   if (view === "dashboard") {
     return (
+      <ErrorBoundary>
       <Dashboard
         onSelectTemplate={handleSelectTemplate}
         onCreateHtmlTemplate={handleCreateHtmlTemplate}
       />
+      </ErrorBoundary>
     );
   }
 
   // Editor V2 view (HTML/CSS)
   return (
+    <ErrorBoundary>
     <EditorV2
       templateId={templateId!}
       onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/'); }}
       onOpenTemplate={(id) => { dispatch({ type: "OPEN_TEMPLATE_V2", id }); window.history.replaceState(null, '', `/?template=${id}&v=2`); }}
     />
+    </ErrorBoundary>
   );
 }
 

@@ -1,0 +1,117 @@
+[2026-07-19T10:25:06.256Z] generando PNG de ruido 450x450…
+[2026-07-19T10:25:06.269Z] data URI: 810826 chars (~792KB)
+[2026-07-19T10:25:08.213Z] template creado verify-a2-img → tpl_b9cec7e8-4c1
+[2026-07-19T10:25:11.763Z] screenshot shots/03-01-img-inyectada.png
+[2026-07-19T10:25:12.633Z] fase A: writes = [1622638,1622750,1622918,1622920] PUTs >100KB: []
+[2026-07-19T10:25:14.032Z] template creado verify-a2-img02 → tpl_28580ea9-878
+[2026-07-19T10:25:16.754Z] fase B verify-a2-img02: LS = 3.25M chars, templates=2, error=no, toast=false
+[2026-07-19T10:25:17.965Z] template creado verify-a2-img03 → tpl_08d1868c-06f
+[2026-07-19T10:25:20.294Z] fase B verify-a2-img03: LS = 4.87M chars, templates=3, error=no, toast=false
+[2026-07-19T10:25:21.544Z] template creado verify-a2-img04 → tpl_06764578-b06
+[2026-07-19T10:25:23.850Z] fase B verify-a2-img04: LS = 4.87M chars, templates=3, error=QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'futuraria_local_templates' exceeded the quota., toast=true
+[2026-07-19T10:25:24.079Z] screenshot shots/03-02-quota-exceeded.png
+[2026-07-19T10:25:24.244Z] screenshot shots/03-03-estado-final.png
+[2026-07-19T10:25:27.052Z] cleanup: 4 templates purgados
+
+===== RESULT ITEM-3 =====
+{
+  "item": "3-LOCALSTORAGE-RISK",
+  "editsPhaseA": [
+    {
+      "t": "2026-07-19T10:25:12.633Z",
+      "lsChars": 1622920,
+      "perTemplateChars": {
+        "tpl_b9cec7e8-4c1": 1622899
+      }
+    }
+  ],
+  "quotaPhase": [
+    {
+      "n": 2,
+      "name": "verify-a2-img02",
+      "t": "2026-07-19T10:25:16.754Z",
+      "lsChars": 3245671,
+      "templatesEnLS": 2,
+      "setItemError": null,
+      "toastVisible": false
+    },
+    {
+      "n": 3,
+      "name": "verify-a2-img03",
+      "t": "2026-07-19T10:25:20.294Z",
+      "lsChars": 4868422,
+      "templatesEnLS": 3,
+      "setItemError": null,
+      "toastVisible": false
+    },
+    {
+      "n": 4,
+      "name": "verify-a2-img04",
+      "t": "2026-07-19T10:25:23.850Z",
+      "lsChars": 4868422,
+      "templatesEnLS": 3,
+      "setItemError": "QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'futuraria_local_templates' exceeded the quota.",
+      "toastVisible": true
+    }
+  ],
+  "imgDataUriChars": 810826,
+  "setItemWritesPhaseA": [
+    {
+      "t": "2026-07-19T10:25:11.103Z",
+      "key": "futuraria_local_templates",
+      "chars": 1622638
+    },
+    {
+      "t": "2026-07-19T10:25:11.131Z",
+      "key": "futuraria_local_templates",
+      "chars": 1622750
+    },
+    {
+      "t": "2026-07-19T10:25:11.776Z",
+      "key": "futuraria_local_templates",
+      "chars": 1622918
+    },
+    {
+      "t": "2026-07-19T10:25:12.210Z",
+      "key": "futuraria_local_templates",
+      "chars": 1622920
+    }
+  ],
+  "putsGrandes": [],
+  "quotaError": {
+    "n": 4,
+    "name": "verify-a2-img04",
+    "t": "2026-07-19T10:25:23.850Z",
+    "lsChars": 4868422,
+    "templatesEnLS": 3,
+    "setItemError": "QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'futuraria_local_templates' exceeded the quota.",
+    "toastVisible": true
+  },
+  "consoleSAVE": [
+    {
+      "t": "2026-07-19T10:25:23.050Z",
+      "text": "[SAVE] localStorage FAILED: JSHandle@error"
+    },
+    {
+      "t": "2026-07-19T10:25:23.096Z",
+      "text": "[SAVE] localStorage FAILED: JSHandle@error"
+    }
+  ],
+  "cleanedUp": 4,
+  "verdict": {
+    "oneSetItemPerAutosave": true,
+    "fullDocumentPerWrite": true,
+    "sharedSingleKey": true,
+    "cumulativeGrowth": true,
+    "quotaExceededObserved": true,
+    "quotaErrorDetail": {
+      "n": 4,
+      "name": "verify-a2-img04",
+      "t": "2026-07-19T10:25:23.850Z",
+      "lsChars": 4868422,
+      "templatesEnLS": 3,
+      "setItemError": "QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'futuraria_local_templates' exceeded the quota.",
+      "toastVisible": true
+    }
+  }
+}

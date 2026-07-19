@@ -1,0 +1,5 @@
+[2026-07-19T10:30:42.028Z] ═══ CLEANUP ═══
+[2026-07-19T10:30:43.430Z] templates 'verify-c-collab' antes de borrar: 1
+[2026-07-19T10:30:43.768Z] delete_template(tpl_d7438478-ef6) OK
+[2026-07-19T10:30:44.436Z] RESULTADO CLEANUP: {"encontradosAntes":1,"encontradosDespues":0,"sigueExistiendo":false,"veredicto":"LIMPIEZA OK"}
+[2026-07-19T10:30:44.768Z] get_template tras borrado: ¡todavía responde! (revisar soft-delete)

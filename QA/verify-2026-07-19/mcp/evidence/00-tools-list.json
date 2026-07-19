@@ -1,0 +1,11 @@
+{
+  "httpStatus": 200,
+  "toolCount": 157,
+  "first5": [
+    "list_workspaces",
+    "create_workspace",
+    "list_templates",
+    "get_template",
+    "create_template"
+  ]
+}

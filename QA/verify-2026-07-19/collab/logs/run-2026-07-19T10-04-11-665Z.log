@@ -1,0 +1,16 @@
+[2026-07-19T10:04:11.666Z] ═══ ÍTEM 1b: timing del polling (probe tardío) ═══
+[2026-07-19T10:04:14.138Z] editor cargado; esperando 12s para que el polling cebe su baseline...
+[2026-07-19T10:04:26.148Z] localStorage keys del template antes del probe: {}
+[2026-07-19T10:04:26.149Z] MCP update_html_frame → h1 = MCP-LIVE-PROBE-1b
+[2026-07-19T10:04:28.748Z] t+2s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:30.765Z] t+4s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:32.779Z] t+6s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:34.797Z] t+8s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:36.809Z] t+10s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:38.817Z] t+12s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:40.833Z] t+14s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:42.837Z] t+16s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:44.848Z] t+18s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:46.865Z] t+20s DOM contiene MCP-LIVE-PROBE-1b: false
+[2026-07-19T10:04:46.939Z] SCREENSHOT 01-item1b-after-late-probe.png
+[2026-07-19T10:04:46.939Z] RESULTADO ÍTEM 1b: {"probeTardioVisibleSinRecargar":false,"latenciaAproxSegundos":null,"nota":"Ni con probe tardío aparece: polling ineficaz para escrituras MCP"}

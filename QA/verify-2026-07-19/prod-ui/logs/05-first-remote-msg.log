@@ -1,0 +1,180 @@
+[2026-07-19T10:27:19.351Z] template creado verify-a2-sync → tpl_98547d8c-bfd
+[2026-07-19T10:27:22.932Z] screenshot shots/05-01-ctx1-antes.png
+[2026-07-19T10:27:22.935Z] ctx1 rect antes: 100
+[2026-07-19T10:27:22.987Z] ctx2 editó, rect: 280 en 52 ms
+[2026-07-19T10:27:23.265Z] screenshot shots/05-02-ctx2-despues-de-editar.png
+[2026-07-19T10:27:39.642Z] ctx1 sincronizó en: null ms (null = no llegó en 16s)
+[2026-07-19T10:27:39.717Z] screenshot shots/05-03-ctx1-despues-sync.png
+[2026-07-19T10:27:39.717Z] websockets vistos: 0 | polling GETs de ctx1: 4 | PUTs de ctx2: 1
+[2026-07-19T10:27:41.004Z] cleanup {"soft":200,"purge":200}
+
+===== RESULT ITEM-5 =====
+{
+  "item": "5-FIRST-REMOTE-MSG-LOST",
+  "realtimeActiveInProd": false,
+  "syncSamples": [
+    {
+      "ms": 332,
+      "x": 100
+    },
+    {
+      "ms": 836,
+      "x": 100
+    },
+    {
+      "ms": 1345,
+      "x": 100
+    },
+    {
+      "ms": 1857,
+      "x": 100
+    },
+    {
+      "ms": 2362,
+      "x": 100
+    },
+    {
+      "ms": 2871,
+      "x": 100
+    },
+    {
+      "ms": 3381,
+      "x": 100
+    },
+    {
+      "ms": 3894,
+      "x": 100
+    },
+    {
+      "ms": 4413,
+      "x": 100
+    },
+    {
+      "ms": 4921,
+      "x": 100
+    },
+    {
+      "ms": 5433,
+      "x": 100
+    },
+    {
+      "ms": 5937,
+      "x": 100
+    },
+    {
+      "ms": 6444,
+      "x": 100
+    },
+    {
+      "ms": 6959,
+      "x": 100
+    },
+    {
+      "ms": 7477,
+      "x": 100
+    },
+    {
+      "ms": 7992,
+      "x": 100
+    },
+    {
+      "ms": 8510,
+      "x": 100
+    },
+    {
+      "ms": 9023,
+      "x": 100
+    },
+    {
+      "ms": 9538,
+      "x": 100
+    },
+    {
+      "ms": 10041,
+      "x": 100
+    },
+    {
+      "ms": 10557,
+      "x": 100
+    },
+    {
+      "ms": 11063,
+      "x": 100
+    },
+    {
+      "ms": 11582,
+      "x": 100
+    },
+    {
+      "ms": 12092,
+      "x": 100
+    },
+    {
+      "ms": 12603,
+      "x": 100
+    },
+    {
+      "ms": 13111,
+      "x": 100
+    },
+    {
+      "ms": 13627,
+      "x": 100
+    },
+    {
+      "ms": 14146,
+      "x": 100
+    },
+    {
+      "ms": 14662,
+      "x": 100
+    },
+    {
+      "ms": 15173,
+      "x": 100
+    },
+    {
+      "ms": 15689,
+      "x": 100
+    },
+    {
+      "ms": 16207,
+      "x": 100
+    }
+  ],
+  "evidence": {
+    "websocketsSupabase": [],
+    "ctx1PollingGets": [
+      {
+        "t": "2026-07-19T10:27:20.985Z",
+        "msTrasEdicion": -1950
+      },
+      {
+        "t": "2026-07-19T10:27:26.314Z",
+        "msTrasEdicion": 3379
+      },
+      {
+        "t": "2026-07-19T10:27:31.325Z",
+        "msTrasEdicion": 8390
+      },
+      {
+        "t": "2026-07-19T10:27:36.311Z",
+        "msTrasEdicion": 13376
+      }
+    ],
+    "ctx2Puts": [
+      {
+        "t": "2026-07-19T10:27:24.944Z",
+        "msTrasEdicion": 2009,
+        "bytes": 843
+      }
+    ],
+    "syncedAtMs": null
+  },
+  "verdict": {
+    "realtimeConfiguredInProd": false,
+    "claimReachableInProd": false,
+    "pollingFallbackWorks": false,
+    "syncLatencyMs": null
+  }
+}

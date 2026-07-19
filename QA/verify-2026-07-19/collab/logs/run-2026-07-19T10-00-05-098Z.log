@@ -1,0 +1,18 @@
+[2026-07-19T10:00:05.100Z] ═══ ÍTEM 1: AI-WRITE-NOT-LIVE ═══
+[2026-07-19T10:00:07.125Z] esperando carga completa del editor...
+[2026-07-19T10:00:10.158Z] texto frame1 ANTES del probe: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:10.232Z] SCREENSHOT 01-item1-editor-loaded.png
+[2026-07-19T10:00:10.233Z] MCP update_html_frame → h1 = MCP-LIVE-PROBE-1
+[2026-07-19T10:00:11.112Z] respuesta update_html_frame: ["x","y","id","css","html","name","width","height","background"]
+[2026-07-19T10:00:13.127Z] t+2s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:15.133Z] t+4s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:17.153Z] t+6s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:19.164Z] t+8s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:21.186Z] t+10s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:23.192Z] t+12s DOM frame1 contiene PROBE-1: false | texto actual: "VC-ALPHA\n\nTexto original frame 1"
+[2026-07-19T10:00:23.267Z] SCREENSHOT 02-item1-after-mcp-write-12s.png
+[2026-07-19T10:00:23.267Z] recargando la página...
+[2026-07-19T10:00:26.242Z] texto frame1 TRAS reload contiene PROBE-1: true
+[2026-07-19T10:00:26.325Z] SCREENSHOT 03-item1-after-reload.png
+[2026-07-19T10:00:26.865Z] servidor (get_template) frame1 tiene PROBE-1 persistido: true
+[2026-07-19T10:00:26.865Z] RESULTADO ÍTEM 1: {"websockets":[],"supabaseRealtimeActivo":false,"cambioVisibleSinRecargar":false,"cambioVisibleTrasRecargar":true,"persistidoEnServidor":true,"afirmacion":"NO se ve sin recargar; SÍ tras recargar","veredicto":"VERIFICADO"}

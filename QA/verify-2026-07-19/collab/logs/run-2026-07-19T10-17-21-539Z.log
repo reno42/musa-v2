@@ -1,0 +1,5 @@
+[2026-07-19T10:17:21.541Z] ═══ ÍTEM 3: PRESENCE ═══
+[2026-07-19T10:17:26.847Z] SCREENSHOT 01-item3-agents-panel.png
+[2026-07-19T10:17:26.849Z] texto del ActiveAgentsPanel: "PROPERTIES\n📌\nActive Agents\nNo agents connected"
+[2026-07-19T10:17:27.422Z] get_active_agents (MCP): []
+[2026-07-19T10:17:27.423Z] RESULTADO ÍTEM 3: {"panelDice":"PROPERTIES\n📌\nActive Agents\nNo agents connected","panelMuestraNoAgents":true,"getActiveAgentsVacio":true,"evidenciaEstatica":"trackPresence solo se define (src/lib/supabaseRealtime.ts:87), ningún caller en src/; además el bundle de prod no trae VITE_SUPABASE_* → getClient()=null → ni siquiera se crea el canal de presencia","veredicto":"VERIFICADO"}

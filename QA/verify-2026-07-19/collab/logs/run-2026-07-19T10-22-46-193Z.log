@@ -1,0 +1,20 @@
+[2026-07-19T10:22:46.194Z] ═══ ÍTEM 6: MULTI-TAB ═══
+[2026-07-19T10:22:47.045Z] reset hecho (frame1 con hum_card + tab_card)
+[2026-07-19T10:22:53.511Z] ambas tabs cargadas
+[2026-07-19T10:22:53.511Z] (a) tab1: drag hum_card +300px
+[2026-07-19T10:23:59.617Z] tab1 hum_card computed left: 340
+[2026-07-19T10:24:00.634Z] t+1s tab2 hum_card computed left: 40
+[2026-07-19T10:24:01.649Z] t+2s tab2 hum_card computed left: 40
+[2026-07-19T10:24:02.653Z] t+3s tab2 hum_card computed left: 40
+[2026-07-19T10:24:03.665Z] t+4s tab2 hum_card computed left: 40
+[2026-07-19T10:24:04.670Z] t+5s tab2 hum_card computed left: 40
+[2026-07-19T10:24:05.685Z] t+6s tab2 hum_card computed left: 40
+[2026-07-19T10:24:06.696Z] t+7s tab2 hum_card computed left: 40
+[2026-07-19T10:24:07.700Z] t+8s tab2 hum_card computed left: 40
+[2026-07-19T10:26:25.280Z] SCREENSHOT 01-item6-tab1-after-edit.png
+[2026-07-19T10:26:25.355Z] SCREENSHOT 02-item6-tab2-after-8s.png
+[2026-07-19T10:26:25.355Z] (b) carrera: tab1 drag hum_card +100 y tab2 drag tab_card +100 con 1s de diferencia
+[2026-07-19T10:27:38.897Z] server frame1.css tras la carrera: {"cssTieneHumCard":false,"cssTieneTabCard":true,"css":"\n\n[data-layer-id=\"tab_card\"] {\n  left: 140px !important;\n  top: 400px !important;\n}"}
+[2026-07-19T10:27:39.161Z] SCREENSHOT 03-item6-tab1-final.png
+[2026-07-19T10:27:39.238Z] SCREENSHOT 04-item6-tab2-final.png
+[2026-07-19T10:27:39.239Z] RESULTADO ÍTEM 6: {"a_tab2SeActualizoSolo":false,"a_latenciaSegundos":null,"b_ganador":"tab2 (último PUT) — el movimiento de tab1 se perdió","nota":"Cada PUT lleva el template COMPLETO de su tab; el último PUT pisa al anterior sin aviso"}

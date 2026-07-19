@@ -1,0 +1,16 @@
+[2026-07-19T10:11:50.053Z] ═══ ÍTEM 2: LAST-WRITE-WINS (v2, ratón CDP) ═══
+[2026-07-19T10:11:50.054Z] reset de frames (hum_card left:40, frame2 AI-BASE)
+[2026-07-19T10:11:55.237Z] SCREENSHOT 01-item2-loaded.png
+[2026-07-19T10:11:55.238Z] (a) edición humana #1: drag hum_card +60px (DOM left antes: 40)
+[2026-07-19T10:11:56.206Z] DOM left tras drag #1: 100 (esperado ≈100)
+[2026-07-19T10:11:56.346Z] SCREENSHOT 02-item2-after-human-edit1.png
+[2026-07-19T10:12:01.892Z] server frame1 hum_card left tras autosave #1: 40 (esperado ≈100)
+[2026-07-19T10:12:01.893Z] (b) MCP update_html_frame frame2 → MCP-PROBE-2
+[2026-07-19T10:12:02.556Z] server frame2 contiene MCP-PROBE-2 tras escritura MCP: true
+[2026-07-19T10:12:04.566Z] (c) edición humana #2: drag hum_card +60px
+[2026-07-19T10:12:05.514Z] DOM left tras drag #2: 160 (esperado ≈160)
+[2026-07-19T10:12:05.597Z] SCREENSHOT 03-item2-after-human-edit2.png
+[2026-07-19T10:12:11.256Z] server frame1 hum_card left tras autosave #2: 40 (esperado ≈160)
+[2026-07-19T10:12:11.557Z] (d) server frame2 contiene MCP-PROBE-2 al final: false (h1 actual: "AI-BASE")
+[2026-07-19T10:12:11.640Z] SCREENSHOT 04-item2-final-browser-view.png
+[2026-07-19T10:12:11.640Z] RESULTADO ÍTEM 2: {"domLeft":[40,100,160],"serverLeft":[40,40,40],"humanEdit1Persistio":false,"probe2ExistiaTrasMcp":true,"humanEdit2Persistio":false,"probe2Sobrevivio":false,"afirmacion":"MCP-PROBE-2 desaparece: el PUT del editor pisa el trabajo de la IA","veredicto":"VERIFICADO (mecanismo)"}

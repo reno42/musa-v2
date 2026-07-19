@@ -1,0 +1,4 @@
+[2026-07-19T10:21:03.097Z] verify-a2-imgchk-small GET html chars: 102 | contiene data URI: false | src snippet: 
+[2026-07-19T10:21:05.325Z] verify-a2-imgchk-big GET html chars: 102 | contiene data URI: false | src snippet: 
+PUT response frames html: "<img data-layer-id=\"img1\" src=\"\" style=\"position:absolute;\">"
+GET html: "<img data-layer-id=\"img1\" src=\"\" style=\"position:absolute;\">"

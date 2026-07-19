@@ -1,0 +1,6 @@
+[2026-07-19T09:58:15.360Z] workspaces disponibles: 21
+[2026-07-19T09:58:15.361Z] usando workspace: verify-a2-ws (ws_c804a39e-f0a)
+[2026-07-19T09:58:15.738Z] template creado: tpl_d7438478-ef6
+[2026-07-19T09:58:16.086Z] frames escritos: vc_frame1, vc_frame2, vc_frame3
+[2026-07-19T09:58:16.377Z] verificación get_template: ["vc_frame1:ok","vc_frame2:ok","vc_frame3:ok"]
+[2026-07-19T09:58:16.379Z] state.json escrito

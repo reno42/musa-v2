@@ -1,0 +1,86 @@
+[
+  {
+    "item": "4 SCRUB-FLOOD",
+    "status": "VERIFICADO",
+    "evidence": "scrub de 18 ticks con pausas reales de ~77ms: font-size 44px → 62px. Un solo Ctrl+Z revierte a 61px (1 paso de 1px, no el gesto completo). Undos necesarios para volver a 44px: 18 (≈18 ticks → ~1 entrada de undo por tick, sin coalescing). Screenshots item4-*.png.",
+    "notes": "Cada onChange del panel llama handleCssChange → store.replaceAllWithUndo (EditorV2.tsx:579-590); el 'coalesce' de 300ms es código muerto (solo actualiza un ref, no filtra nada)."
+  },
+  {
+    "item": "5 RECONCILER-ORDER",
+    "status": "VERIFICADO",
+    "evidence": "orden DOM tras sync REST: [\"la\",\"lb\",\"lc\",\"newmid\"] — NEW insertada con appendChild AL FINAL en vez de entre A y B ([\"la\",\"newmid\",\"lb\",\"lc\"]). reconcile stats: {\"patched\":0,\"inserted\":0,\"removed\":0,\"skipped\":1,\"durationMs\":0.09999999403953552}. NEW (naranja) se pinta POR ENCIMA de B (verde) pese a ir antes en el HTML → z-order incorrecto. Screenshots item5-*.png.",
+    "notes": "frameReconciler.ts:104-108 — INSERT hace content.appendChild(clone) sin calcular la posición entre hermanos."
+  },
+  {
+    "item": "6 RECONCILER-REPARENT",
+    "status": "VERIFICADO",
+    "evidence": "tras la sync REST, panel ya no está y mv DESAPARECIÓ del DOM: orden=[\"sib\"] (solo queda sib). reconcile stats: {\"patched\":0,\"inserted\":0,\"removed\":0,\"skipped\":1,\"durationMs\":0} — el padre viejo se remove() con mv dentro y la entrada stale de mv en currentLayers casa por hash → SKIP → nunca se re-inserta. Screenshots item6-*.png.",
+    "notes": "frameReconciler.ts: DELETE recorre currentLayers antes de que el loop INSERT/SKIP note que el nodo ya no está en el DOM."
+  },
+  {
+    "item": "7 CODEPANEL-TAB",
+    "status": "VERIFICADO (con matiz)",
+    "evidence": "la afirmación LITERAL (solo cambiar de tab sin escribir) no reproduce: variante A commitó (marker en frame DOM, sobrevive reapertura=true). PERO el mecanismo del debounceRef compartido SÍ pierde el cambio: variante B — edición CSS a los 8ms de la última tecla HTML (<200ms) → el commit HTML se canceló: marker AUSENTE del frame DOM; en el editor queda texto fantasma hasta reabrir (survivesReopen=false). Screenshots item7-*.png.",
+    "notes": "CodePanel.tsx:51,82-90 — un único debounceRef para handleHtmlChange y handleCssChange; escribir en el otro tab dentro de la ventana de 200ms cancela el commit pendiente. Cambiar de tab sin escribir NO lo cancela (los editores quedan montados con display:none)."
+  },
+  {
+    "item": "9 ERROR-BOUNDARY",
+    "status": "VERIFICADO (con matiz)",
+    "evidence": "(a) estático: NO hay ningún ErrorBoundary/componentDidCatch/getDerivedStateFromError en src/ · (b) JSON inválido estricto en get_brands: el panel lo capturó (try/catch) y la app siguió viva (root=true, texto=298 chars, pageErrors=0) · (c) forma hostil (brands=\"abc\"): TUMBÓ la app — sin ErrorBoundary la excepción de render desmonta React (root=false, texto=0 chars, pageErrors=3). Screenshots item9-*.png.",
+    "notes": "La afirmación 'no hay ErrorBoundary' es cierta; el vector exacto 'JSON inválido' lo absorbe el try/catch del panel — hace falta que el dato llegue al render sin validar para que la ausencia de boundary tumbe la app."
+  },
+  {
+    "item": "10a CONTEXT-MENU",
+    "status": "VERIFICADO",
+    "evidence": "click derecho (mousedown/mouseup/contextmenu button=2) sobre la capa: 0 menús (role=menu/.context-menu), 0 popups nuevos, body children 2→2. Ausencia confirmada. Screenshot item10a-right-click.png.",
+    "notes": ""
+  },
+  {
+    "item": "10b MARQUEE",
+    "status": "VERIFICADO",
+    "evidence": "drag de 150×108px en área vacía del frame (modo select): overlay children=0, divs dashed en overlay=0, marquees en light DOM=0, divs dashed en body=0. Sin rubber-band. Screenshot item10b-empty-drag-mid.png (botón aún pulsado).",
+    "notes": ""
+  },
+  {
+    "item": "10c TEXT-MINIBAR",
+    "status": "REFUTADO",
+    "evidence": "SÍ hay mini-barra flotante de formato: nodo en overlay con 8 botones (zIndex 10001). Se muestra al seleccionar texto. Screenshot item10c-text-selected.png.",
+    "notes": "DesignFrame.tsx:654-794 — Sprint 3.5: barra con fuente, tamaño, bold, tracking, line-height y swatches."
+  },
+  {
+    "item": "10f GRADIENT-CONTROLS",
+    "status": "REFUTADO",
+    "evidence": "SÍ hay controles de gradiente en el panel contextual (Fill): \"⬢→Path FILL & COLOR ▾ Fill Opacity 100% GRADIENT + Img 🖼 Image Blend normal multiply screen overlay darken \" · botón Apply=false. Screenshot item10f-contextual-panel.png.",
+    "notes": "HtmlContextualPanel.tsx:612-617,954-1072 — GradientBuilder con linear/radial/conic, ángulo y stops."
+  },
+  {
+    "item": "10e PEN-TOOL",
+    "status": "REFUTADO",
+    "evidence": "clicks rectos → path \"M 300 600 L 520 620 L 409 780 Z\" (solo M/L/Z, recto). punto con drag → path \"M 620 600 C 620 600 728 688 800 640 C 872 592 700 820 700 820 Z\" → CONTIENE curvas cúbicas (C): el pen SÍ produce bezier arrastrando. Screenshots item10e-*.png.",
+    "notes": "FloatingToolbar.tsx:51 — tooltip propio del editor: 'Pen — click to add points, drag for bezier'; DesignFrame.tsx:1368-1397 createSmoothPoint."
+  },
+  {
+    "item": "1 UNDO-VISUAL",
+    "status": "VERIFICADO",
+    "evidence": "variante A (posición solo inline): inicial=(100,100) → drag=(249,189) → undo=(249,189). La capa NO volvió: inline residual left=249px top=189px con <style> revertido a \"\". Variante B (regla !important preexistente): undo=(100,100) → SÍ vuelve (la regla !important restaurada vence al inline).",
+    "notes": "El bug se manifiesta cuando la posición original vivía solo en inline styles; con regla !important previa el undo sí restaura lo visual."
+  },
+  {
+    "item": "2 UNDO-BUTTONS",
+    "status": "VERIFICADO",
+    "evidence": "tras drag válido (undo de teclado funciona): undo.disabled=true (opacity 0.4, color rgba(122, 118, 104, 0.3)), redo.disabled=true. Antes de editar: undo.disabled=true. Screenshots item2-*.png / item10d-*.png.",
+    "notes": "El store sí acumula entradas (Ctrl+Z revierte), pero canUndo/canRedo de React nunca se ponen a true."
+  },
+  {
+    "item": "3 ALT-DRAG",
+    "status": "VERIFICADO",
+    "evidence": "marcados=3, supervivientes=0 (misma referencia de nodo). Mutaciones durante el gesto: +6 nodos añadidos / -5 eliminados. Nodos [data-layer-id] tras el gesto: 4 (3 originales + 1 duplicado). Screenshot item3-alt-drag-after.png.",
+    "notes": "duplicateForDrag ejecuta content.innerHTML = duplicated.html a mitad del gesto (DesignFrame.tsx:1765)."
+  },
+  {
+    "item": "8 ECHO-HTML",
+    "status": "VERIFICADO",
+    "evidence": "tras el commit local (alt-drag → emitFrameChange con HTML) corrió un reconcile completo: patched=0, inserted=0, removed=0, skipped=4, durationMs=0.10 → 4 capas re-hasheadas aunque el DOM ya estaba igual. Contraste: drag normal (solo CSS) → reconcile posterior = false (centinela intacto).",
+    "notes": "emitFrameChange marca lastEmittedCssRef pero no lastEmittedHtmlRef (DesignFrame.tsx:220-226) → el echo de vuelta del padre supera el gate y re-ejecuta reconcileFrameHtml."
+  }
+]

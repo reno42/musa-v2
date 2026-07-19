@@ -1,0 +1,33 @@
+== generando payloads ==
+payload-6mb.json bytes: 6291556
+payload-60mb.json bytes: 62914661
+payload-mcp-6mb.json bytes: 6291585
+
+== [1] POST /api/templates con ~6MB (bajo el límite de 50mb de Express) ==
+HTTP 201 | 6291556 bytes subidos | 12584256 bytes respuesta
+respuesta (truncada):
+{"success":true,"data":{"id":"tpl_c60a9894-3cd","workspaceId":"ws_qa_verify","name":"qa-payload-6mb","width":1080,"height":1080,"engine":"html","canvas":null,"frames":[{"id":"frame_8c2dc50d-a02","temp
+
+== [2] POST /api/templates con ~60MB (sobre el límite de 50mb) ==
+HTTP 413 | 62914661 bytes subidos | 1457 bytes respuesta
+Content-Type de la respuesta:
+HTTP/1.1 100 Continue
+HTTP/1.1 413 Payload Too Large
+X-Content-Type-Options: nosniff
+Content-Type: text/html; charset=utf-8
+cuerpo (truncado, 400 chars):
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>PayloadTooLargeError: request entity too large<br> &nbsp; &nbsp;at readStream (C:\Users\Renzo\.openclaw\workspace\design-main\api\node_modules\raw-body\index.js:163:17)<br> &nbsp; &nbsp;at getRawBody (C:\Users\Renzo\.openclaw\workspace\design-main\api\node_modules\raw-body\index.js:116:12)<br> &
+
+== [3] POST /mcp con ~6MB (límite MCP = 5MB) ==
+HTTP 413 | 6291585 bytes subidos
+respuesta (truncada):
+{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Payload exceeds 5 MB limit. Upload images separately via upload_image before embedding them in HTML."}}
+
+== payloads temporales eliminados ==

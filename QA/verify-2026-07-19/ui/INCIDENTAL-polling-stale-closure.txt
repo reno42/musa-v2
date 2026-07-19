@@ -1,0 +1,31 @@
+HALLAZGO INCIDENTAL (fuera de la lista de 10): el sync remoto vía polling está roto en la app
+================================================================================================
+
+Síntoma: con el editor abierto sobre un template de UN solo frame, un cambio
+remoto del template (REST/MCP) NUNCA se aplica al canvas por polling, aunque el
+editor descarga el dato nuevo cada 5s.
+
+Evidencia (probe-poll.mjs, 2026-07-19 ~10:43):
+- localStorage vacío (sin interferencia de la caché local).
+- El editor hizo GET /api/templates/:id cada 5s (9 llamadas observadas).
+- Tras el update remoto (añade capa "lnew"), las respuestas del poll muestran el
+  updatedAt nuevo (10:43:13.672Z → 10:43:27.930Z) — el dato nuevo LLEGA.
+- La capa lnew NUNCA apareció en el DOM en 25s de observación.
+
+Causa raíz (lectura de código, EditorV2.tsx:518-553):
+  El setInterval del poll captura `lastRemoteUpdate` (useState) en su closure.
+  `setLastRemoteUpdate(remoteUpdated)` provoca re-render, pero el efecto NO se
+  re-ejecute (deps [templateId, selectedFrameId] no cambian), así que el callback
+  del intervalo ve `lastRemoteUpdate === null` para siempre → la rama que hace
+  `store.replaceAll(t.frames)` (que exige lastRemoteUpdate !== null) es código
+  muerto con un solo frame.
+
+Matiz verificado en vivo (test-04 v3): si selectedFrameId CAMBIA (p.ej. click en
+otro frame de un template multi-frame), el efecto se re-ejecuta, el nuevo closure
+captura el lastRemoteUpdate real y el siguiente poll SÍ aplica el update remoto
+(store.replaceAll → reconcileFrameHtml). Es decir: el polling funciona solo tras
+un cambio de selección de frame; con un solo frame abierto está muerto.
+
+Consecuencia para los ítems 5/6: la inyección del HTML nuevo se hizo por la vía
+auténtica REST→poll→replaceAll, usando un template de 2 frames y un click en el
+frame 2 para desatascar la closure (ver test-04-reconciler.mjs).

@@ -1,0 +1,22 @@
+{
+  "httpStatus": 200,
+  "rpcError": null,
+  "bytes": 425,
+  "keys": [
+    "format",
+    "exportedAt",
+    "template"
+  ],
+  "templateKeys": [
+    "name",
+    "width",
+    "height",
+    "variables",
+    "metadata"
+  ],
+  "has_frames": false,
+  "has_html": false,
+  "has_css": false,
+  "full_json_truncated": "{\n  \"format\": \"futuraria/v1\",\n  \"exportedAt\": \"2026-07-19T10:08:49.518Z\",\n  \"template\": {\n    \"name\": \"verify-b-noop\",\n    \"width\": 800,\n    \"height\": 600,\n    \"variables\": {\n      \"bindings\": {},\n      \"variables\": [],\n      \"collections\": []\n    },\n    \"metadata\": {\n      \"createdAt\": \"2026-07-19T10:07:53.684591+00:00\",\n      \"createdBy\": \"dev_user_default\",\n      \"updatedAt\": \"2026-07-19T10:08:32.676+00:00\"\n    }\n  }\n}",
+  "conclusion": "VERIFICADO: export_template devuelve solo metadata (425 bytes), sin frames/html/css"
+}

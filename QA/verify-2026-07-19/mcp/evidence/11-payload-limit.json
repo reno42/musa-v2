@@ -1,0 +1,7 @@
+{
+  "httpStatus": 500,
+  "contentType": "text/plain; charset=utf-8",
+  "rawBodyTruncated": "Internal Error. ID: 01KXWXQ2QKQQWSYKE7VZ1WAVS7",
+  "rpcError": null,
+  "conclusion": "OTRO: HTTP 500 Internal Error. ID: 01KXWXQ2QKQQWSYKE7VZ1WAVS7"
+}

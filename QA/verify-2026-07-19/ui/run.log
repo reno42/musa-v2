@@ -1,0 +1,256 @@
+
+=== run 2026-07-19T10:27:16.908Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T1 UNDO-VISUAL + UNDO-BUTTONS
+[A-inline-only] inicial: box=(100,100) inline=(100px,100px)
+[A-inline-only] post-drag: box=(249,189) inline=(249px,189px)
+[A-inline-only] post-undo: box=(249,189) inline=(249px,189px) computed=(249px,189px)
+[A-inline-only] styleTag post-undo: ""
+  ✖ T1 UNDO-VISUAL + UNDO-BUTTONS lanzó: net::ERR_CONNECTION_REFUSED at http://localhost:5173/?template=tpl_0bebd1b3-bec&v=2
+    at navigate (file:///C:/Users/Renzo/.openclaw/workspace/design-main/node_modules/puppeteer-core/lib/esm/puppeteer/cdp/Frame.js:181:27)
+    at async Deferred.race (file:///C:/Users/Renzo/.openclaw/workspace/design-main/node_modules/puppeteer-core/lib/esm/puppeteer/util/Deferred.js:33:20)
+    at async CdpFrame.goto (file:///C:/Users/Renzo/.openclaw/workspace/design-main/node_modules/puppeteer-core/lib/esm/puppeteer/cdp/Frame.js:147:25)
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:28:44.376Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T1 UNDO-VISUAL + UNDO-BUTTONS
+[A-inline-only] inicial: box=(100,100) inline=(100px,100px)
+[A-inline-only] post-drag: box=(249,189) inline=(249px,189px)
+[A-inline-only] post-undo: box=(249,189) inline=(249px,189px) computed=(249px,189px)
+[A-inline-only] styleTag post-undo: ""
+[B-css-important] inicial: box=(100,100) inline=(100px,100px)
+[B-css-important] post-drag: box=(249,189) inline=(249px,189px)
+[B-css-important] post-undo: box=(100,100) inline=(249px,189px) computed=(100px,100px)
+[B-css-important] styleTag post-undo: "[data-layer-id=\"rect\"] {\n  position: absolute;\n  left: 100px !important;\n  top: 100px !important;\n}\n"
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:30:00.068Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T2 ALT-DRAG + ECHO-HTML
+[altdrag] nodos marcados: 3
+[echo] drag normal → reconcile posterior: false ({"patched":-1,"inserted":-1,"removed":-1,"skipped":-1,"durationMs":-1,"sentinel":true})
+[altdrag] drag.ok=true mutaciones: +6/-5 supervivientes=0/3 nodosTras=4
+[echo] alt-drag → reconcile posterior: true stats={"patched":0,"inserted":0,"removed":0,"skipped":4,"durationMs":0.20000001788139343} capasRehasheadas=4
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:30:25.646Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T3 SCRUB-FLOOD
+[scrub] 18 ticks asíncronos en 1362ms (~76ms/tick). font-size: 44 → computado 44 (final esperado 18)
+[scrub] undos para volver a 44px: 0. Trayectoria: 
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:34:19.893Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T3 SCRUB-FLOOD
+[scrub] ctrl+click h1: {"ok":true,"tag":"H1","layerId":"el_mrrns2t0_1"}
+[scrub] 18 ticks asíncronos en 1389ms (~77ms/tick). font-size: 44 → computado 62 (final esperado 62)
+[scrub] undos para volver a 44px: 18. Trayectoria: undo#1→61px, undo#2→60px, undo#3→59px, undo#18→44px
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:34:56.171Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T4 RECONCILER-ORDER/REPARENT
+[order] orden inicial DOM: ["la","lb","lc"]
+[order] update remoto enviado (NEW entre A y B); esperando al polling del editor…
+[reparent] DOM inicial: ["panel","sib"] (mv dentro de panel)
+[reparent] update remoto enviado (panel eliminado, mv a top-level con mismo outerHTML)…
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:39:40.855Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T4 RECONCILER-ORDER/REPARENT
+[order] orden inicial DOM: ["la","lb","lc"]
+[order] esperando 10s para superar la ventana de gracia de localStorage…
+[order] update remoto enviado (NEW entre A y B); esperando al polling del editor…
+[reparent] DOM inicial: ["panel","sib"] (mv dentro de panel)
+[reparent] esperando 10s (ventana de gracia de localStorage)…
+[reparent] update remoto enviado (panel eliminado, mv a top-level con mismo outerHTML)…
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:43:13.360Z ===
+[probe] supabase traffic: http://localhost:5173/src/lib/supabase.ts
+[probe] supabase traffic: http://localhost:5173/src/lib/supabaseRealtime.ts
+[probe] supabase traffic: http://localhost:5173/node_modules/.vite/deps/@supabase_supabase-js.js?v=ba1afef5
+[probe] localStorage: {"totalKeys":0,"keysWithTemplate":[],"sample":[]}
+[probe] esperando 12s (2+ ciclos de poll)…
+[probe] llamadas GET /api/templates hasta ahora: 4 [{"t":"10:43:14","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:14","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:19","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:24","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1}]
+[probe] enviando update remoto (añade capa lnew)…
+[probe] ✗ lnew NUNCA apareció en 25s
+[probe] llamadas GET totales: 9 [{"t":"10:43:14","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:14","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:19","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:24","updatedAt":"2026-07-19T10:43:13.672Z","frameCount":1},{"t":"10:43:29","updatedAt":"2026-07-19T10:43:27.930Z","frameCount":1},{"t":"10:43:34","updatedAt":"2026-07-19T10:43:27.930Z","frameCount":1},{"t":"10:43:39","updatedAt":"2026-07-19T10:43:27.930Z","frameCount":1},{"t":"10:43:44","updatedAt":"2026-07-19T10:43:27.930Z","frameCount":1},{"t":"10:43:49","updatedAt":"2026-07-19T10:43:27.930Z","frameCount":1}]
+
+=== run 2026-07-19T10:50:24.512Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T4 RECONCILER-ORDER/REPARENT
+[order] orden inicial DOM: ["la","lb","lc"]
+[transporte] update REST enviado; observando 12s de polling…
+[order] ¿el polling aplicó el update REST? false
+[codepanel] execCommand insertText ok=false commit aplicado al frame=false
+[reparent] DOM inicial: ["panel","sib"] (mv dentro de panel)
+[transporte] update REST enviado; observando 12s de polling…
+[reparent] ¿el polling aplicó el update REST? true
+[reparent] tras update (REST/polling): {"panelPresent":true,"mvPresent":true,"order":["panel","sib"],"reconcile":{"patched":0,"inserted":0,"removed":0,"skipped":3,"durationMs":0.19999998807907104}}
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T10:53:07.371Z ===
+[monaco] keyboard.insertText existe: undefined
+
+=== run 2026-07-19T10:54:07.546Z ===
+[monaco] keyboard.sendCharacter existe: function
+[monaco] view-lines empieza: "<div data-layer-id=\"box\" data-layer-name=\"Box\" style=\"position:absolute;left:10px;top:10px;width:100px;height:100px;back"
+[monaco] zzprobe en frame DOM: false
+
+=== run 2026-07-19T10:54:53.494Z ===
+[monaco] activeElement: TEXTAREA/ime-text-area
+[monaco] view-lines empieza: "<div data-layer-id=\"box\" data-layer-name=\"Box\" style=\"position:absolute;left:10px;top:10px;width:100px;height:100px;back"
+[monaco] zzprobe en frame DOM: false
+
+=== run 2026-07-19T10:57:51.713Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T4 RECONCILER-ORDER/REPARENT
+[order] DOM inicial frame1: ["la","lb","lc"]
+[order] 7s para garantizar ≥1 ciclo de poll (lastRemoteUpdate se inicializa)…
+[order] update REST enviado (NEW entre A y B). Click en frame 2 para refrescar la closure del poll…
+[order] orden tras sync REST: null reconcile={"patched":0,"inserted":0,"removed":0,"skipped":1,"durationMs":0}
+[reparent] DOM inicial frame1: ["panel","sib"] (mv dentro de panel)
+[reparent] 7s para el primer poll…
+[reparent] update REST enviado (panel eliminado; mv a top-level con mismo outerHTML; sib con data-remote-marker). Click en frame 2…
+[reparent] sync=false estado tras update: {"panelPresent":true,"mvPresent":true,"order":["panel","sib"],"reconcile":{"patched":0,"inserted":0,"removed":0,"skipped":1,"durationMs":0.09999999403953552}}
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:02:38.696Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T4 RECONCILER-ORDER/REPARENT
+[order] DOM inicial frame1: ["la","lb","lc"]
+[order] esperando al primer poll del editor (GET /api/templates)…
+[order] primer poll observado: true. Enviando update REST (NEW entre A y B)…
+[order] topbar tras click frame2: "verify-a1-order F2 · 400×400 Library DS X B"
+[order] orden tras sync REST: ["la","lb","lc","newmid"] reconcile={"patched":0,"inserted":0,"removed":0,"skipped":1,"durationMs":0.09999999403953552}
+[reparent] DOM inicial frame1: ["panel","sib"] (mv dentro de panel)
+[reparent] esperando al primer poll…
+[reparent] primer poll observado: true. Enviando update REST (panel eliminado; mv a top-level mismo outerHTML; sib con data-remote-marker)…
+[reparent] topbar tras click frame2: "verify-a1-reparent F2 · 400×400 Library DS X B"
+[reparent] sync=true estado tras update: {"panelPresent":false,"mvPresent":false,"order":["sib"],"reconcile":{"patched":0,"inserted":0,"removed":0,"skipped":1,"durationMs":0}}
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:03:53.144Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T5 CODEPANEL-TAB
+[codepanel-A-solo-cambio-tab] tabs: css=true html=true secuencia=314ms
+[codepanel-A-solo-cambio-tab] marker " QAAMARK " en frame DOM: false · editor contiene marker: false
+[codepanel-A-solo-cambio-tab] tras reabrir panel, editor contiene marker: false
+[codepanel-B-escribe-en-css] tabs: css=true html=true secuencia=548ms
+[codepanel-B-escribe-en-css] marker " QABMARK " en frame DOM: false · editor contiene marker: false
+[codepanel-B-escribe-en-css] tras reabrir panel, editor contiene marker: false
+[codepanel] variante A: el cambio HTML NO llegó al frame
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:05:25.451Z ===
+[m2] editores: [{"visible":true,"aria":"","dataUri":"inmemory://model/1"},{"visible":false,"aria":"","dataUri":"inmemory://model/2"}]
+[m2] activeElement tras click real: DIV/native-edit-context
+[m2] tras teclear: {"viewText":"<div dathelloqaa-layer-id=\"box\" data-layer-name=\"Box\" style=\"position:absolute;l","taValue":"","hasWindowMonaco":true}
+
+=== run 2026-07-19T11:07:27.773Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T5 CODEPANEL-TAB
+[codepanel-A-solo-cambio-tab] tabs: css=true html=true secuencia=357ms
+[codepanel-A-solo-cambio-tab] marker "QAAMARK" en frame DOM: true · modelo Monaco contiene marker: true
+[codepanel-A-solo-cambio-tab] tras reabrir panel, editor contiene marker: true
+[codepanel-B-escribe-en-css] tabs: css=true html=true secuencia=705ms
+[codepanel-B-escribe-en-css] marker "QABMARK" en frame DOM: true · modelo Monaco contiene marker: true
+[codepanel-B-escribe-en-css] tras reabrir panel, editor contiene marker: true
+[codepanel] variante A: el commit HTML SALIÓ pese al cambio de tab (debounce no cancelado por tabs)
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:10:05.958Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T5 CODEPANEL-TAB
+[codepanel-A-solo-cambio-tab] tabs: css=true html=true secuencia=277ms · última tecla HTML → edición CSS: nullms
+[codepanel-A-solo-cambio-tab] marker "QAAMARK" en frame DOM: true · modelo Monaco contiene marker: true
+[codepanel-A-solo-cambio-tab] tras reabrir panel, editor contiene marker: true
+[codepanel-B-escribe-en-css] tabs: css=true html=true secuencia=304ms · última tecla HTML → edición CSS: 8ms
+[codepanel-B-escribe-en-css] marker "QABMARK" en frame DOM: false · modelo Monaco contiene marker: true
+[codepanel-B-escribe-en-css] tras reabrir panel, editor contiene marker: false
+[codepanel] variante A: el commit HTML SALIÓ pese al cambio de tab (debounce no cancelado por tabs)
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:10:37.293Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T6 ERROR-BOUNDARY
+[error-boundary] componentes con ErrorBoundary en src/: 0 []
+[error-boundary] tab Brand encontrado: true
+[error-boundary] (b) loadClicked=true vivo={"root":true,"bodyTextLen":298} pageErrors=0
+[error-boundary] (c) loadClicked=true vivo={"root":false,"bodyTextLen":0} pageErrors=3
+[error-boundary] errores de página: savedBrands.slice(...).map is not a function | savedBrands.slice(...).map is not a function | savedBrands.slice(...).map is not a function
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:11:15.429Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T7 VISUAL PASS
+[10a] menús tras click derecho: {"menus":0,"fixedPopups":0,"bodyKids":2} (body children antes: 2)
+[10b] marquee tras drag en vacío: {"overlay":{"count":0,"dashedInOverlay":0},"lightMarquee":0,"dashedDivs":0}
+[10c] overlay tras seleccionar texto: {"count":12,"kids":[{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"2px solid rgb(59, 130, 246)"},{"tag":"div","id":null,"z":"10001","hasButtons":8,"border":"1px solid rgba(255, 255, 255, 0.12)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":null},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"2px solid rgb(59, 130, 246)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"},{"tag":"div","id":null,"z":null,"hasButtons":0,"border":"1px solid rgb(255, 255, 255)"}]}
+[10f] panel contextual: {"panel":true,"hasGradient":true,"hasApply":false,"snippet":"⬢→Path\nFILL & COLOR\n▾\nFill\nOpacity\n100%\nGRADIENT\n+\nImg\n🖼 Image\nBlend\nnormal\nmultiply\nscreen\noverlay\ndarken\n"}
+[10e] path tras clicks rectos: ["M 300 600 L 520 620 L 409 780 Z"]
+[10e] paths totales: ["M 300 600 L 520 620 L 409 780 Z","M 620 600 C 620 600 728 688 800 640 C 872 592 700 820 700 820 Z"]
+[10d] botones undo/redo tras edits pen: {"undo":{"disabled":true,"opacity":"0.4","color":"rgba(122, 118, 104, 0.3)","rect":{"x":7,"y":466,"w":46,"h":36}},"redo":{"disabled":true,"opacity":"0.4","color":"rgba(122, 118, 104, 0.3)","rect":{"x":7,"y":504,"w":46,"h":36}}}
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:12:36.705Z ===
+
+=== run 2026-07-19T11:14:13.722Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T1 UNDO-VISUAL + UNDO-BUTTONS
+[A-inline-only] inicial: box=(100,100) inline=(100px,100px)
+[A-inline-only] post-drag: box=(249,189) inline=(249px,189px)
+[A-inline-only] post-undo: box=(249,189) inline=(249px,189px) computed=(249px,189px)
+[A-inline-only] styleTag post-undo: ""
+[B-css-important] inicial: box=(100,100) inline=(100px,100px)
+[B-css-important] post-drag: box=(249,189) inline=(249px,189px)
+[B-css-important] post-undo: box=(100,100) inline=(249px,189px) computed=(100px,100px)
+[B-css-important] styleTag post-undo: "[data-layer-id=\"rect\"] {\n  position: absolute;\n  left: 100px !important;\n  top: 100px !important;\n}\n"
+
+── Fin (ver results.json) ──
+
+=== run 2026-07-19T11:14:20.747Z ===
+── Verificación en vivo 2026-07-19 ──
+
+▶ T2 ALT-DRAG + ECHO-HTML
+[altdrag] nodos marcados: 3
+[echo] drag normal → reconcile posterior: false ({"patched":-1,"inserted":-1,"removed":-1,"skipped":-1,"durationMs":-1,"sentinel":true})
+[altdrag] drag.ok=true mutaciones: +6/-5 supervivientes=0/3 nodosTras=4
+[echo] alt-drag → reconcile posterior: true stats={"patched":0,"inserted":0,"removed":0,"skipped":4,"durationMs":0.10000002384185791} capasRehasheadas=4
+
+── Fin (ver results.json) ──

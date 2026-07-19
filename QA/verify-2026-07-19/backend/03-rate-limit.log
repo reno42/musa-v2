@@ -1,0 +1,14 @@
+burst de 250 GET /api/health en 182 ms
+conteo por status: {"200":100,"429":150}
+
+request #1: status=200 headers={"limit":"100","remaining":"99","reset":"1784455273","retryAfter":null}
+último request con éxito: #100 status=200 remaining=0
+
+primer 429 en request #101
+headers: {
+  "limit": "100",
+  "remaining": "0",
+  "reset": "1784455273",
+  "retryAfter": "60"
+}
+body: {"success":false,"error":"Too many requests","retryAfter":60}

@@ -1,0 +1,17 @@
+template del ítem 4: tpl_a6b71008-60a
+
+[1] html actual: length=210011 (esperado ~210011, del PUT grande)
+
+[2] versión a restaurar: id=ver_3cd471a2-7ed html="<div>v3</div>" css="" canvas=null
+
+[3] POST /versions/ver_3cd471a2-7ed/restore → 200
+    body: {"success":true,"data":{"message":"Version restored"}}
+
+[4] html tras restore REST: "<div>v3</div>"
+    ¿html restaurado a la versión? true
+    ¿canvas del template? null
+
+[5] MCP restore_version → 200
+    body (truncado): {"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"Version has no canvas data"}}
+
+[6] html final tras intento MCP: "<div>v3</div>"

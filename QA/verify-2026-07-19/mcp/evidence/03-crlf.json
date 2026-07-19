@@ -1,0 +1,28 @@
+{
+  "crlf": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"id\": \"tpl_67915687-68d\",\n  \"workspaceId\": \"ws_c804a39e-f0a\",\n  \"name\": \"verify-b-crlf\",\n  \"width\": 1080,\n  \"height\": 1080,\n  \"engine\": \"html\",\n  \"canvas\": null,\n  \"frames\": [\n    {\n      \"id\": \"frame_17299556-1cc\",\n      \"name\": \"verify-b-crlf\",\n      \"x\": 0,\n      \"y\": 0,\n      \"width\": 1080,\n      \"height\": 1080,\n      \"html\": \"<div class='verify-a'>CRLF probe</div>\",\n      \"css\": \".verify-a {\\r\\n  color: #ff0000;\\r\\n}\\r\\n.verify-b {\\r\\n  margin: 0;\\r\\n}\",\n      \"background\": \"#ffffff\"\n    }\n  ],\n  \"styles\": [],\n  \"comments\": [],\n  \"versions\": [],\n  \"variables\": {\n    \"collections\": [],\n    \"variables\": [],\n    \"bindings\": {}\n  },\n  \"components\": [],\n  \"metadata\": {\n    \"createdAt\": \"2026-07-19T10:08:29.598Z\",\n    \"updatedAt\": \"2026-07-19T10:08:29.676Z\",\n    \"createdBy\": \"dev_user_default\"\n  },\n  \"html\": \"<div class='verify-a'>CRLF probe</div>\",\n  \"css\": \".verify-a {\\r\\n  color: #ff0000;\\r\\n}\\r\\n.verify-b {\\r\\n  margin: 0;\\r\\n}\",\n  \"thumbnail\": \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEwODAiIHZpZXdCb3g9IjAgMCAxMDgwIDEwODAiPgogIDxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiNmZmZmZmYiLz4KICA8dGV4dCB4PSI1MCUiIHk9IjQ1JSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjE1KSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNzJweCI+dmVyaWZ5LWItY3JsZjwvdGV4dD4KICA8dGV4dCB4PSI1MCUiIHk9IjU4JSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjA4KSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMzZweCI+MTA4MMOXMTA4MDwvdGV4dD4KPC9zdmc+\"\n}"
+  },
+  "lf": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"id\": \"tpl_746f39c4-56a\",\n  \"workspaceId\": \"ws_c804a39e-f0a\",\n  \"name\": \"verify-b-crlf-lf\",\n  \"width\": 1080,\n  \"height\": 1080,\n  \"engine\": \"html\",\n  \"canvas\": null,\n  \"frames\": [\n    {\n      \"id\": \"frame_bfc717d1-eee\",\n      \"name\": \"verify-b-crlf-lf\",\n      \"x\": 0,\n      \"y\": 0,\n      \"width\": 1080,\n      \"height\": 1080,\n      \"html\": \"<div class='verify-a'>LF probe</div>\",\n      \"css\": \".verify-a {\\n  color: #ff0000;\\n}\\n.verify-b {\\n  margin: 0;\\n}\",\n      \"background\": \"#ffffff\"\n    }\n  ],\n  \"styles\": [],\n  \"comments\": [],\n  \"versions\": [],\n  \"variables\": {\n    \"collections\": [],\n    \"variables\": [],\n    \"bindings\": {}\n  },\n  \"components\": [],\n  \"metadata\": {\n    \"createdAt\": \"2026-07-19T10:08:29.974Z\",\n    \"updatedAt\": \"2026-07-19T10:08:29.998Z\",\n    \"createdBy\": \"dev_user_default\"\n  },\n  \"html\": \"<div class='verify-a'>LF probe</div>\",\n  \"css\": \".verify-a {\\n  color: #ff0000;\\n}\\n.verify-b {\\n  margin: 0;\\n}\",\n  \"thumbnail\": \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEwODAiIHZpZXdCb3g9IjAgMCAxMDgwIDEwODAiPgogIDxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiNmZmZmZmYiLz4KICA8dGV4dCB4PSI1MCUiIHk9IjQ1JSIgd…[TRUNCADO 346 chars de 1546 totales]"
+  },
+  "crlf_stored_css": {
+    "hasCR": true,
+    "hasLF": true,
+    "preview": "\".verify-a {\\r\\n  color: #ff0000;\\r\\n}\\r\\n.verify-b {\\r\\n  margin: 0;\\r\\n}\""
+  },
+  "delete_tpl_67915687-68d": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_67915687-68d\"\n}"
+  },
+  "delete_tpl_746f39c4-56a": {
+    "httpStatus": 200,
+    "rpcError": null,
+    "textTruncated": "{\n  \"deleted\": true,\n  \"id\": \"tpl_746f39c4-56a\"\n}"
+  },
+  "conclusion": "REFUTADO: create_template con CRLF en css funciona"
+}

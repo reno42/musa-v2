@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
 import { store } from "../../api/src/services/store.js";
@@ -2799,6 +2800,29 @@ async function handleMethod(method, params, userId) {
       } else {
         store.snapshotAuto(templateId, "ia", trigger);
       }
+      // Persist snapshot to Supabase for cross-invocation survival
+      const sb = getSupabase();
+      if (sb) {
+        const snap = store.getSnapshot(templateId);
+        if (snap && snap.data) {
+          const snapData = snap.data;
+          sb.from("templates").select("data").eq("id", templateId).maybeSingle().then(({ data: row }) => {
+            if (row?.data) {
+              const existing = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+              const snapshots = existing._snapshots || [];
+              snapshots.push({
+                id: snap.id,
+                trigger,
+                timestamp: new Date().toISOString(),
+                data: snapData,
+              });
+              if (snapshots.length > 10) snapshots.shift();
+              existing._snapshots = snapshots;
+              sb.from("templates").update({ data: existing }).eq("id", templateId).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      }
     } catch { /* non-blocking */ }
   };
 
@@ -3028,9 +3052,9 @@ async function handleMethod(method, params, userId) {
       // Also accept id or templateId
       const tplId = params.id || params.templateId;
       if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      autoSnapshot(tplId, "update_template");
       const tpl = await templates.updateTemplate(tplId, updates);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
-      autoSnapshot(tplId, "update_template");
       return tpl;
     }
     case "delete_template": {
@@ -3051,6 +3075,10 @@ async function handleMethod(method, params, userId) {
         exportedAt: new Date().toISOString(),
         template: {
           name: tpl.name, width: tpl.width, height: tpl.height,
+          engine: tpl.engine || "fabric",
+          frames: tpl.frames || [],
+          html: tpl.html || "",
+          css: tpl.css || "",
           variables: tpl.variables, metadata: tpl.metadata,
         },
       };
@@ -3292,29 +3320,49 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(tplId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
 
-      // Try snapshot store first
+      // 1. Try in-memory snapshot store (same invocation)
       const snapshot = store.getSnapshot(tplId, params.versionId);
       if (snapshot && snapshot.data) {
-        const restored = await templates.updateTemplate(tplId, { canvas: snapshot.data.canvas });
-        return {
-          restored: true,
-          templateId: tplId,
-          versionId: params.versionId,
-          template: restored,
-        };
+        const updates = {};
+        if (snapshot.data.canvas) updates.canvas = snapshot.data.canvas;
+        if (snapshot.data.frames) updates.frames = snapshot.data.frames;
+        if (snapshot.data.html !== undefined) updates.html = snapshot.data.html;
+        if (snapshot.data.css !== undefined) updates.css = snapshot.data.css;
+        const restored = await templates.updateTemplate(tplId, updates);
+        return { restored: true, templateId: tplId, versionId: params.versionId, template: restored, source: "memory" };
       }
 
-      // Fallback to legacy tpl.versions
+      // 2. Try Supabase-persisted snapshots (cross-invocation)
+      const tplData = tpl.data || {};
+      const persistedSnaps = tplData._snapshots || [];
+      if (persistedSnaps.length > 0) {
+        const persistedSnap = persistedSnaps.find(s => s.id === params.versionId);
+        if (persistedSnap?.data) {
+          const updates = {};
+          if (persistedSnap.data.canvas) updates.canvas = persistedSnap.data.canvas;
+          if (persistedSnap.data.frames) updates.frames = persistedSnap.data.frames;
+          if (persistedSnap.data.html !== undefined) updates.html = persistedSnap.data.html;
+          if (persistedSnap.data.css !== undefined) updates.css = persistedSnap.data.css;
+          const restored = await templates.updateTemplate(tplId, updates);
+          return { restored: true, templateId: tplId, versionId: params.versionId, template: restored, source: "supabase" };
+        }
+      }
+
+      // 3. Fallback to legacy tpl.versions (Fabric.js canvas format)
       const versions = tpl.versions || [];
       const match = versions.find((v, i) => (v.id || `v${i}`) === params.versionId);
       if (!match) throw { code: -32000, message: `Version not found: ${params.versionId}` };
-      if (!match.canvas) throw { code: -32000, message: "Version has no canvas data" };
-      const restored = await templates.updateTemplate(tplId, { canvas: match.canvas });
+      if (!match.canvas && !match.frames) throw { code: -32000, message: "Version has no restore data" };
+      const legacyUpdates = {};
+      if (match.canvas) legacyUpdates.canvas = match.canvas;
+      if (match.frames) legacyUpdates.frames = match.frames;
+      const restored = await templates.updateTemplate(tplId, legacyUpdates);
       return {
         restored: true,
         templateId: tplId,
         versionId: params.versionId,
         template: restored,
+        source: "legacy",
       };
     }
 
@@ -3482,8 +3530,8 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       const ok = store.deleteFrame(params.templateId, params.frameId);
       if (!ok) throw { code: -32000, message: "Frame not found" };
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
     }
 
@@ -3799,8 +3847,8 @@ async function handleMethod(method, params, userId) {
             translatedCount++;
           }
         }
-        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
         autoSnapshot(params.templateId, method);
+        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
         return { translated: translatedCount, total: targets.length, targetLanguage: targetLang };
       } else if (textToTranslate) {
         const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -3832,8 +3880,8 @@ async function handleMethod(method, params, userId) {
         collectionId: params.collectionId || null,
       };
       tpl.variables.variables.push(variable);
-      await templates.updateTemplate(params.templateId, { variables: tpl.variables });
       autoSnapshot(params.templateId, method);
+      await templates.updateTemplate(params.templateId, { variables: tpl.variables });
       return { created: true, variableId: variable.id, name: variable.name, type: variable.type, value: variable.value };
     }
 
@@ -3853,8 +3901,8 @@ async function handleMethod(method, params, userId) {
       tpl.variables.bindings[key].push({ variableId: variable.id, variableName: variable.name });
       obj[prop] = variable.value;
       if (prop === "fontSize" || prop === "width" || prop === "height") obj[prop] = Number(variable.value) || variable.value;
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames, variables: tpl.variables });
       autoSnapshot(params.templateId, method);
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames, variables: tpl.variables });
       return { linked: true, variableName: variable.name, targetLayerName: params.targetLayerName, property: prop, value: variable.value };
     }
 
@@ -4292,8 +4340,8 @@ async function handleMethod(method, params, userId) {
 
       applyLayout();
       tpl.metadata.updatedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
 
       return { applied: true, layout, objectCount: targets.length, objects: targets.map(o => ({ layerName: o.layerName || o.name, left: o.left, top: o.top })) };
     }
@@ -5472,12 +5520,12 @@ async function handleMethod(method, params, userId) {
       if (params.background !== undefined) frame.background = params.background;
       tpl.metadata.updatedAt = new Date().toISOString();
       // Persist
+      autoSnapshot(params.templateId, "update_html_frame");
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
         html: tpl.html,
         css: tpl.css,
       });
-      autoSnapshot(params.templateId, "update_html_frame");
       return frame;
     }
 
@@ -5492,12 +5540,12 @@ async function handleMethod(method, params, userId) {
       if (idx === -1) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
       frames.splice(idx, 1);
       tpl.metadata.updatedAt = new Date().toISOString();
+      autoSnapshot(params.templateId, "delete_html_frame");
       await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
         html: tpl.html,
         css: tpl.css,
       });
-      autoSnapshot(params.templateId, "delete_html_frame");
       return { deleted: true, frameId: params.frameId, remainingFrames: frames.length };
     }
 

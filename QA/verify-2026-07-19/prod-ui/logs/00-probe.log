@@ -1,0 +1,7 @@
+[2026-07-19T09:55:31.690Z] workspace create 201 ws_c804a39e-f0a
+[2026-07-19T09:55:32.299Z] template create 201 tpl_0084fd82-68a
+[2026-07-19T09:55:32.655Z] template PUT 200 true
+[2026-07-19T09:55:32.952Z] template GET 200 frames: 1 layer box1 presente: true
+[2026-07-19T09:55:33.627Z] template cleanup soft: 200 purge: 200
+[2026-07-19T09:55:34.117Z] trash verify-a2-* restantes: 0
+[2026-07-19T09:55:34.117Z] DONE writesPossible: true

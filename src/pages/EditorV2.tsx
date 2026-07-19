@@ -257,7 +257,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // Agent bridge: window.futurariaAgent gives AI agents frame snapshots + layout lint
   useEffect(() => { installAgentBridge(); }, []);
 
-  // ── Undo/Redo via DocumentStore (canUndo/canRedo synced below) ──
+  // ── Sync canUndo/canRedo from DocumentStore ──
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      setCanUndo(store.canUndo);
+      setCanRedo(store.canRedo);
+    });
+    // Initial sync
+    setCanUndo(store.canUndo);
+    setCanRedo(store.canRedo);
+    return unsubscribe;
+  }, [store]);
 
   // ── UI state ──
   const [loading, setLoading] = useState(true);
@@ -277,7 +287,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
+  const lastRemoteUpdateRef = useRef<string | null>(null);
   const isDirtyRef = useRef(false);
   const autoSaveRef = useRef<(frames: FrameData[]) => void>(() => {});
   const framesRef = useRef(frames);
@@ -481,9 +491,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // Keep autoSaveRef in sync so undo/redo can call the latest version
   autoSaveRef.current = autoSave;
 
+  // ── Flush pending save on tab close / navigation ──
   useEffect(() => {
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, []);
+    const handleBeforeUnload = () => {
+      if (isDirtyRef.current && saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        // Sync: send last known state via sendBeacon (fire-and-forget)
+        const lastFrames = framesRef.current;
+        const active = lastFrames.find(f => f.id === selectedFrameId) || lastFrames[0];
+        const payload = JSON.stringify({
+          frames: lastFrames.map(f => ({...f, contentHash: simpleHash((f.html || "") + "||" + (f.css || "")), lastModifiedBy: "human", lastModifiedAt: new Date().toISOString()})),
+          html: active?.html || "",
+          css: active?.css || "",
+          name: templateName,
+        });
+        try { navigator.sendBeacon(`/api/templates/${templateId}`, new Blob([payload], { type: "application/json" })); } catch {}
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [templateId, selectedFrameId, templateName]);
 
   // ── Realtime sync ──
   const realtimeReadyRef = useRef(false);
@@ -525,8 +553,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           if (!tpl) return;
           const t = tpl as any;
           const remoteUpdated = t.metadata?.updatedAt;
-          if (remoteUpdated && remoteUpdated !== lastRemoteUpdate) {
-            if (lastRemoteUpdate !== null) {
+          if (remoteUpdated && remoteUpdated !== lastRemoteUpdateRef.current) {
+            if (lastRemoteUpdateRef.current !== null) {
               // Safety: never replace non-empty local frames with empty remote frames
               if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
                 // Only update if frame data actually differs (avoid unnecessary re-renders)
@@ -547,7 +575,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 ));
               }
             }
-            setLastRemoteUpdate(remoteUpdated);
+            lastRemoteUpdateRef.current = remoteUpdated;
           }
         } catch { /* silent */ }
       }, 5000);
