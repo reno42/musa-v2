@@ -79,8 +79,9 @@ async function listFromSupabase(
     // Postgres extracts the scalars and ONLY the first frame (dashboard
     // thumbnail) server-side. Pulling whole rows made the response grow
     // with every batch-generated design until Netlify answered 502.
+    // slug column added by v7 migration — omit from SELECT if it doesn't exist yet
     const queryPromise = sb.from("templates")
-      .select("id, name, slug, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
+      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -171,6 +172,16 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
     }
     const { error } = await sb.from("templates").upsert(row);
     if (error) {
+      // slug column added by v7 migration — retry without it if missing
+      if (error.message?.includes("slug") && error.message?.includes("does not exist")) {
+        delete row.slug;
+        const { error: err2 } = await sb.from("templates").upsert(row);
+        if (err2) {
+          console.warn("[templates] Supabase upsert failed (retry):", err2.message);
+          return false;
+        }
+        return true;
+      }
       console.warn("[templates] Supabase upsert failed:", error.message);
       return false;
     }

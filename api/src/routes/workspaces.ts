@@ -83,7 +83,16 @@ async function syncWorkspacesFromTemplates(sb: ReturnType<typeof getSupabase>) {
 
     if (rows.length > 0) {
       const { error: upsertErr } = await sb.from("workspaces").upsert(rows);
-      if (upsertErr) console.warn("[workspaces] sync upsert failed:", upsertErr.message);
+      if (upsertErr) {
+        // slug column added by v7 migration — retry without it if missing
+        if (upsertErr.message?.includes("slug") && upsertErr.message?.includes("does not exist")) {
+          const rowsNoSlug = rows.map(({ slug: _, ...rest }) => rest);
+          const { error: err2 } = await sb.from("workspaces").upsert(rowsNoSlug);
+          if (err2) console.warn("[workspaces] sync upsert failed (retry):", err2.message);
+        } else {
+          console.warn("[workspaces] sync upsert failed:", upsertErr.message);
+        }
+      }
     }
   } catch (e) {
     console.warn("[workspaces] sync failed:", (e as Error).message);
@@ -94,14 +103,24 @@ async function upsertSupabase(ws: Workspace) {
   const sb = getSupabase();
   if (!sb) return;
   try {
-    await sb.from("workspaces").upsert({
+    const row: Record<string, any> = {
       id: ws.id,
       name: ws.name,
       slug: ws.slug || slugify(ws.name),
       owner_id: ws.ownerId,
       data: ws,
       updated_at: new Date().toISOString(),
-    });
+    };
+    const { error } = await sb.from("workspaces").upsert(row);
+    if (error) {
+      // slug column added by v7 migration — retry without it if missing
+      if (error.message?.includes("slug") && error.message?.includes("does not exist")) {
+        delete row.slug;
+        await sb.from("workspaces").upsert(row);
+      } else {
+        console.warn("[workspaces] Supabase upsert failed:", error.message);
+      }
+    }
   } catch (e) {
     console.warn("[workspaces] Supabase upsert failed:", (e as Error).message);
   }

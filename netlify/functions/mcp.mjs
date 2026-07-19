@@ -8633,21 +8633,25 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "query_design_graph": {
       const sbGraph = getSupabase();
       if (!sbGraph) return { nodes: [], edges: [] };
-      let query = sbGraph.from("design_file_meta").select("*, templates!inner(id, name, thumbnail, slug, workspace_id)");
+      let query = sbGraph.from("design_file_meta").select("*, templates!inner(id, name, thumbnail, workspace_id)");
       if (params.workspaceId) query = query.eq("workspace_id", params.workspaceId);
       if (params.brand) query = query.eq("brand", params.brand);
       if (params.tag) query = query.contains("tags", [params.tag]);
       if (params.format) query = query.eq("format", params.format);
-      const { data, error } = await query;
+      let { data, error } = await query;
       if (error) throw error;
 
       // Collect unique workspace IDs to resolve slugs
       const wsIds = [...new Set((data || []).map(r => r.workspace_id).filter(Boolean))];
       let wsSlugMap = {};
       if (wsIds.length > 0) {
-        const { data: wsRows } = await sbGraph.from("workspaces")
-          .select("id, slug").in("id", wsIds);
-        for (const w of (wsRows || [])) wsSlugMap[w.id] = w.slug || null;
+        try {
+          const { data: wsRows, error: wsErr } = await sbGraph.from("workspaces")
+            .select("id, slug").in("id", wsIds);
+          if (!wsErr) {
+            for (const w of (wsRows || [])) wsSlugMap[w.id] = w.slug || null;
+          }
+        } catch { /* slug column may not exist yet (v7 migration pending) */ }
       }
 
       const nodes = (data || []).map(r => ({
