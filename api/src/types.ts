@@ -3,6 +3,7 @@
 export interface Workspace {
   id: string;
   name: string;
+  slug?: string;
   description?: string;
   ownerId: string;
   memberIds: string[];
@@ -43,6 +44,7 @@ export interface DesignTemplate {
   id: string;
   workspaceId: string;
   name: string;
+  slug?: string;
   width: number;
   height: number;
   engine: "html";

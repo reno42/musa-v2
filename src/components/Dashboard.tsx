@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef, useReducer } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
@@ -11,6 +11,7 @@ import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../
 interface Template {
   id: string;
   name: string;
+  slug?: string;
   width: number;
   height: number;
   engine?: "html";
@@ -37,10 +38,11 @@ interface Recipe {
 interface Workspace {
   id: string;
   name: string;
+  slug?: string;
 }
 
 interface DashboardProps {
-  onSelectTemplate: (id: string) => void;
+  onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
   onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
 }
 
@@ -147,6 +149,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
+
+  // workspace id → slug lookup for clean URL navigation
+  const wsSlugMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of workspaces) if (w.slug) m.set(w.id, w.slug);
+    return m;
+  }, [workspaces]);
 
   // ── Security / API Key ──
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
@@ -549,7 +558,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug }); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
               </div>
             </>
           )}
@@ -584,7 +593,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(0,0,0,0.6)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(0,0,0,0.5)"; }}
-            onClick={() => onSelectTemplate(t.id)}
+            onClick={() => onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug })}
           >
             <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
               {/* Virtualization: only mount <img> for center ±4 cards (9 max).
@@ -613,7 +622,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       style={{ ...cardStyle }}
       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
-      onClick={() => onSelectTemplate(t.id)}
+      onClick={() => onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug })}
     >
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
         {previewContent}
@@ -667,7 +676,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
-                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
+                <button type="button" onClick={e => { e.stopPropagation(); onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug }); setActionDropdownId(null); }} style={ddItemStyle}>ℹ️ Info</button>
               </div>
             </>
           )}

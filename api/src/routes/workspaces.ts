@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { store } from "../services/store.js";
 import { getSupabase } from "../services/supabase.js";
+import { slugify } from "../services/slugify.js";
 import {
   validate, createWorkspaceSchema, updateWorkspaceSchema, addMemberSchema,
 } from "../middleware/index.js";
@@ -73,6 +74,7 @@ async function syncWorkspacesFromTemplates(sb: ReturnType<typeof getSupabase>) {
     const rows = [...seen.entries()].map(([id, tplName]) => ({
       id,
       name: tplName.replace(/^(.+?)\s*[-–—].*$/, "$1").trim() || "Workspace",
+      slug: slugify(tplName.replace(/^(.+?)\s*[-–—].*$/, "$1").trim() || "Workspace"),
       owner_id: "dev_user_default",
       data: {},
       created_at: new Date().toISOString(),
@@ -95,6 +97,7 @@ async function upsertSupabase(ws: Workspace) {
     await sb.from("workspaces").upsert({
       id: ws.id,
       name: ws.name,
+      slug: ws.slug || slugify(ws.name),
       owner_id: ws.ownerId,
       data: ws,
       updated_at: new Date().toISOString(),

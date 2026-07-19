@@ -1,4 +1,4 @@
-import { useReducer, useEffect } from "react";
+import { useReducer, useEffect, useState } from "react";
 import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
@@ -36,8 +36,23 @@ const initialAppState: AppState = {
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const { addToast } = useToast();
+  const [resolving, setResolving] = useState(false);
 
   const { view, templateId } = state;
+
+  // ── Slug → UUID resolution ──────────────────────────────
+  // Calls the public /api/resolve endpoint (no auth required).
+  // Returns null if the slug doesn't resolve.
+  const resolveSlug = async (wsSlug: string, tplSlug?: string) => {
+    const url = tplSlug
+      ? `/api/resolve/workspace/${wsSlug}/${tplSlug}`
+      : `/api/resolve/workspace/${wsSlug}`;
+    try {
+      const res = await fetch(url);
+      const json = await res.json();
+      return json.success ? json.data : null;
+    } catch { return null; }
+  };
 
   // Create HTML template and open in EditorV2
   const handleCreateHtmlTemplate = async (workspaceId: string, name: string) => {
@@ -49,8 +64,10 @@ function App() {
       });
       const json = await res.json();
       if (json.success && json.data) {
-        dispatch({ type: "OPEN_TEMPLATE_V2", id: json.data.id });
-        window.history.replaceState(null, '', `/?template=${json.data.id}&v=2`);
+        const id = json.data.id;
+        dispatch({ type: "OPEN_TEMPLATE_V2", id });
+        // Fall back to query-param URL until slug is available
+        window.history.replaceState(null, '', `/?template=${id}&v=2`);
       } else {
         addToast("No se pudo crear la plantilla. Intenta de nuevo.", "error");
       }
@@ -59,17 +76,52 @@ function App() {
     }
   };
 
-  // Open template — always uses EditorV2
-  const handleSelectTemplate = (id: string) => {
+  // Open template — uses clean URL when slug info is available
+  const handleSelectTemplate = (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => {
     dispatch({ type: "OPEN_TEMPLATE_V2", id });
-    window.history.replaceState(null, '', `/?template=${id}&v=2`);
+    if (slugInfo?.wsSlug && slugInfo?.tplSlug) {
+      window.history.replaceState(null, '', `/w/${slugInfo.wsSlug}/${slugInfo.tplSlug}`);
+    } else {
+      // Backward compat: query-param URL
+      window.history.replaceState(null, '', `/?template=${id}&v=2`);
+    }
   };
 
-  // Check URL params for direct template loading
+  // Check URL params for direct template/slug loading
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tplId = params.get("template");
     const hash = window.location.hash.replace("#", "");
+
+    // ── Clean URL routing (/w/:wsSlug[/:tplSlug]) ──
+    const path = window.location.pathname;
+    const slugMatch = path.match(/^\/w\/([^/]+)(?:\/([^/]+))?$/);
+
+    if (slugMatch) {
+      const [, wsSlug, tplSlug] = slugMatch;
+      setResolving(true);
+      resolveSlug(wsSlug, tplSlug || undefined).then((data) => {
+        if (!data) {
+          // Slug not found — show dashboard
+          dispatch({ type: "ENTER_WORKSPACE" });
+          return;
+        }
+        if (data.templateId) {
+          // Full resolve: workspace + template
+          dispatch({ type: "OPEN_TEMPLATE_V2", id: data.templateId });
+        } else {
+          // Workspace-only resolve — go to dashboard
+          dispatch({ type: "ENTER_WORKSPACE" });
+        }
+      }).catch(() => {
+        dispatch({ type: "ENTER_WORKSPACE" });
+      }).finally(() => {
+        setResolving(false);
+      });
+      return;
+    }
+
+    // ── Backward compat: ?template=UUID&v=2 ──
     if (tplId) {
       dispatch({ type: "OPEN_TEMPLATE_V2", id: tplId });
     } else if (hash === "workspace") {
@@ -80,6 +132,17 @@ function App() {
 
   // Landing view
   if (view === "landing") {
+    if (resolving) {
+      // Show landing skeleton while resolving slug
+      return (
+        <Landing
+          onEnter={() => {
+            dispatch({ type: "ENTER_WORKSPACE" });
+            window.history.replaceState(null, "", "/#workspace");
+          }}
+        />
+      );
+    }
     return (
       <Landing
         onEnter={() => {

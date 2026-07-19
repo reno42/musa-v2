@@ -1,5 +1,6 @@
 import { store } from "./store.js";
 import { getSupabase } from "./supabase.js";
+import { slugify } from "./slugify.js";
 import { v4 as uuid } from "uuid";
 import type { DesignTemplate, CanvasData, LayerOverride } from "../types.js";
 
@@ -23,6 +24,7 @@ function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
     id: row.id,
     name: row.name,
     workspaceId: row.workspace_id,
+    slug: (row as any).slug || null,
     metadata: {
       ...data.metadata,
       createdAt: row.created_at,
@@ -78,7 +80,7 @@ async function listFromSupabase(
     // thumbnail) server-side. Pulling whole rows made the response grow
     // with every batch-generated design until Netlify answered 502.
     const queryPromise = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
+      .select("id, name, slug, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -94,6 +96,7 @@ async function listFromSupabase(
     let items = (data || []).map((r: any): DesignTemplate => ({
       id: r.id,
       name: r.name,
+      slug: r.slug || null,
       workspaceId: r.workspace_id,
       width: Number(r.width) || 1080,
       height: Number(r.height) || 1080,
@@ -157,6 +160,7 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
     const row: Record<string, any> = {
       id: tpl.id,
       name: tpl.name,
+      slug: tpl.slug || slugify(tpl.name),
       workspace_id: tpl.workspaceId || null,
       data: tpl,
       updated_at: new Date().toISOString(),

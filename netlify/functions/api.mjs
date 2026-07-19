@@ -1,5 +1,8 @@
 import { Readable } from "node:stream";
 import app from "../../api/src/index.js";
+// NOTE: import path "../../api/src/index.js" resolves to TypeScript source
+// at build time via esbuild. If the bundler changes, update this path.
+import { getSupabase } from "../../api/src/services/supabase.js";
 
 // ── Lightweight auth check (defense-in-depth, Express middleware does full validation) ──
 
@@ -65,6 +68,98 @@ export const handler = async (event, context) => {
   }
 
   const req = createRequest(event);
+
+  // ── Public slug resolution (pre-Express, guaranteed no-auth) ──
+  // Bypasses the full middleware chain for fast, guaranteed-public
+  // slug→UUID lookups. Express auth middleware also allows public GET,
+  // but this interceptor is architectural isolation: resolve stays
+  // public regardless of future auth middleware changes.
+  if (event.httpMethod === "GET" && event.path.startsWith("/api/resolve/")) {
+    const sb = getSupabase();
+    if (!sb) {
+      return {
+        statusCode: 503,
+        headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ success: false, error: "Supabase not connected" }),
+      };
+    }
+
+    // Parse: /api/resolve/workspace/:wsSlug[/:tplSlug?]
+    const parts = event.path.replace("/api/resolve/workspace/", "").split("/").filter(Boolean);
+    const wsSlug = parts[0];
+    const tplSlug = parts[1] || null;
+
+    try {
+      if (!wsSlug) {
+        return {
+          statusCode: 400,
+          headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ success: false, error: "Missing workspace slug" }),
+        };
+      }
+
+      // Resolve workspace by slug
+      const { data: ws, error: wsErr } = await sb.from("workspaces")
+        .select("id, name, slug")
+        .eq("slug", wsSlug)
+        .maybeSingle();
+
+      if (wsErr || !ws) {
+        return {
+          statusCode: 404,
+          headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ success: false, error: `Workspace not found: ${wsSlug}` }),
+        };
+      }
+
+      // Workspace-only resolve
+      if (!tplSlug) {
+        return {
+          statusCode: 200,
+          headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ success: true, data: { id: ws.id, name: ws.name, slug: ws.slug } }),
+        };
+      }
+
+      // Template resolve within workspace
+      const { data: tpl, error: tplErr } = await sb.from("templates")
+        .select("id, name, slug")
+        .eq("workspace_id", ws.id)
+        .eq("slug", tplSlug)
+        .is("deleted_at", null)
+        .maybeSingle();
+
+      if (tplErr || !tpl) {
+        return {
+          statusCode: 404,
+          headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ success: false, error: `Template not found: ${tplSlug}` }),
+        };
+      }
+
+      return {
+        statusCode: 200,
+        headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({
+          success: true,
+          data: {
+            workspaceId: ws.id,
+            workspaceName: ws.name,
+            workspaceSlug: ws.slug,
+            templateId: tpl.id,
+            templateName: tpl.name,
+            templateSlug: tpl.slug,
+          },
+        }),
+      };
+    } catch (err) {
+      return {
+        statusCode: 500,
+        headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ success: false, error: `Resolution failed: ${err.message}` }),
+      };
+    }
+  }
 
   const chunks = [];
   const resHeaders = {};
