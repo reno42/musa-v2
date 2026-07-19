@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
+import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
@@ -76,29 +77,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
   const [flowIndex, setFlowIndex] = useState(0);
-  const flowScrollRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const CARD_WIDTH = 220;
-  const CARD_GAP = 16;
-
-  /* Scroll one card at a time — centers the target card in the viewport */
-  const scrollToCard = useCallback((idx: number) => {
-    const el = flowScrollRef.current;
-    if (!el) return;
-    const clamped = Math.max(0, Math.min(idx, templates.length - 1));
-    // Card center = clamped * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2
-    // Subtract half viewport to center the card
-    const target = clamped * (CARD_WIDTH + CARD_GAP) - el.clientWidth / 2 + CARD_WIDTH / 2;
-    el.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
-  }, [templates.length]);
-
-  /* Auto-center first card when entering flow mode */
-  useEffect(() => {
-    if (cardMode === "flow" && templates.length > 0) {
-      const timer = setTimeout(() => scrollToCard(0), 150);
-      return () => clearTimeout(timer);
-    }
-  }, [cardMode, templates.length, scrollToCard]);
 
   /* Fetch storage health when Settings tab is active */
   useEffect(() => {
@@ -111,18 +90,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     return () => { cancelled = true; };
   }, [activeTab]);
 
-  /* Debounced scroll handler — prevents laggy state updates mid-scroll */
-  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleFlowScroll = useCallback(() => {
-    const el = flowScrollRef.current;
-    if (!el) return;
-    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-    scrollTimeoutRef.current = setTimeout(() => {
-      const center = el.scrollLeft + el.clientWidth / 2;
-      const idx = Math.round((center - CARD_WIDTH / 2) / (CARD_WIDTH + CARD_GAP));
-      setFlowIndex(Math.max(0, Math.min(idx, templates.length - 1)));
-    }, 60);
-  }, [templates.length]);
   const handleCardModeChange = (mode: "grid" | "flow") => {
     setCardMode(mode);
     try { localStorage.setItem("futuraria-card-mode", mode); } catch {}
@@ -301,20 +268,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         searchInputRef.current?.select();
         return;
       }
-      /* Arrow keys → navigate flow (only when flow is active and search not focused) */
-      if (cardMode === "flow" && activeTab === "templates" && document.activeElement?.tagName !== "INPUT") {
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          scrollToCard(flowIndex - 1);
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          scrollToCard(flowIndex + 1);
-        }
-      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cardMode, activeTab, flowIndex, scrollToCard]);
+  }, [cardMode, activeTab]);
 
   const loading = loadingRef.current;
 
@@ -496,29 +453,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     }
   };
 
-  const renderTemplateCard = (t: Template, i?: number) => {
-    const dist = i !== undefined ? i - flowIndex : 0;
-    const absDist = Math.abs(dist);
-    const isCenter = dist === 0;
-    const isFlow = i !== undefined && cardMode === "flow";
-    const rotY = isCenter ? 0 : dist > 0 ? -42 : 42;
-    const scaleVal = isCenter ? 1.1 : Math.max(0.6, 1 - absDist * 0.12);
-    const translateZ = isCenter ? 60 : -absDist * 50;
-    const opacityVal = Math.max(0.2, 1 - absDist * 0.25);
-
-    /* Thumbnail preview: both flow and grid modes use static <img> thumbnails.
-       Server-side pipeline generates SVG placeholders on commit; browser-side
-       handleSnapshotAll replaces them with real PNGs via html2canvas.
-       Prefer curated cover_image_url from design_file_meta over auto thumbnail. */
-    const coverUrl = metaCovers.get(t.id) || t.thumbnail;
-    const previewContent = coverUrl
-      ? <img src={coverUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
-      : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 14, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
-        </div>;
-
-    /* Shared metadata + actions block (rendered inside card for grid, below for flow) */
-    const metaBlock = (
+  /* Metadata + actions for the centered CoverFlow item (name, date, ··· menu) */
+  const renderFlowMeta = (t: Template) => (
       <>
         {editingTplId === t.id ? (
           <input
@@ -566,53 +502,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       </>
     );
 
-    /* ── FLOW MODE: card is pure preview, metadata below outside ── */
-    if (isFlow) {
-      return (
-        <div
-          key={t.id}
-          style={{
-            width: CARD_WIDTH, flexShrink: 0,
-            transform: `rotateY(${rotY}deg) scale(${scaleVal}) translateZ(${translateZ}px)`,
-            opacity: opacityVal,
-            transition: "transform 0.4s ease, opacity 0.4s ease",
-            scrollSnapAlign: "center" as any,
-            transformStyle: "preserve-3d",
-            zIndex: 100 - absDist,
-            display: "flex", flexDirection: "column", alignItems: "center",
-          }}
-        >
-          {/* The card itself — clean preview, no overlay, no info inside */}
-          <div
-            className="dash-card flow-card"
-            style={{
-              ...cardStyle,
-              width: CARD_WIDTH, height: 300,
-              borderRadius: 12,
-              cursor: "pointer",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(0,0,0,0.6)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(0,0,0,0.5)"; }}
-            onClick={() => onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug })}
-          >
-            <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
-              {/* Virtualization: only mount <img> for center ±4 cards (9 max).
-                  Distant cards get a plain placeholder — avoids 100+ concurrent image decodes. */}
-              {absDist <= 4 ? previewContent : (
-                <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ color: "rgba(255,255,255,0.08)", fontSize: 12, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
-                </div>
-              )}
-            </div>
-          </div>
+  const renderTemplateCard = (t: Template, i?: number) => {
+    /* Thumbnail preview: both flow and grid modes use static <img> thumbnails.
+       Server-side pipeline generates SVG placeholders on commit; browser-side
+       handleSnapshotAll replaces them with real PNGs via html2canvas.
+       Prefer curated cover_image_url from design_file_meta over auto thumbnail. */
+    const coverUrl = metaCovers.get(t.id) || t.thumbnail;
+    const previewContent = coverUrl
+      ? <img src={coverUrl} alt={t.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
+      : <div style={{ width: "100%", height: "100%", background: t.frames?.[0]?.background || "#0d0d1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 14, fontFamily: "'Instrument Serif', serif" }}>{t.name}</span>
+        </div>;
 
-          {/* Metadata + actions — below the card, outside */}
-          <div style={{ width: CARD_WIDTH, marginTop: 12, padding: "0 4px", textAlign: "center" }}>
-            {metaBlock}
-          </div>
-        </div>
-      );
-    }
+
 
     /* ── GRID MODE: original layout with frosted info panel inside card */
     return (
@@ -949,57 +851,26 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </button>
           </div>
         ) : cardMode === "flow" ? (
-          <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%" }}>
-            <div
-              ref={flowScrollRef}
-              onScroll={handleFlowScroll}
-              className="flow-track"
-              style={{
-                display: "flex", gap: CARD_GAP, overflowX: "auto", overflowY: "hidden",
-                scrollSnapType: "x mandatory",
-                perspective: "1200px", perspectiveOrigin: "center",
-                padding: "60px 0 20px", alignItems: "center",
-                WebkitOverflowScrolling: "touch",
-                flex: 1,
+          <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+            <CoverFlow
+              items={templates.map(t => ({
+                id: t.id,
+                name: t.name,
+                cover: metaCovers.get(t.id) || t.thumbnail || null,
+                background: t.frames?.[0]?.background || "#0d0d1a",
+              }))}
+              onOpen={(id) => {
+                const t = templates.find(x => x.id === id);
+                if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
               }}
-            >
-              {templates.map((t, i) => renderTemplateCard(t, i))}
-            </div>
-            {/* Arrow buttons — glassmorphic, positioned at metadata height with spacing */}
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "40%", padding: "12px 0 24px" }}>
-              <button
-                type="button"
-                onClick={() => scrollToCard(flowIndex - 1)}
-                disabled={flowIndex <= 0}
-                className="liquid-glass"
-                aria-label="Previous"
-                style={{
-                  borderRadius: "50%", width: 44, height: 44, border: "none", cursor: flowIndex <= 0 ? "default" : "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  opacity: flowIndex <= 0 ? 0.2 : 0.7,
-                  transition: "all 0.2s ease", background: "rgba(255,255,255,0.03)",
-                  color: "rgba(255,255,255,0.8)", flexShrink: 0,
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollToCard(flowIndex + 1)}
-                disabled={flowIndex >= templates.length - 1}
-                className="liquid-glass"
-                aria-label="Next"
-                style={{
-                  borderRadius: "50%", width: 44, height: 44, border: "none", cursor: flowIndex >= templates.length - 1 ? "default" : "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  opacity: flowIndex >= templates.length - 1 ? 0.2 : 0.7,
-                  transition: "all 0.2s ease", background: "rgba(255,255,255,0.03)",
-                  color: "rgba(255,255,255,0.8)", flexShrink: 0,
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-              </button>
-            </div>
+              onIndexChange={setFlowIndex}
+              height={400}
+            />
+            {templates[Math.min(flowIndex, templates.length - 1)] && (
+              <div style={{ width: 260, margin: "10px auto 0", textAlign: "center" }}>
+                {renderFlowMeta(templates[Math.min(flowIndex, templates.length - 1)])}
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
