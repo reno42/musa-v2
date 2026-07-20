@@ -29,6 +29,10 @@ interface Props {
   showLayers?: boolean;
   onToggleCode?: () => void;
   onToggleLayers?: () => void;
+  onGroup?: () => void;
+  onUngroup?: () => void;
+  canGroup?: boolean;
+  canUngroup?: boolean;
 }
 
 const FRAME_PRESETS = [
@@ -76,6 +80,7 @@ export function FloatingToolbar({
   canUndo, canRedo, onUndo, onRedo,
   multiSelectCount, onPathfinder, onSvgImport,
   showCode, showLayers, onToggleCode, onToggleLayers,
+  onGroup, onUngroup, canGroup, canUngroup,
 }: Props) {
   const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
@@ -182,6 +187,28 @@ export function FloatingToolbar({
       }}
     >
       {icon}
+    </button>
+  );
+
+  // ── Action button with a small shortcut label (matches the tool buttons) ──
+  const labeledActionBtn = (icon: React.ReactNode, shortcut: string, title: string, onClick: () => void, disabled?: boolean) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={`${title} (${shortcut})`}
+      style={{
+        width: 46, height: 36,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
+        background: "transparent", border: "1px solid transparent",
+        color: disabled ? "rgba(122,118,104,0.3)" : "var(--text-muted, #7a7668)",
+        transition: "all 0.15s ease", opacity: disabled ? 0.4 : 1,
+        position: "relative",
+      }}
+    >
+      {icon}
+      <span style={shortcutLabel}>{shortcut}</span>
     </button>
   );
 
@@ -538,6 +565,25 @@ export function FloatingToolbar({
           {divider}
         </>
       )}
+
+      {/* ── Group / Ungroup ── */}
+      {(onGroup || onUngroup) && <>
+        {onGroup && labeledActionBtn(
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" />
+            <path d="M4 15v3a2 2 0 0 0 2 2h3M15 4h3a2 2 0 0 1 2 2v3" strokeDasharray="2 2" />
+          </svg>,
+          "⌘G", "Group", () => onGroup(), !canGroup,
+        )}
+        {onUngroup && labeledActionBtn(
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="15" width="6" height="6" rx="1" />
+            <path d="M15 6h3M18 6v3M6 15v3M6 18h3" strokeDasharray="2 2" />
+          </svg>,
+          "⇧⌘G", "Ungroup", () => onUngroup(), !canUngroup,
+        )}
+        {divider}
+      </>}
 
       {/* ── Undo / Redo ── */}
       {actionBtn(

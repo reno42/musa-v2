@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, frameHitTestRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -44,6 +44,8 @@ interface InfiniteHtmlCanvasProps {
   onDuplicateFrames?: (copies: { sourceId: string; x: number; y: number }[]) => void;
   onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
+  /** Click on frame body resolves the topmost layer under the cursor (layer-panel order). */
+  onRequestLayerSelect?: (frameId: string, layerId: string) => void;
   layerSelectionRequest?: LayerSelectionRequest | null;
   selectedElement?: SelectedElementInfo | null;
   onFrameCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
@@ -80,7 +82,7 @@ export function InfiniteHtmlCanvas({
   frames, canvasObjects, selectedFrameId, selectedFrameIds, selectedOrphanIds, contentFrameId, activeTool, zoom,
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
-  onElementSelect, onFrameCssChange, onFrameHtmlChange,
+  onElementSelect, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
@@ -94,10 +96,15 @@ export function InfiniteHtmlCanvas({
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const [isDraggingFrame, setIsDraggingFrame] = useState(false);
-  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; duplicate: boolean; moved: boolean } | null>(null);
+  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; duplicate: boolean; moved: boolean; ghostEl?: HTMLElement | null } | null>(null);
 
   // Multi-frame drag state (Phase 4)
-  const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[]; duplicate: boolean; moved: boolean } | null>(null);
+  const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[]; duplicate: boolean; moved: boolean; ghostEls?: HTMLElement[] } | null>(null);
+
+  // Frame-body click vs drag disambiguation: mousedown arms this; movement
+  // promotes it to a frame drag, release without movement resolves the
+  // topmost LAYER under the cursor instead (frames are not click-selectable).
+  const pendingFrameClickRef = useRef<{ frameId: string; clientX: number; clientY: number; altKey: boolean } | null>(null);
 
   // Orphan drag state
   const orphanDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
@@ -106,6 +113,10 @@ export function InfiniteHtmlCanvas({
   // Marquee selection state (Phase 3)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  // Alt-drag duplicate: dashed outline(s) marking where the originals stay
+  // while the moved copy follows the cursor (real-time duplicate preview).
+  const [dupPlaceholders, setDupPlaceholders] = useState<{ x: number; y: number; w: number; h: number }[] | null>(null);
 
   // Frame tool draw state — click places a default frame, drag sizes a custom one.
   // The ref mirrors the state so mouseup reads the latest rect even when React
@@ -230,28 +241,50 @@ export function InfiniteHtmlCanvas({
     // Single frame dragging
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
-      const dx = (e.clientX - df.startX) / zoom;
-      const dy = (e.clientY - df.startY) / zoom;
-      if (!df.moved && Math.hypot(dx, dy) < 3) return;
-      df.moved = true;
-      const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement;
-      if (frameEl) {
-        frameEl.style.transform = `translate(${dx}px, ${dy}px)`;
+      const dxPx = e.clientX - df.startX;
+      const dyPx = e.clientY - df.startY;
+      if (!df.moved && Math.hypot(dxPx, dyPx) < 3) return;
+      if (!df.moved) {
+        // First real movement — this is a drag, not a click.
+        df.moved = true;
+        pendingFrameClickRef.current = null;
+        const f = frames.find(fr => fr.id === df.id);
+        if (df.duplicate && f) {
+          // Leave a dashed outline where the original stays; the frame the
+          // user drags reads as the moving duplicate.
+          setDupPlaceholders([{ x: f.x, y: f.y, w: f.width, h: f.height }]);
+        } else {
+          // Plain drag selects the frame it moves.
+          onSelectFrame(df.id);
+        }
       }
+      const dx = dxPx / zoom;
+      const dy = dyPx / zoom;
+      const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement;
+      if (frameEl) frameEl.style.transform = `translate(${dx}px, ${dy}px)`;
       return;
     }
     // Multi-frame dragging (Phase 4)
     if (multiDragRef.current) {
       const md = multiDragRef.current;
-      const dx = (e.clientX - md.startX) / zoom;
-      const dy = (e.clientY - md.startY) / zoom;
-      if (!md.moved && Math.hypot(dx, dy) < 3) return;
-      md.moved = true;
+      const dxPx = e.clientX - md.startX;
+      const dyPx = e.clientY - md.startY;
+      if (!md.moved && Math.hypot(dxPx, dyPx) < 3) return;
+      if (!md.moved) {
+        md.moved = true;
+        pendingFrameClickRef.current = null;
+        if (md.duplicate) {
+          setDupPlaceholders(md.frames.map(mf => {
+            const f = frames.find(fr => fr.id === mf.id);
+            return f ? { x: f.x, y: f.y, w: f.width, h: f.height } : { x: mf.origX, y: mf.origY, w: 0, h: 0 };
+          }));
+        }
+      }
+      const dx = dxPx / zoom;
+      const dy = dyPx / zoom;
       for (const f of md.frames) {
         const el = document.querySelector(`[data-frame-id="${f.id}"]`) as HTMLElement;
-        if (el) {
-          el.style.transform = `translate(${dx}px, ${dy}px)`;
-        }
+        if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
       }
       return;
     }
@@ -298,10 +331,11 @@ export function InfiniteHtmlCanvas({
         h: Math.abs(pt.y - start.y),
       });
     }
-  }, [zoom, screenToCanvas]);
+  }, [zoom, screenToCanvas, frames, onSelectFrame]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     isPanning.current = false;
+    setDupPlaceholders(null);
     // Single frame drag commit
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
@@ -312,7 +346,15 @@ export function InfiniteHtmlCanvas({
       if (df.moved) {
         if (df.duplicate) onDuplicateFrames?.([{ sourceId: df.id, x: df.origX + dx, y: df.origY + dy }]);
         else onFrameMove?.(df.id, Math.round(df.origX + dx), Math.round(df.origY + dy));
+      } else if (pendingFrameClickRef.current && pendingFrameClickRef.current.frameId === df.id) {
+        // A plain click (no drag): the frame is NOT selected. Resolve the
+        // topmost layer under the cursor and select it instead.
+        const pc = pendingFrameClickRef.current;
+        const layerId = frameHitTestRegistry.get(df.id)?.(pc.clientX, pc.clientY) ?? null;
+        if (layerId) onRequestLayerSelect?.(df.id, layerId);
+        else { onSelectFrame(null); onElementSelect?.(null); }
       }
+      pendingFrameClickRef.current = null;
       dragFrameRef.current = null;
       setIsDraggingFrame(false);
     }
@@ -399,7 +441,7 @@ export function InfiniteHtmlCanvas({
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onSelectOrphan]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onSelectOrphan, onRequestLayerSelect, onElementSelect, onSelectFrame]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {
@@ -441,7 +483,14 @@ export function InfiniteHtmlCanvas({
     startOrphanDrag(orphanId, e);
   }, [activeTool, onSelectOrphan, onOrphanShiftClick, startOrphanDrag]);
 
-  // Frame body mousedown — single/shift/multi drag logic (Phase 2 + 4)
+  // Frame body mousedown.
+  //
+  // A frame is NEVER selected by a plain click on its body — only its NAME
+  // selects it. A plain click resolves the topmost layer under the cursor
+  // (see handleMouseUp). Dragging the body moves the frame (and selects it
+  // once movement starts); Alt+drag duplicates. Shift+click toggles the
+  // frame in the multi-selection; dragging an already-multi-selected frame
+  // moves the whole group.
   const handleFrameMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
     if (activeTool !== "select" || e.button !== 0) return;
     // Don't intercept clicks in content mode — let Shadow DOM handle them
@@ -454,15 +503,20 @@ export function InfiniteHtmlCanvas({
       return;
     }
 
-    // If already in multi-selection, start group drag
+    // Already in a multi-selection → drag the whole group of frames
     if (selectedFrameIds.has(frameId) && selectedFrameIds.size > 1) {
       startFrameDrag(frameId, e);
-    } else {
-      onSelectFrame(frameId);
-      startFrameDrag(frameId, e);
+      e.stopPropagation();
+      return;
     }
+
+    // Plain press: arm a click (resolves a layer on release without movement)
+    // and prime a frame drag that only commits — and selects the frame — once
+    // the pointer actually moves.
+    pendingFrameClickRef.current = { frameId, clientX: e.clientX, clientY: e.clientY, altKey: e.altKey };
+    startFrameDrag(frameId, e);
     e.stopPropagation();
-  }, [activeTool, contentFrameId, selectedFrameIds, onSelectFrame, onFrameShiftClick, startFrameDrag]);
+  }, [activeTool, contentFrameId, selectedFrameIds, onFrameShiftClick, startFrameDrag]);
 
   // Label mousedown — starts drag from label (Phase 1)
   const handleLabelMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
@@ -630,6 +684,18 @@ export function InfiniteHtmlCanvas({
             zIndex: 10000,
           }} />
         )}
+
+        {/* Alt-drag duplicate: dashed outline where each original stays */}
+        {dupPlaceholders?.map((p, i) => (
+          <div key={`dup-${i}`} style={{
+            position: "absolute",
+            left: p.x, top: p.y, width: p.w, height: p.h,
+            border: "2px dashed rgba(59,130,246,0.7)",
+            background: "rgba(59,130,246,0.05)",
+            pointerEvents: "none",
+            zIndex: 9999,
+          }} />
+        ))}
 
         {/* Marquee selection rectangle (Phase 3) */}
         {marqueeRect && (

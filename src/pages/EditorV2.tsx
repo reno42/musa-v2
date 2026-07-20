@@ -22,6 +22,7 @@ import { SvgImportDialog, type RasterImageImport } from "../components/SvgImport
 import { InsertToolbar } from "../components/InsertToolbar";
 import { PasteHtmlModal } from "../components/PasteHtmlModal";
 import { ImageToDesignModal } from "../components/ImageToDesignModal";
+import { IconPicker } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
@@ -2321,6 +2322,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [showImageToDesign, setShowImageToDesign] = useState(false);
+  const [showIconPicker, setShowIconPicker] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   const handleSaveRecipe = useCallback(async () => {
@@ -3339,6 +3341,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <span style={{ fontSize: 14 }}>🪄</span>
         </button>
 
+        {/* Icon Picker */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowIconPicker(true)}
+          title="Icons (Phosphor)"
+        >
+          <i className="ph ph-shapes" style={{ fontSize: 14 }}></i>
+        </button>
+
         <div className="editor-v2-topbar-sep" />
 
         {/* Import template */}
@@ -3545,6 +3557,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <span style={{ fontSize: 16 }}>🪄</span> Image to Design
                 </span>
               </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowIconPicker(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <i className="ph ph-shapes" style={{ fontSize: 16 }}></i> Icons
+                </span>
+              </button>
               
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
@@ -3725,6 +3743,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onDuplicateFrames={handleDuplicateFramesAtPositions}
             onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
+            onRequestLayerSelect={(frameId, layerId) => handleSelectLayerElement(frameId, layerId)}
             layerSelectionRequest={layerSelectionRequest}
             selectedElement={selectedElement}
             onFrameCssChange={handleFrameCssChange}
@@ -3776,6 +3795,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           showLayers={showLayersPanel}
           onToggleCode={() => setShowCodePanel(v => !v)}
           onToggleLayers={() => setShowLayersPanel(v => !v)}
+          onGroup={handleGroup}
+          onUngroup={handleUngroup}
+          canGroup={multiSelectLayerIds.length >= 2 || selectedOrphanIds.size >= 2}
+          canUngroup={(!!selectedElement && !!selectedElement.childLayerCount) || selectedOrphanIds.size > 0}
         />
       </div>
 
@@ -3990,6 +4013,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClose={() => setShowImageToDesign(false)}
           onDesignReady={() => {
             addToast("✓ Design generated! Reloading...", "success");
+            reloadFromServer();
+          }}
+        />
+      )}
+
+      {/* ═══ Icon Picker ═══ */}
+      {showIconPicker && (
+        <IconPicker
+          templateId={templateId}
+          frameId={selectedFrameId}
+          onClose={() => setShowIconPicker(false)}
+          onInsert={() => {
+            addToast("✓ Icon inserted", "success");
             reloadFromServer();
           }}
         />

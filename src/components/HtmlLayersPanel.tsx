@@ -199,6 +199,7 @@ export function HtmlLayersPanel({
   const dropTargetRef = useRef<DropTarget | null>(null);
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const suppressLayerClickRef = useRef(false);
+  const selectedRowRef = useRef<HTMLDivElement | null>(null);
   const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
   const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -211,6 +212,32 @@ export function HtmlLayersPanel({
   useEffect(() => {
     setMultiSelect(new Set());
   }, [selectedFrameId]);
+
+  // Reveal the selected layer: auto-expand its ancestors, then scroll its
+  // row into view so the user can see where the selection sits in the stack.
+  useEffect(() => {
+    if (!selectedFrameId || !selectedElementId) return;
+    const tree = frameTrees.find(t => t.frame.id === selectedFrameId);
+    if (!tree) return;
+    const toExpand: string[] = [];
+    let node = tree.byId.get(selectedElementId);
+    while (node && node.parentId) {
+      toExpand.push(collapseKey(selectedFrameId, node.parentId));
+      node = tree.byId.get(node.parentId);
+    }
+    if (toExpand.length) {
+      setCollapsed(prev => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const k of toExpand) if (next.delete(k)) changed = true;
+        return changed ? next : prev;
+      });
+    }
+    const raf = requestAnimationFrame(() => {
+      selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selectedFrameId, selectedElementId, frameTrees]);
 
   useEffect(() => {
     if (!actionMenu) return;
@@ -441,6 +468,7 @@ export function HtmlLayersPanel({
     return (
       <div key={key} role="treeitem" aria-level={layer.depth + 2} aria-selected={isSelected}>
         <div
+          ref={isSelected ? selectedRowRef : undefined}
           className={`layers-tree-row${isSelected ? " is-selected" : ""}${dragging?.kind === "layer" && dragging.layerId === layer.layerId ? " is-dragging" : ""}${currentDrop?.placement === "inside" ? " is-drop-inside" : ""}`}
           data-layer-drop-kind="layer"
           data-layer-frame-id={tree.frame.id}

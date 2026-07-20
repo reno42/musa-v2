@@ -31,6 +31,15 @@ import {
  * code↔DOM sync.
  */
 
+/**
+ * Per-frame hit-test registry. Lets the canvas resolve a plain click on a
+ * frame body to the topmost TOP-LEVEL layer under the cursor, respecting
+ * layer-panel order (= DOM order, last child paints on top). Returns the
+ * layerId, or null when the click landed on empty frame background.
+ */
+export type FrameHitTestFn = (clientX: number, clientY: number) => string | null;
+export const frameHitTestRegistry = new Map<string, FrameHitTestFn>();
+
 export interface FrameData {
   id: string;
   name: string;
@@ -366,6 +375,34 @@ export function DesignFrame({
     // Attach interaction handlers
     setupInteraction(shadow, content, overlay);
   }, []);
+
+  // ── Register the top-level hit-test used by plain clicks on the frame body ──
+  // Kept in its own effect (not the shadow-init effect, which early-returns once
+  // the shadow exists) so StrictMode's mount→cleanup→mount cycle re-registers it.
+  // Iterates top-level layers in reverse DOM order: the layer highest in the
+  // layers panel (last child) wins when bounding boxes overlap.
+  useEffect(() => {
+    const register = (): boolean => {
+      const content = shadowRef.current?.getElementById("__df_content");
+      if (!content) return false;
+      frameHitTestRegistry.set(frame.id, (clientX, clientY) => {
+        const topLevel = [...content.children].filter(c => c.hasAttribute("data-layer-id"));
+        for (let i = topLevel.length - 1; i >= 0; i--) {
+          const el = topLevel[i];
+          const r = getVisualRect(el);
+          if (r.width <= 0 && r.height <= 0) continue;
+          if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+            return el.getAttribute("data-layer-id");
+          }
+        }
+        return null;
+      });
+      return true;
+    };
+    let raf = 0;
+    if (!register()) raf = requestAnimationFrame(() => register());
+    return () => { if (raf) cancelAnimationFrame(raf); frameHitTestRegistry.delete(frame.id); };
+  }, [frame.id]);
 
   // ── Code → DOM: CSS update ──
   useEffect(() => {
@@ -2577,7 +2614,9 @@ function mapBodySelectors(css: string): string {
 }
 
 function extractFontImports(css: string): string[] {
-  const re = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'"]+)['"]?\)/g;
+  // Extract ALL @import url(...) from CSS — Google Fonts, Phosphor Icons, any CDN.
+  // Each becomes a <link rel="stylesheet"> injected into the Shadow DOM.
+  const re = /@import\s+url\(['"]?(https?:\/\/[^'"]+)['"]?\)/g;
   const hrefs: string[] = [];
   let m;
   while ((m = re.exec(css)) !== null) hrefs.push(m[1]);
