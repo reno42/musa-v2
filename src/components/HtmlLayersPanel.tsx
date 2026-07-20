@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FrameData } from "./DesignFrame";
+import type { FrameData, HtmlCanvasObject } from "./DesignFrame";
 import type { LayerKind, LayerNode } from "../hooks/useLayerTree";
 import { parseLayerTree } from "../hooks/useLayerTree";
 import {
@@ -11,11 +11,15 @@ import type { LayerDropPlacement, LayerStackChange, LayerStackDirection, LayerSt
 
 interface Props {
   frames: FrameData[];
+  canvasObjects: HtmlCanvasObject[];
   selectedFrameId: string | null;
   selectedFrameIds: Set<string>;
+  selectedOrphanIds: Set<string>;
   selectedElementId: string | null;
   onSelectFrame: (frameId: string) => void;
   onSelectElement: (frameId: string, layerId: string, path?: number[]) => void;
+  onSelectOrphan?: (id: string | null) => void;
+  onOrphanDelete?: (id: string) => void;
   onHtmlChange: (frameId: string, newHtml: string) => void;
   onLayerStackChange: (frameId: string, change: LayerStackChange) => void;
   onLayerDrop: (
@@ -160,11 +164,15 @@ function getFrameDropPlacement(bounds: DOMRect, clientY: number, source: DragSou
 
 export function HtmlLayersPanel({
   frames,
+  canvasObjects,
   selectedFrameId,
   selectedFrameIds,
+  selectedOrphanIds,
   selectedElementId,
   onSelectFrame,
   onSelectElement,
+  onSelectOrphan,
+  onOrphanDelete,
   onHtmlChange,
   onLayerStackChange,
   onLayerDrop,
@@ -530,7 +538,7 @@ export function HtmlLayersPanel({
   return (
     <div style={panelStyle} onClick={() => setActionMenu(null)}>
       <div className="layers-tree-header">
-        <span>Layers · {frames.length} frames · {totalLayers} objects</span>
+        <span>Layers · {frames.length} frames{frames.length !== 1 ? "s" : ""} · {totalLayers} objects{canvasObjects.length > 0 ? ` · ${canvasObjects.length} orphan${canvasObjects.length !== 1 ? "s" : ""}` : ""}</span>
         {multiSelect.size > 1 && (
           <button type="button" className="layers-tree-group" onClick={handleGroup}>
             Group ({multiSelect.size})
@@ -541,9 +549,10 @@ export function HtmlLayersPanel({
       {status && <div className="layers-tree-status" role="status">{status}</div>}
 
       <div className="layers-tree" role="tree" aria-label="Design layers">
-        {frameTrees.length === 0 ? (
+        {frameTrees.length === 0 && canvasObjects.length === 0 ? (
           <div className="layers-tree-empty">Create a frame to start organizing layers.</div>
-        ) : frameTrees.map(tree => {
+        ) : null}
+        {frameTrees.map(tree => {
           const frameCollapseKey = collapseKey(tree.frame.id);
           const isCollapsed = collapsed.has(frameCollapseKey);
           const isSelected = selectedFrameIds.has(tree.frame.id);
@@ -595,6 +604,52 @@ export function HtmlLayersPanel({
             </div>
           );
         })}
+        {/* Canvas-level orphan objects */}
+        {canvasObjects.length > 0 && (
+          <>
+            <div className="layers-tree-separator" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "4px 0" }} />
+            <div className="layers-tree-section-label" style={{ padding: "2px 8px", fontSize: 10, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1 }}>Canvas</div>
+            {canvasObjects.map(obj => {
+              const isSelected = selectedOrphanIds.has(obj.id);
+              return (
+                <div
+                  key={obj.id}
+                  role="treeitem"
+                  aria-level={1}
+                  aria-selected={isSelected}
+                  className={`layers-tree-row${isSelected ? " is-selected" : ""}`}
+                  onClick={() => {
+                    if (suppressLayerClickRef.current) return;
+                    onSelectOrphan?.(obj.id);
+                  }}
+                  style={{ paddingLeft: 8 }}
+                >
+                  <span className="layers-tree-disclosure-spacer" />
+                  <button
+                    type="button"
+                    className="layers-tree-select"
+                    style={{ width: "100%", textAlign: "left" }}
+                  >
+                    <span className="layers-tree-kind" style={{ color: "#c8a8e8" }}>◇</span>
+                    <span className="layers-tree-name">{obj.name}</span>
+                  </button>
+                  {isSelected && onOrphanDelete && (
+                    <span className="layers-tree-actions">
+                      <button
+                        type="button"
+                        className="layers-tree-action"
+                        title="Delete orphan"
+                        onClick={(e) => { e.stopPropagation(); onOrphanDelete(obj.id); }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
       </div>
 
       {actionMenu && (

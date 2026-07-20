@@ -55,6 +55,20 @@ export interface ShapeOptions {
   size: number;
 }
 
+/** Canvas-level orphan object — lives outside any frame, rendered as a
+ *  standalone div with inline style+html (no Shadow DOM, no clipping). */
+export interface HtmlCanvasObject {
+  id: string;
+  name: string;
+  html: string;
+  css: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+}
+
 export interface SelectedElementInfo {
   layerId: string;
   tag: string;

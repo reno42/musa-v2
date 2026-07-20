@@ -12,7 +12,7 @@ import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
-import type { FrameData, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
+import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
@@ -47,12 +47,14 @@ import {
   duplicateLayerInHtml,
   ensureLayerIds,
   extractLayerFromHtml,
+  groupLayersInHtml,
   insertLayerIntoHtml,
   pasteLayerFromHtml,
   remapLayerTreeForTarget,
   reparentLayerInHtml,
   replaceLayerPathData,
   replaceLayerText,
+  ungroupLayerInHtml,
   wrapLayersInFrame,
   type LayerDropPlacement,
   type LayerStackChange,
@@ -114,6 +116,12 @@ function nextFrameNumber(frames: FrameData[]): number {
     const match = /^Frame\s+(\d+)$/i.exec(frame.name.trim());
     return match ? Math.max(highest, Number(match[1])) : highest;
   }, 0) + 1;
+}
+
+let generatedOrphanSeq = 0;
+function createOrphanId(): string {
+  generatedOrphanSeq++;
+  return `orphan_${Date.now().toString(36)}_${generatedOrphanSeq.toString(36)}`;
 }
 
 function cloneFrame(source: FrameData, x: number, y: number, name: string): FrameData {
@@ -308,12 +316,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<string>("contextual");
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
+  const [canvasObjects, setCanvasObjects] = useState<HtmlCanvasObject[]>([]);
+  const canvasObjectsRef = useRef(canvasObjects);
+  canvasObjectsRef.current = canvasObjects;
   const [showSvgImport, setShowSvgImport] = useState(false);
   const [showStyleLibrary, setShowStyleLibrary] = useState(false);
 
   // ── Figma-style selection state ──
   const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
   const [contentFrameId, setContentFrameId] = useState<string | null>(null);
+  const [selectedOrphanIds, setSelectedOrphanIds] = useState<Set<string>>(new Set());
 
   // ── Derived: active frame ──
   const selectedFrame = frames.find(f => f.id === selectedFrameId) ?? null;
@@ -391,6 +403,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }));
           store.replaceAll(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
+          // Canvas-level orphan objects (outside all frames)
+          if (Array.isArray(t.canvasObjects) && t.canvasObjects.length > 0) {
+            setCanvasObjects(t.canvasObjects.map((o: any) => ({ ...o })));
+          }
           // Loaded data is the baseline, not an undoable user action.
           lastPushTimeRef.current = 0;
           setCanUndo(false);
@@ -438,6 +454,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
     const payload = {
       frames: hashedFrames,
+      canvasObjects: canvasObjectsRef.current,
       html: active?.html || "",
       css: active?.css || "",
       name: templateName,
@@ -668,11 +685,151 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedElement(null);
   }, []);
 
+  const handleMarqueeSelectOrphans = useCallback((ids: Set<string>) => {
+    setSelectedOrphanIds(ids);
+    if (ids.size > 0) setSelectedFrameId(null);
+  }, []);
+
   const handleEnterContentMode = useCallback((frameId: string) => {
     setContentFrameId(frameId);
     setSelectedFrameId(frameId);
     setSelectedFrameIds(new Set([frameId]));
+    setSelectedOrphanIds(new Set());
   }, []);
+
+  // ── Orphan (canvas-level object) handlers ──
+  const handleSelectOrphan = useCallback((id: string | null) => {
+    setSelectedOrphanIds(id ? new Set([id]) : new Set());
+    setContentFrameId(null);
+    setSelectedElement(null);
+    if (id) setSelectedFrameId(null);
+  }, []);
+
+  const handleOrphanShiftClick = useCallback((id: string) => {
+    setSelectedOrphanIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    setContentFrameId(null);
+    setSelectedElement(null);
+  }, []);
+
+  const handleOrphanMove = useCallback((id: string, x: number, y: number) => {
+    setCanvasObjects(prev => prev.map(o => o.id === id ? { ...o, x: Math.round(x), y: Math.round(y) } : o));
+    isDirtyRef.current = true;
+  }, []);
+
+  const handleDeleteOrphan = useCallback((id: string) => {
+    setCanvasObjects(prev => prev.filter(o => o.id !== id));
+    setSelectedOrphanIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+    isDirtyRef.current = true;
+  }, []);
+
+  /** Create a canvas-level orphan object from a drawing tool on empty canvas. */
+  const handleCreateOrphanFromTool = useCallback((type: string, x: number, y: number, w: number, h: number) => {
+    const orphanId = createOrphanId();
+    let html = "";
+    let css = "";
+    const nameMap: Record<string, string> = { rect: "Rectangle", circle: "Circle", triangle: "Triangle", star: "Star", polygon: "Polygon", text: "Text", pen: "Bezier", pencil: "Pencil Stroke" };
+    const oname = nameMap[type] || type;
+    if (type === "rect") {
+      html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n}`;
+    } else if (type === "circle") {
+      html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n}`;
+    } else if (type === "triangle") {
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}`;
+    } else if (type === "star") {
+      const s = Math.max(w, h);
+      const d = generateStarPath(s, 5, 0.4);
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="star" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
+    } else if (type === "polygon") {
+      const n = clampShapeCount(6);
+      const s = Math.max(w, h);
+      const d = generatePolygonPath(s, n);
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="polygon" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
+    } else {
+      // text or other: default shape
+      html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:0;top:0;">Type something</div>`;
+      css = `[data-layer-id="${orphanId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: 0;\n  top: 0;\n}`;
+    }
+    const newOrphan: HtmlCanvasObject = {
+      id: orphanId,
+      name: oname,
+      html, css,
+      x: Math.round(x), y: Math.round(y),
+      width: w, height: h,
+      zIndex: canvasObjectsRef.current.length + frames.length,
+    };
+    setCanvasObjects(prev => [...prev, newOrphan]);
+    setSelectedOrphanIds(new Set([orphanId]));
+    isDirtyRef.current = true;
+    setActiveTool("select");
+  }, [frames.length]);
+
+  /** Orphan CSS change (from inline editing or context panel) */
+  const handleOrphanCssChange = useCallback((orphanId: string, newCss: string, newHtml?: string) => {
+    setCanvasObjects(prev => prev.map(o =>
+      o.id === orphanId ? { ...o, css: newCss, ...(newHtml !== undefined ? { html: newHtml } : {}) } : o
+    ));
+    isDirtyRef.current = true;
+  }, []);
+
+  /** Reorder orphan z-index in layers panel */
+  const handleOrphanZReorder = useCallback((orphanId: string, newZ: number) => {
+    setCanvasObjects(prev => {
+      const list = prev.map(o => o.id === orphanId ? { ...o, zIndex: newZ } : o);
+      list.sort((a, b) => a.zIndex - b.zIndex);
+      return list;
+    });
+    isDirtyRef.current = true;
+  }, []);
+
+  /** Move a layer from a frame to canvas (orphan) preserving visual position */
+  const handleMoveLayerToCanvas = useCallback((frameId: string, layerId: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const extracted = extractLayerFromHtml(frame.html, layerId);
+    if (!extracted) return;
+    const transferredCss = cloneLayerTreeCss(frame.css, extracted.layerHtml, extracted.layerIds, new Map(extracted.layerIds.map(id => [id, id])), 0);
+    const sourceCss = removeLayersCss(frame.css, extracted.layerIds);
+    // Get visual position: use frame's position as offset
+    const newOrphan: HtmlCanvasObject = {
+      id: createOrphanId(),
+      name: "Layer",
+      html: extracted.layerHtml,
+      css: transferredCss,
+      x: frame.x, y: frame.y,
+      width: frame.width, height: frame.height,
+      zIndex: canvasObjectsRef.current.length + frames.length,
+    };
+    const updated = frames.map(f => f.id === frameId ? { ...f, html: extracted.html, css: sourceCss } : f);
+    store.replaceAllWithUndo(updated, "move to canvas");
+    autoSave(updated);
+    setCanvasObjects(prev => [...prev, newOrphan]);
+    addToast("Layer moved to canvas.", "success");
+  }, [frames, autoSave, addToast]);
+
+  /** Move an orphan into a target frame */
+  const handleMoveOrphanToFrame = useCallback((orphanId: string, targetFrameId: string) => {
+    const orphan = canvasObjects.find(o => o.id === orphanId);
+    const targetFrame = frames.find(f => f.id === targetFrameId);
+    if (!orphan || !targetFrame) return;
+    const inserted = insertLayerIntoHtml(targetFrame.html, orphan.html, null, "inside");
+    if (!inserted) { addToast("Could not insert orphan into frame.", "error"); return; }
+    const combinedCss = mergeCssRules(targetFrame.css, orphan.css);
+    const updated = frames.map(f => f.id === targetFrameId ? { ...f, html: inserted.html, css: combinedCss } : f);
+    store.replaceAllWithUndo(updated, "move to frame");
+    autoSave(updated);
+    setCanvasObjects(prev => prev.filter(o => o.id !== orphanId));
+    setSelectedOrphanIds(prev => { const next = new Set(prev); next.delete(orphanId); return next; });
+    addToast("Orphan moved into frame.", "success");
+  }, [canvasObjects, frames, autoSave, addToast]);
 
   const handleRenameFrame = useCallback((frameId: string, newName: string) => {
         const updated = frames.map(f => f.id === frameId ? { ...f, name: newName } : f);
@@ -1174,26 +1331,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedFrameIds(new Set([newFrame.id]));
     autoSave(updated);
     setActiveTool("select");
-  }, [frames, autoSave]);
-
-  // ── Sprint 3.5: Auto-frame for drawing tools on empty canvas ──
-  // Same as handleCreateFrameAt but keeps the active drawing tool so the user
-  // can immediately draw inside the newly created frame.
-  const handleAutoFrameForTool = useCallback((x: number, y: number, w: number, h: number) => {
-    const newFrame: FrameData = {
-      id: createFrameId(),
-      name: `Frame ${nextFrameNumber(frames)}`,
-      x, y, width: w, height: h,
-      html: "",
-      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n`,
-      background: "#ffffff",
-    };
-    const updated = [...frames, newFrame];
-    store.replaceAllWithUndo(updated, "edit");
-    setSelectedFrameId(newFrame.id);
-    setSelectedFrameIds(new Set([newFrame.id]));
-    autoSave(updated);
-    // Keep the drawing tool active — don't switch to select
   }, [frames, autoSave]);
 
   // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
@@ -1734,6 +1871,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
       if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
       if (mod && e.key.toLowerCase() === "d" && !e.shiftKey) { e.preventDefault(); duplicateFrame(); return; }
+      if (mod && e.key.toLowerCase() === "g" && !e.shiftKey && !e.altKey) { e.preventDefault(); handleGroup(); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); handleUngroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
       if (!mod) {
         switch (e.key.toLowerCase()) {
@@ -1756,6 +1895,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           case "backspace":
             if (selectedElement) {
               handleDeleteElement(selectedElement.layerId);
+            } else if (selectedOrphanIds.size > 0) {
+              for (const id of selectedOrphanIds) {
+                handleDeleteOrphan(id);
+              }
             } else if (selectedFrameId && frames.length > 1) {
               deleteSelectedFrame();
             }
@@ -2392,6 +2535,37 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrameId, selectedElement, multiSelectLayerIds, templateId, callMcp, reloadFromServer]);
 
   const handleGroup = useCallback(async () => {
+    // ── Orphan grouping ──
+    if (selectedOrphanIds.size >= 2) {
+      const selected = canvasObjects.filter(o => selectedOrphanIds.has(o.id));
+      if (selected.length < 2) return;
+      const groupId = createOrphanId();
+      // Compute bounds
+      const minX = Math.min(...selected.map(o => o.x));
+      const minY = Math.min(...selected.map(o => o.y));
+      const maxX = Math.max(...selected.map(o => o.x + o.width));
+      const maxY = Math.max(...selected.map(o => o.y + o.height));
+      // Combine HTML: wrap children in a group div with display:contents
+      let combinedHtml = `<div data-layer-id="${groupId}" data-layer-name="Group" data-layer-kind="group" style="display:contents;">`;
+      let combinedCss = "";
+      for (const o of selected) {
+        combinedHtml += o.html;
+        combinedCss += "\n" + o.css;
+      }
+      combinedHtml += "</div>";
+      const groupOrphan: HtmlCanvasObject = {
+        id: groupId, name: "Group",
+        html: combinedHtml, css: combinedCss,
+        x: minX, y: minY,
+        width: maxX - minX, height: maxY - minY,
+        zIndex: Math.max(...selected.map(o => o.zIndex)),
+      };
+      setCanvasObjects(prev => [...prev.filter(o => !selectedOrphanIds.has(o.id)), groupOrphan]);
+      setSelectedOrphanIds(new Set([groupId]));
+      isDirtyRef.current = true;
+      return;
+    }
+    // ── Frame element grouping ──
     if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
     setMcpLoading("group");
     try {
@@ -2403,7 +2577,57 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } catch { setMcpMsg("✗ Group failed"); }
     setMcpLoading(null);
     setTimeout(() => setMcpMsg(""), 2000);
-  }, [selectedFrameId, multiSelectLayerIds, templateId, callMcp, reloadFromServer]);
+  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, templateId, callMcp, reloadFromServer]);
+
+  const handleUngroup = useCallback(async () => {
+    // ── Orphan ungrouping ──
+    if (selectedOrphanIds.size > 0) {
+      const newOrphans: HtmlCanvasObject[] = [];
+      const toRemove = new Set<string>();
+      for (const oid of selectedOrphanIds) {
+        const obj = canvasObjects.find(o => o.id === oid);
+        if (!obj) continue;
+        // Parse the orphan's HTML to find group children with data-layer-id
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(obj.html, "text/html");
+        const groupWrapper = doc.body.firstElementChild;
+        if (groupWrapper && groupWrapper.getAttribute("data-layer-kind") === "group") {
+          // Extract each child as a separate orphan
+          let idx = 0;
+          for (const child of Array.from(groupWrapper.children)) {
+            const childHtml = child.outerHTML;
+            const childLayerId = child.getAttribute("data-layer-id") || createOrphanId();
+            const childCss = obj.css;
+            newOrphans.push({
+              id: childLayerId, name: child.getAttribute("data-layer-name") || `Layer ${idx + 1}`,
+              html: childHtml, css: childCss,
+              x: obj.x, y: obj.y,
+              width: obj.width, height: obj.height,
+              zIndex: obj.zIndex + idx,
+            });
+            idx++;
+          }
+          toRemove.add(oid);
+        }
+      }
+      if (newOrphans.length > 0) {
+        setCanvasObjects(prev => [...prev.filter(o => !toRemove.has(o.id)), ...newOrphans]);
+        setSelectedOrphanIds(new Set(newOrphans.map(o => o.id)));
+        isDirtyRef.current = true;
+        return;
+      }
+    }
+    // ── Frame element ungrouping ──
+    if (!selectedFrameId || !selectedElement) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    const newHtml = ungroupLayerInHtml(frame.html, selectedElement.layerId);
+    if (!newHtml) return;
+    const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: newHtml } : f);
+    store.replaceAllWithUndo(updated, "ungroup");
+    autoSave(updated);
+    setSelectedElement(null);
+  }, [selectedFrameId, selectedElement, selectedOrphanIds, canvasObjects, frames, autoSave]);
 
   const handleReorder = useCallback(async (direction: "up" | "down" | "top" | "bottom") => {
     if (!selectedFrameId || !selectedElement) return;
@@ -3087,11 +3311,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </div>
             <HtmlLayersPanel
               frames={frames}
+              canvasObjects={canvasObjects}
               selectedFrameId={selectedFrameId}
               selectedFrameIds={selectedFrameIds}
+              selectedOrphanIds={selectedOrphanIds}
               selectedElementId={selectedElement?.layerId || null}
               onSelectFrame={handleSelectFrame}
               onSelectElement={handleSelectLayerElement}
+              onSelectOrphan={handleSelectOrphan}
+              onOrphanDelete={handleDeleteOrphan}
               onHtmlChange={handleFrameHtmlChange}
               onLayerStackChange={handleLayerStackChange}
               onLayerDrop={handleLayerDrop}
@@ -3177,8 +3405,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           )}
           <InfiniteHtmlCanvas
             frames={frames}
+            canvasObjects={canvasObjects}
             selectedFrameId={selectedFrameId}
             selectedFrameIds={selectedFrameIds}
+            selectedOrphanIds={selectedOrphanIds}
             contentFrameId={contentFrameId}
             activeTool={activeTool}
             zoom={zoom}
@@ -3186,6 +3416,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onActivateFrame={handleActivateFrame}
             onFrameShiftClick={handleFrameShiftClick}
             onMarqueeSelect={handleMarqueeSelect}
+            onMarqueeSelectOrphans={handleMarqueeSelectOrphans}
             onEnterContentMode={handleEnterContentMode}
             onZoomChange={setZoom}
             onFrameMove={handleFrameMove}
@@ -3208,7 +3439,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onElementDuplicate={handleDuplicateElement}
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
-                        onAutoFrameForTool={handleAutoFrameForTool}
+            onCreateOrphanFromTool={handleCreateOrphanFromTool}
+            onSelectOrphan={handleSelectOrphan}
+            onOrphanShiftClick={handleOrphanShiftClick}
+            onOrphanMove={handleOrphanMove}
+            onDeleteOrphan={handleDeleteOrphan}
             autoEditLayerId={autoEditLayerId}
             onAutoEditHandled={() => setAutoEditLayerId(null)}
           />

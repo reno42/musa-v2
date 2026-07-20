@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, type FrameData, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -25,8 +25,10 @@ export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "tr
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
+  canvasObjects: HtmlCanvasObject[];
   selectedFrameId: string | null;
   selectedFrameIds: Set<string>;
+  selectedOrphanIds: Set<string>;
   contentFrameId: string | null;
   activeTool: HtmlToolName;
   zoom: number;
@@ -34,6 +36,7 @@ interface InfiniteHtmlCanvasProps {
   onActivateFrame?: (frameId: string) => void;
   onFrameShiftClick?: (frameId: string) => void;
   onMarqueeSelect?: (ids: Set<string>) => void;
+  onMarqueeSelectOrphans?: (ids: Set<string>) => void;
   onEnterContentMode?: (frameId: string) => void;
   onZoomChange: (z: number) => void;
   onFrameMove?: (id: string, x: number, y: number) => void;
@@ -57,8 +60,13 @@ interface InfiniteHtmlCanvasProps {
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
   /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
-  /** Sprint 3.5: auto-create frame when drawing tools click on empty canvas. */
-  onAutoFrameForTool?: (x: number, y: number, w: number, h: number) => void;
+  /** Drawing tools on empty canvas create orphans instead of auto-frames. */
+  onCreateOrphanFromTool?: (type: string, x: number, y: number, w: number, h: number) => void;
+  /** Orphan selection */
+  onSelectOrphan?: (id: string | null) => void;
+  onOrphanShiftClick?: (id: string) => void;
+  onOrphanMove?: (id: string, x: number, y: number) => void;
+  onDeleteOrphan?: (id: string) => void;
   // Sprint 3.5: auto-edit newly created text layers
   autoEditLayerId?: string | null;
   onAutoEditHandled?: () => void;
@@ -69,14 +77,15 @@ const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5;
 
 export function InfiniteHtmlCanvas({
-  frames, selectedFrameId, selectedFrameIds, contentFrameId, activeTool, zoom,
+  frames, canvasObjects, selectedFrameId, selectedFrameIds, selectedOrphanIds, contentFrameId, activeTool, zoom,
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
-  onFrameResize, onCreateFrame,
-  autoEditLayerId, onAutoEditHandled, onAutoFrameForTool,
+  onFrameResize, onCreateFrame, onCreateOrphanFromTool,
+  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans,
+  autoEditLayerId, onAutoEditHandled,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -89,6 +98,10 @@ export function InfiniteHtmlCanvas({
 
   // Multi-frame drag state (Phase 4)
   const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[]; duplicate: boolean; moved: boolean } | null>(null);
+
+  // Orphan drag state
+  const orphanDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+  const [isDraggingOrphan, setIsDraggingOrphan] = useState(false);
 
   // Marquee selection state (Phase 3)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -181,6 +194,7 @@ export function InfiniteHtmlCanvas({
     if (activeTool === "select" && e.button === 0 && e.target === viewportRef.current) {
       onSelectFrame(null);
       onElementSelect?.(null);
+      onSelectOrphan?.(null);
       // Start marquee
       const pt = screenToCanvas(e.clientX, e.clientY);
       marqueeStartRef.current = pt;
@@ -239,6 +253,17 @@ export function InfiniteHtmlCanvas({
           el.style.transform = `translate(${dx}px, ${dy}px)`;
         }
       }
+      return;
+    }
+    // Orphan dragging
+    if (orphanDragRef.current) {
+      const od = orphanDragRef.current;
+      const dx = (e.clientX - od.startX) / zoom;
+      const dy = (e.clientY - od.startY) / zoom;
+      if (!od.moved && Math.hypot(dx, dy) < 3) return;
+      od.moved = true;
+      const el = document.querySelector(`[data-canvas-object-id="${od.id}"]`) as HTMLElement;
+      if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
       return;
     }
     // Frame tool drawing
@@ -312,6 +337,17 @@ export function InfiniteHtmlCanvas({
       multiDragRef.current = null;
       setIsDraggingFrame(false);
     }
+    // Orphan drag commit
+    if (orphanDragRef.current) {
+      const od = orphanDragRef.current;
+      const dx = (e.clientX - od.startX) / zoom;
+      const dy = (e.clientY - od.startY) / zoom;
+      const el = document.querySelector(`[data-canvas-object-id="${od.id}"]`) as HTMLElement | null;
+      if (el) el.style.transform = "";
+      if (od.moved) onOrphanMove?.(od.id, Math.round(od.origX + dx), Math.round(od.origY + dy));
+      orphanDragRef.current = null;
+      setIsDraggingOrphan(false);
+    }
     // Frame tool / drawing-tool auto-frame commit: drag = custom size, click = default
     if (frameDrawStartRef.current) {
       const start = frameDrawStartRef.current;
@@ -321,18 +357,19 @@ export function InfiniteHtmlCanvas({
       setFrameDrawRect(null);
       const isDrawingTool = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "text-path"].includes(activeTool);
       if (rect && rect.w >= 4 && rect.h >= 4) {
-        if (isDrawingTool) onAutoFrameForTool?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
+        if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
         else onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
       } else {
-        // Click (no drag): default-size frame
-        if (isDrawingTool) onAutoFrameForTool?.(Math.round(start.x - 200), Math.round(start.y - 150), 400, 300);
+        // Click (no drag): default-size orphan or frame
+        if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(start.x), Math.round(start.y), 150, 150);
         else onCreateFrame?.(Math.round(start.x), Math.round(start.y), 100, 100);
       }
       return;
     }
     // Marquee selection commit (Phase 3) — AABB intersection
     if (marqueeStartRef.current && marqueeRect) {
-      const ids = new Set<string>();
+      const frameIds = new Set<string>();
+      // Frames
       for (const f of frames) {
         if (
           f.x < marqueeRect.x + marqueeRect.w &&
@@ -340,14 +377,29 @@ export function InfiniteHtmlCanvas({
           f.y < marqueeRect.y + marqueeRect.h &&
           f.y + f.height > marqueeRect.y
         ) {
-          ids.add(f.id);
+          frameIds.add(f.id);
         }
       }
-      if (ids.size > 0) onMarqueeSelect?.(ids);
+      // Orphans — batch-collect all intersected IDs
+      const orphanIds = new Set<string>();
+      for (const obj of canvasObjects) {
+        if (
+          obj.x < marqueeRect.x + marqueeRect.w &&
+          obj.x + obj.width > marqueeRect.x &&
+          obj.y < marqueeRect.y + marqueeRect.h &&
+          obj.y + obj.height > marqueeRect.y
+        ) {
+          orphanIds.add(obj.id);
+        }
+      }
+      if (orphanIds.size > 0) onMarqueeSelectOrphans?.(orphanIds);
+      else onSelectOrphan?.(null);
+      if (frameIds.size > 0) onMarqueeSelect?.(frameIds);
+      else onSelectFrame(null);
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onCreateFrame, onAutoFrameForTool, activeTool, frames, marqueeRect, frameDrawRect]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onSelectOrphan]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {
@@ -370,6 +422,24 @@ export function InfiniteHtmlCanvas({
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
   }, [zoom, onZoomChange]);
+
+  // ── Orphan mouse handlers ──
+  const startOrphanDrag = useCallback((orphanId: string, e: React.MouseEvent) => {
+    const obj = canvasObjects.find(o => o.id === orphanId);
+    if (!obj) return;
+    orphanDragRef.current = { id: orphanId, startX: e.clientX, startY: e.clientY, origX: obj.x, origY: obj.y, moved: false };
+    setIsDraggingOrphan(true);
+  }, [canvasObjects]);
+
+  const handleOrphanMouseDown = useCallback((orphanId: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    if (activeTool !== "select" && activeTool !== "hand") return;
+    // Shift+click: toggle in/out of selection
+    if (e.shiftKey) { onOrphanShiftClick?.(orphanId); return; }
+    onSelectOrphan?.(orphanId);
+    startOrphanDrag(orphanId, e);
+  }, [activeTool, onSelectOrphan, onOrphanShiftClick, startOrphanDrag]);
 
   // Frame body mousedown — single/shift/multi drag logic (Phase 2 + 4)
   const handleFrameMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
@@ -514,6 +584,37 @@ export function InfiniteHtmlCanvas({
             />
           </div>
         ))}
+
+        {/* Canvas-level orphan objects (outside all frames) */}
+        {canvasObjects.map(obj => {
+          const isSelected = selectedOrphanIds.has(obj.id);
+          return (
+            <div
+              key={obj.id}
+              data-canvas-object-id={obj.id}
+              onMouseDown={(e) => handleOrphanMouseDown(obj.id, e)}
+              style={{
+                position: "absolute",
+                left: obj.x, top: obj.y,
+                width: obj.width, height: obj.height,
+                overflow: "visible",
+                zIndex: obj.zIndex,
+                cursor: isDraggingOrphan && orphanDragRef.current?.id === obj.id ? "grabbing" : isSelected ? "move" : "default",
+              }}
+            >
+              <style>{obj.css}</style>
+              <div dangerouslySetInnerHTML={{ __html: obj.html }} />
+              {isSelected && (
+                <div style={{
+                  position: "absolute", inset: 0,
+                  border: "2px solid #3B82F6",
+                  borderRadius: 2, pointerEvents: "none",
+                  boxShadow: "0 0 0 1px #3B82F6",
+                }} />
+              )}
+            </div>
+          );
+        })}
 
         {/* Frame tool draw preview */}
         {frameDrawRect && (
