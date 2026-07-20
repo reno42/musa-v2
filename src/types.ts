@@ -18,7 +18,7 @@ export interface HtmlTemplate {
   html?: string;
   css?: string;
   frames?: any[];
-  /** Base64 data URL of a rendered preview thumbnail */
+  /** Preview thumbnail: Storage public URL (preferred) or legacy base64 data URL */
   thumbnail?: string;
   metadata: TemplateMetadata;
 }
