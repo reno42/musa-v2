@@ -378,9 +378,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const name = editingTplName.trim();
     if (!id || !name) { setEditingTplId(null); return; }
     try {
-      await mcpCall("update_html_frame", { templateId: id, name });
+      await mcpCall("rename_template", { templateId: id, name });
       setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
-    } catch {
+    } catch (err) {
+      console.error("[Dashboard] Rename failed:", err);
       addToast("Error al renombrar la plantilla.", "error");
     }
     setEditingTplId(null);
