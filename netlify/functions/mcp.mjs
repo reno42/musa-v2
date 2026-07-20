@@ -1122,24 +1122,26 @@ const MCP_TOOLS = [
   },
   {
     name: "set_html",
-    description: "Replace the full HTML content of an HTML template (server-side sanitized with DOMPurify)",
+    description: "Replace the HTML content of a frame (or template if no frames). Defaults to the first frame. Server-side sanitized with DOMPurify.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         html: { type: "string", description: "Full HTML content" },
+        frameId: { type: "string", description: "Optional frame ID. If omitted, writes to the first frame." },
       },
       required: ["templateId", "html"],
     },
   },
   {
     name: "set_css",
-    description: "Replace the full CSS stylesheet of an HTML template",
+    description: "Replace the CSS stylesheet of a frame (or template if no frames). Defaults to the first frame.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         css: { type: "string", description: "Full CSS stylesheet" },
+        frameId: { type: "string", description: "Optional frame ID. If omitted, writes to the first frame." },
       },
       required: ["templateId", "css"],
     },
@@ -3267,6 +3269,7 @@ async function handleMethod(method, params, userId) {
             status: "ready",
             _links: {
               render: `/api/templates/${id}/render`,
+              renderHtml: `/api/render/${id}?format=${format}&scale=${scale}${transparent ? "&transparent=1" : ""}`,
               view: `/api/render/${id}`,
             },
             renderParams: { format, scale, width: (tpl.width || 1080) * scale, height: (tpl.height || 1080) * scale, transparent },
@@ -3275,7 +3278,14 @@ async function handleMethod(method, params, userId) {
           results.push({ templateId: id, error: e?.message || "load failed" });
         }
       }
-      return { format, scale, total: params.templateIds.length, ready: results.filter(r => r.status === "ready").length, results };
+      return {
+        format,
+        scale,
+        total: params.templateIds.length,
+        ready: results.filter(r => r.status === "ready").length,
+        results,
+        _note: "Renders use client-side html2canvas (browser-based, no server-side Puppeteer). Open renderHtml in a browser and click 'Download PNG'. For automated PNG retrieval, a dedicated render service (AWS Lambda / Cloud Run) with Puppeteer is required.",
+      };
     }
 
     // ── Versions ──
@@ -3473,6 +3483,16 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
 
+      // Determine target frame (default to first frame if no frameId specified)
+      const frames = tpl.frames || [];
+      const targetFrame = params.frameId
+        ? frames.find(f => f.id === params.frameId)
+        : frames[0] || null;
+
+      if (params.frameId && !targetFrame) {
+        throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+
       // Sanitize HTML with DOMPurify on server-side
       let sanitized = params.html;
       try {
@@ -3482,14 +3502,20 @@ async function handleMethod(method, params, userId) {
         });
       } catch { /* use original if sanitization fails */ }
 
-      tpl.html = sanitized;
+      if (targetFrame) {
+        // Write to frame (visible in editor)
+        targetFrame.html = sanitized;
+      } else {
+        // No frames: write to template-level (backward compat)
+        tpl.html = sanitized;
+      }
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
         html: tpl.html,
         frames: tpl.frames || [],
       });
 
-      return { success: true, templateId: params.templateId, htmlLength: tpl.html.length };
+      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, htmlLength: sanitized.length };
     }
 
     // ── set_css ──
@@ -3498,14 +3524,30 @@ async function handleMethod(method, params, userId) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
 
-      tpl.css = params.css;
+      // Determine target frame (default to first frame if no frameId specified)
+      const frames = tpl.frames || [];
+      const targetFrame = params.frameId
+        ? frames.find(f => f.id === params.frameId)
+        : frames[0] || null;
+
+      if (params.frameId && !targetFrame) {
+        throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+
+      if (targetFrame) {
+        // Write to frame (visible in editor)
+        targetFrame.css = params.css;
+      } else {
+        // No frames: write to template-level (backward compat)
+        tpl.css = params.css;
+      }
       tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
       await templates.updateTemplate(params.templateId, {
         css: tpl.css,
         frames: tpl.frames || [],
       });
 
-      return { success: true, templateId: params.templateId, cssLength: tpl.css.length };
+      return { success: true, templateId: params.templateId, frameId: targetFrame?.id || null, cssLength: params.css.length };
     }
 
     // ── list_frames ──

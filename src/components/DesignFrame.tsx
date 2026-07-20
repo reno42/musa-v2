@@ -240,7 +240,7 @@ export function DesignFrame({
     cssRef.current = updatedCss;
     lastEmittedCssRef.current = updatedCss;
     const style = shadowRef.current?.querySelector("style");
-    if (style) style.textContent = mapBodySelectors(updatedCss);
+    if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(updatedCss)}`;
     onCssChangeRef.current?.(frame.id, updatedCss, updatedHtml);
   }
 
@@ -322,33 +322,27 @@ export function DesignFrame({
       shadow.appendChild(link);
     }
 
-    // Style element — map body/html selectors to Shadow DOM root
+    // Style element — system defaults FIRST (user CSS comes after, cascade: user wins)
     const style = document.createElement("style");
-    style.textContent = mapBodySelectors(frame.css);
+    style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
     shadow.appendChild(style);
 
     // Editor interaction CSS: content wrapper is transparent to pointer events,
     // but individual children capture them. Click on empty space passes through
     // content → hits background div (frame select/drag). Click on element → element.
     const peStyle = document.createElement("style");
-    peStyle.textContent = `#__df_content { width: 100%; height: 100%; pointer-events: none; } #__df_content * { pointer-events: auto; }`;
+    peStyle.textContent = `#__df_content { pointer-events: none; } #__df_content * { pointer-events: auto; }`;
     shadow.appendChild(peStyle);
 
     // Content container
     const content = document.createElement("div");
     content.id = "__df_content";
     content.innerHTML = frame.html;
-    // Content must be positioned with z-index above background (1) but below border (3).
-    // Without this, static content paints beneath all positioned elements (white frame bug).
+    // position and z-index are functional (stacking context). Keep inline.
     content.style.position = "relative";
     content.style.zIndex = "2";
-    // CRITICAL: set explicit dimensions so bottom/right/flex/percent positioning
-    // always resolves against the frame size, not the viewport or auto height.
-    // Without this, body { } CSS remapped by mapBodySelectors can be absent or
-    // use viewport units (vh/vw), causing children to escape the frame.
-    content.style.width = frame.width + "px";
-    content.style.height = frame.height + "px";
-    content.style.overflow = "hidden";
+    // width, height, overflow now come from <style> (above) — allows user CSS
+    // body { } remapped by mapBodySelectors to #__df_content to override defaults.
     // Apply frame background as inline style — overrides CSS body background remapped to #__df_content
     content.style.background = frame.background || "transparent";
     shadow.appendChild(content);
@@ -385,7 +379,7 @@ export function DesignFrame({
     const shadow = shadowRef.current;
     if (!shadow) return;
     const style = shadow.querySelector("style");
-    if (style) style.textContent = mapBodySelectors(frame.css);
+    if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
     const newHrefs = extractFontImports(frame.css);
