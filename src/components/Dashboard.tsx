@@ -73,6 +73,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "storage" | "settings" | "graph">("templates");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
   });
@@ -617,7 +618,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       />
 
       {/* Header — matches landing navbar: brand left, tabs+dropdown centered, search right */}
-      <div style={dashHeaderStyle}>
+      <div className="dash-header" style={dashHeaderStyle}>
         <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
           {/* Brand — identical to landing */}
           <div className="landing-brand" style={{ flexShrink: 0 }}>
@@ -628,8 +629,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span>Futuraria</span>
           </div>
 
+          {/* Hamburger — visible on mobile/tablet */}
+          <button type="button" className="dash-hamburger" onClick={() => setMobileMenuOpen(true)} aria-label="Open menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+
           {/* Centered: tabs + workspace dropdown */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
+          <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Templates", icon: <IconFile size={14} /> },
               { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
@@ -783,7 +793,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
 
           {/* Right: Search — replaces Enter Workspace button position */}
-          <div style={{ flexShrink: 0 }}>
+          <div className="dash-search-desktop" style={{ flexShrink: 0 }}>
             <input
               ref={searchInputRef}
               aria-label="Search templates"
@@ -802,6 +812,94 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       </div>
+
+      {/* ── Mobile Search (below header on small screens) ── */}
+      <div className="dash-search-mobile">
+        <input
+          aria-label="Search templates"
+          placeholder="Search…"
+          value={searchDisplay}
+          onChange={e => handleSearch(e.target.value)}
+        />
+      </div>
+
+      {/* ── Hamburger Slide-out Menu ── */}
+      {mobileMenuOpen && (
+        <>
+          <div className="landing-menu-overlay" onClick={() => setMobileMenuOpen(false)} />
+          <div className="landing-menu-panel">
+            <div className="landing-menu-header">
+              <span style={{ fontSize: 16, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>Menu</span>
+              <button type="button" className="landing-menu-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="landing-menu-nav">
+              {([
+                { id: "templates", label: "Templates", icon: <IconFile size={16} /> },
+                { id: "recipes", label: "Key Visuals", icon: <IconTag size={16} /> },
+                { id: "storage", label: "Storage", icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                  </svg>
+                )},
+                { id: "settings", label: "Settings", icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                )},
+                { id: "graph", label: "Graph", icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="6" cy="6" r="2" />
+                    <circle cx="18" cy="6" r="2" />
+                    <circle cx="12" cy="18" r="2" />
+                    <line x1="7.5" y1="7.5" x2="11" y2="16" />
+                    <line x1="16.5" y1="7.5" x2="13" y2="16" />
+                    <line x1="8" y1="6" x2="16" y2="6" />
+                  </svg>
+                )},
+              ] as const).map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className="landing-menu-link"
+                  onClick={() => { setActiveTab(tab.id); setMobileMenuOpen(false); }}
+                  style={activeTab === tab.id ? { color: "#fff", background: "rgba(255,255,255,0.06)" } : {}}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {tab.icon} {tab.label}
+                  </span>
+                </button>
+              ))}
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              {/* Workspace selector in menu */}
+              <div style={{ padding: "0 4px" }}>
+                <label style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "0 12px", marginBottom: 4, display: "block" }}>Workspace</label>
+                <select
+                  value={selectedWs || ""}
+                  onChange={e => { handleWsChange(e.target.value || null); }}
+                  style={{
+                    width: "100%", padding: "10px 14px", borderRadius: 10,
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                    color: "#ccc", fontSize: 13, outline: "none", fontFamily: "inherit",
+                  }}
+                >
+                  <option value="">All Templates</option>
+                  {workspaces.map(w => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── API Key Banner (shown when no key configured) ── */}
       {!hasApiKey() && (
@@ -873,7 +971,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             )}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
+          <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
             {templates.map(t => renderTemplateCard(t))}
           </div>
         )}
@@ -894,7 +992,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </div>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
+          <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
             {recipes.map(r => (
               <div
                 key={r.id}
@@ -1332,6 +1430,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
               </div>
             ) : (
+              <div className="dash-settings-table-wrap">
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead>
                   <tr style={{ color: "rgba(255,255,255,0.35)", textAlign: "left" }}>
@@ -1358,6 +1457,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 

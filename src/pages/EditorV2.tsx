@@ -2432,6 +2432,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showCodePanel, setShowCodePanel] = useState(false);
   const [showLayersPanel, setShowLayersPanel] = useState(false);
   const [showInsertBar, setShowInsertBar] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showVersionPanel, setShowVersionPanel] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"fixed" | "smart">("fixed");
   const [mcpLoading, setMcpLoading] = useState<string | null>(null);
@@ -3063,6 +3064,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
+        {/* Hamburger — visible on mobile/tablet */}
+        <button type="button" className="editor-v2-hamburger" onClick={() => setMobileMenuOpen(true)} aria-label="Open menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
         {editingTemplateName !== null ? (
           <input
             ref={templateNameInputRef}
@@ -3366,6 +3375,146 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </button>
       </div>
 
+      {/* ═══ Hamburger Slide-out Menu (mobile/tablet) ═══ */}
+      {mobileMenuOpen && (
+        <>
+          <div className="landing-menu-overlay" onClick={() => setMobileMenuOpen(false)} />
+          <div className="landing-menu-panel">
+            <div className="landing-menu-header">
+              <span style={{ fontSize: 16, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>Menu</span>
+              <button type="button" className="landing-menu-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="landing-menu-nav">
+              {/* Title */}
+              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "0 12px", marginBottom: 4 }}>Actions</div>
+              
+              {/* Properties tabs */}
+              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "8px 12px 4px" }}>Panels</div>
+              {RIGHT_PANEL_TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className="landing-menu-link"
+                  onClick={() => {
+                    if (showRightPanel && rightPanelTab === tab.id) {
+                      setShowRightPanel(false);
+                    } else {
+                      setRightPanelTab(tab.id);
+                      setShowRightPanel(true);
+                    }
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{ fontSize: 13, padding: "10px 14px" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {tab.icon} {tab.title}
+                  </span>
+                </button>
+              ))}
+              
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              
+              <button type="button" className="landing-menu-link" onClick={() => { setShowStyleLibrary(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconPalette size={16} /> Style Library
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowFontPicker(!showFontPicker); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconType size={16} /> Font Picker
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { handleCaptureThumbnail(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconImage size={16} /> Capture Thumbnail
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowExportMenu(!showExportMenu); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconDownload size={16} /> Export
+                </span>
+              </button>
+              
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              
+              <button type="button" className="landing-menu-link" onClick={() => { handleSaveRecipe(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconTag size={16} /> Save Key Visual
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowImageUpload(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconImage size={16} /> Upload Images
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { duplicateFrame(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconCopy size={16} /> Duplicate Frame
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { deleteSelectedFrame(); setMobileMenuOpen(false); }}
+                disabled={frames.length <= 1}
+                style={{ fontSize: 13, padding: "10px 14px", opacity: frames.length <= 1 ? 0.3 : 1 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconTrash size={16} /> Delete Frame
+                </span>
+              </button>
+              
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              
+              <button type="button" className="landing-menu-link" onClick={() => { handleExtractDesignSystem(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconDownload size={16} /> Extract Design System
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowInsertBar(!showInsertBar); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconPlus size={16} /> Insert Elements
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { document.querySelector<HTMLInputElement>('input[accept=".html,.htm"]')?.click(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconCode size={16} /> Import HTML/CSS
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { document.querySelector<HTMLInputElement>('input[accept=".json"]')?.click(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconUpload size={16} /> Import Template
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { handleLintDesign(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconWand size={16} /> Lint Design
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowBatch(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconGrid size={16} /> Batch-a-mator
+                </span>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ═══ Font Picker Dropdown ═══ */}
       {showFontPicker && (
         <div className="editor-v2-font-picker-dropdown">
@@ -3433,6 +3582,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div id="canvas-container" className="editor-v2-canvas-area">
           {/* ── Insert Toolbar (toggleable) ── */}
           {showInsertBar && (
+            <div className="editor-v2-insert-bar">
             <InsertToolbar
               templateId={templateId}
               onHtmlUpdated={(html, css) => {
@@ -3442,10 +3592,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               }}
               onSvgImport={() => setShowSvgImport(true)}
             />
+            </div>
           )}
           {/* ── Element Operations Bar (when element selected) ── */}
           {selectedElement && (
-            <div style={{
+            <div className="editor-v2-elem-ops" style={{
               display: "flex", gap: 2, padding: "4px 8px",
               background: "rgba(12,12,36,0.8)", backdropFilter: "blur(12px)",
               borderBottom: "1px solid rgba(255,255,255,0.06)",
@@ -3545,7 +3696,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
+      <div className="editor-v2-floating-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>

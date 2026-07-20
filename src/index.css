@@ -3086,3 +3086,184 @@ html, body, #root { height: 100%; width: 100%; }
 .image-upload-footer {
   margin-top: 16px; text-align: right;
 }
+
+/* ── Dashboard hamburger (hidden on desktop) ── */
+.dash-hamburger {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  padding: 6px;
+  border-radius: 8px;
+  transition: color 0.2s ease;
+}
+.dash-hamburger:hover { color: rgba(255,255,255,0.9); }
+
+/* ── Editor hamburger (hidden on desktop) ── */
+.editor-v2-hamburger {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  padding: 6px;
+  border-radius: 8px;
+  transition: color 0.2s ease;
+}
+.editor-v2-hamburger:hover { color: rgba(255,255,255,0.9); }
+
+/* ── Dashboard mobile search (hidden on desktop) ── */
+.dash-search-mobile { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE — Tablet (≤1023px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 1023px) {
+  /* ── Dashboard: hamburger visible, tabs hidden ── */
+  .dash-nav-tabs { display: none !important; }
+  .dash-hamburger { display: flex; align-items: center; justify-content: center; }
+  .dash-search-desktop { display: none; }
+
+  /* ── Dashboard: template cards single column ── */
+  .dash-template-grid {
+    grid-template-columns: 1fr !important;
+    padding: 12px !important;
+  }
+
+  /* ── Dashboard: settings tables scrollable ── */
+  .dash-settings-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Editor: top bar — hide icon buttons, show hamburger ── */
+  .editor-v2-topbar-icon-btn,
+  .editor-v2-topbar-sep { display: none; }
+  .editor-v2-topbar .editor-v2-topbar-btn { display: flex; }
+  .editor-v2-topbar-btn-text { max-width: 120px; }
+  .editor-v2-hamburger { display: flex; align-items: center; justify-content: center; }
+
+  /* ── Editor: floating toolbar → bottom bar ── */
+  .editor-v2-floating-toolbar {
+    position: fixed !important;
+    bottom: 12px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    top: auto !important;
+    right: auto !important;
+    width: auto !important;
+    max-width: calc(100vw - 24px);
+    z-index: 40 !important;
+    border-radius: 16px !important;
+    background: rgba(12,12,36,0.85) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5) !important;
+  }
+
+  /* ── Editor: panels become overlays ── */
+  .editor-v2-code-panel,
+  .editor-v2-layers-panel {
+    position: fixed !important;
+    inset: 48px 0 0 0 !important;
+    width: 100% !important;
+    z-index: 50 !important;
+    border-radius: 0 !important;
+    border-right: none !important;
+  }
+
+  .editor-v2-right-panel {
+    position: fixed !important;
+    inset: 48px 0 0 0 !important;
+    width: 100% !important;
+    z-index: 50 !important;
+    border-radius: 0 !important;
+  }
+
+  /* ── Editor: canvas full width ── */
+  .editor-v2-main { flex-direction: column; }
+  .editor-v2-canvas-area { width: 100%; }
+
+  /* ── Editor: topbar compact ── */
+  .editor-v2-topbar { padding: 0 8px; gap: 4px; }
+  .editor-v2-project-name { font-size: 12px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .editor-v2-frame-info { display: none; }
+
+  /* ── Editor: insert toolbar wraps ── */
+  .editor-v2-topbar > label.editor-v2-topbar-icon-btn { display: none; }
+
+  /* ── Landing: nav links hidden on tablet ── */
+  .landing-nav-links { display: none; }
+  .landing-hamburger { display: flex; align-items: center; justify-content: center; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE — Mobile (≤767px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* ── Dashboard: header compact ── */
+  .dash-header {
+    padding: 12px 12px 0 !important;
+  }
+
+  .dash-search-mobile {
+    display: block !important;
+    padding: 0 12px;
+    margin-top: 8px;
+  }
+
+  .dash-search-mobile input {
+    width: 100%;
+    border-radius: 100px;
+    padding: 10px 18px;
+    font-size: 14px;
+    color: #ffffff;
+    outline: none;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  /* ── Dashboard: template cards taller on mobile ── */
+  .dash-card {
+    height: 240px !important;
+  }
+
+  /* ── Editor: topbar brand limit ── */
+  .editor-v2-project-name { max-width: 80px; font-size: 11px; }
+  .editor-v2-saving { font-size: 9px; }
+
+  /* ── Editor: bottom floating toolbar compact ── */
+  .editor-v2-floating-toolbar {
+    bottom: 8px !important;
+    border-radius: 14px !important;
+    padding: 2px 4px !important;
+  }
+
+  /* ── Editor: canvas padding ── */
+  .editor-v2-canvas-area {
+    padding-bottom: 60px !important;
+  }
+
+  /* ── Editor: insert toolbar horizontal scroll ── */
+  .editor-v2-insert-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+  }
+
+  /* ── Editor: element ops bar wraps ── */
+  .editor-v2-elem-ops {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  /* ── Landing: hero text smaller ── */
+  .landing-hero-title { font-size: 36px !important; }
+  .landing-hero-sub { font-size: 16px !important; }
+  .landing-cta { padding: 12px 24px !important; font-size: 14px !important; }
+
+  /* ── Common: modal full-width ── */
+  .image-upload-modal { width: 100% !important; max-width: 100vw !important; border-radius: 0 !important; }
+}
