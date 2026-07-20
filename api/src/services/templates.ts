@@ -192,34 +192,46 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
   }
 }
 
-async function deleteFromSupabase(id: string) {
+async function deleteFromSupabase(id: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return;
+  if (!sb) return false;
   try {
-    // Soft-delete: set deleted_at column
-    await sb.from("templates").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    // Soft-delete: set deleted_at column. .select() reports whether a row matched
+    // — needed because serverless invocations have an empty in-memory store.
+    const { data, error } = await sb.from("templates")
+      .update({ deleted_at: new Date().toISOString() }).eq("id", id).select("id");
+    if (error) throw error;
+    return (data?.length || 0) > 0;
   } catch (e) {
     console.warn("[templates] Supabase soft-delete failed:", (e as Error).message);
+    return false;
   }
 }
 
-async function restoreSupabase(id: string) {
+async function restoreSupabase(id: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return;
+  if (!sb) return false;
   try {
-    await sb.from("templates").update({ deleted_at: null }).eq("id", id);
+    const { data, error } = await sb.from("templates")
+      .update({ deleted_at: null }).eq("id", id).select("id");
+    if (error) throw error;
+    return (data?.length || 0) > 0;
   } catch (e) {
     console.warn("[templates] Supabase restore failed:", (e as Error).message);
+    return false;
   }
 }
 
-async function purgeFromSupabase(id: string) {
+async function purgeFromSupabase(id: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return;
+  if (!sb) return false;
   try {
-    await sb.from("templates").delete().eq("id", id);
+    const { data, error } = await sb.from("templates").delete().eq("id", id).select("id");
+    if (error) throw error;
+    return (data?.length || 0) > 0;
   } catch (e) {
     console.warn("[templates] Supabase purge failed:", (e as Error).message);
+    return false;
   }
 }
 
@@ -227,8 +239,10 @@ async function listTrashFromSupabase(limit: number, offset: number): Promise<{ d
   const sb = getSupabase();
   if (!sb) return null;
   try {
+    // Lean select — NEVER pull the data JSONB here: old trashed templates can
+    // hold megabytes of base64 and blow Netlify's 6MB response cap (502).
     const queryPromise = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, deleted_at, data", { count: "exact" })
+      .select("id, name, workspace_id, created_at, updated_at, deleted_at", { count: "exact" })
       .not("deleted_at", "is", null)
       .order("deleted_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -255,8 +269,10 @@ async function listTrashFromSupabase(limit: number, offset: number): Promise<{ d
         updatedAt: r.updated_at,
         deletedAt: r.deleted_at,
       },
-      data: r.data ? (typeof r.data === "string" ? JSON.parse(r.data) : r.data) : {},
-    }));
+      // Top-level fields the Trash UI reads directly
+      createdAt: r.created_at,
+      deletedAt: r.deleted_at,
+    } as any));
     return { data: items, total: count || items.length };
   } catch {
     return null;
@@ -378,18 +394,23 @@ export async function updateTemplate(
 }
 
 export async function deleteTemplate(id: string): Promise<boolean> {
-  await deleteFromSupabase(id);
-  return store.deleteTemplate(id);
+  const sbOk = await deleteFromSupabase(id);
+  const storeOk = store.deleteTemplate(id);
+  // Either source succeeding counts: serverless invocations start with an
+  // empty in-memory store, so Supabase is often the only one that knows the row.
+  return sbOk || storeOk;
 }
 
 export async function restoreTemplate(id: string): Promise<boolean> {
-  await restoreSupabase(id);
-  return store.restoreTemplate(id);
+  const sbOk = await restoreSupabase(id);
+  const storeOk = store.restoreTemplate(id);
+  return sbOk || storeOk;
 }
 
 export async function purgeTemplate(id: string): Promise<boolean> {
-  await purgeFromSupabase(id);
-  return store.purgeTemplate(id);
+  const sbOk = await purgeFromSupabase(id);
+  const storeOk = store.purgeTemplate(id);
+  return sbOk || storeOk;
 }
 
 export async function listTrash(limit = 50, offset = 0): Promise<{ data: DesignTemplate[]; total: number }> {
