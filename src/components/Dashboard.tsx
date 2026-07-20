@@ -5,6 +5,7 @@ import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
+import { TextsTab } from "./TextsTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
@@ -73,7 +74,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "storage" | "settings" | "graph">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "texts" | "recipes" | "storage" | "settings" | "graph">("templates");
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
@@ -662,6 +663,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Templates", icon: <IconFile size={14} /> },
+              { id: "texts", label: "Textos", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 7 4 4 20 4 20 7" />
+                  <line x1="9" y1="20" x2="15" y2="20" />
+                  <line x1="12" y1="4" x2="12" y2="20" />
+                </svg>
+              )},
               { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
               { id: "storage", label: "Storage", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -860,6 +868,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div className="landing-menu-nav">
               {([
                 { id: "templates", label: "Templates", icon: <IconFile size={16} /> },
+                { id: "texts", label: "Textos", icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 7 4 4 20 4 20 7" />
+                    <line x1="9" y1="20" x2="15" y2="20" />
+                    <line x1="12" y1="4" x2="12" y2="20" />
+                  </svg>
+                )},
                 { id: "recipes", label: "Key Visuals", icon: <IconTag size={16} /> },
                 { id: "storage", label: "Storage", icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -996,6 +1011,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         )}
       </div>
+      )}
+
+      {/* ── Texts Tab ── */}
+      {activeTab === "texts" && (
+        <TextsTab workspaceId={selectedWs} />
       )}
 
       {/* Key Visuals / Recipes Grid */}

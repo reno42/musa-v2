@@ -2150,6 +2150,20 @@ const MCP_TOOLS = [
       required: ["templateId", "frameId", "layerId", "text"],
     },
   },
+  // ── Shared: Text Synchronization ──
+  {
+    name: "list_all_texts",
+    description: "Extract ALL text content from design frames. Scans every text-bearing element (h1-h6, p, span, a, button, li, label, div, etc.) across all templates and frames. Auto-tags elements that lack a data-layer-id with a permanent synthetic ID so they become editable and stay synchronized. Returns a flat list of text entries with template/frame metadata for the Texts sync table.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Filter by workspace. If omitted, scans all templates." },
+        templateId: { type: "string", description: "Filter to a single template. If omitted, scans all (max 100)." },
+        frameId: { type: "string", description: "Filter to a single frame within the template(s)." },
+        includeEmpty: { type: "boolean", description: "Include elements with no text content (default false)." },
+      },
+    },
+  },
   {
     name: "copy_style",
     description: "Copy all CSS properties from one element. Returns the CSS declarations as a string that can be pasted onto another element.",
@@ -8357,6 +8371,115 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       autoSnapshot(params.templateId, method);
       return { success: true, layerId, hidden: params.hidden };
+    }
+
+    // ── list_all_texts ──
+    case "list_all_texts": {
+      const { workspaceId, templateId, frameId, includeEmpty } = params;
+
+      // 1. Determine which templates to scan
+      /** @type {any[]} */
+      let templatesToScan = [];
+      if (templateId) {
+        const tpl = await templates.getTemplate(templateId);
+        if (tpl) templatesToScan.push(tpl);
+      } else {
+        // Lean list first to get IDs, then load full data in parallel batches
+        const lean = await templates.listTemplatesPaginated(100, 0, workspaceId);
+        // Batch-load full templates (concurrency cap of 8 to avoid hammering Supabase)
+        const BATCH = 8;
+        for (let i = 0; i < lean.data.length; i += BATCH) {
+          const chunk = lean.data.slice(i, i + BATCH);
+          const full = await Promise.all(chunk.map(t => templates.getTemplate(t.id)));
+          templatesToScan.push(...full.filter(Boolean));
+        }
+      }
+
+      // Text-bearing tags we care about
+      const TEXT_TAGS = "h1, h2, h3, h4, h5, h6, p, span, a, button, li, label, div, td, th, strong, em, blockquote, figcaption, caption, small, mark";
+
+      /** @type {any[]} */
+      const allTexts = [];
+      /** @type {Map<string, any>} */
+      const templatesToUpdate = new Map();
+      let autoTaggedCount = 0;
+
+      for (const tpl of templatesToScan) {
+        if (!tpl.frames || !Array.isArray(tpl.frames)) continue;
+        let tplModified = false;
+
+        for (const frame of tpl.frames) {
+          if (frameId && frame.id !== frameId) continue;
+          if (!frame.html) continue;
+
+          const $ = cheerio.load(frame.html);
+          let frameModified = false;
+
+          $(TEXT_TAGS).each((_, el) => {
+            const $el = $(el);
+
+            // Extract the element's OWN text (direct text nodes, not descendants)
+            let ownText = "";
+            const node = $el[0];
+            if (node && node.children) {
+              for (const child of node.children) {
+                if (child.type === "text") ownText += child.data || "";
+              }
+            }
+            ownText = ownText.trim();
+
+            if (!ownText && !includeEmpty) return;
+
+            // Auto-tag elements that lack a data-layer-id
+            let layerId = $el.attr("data-layer-id");
+            if (!layerId) {
+              layerId = "txt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+              $el.attr("data-layer-id", layerId);
+              if (!$el.attr("data-layer-name")) $el.attr("data-layer-name", "Text");
+              $el.attr("data-layer-kind", "text");
+              frameModified = true;
+              autoTaggedCount++;
+            }
+
+            allTexts.push({
+              templateId: tpl.id,
+              templateName: tpl.name,
+              frameId: frame.id,
+              frameName: frame.name || frame.id,
+              layerId,
+              layerName: $el.attr("data-layer-name") || null,
+              tag: ($el.prop("tagName") || "").toLowerCase(),
+              text: ownText,
+              charCount: ownText.length,
+            });
+          });
+
+          if (frameModified) {
+            frame.html = $("body").html() || $.html();
+            tplModified = true;
+          }
+        }
+
+        if (tplModified) {
+          templatesToUpdate.set(tpl.id, tpl);
+        }
+      }
+
+      // 3. Persist auto-tagged templates (non-fatal if it fails — texts still returned)
+      for (const [id, tpl] of templatesToUpdate) {
+        try {
+          await templates.updateTemplate(id, { frames: tpl.frames });
+        } catch (e) {
+          console.warn("[list_all_texts] Failed to persist auto-tags for", id, e?.message);
+        }
+      }
+
+      return {
+        texts: allTexts,
+        autoTagged: autoTaggedCount,
+        templatesScanned: templatesToScan.length,
+        templatesUpdated: templatesToUpdate.size,
+      };
     }
 
     // ── edit_text_content ──
