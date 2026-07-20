@@ -2513,11 +2513,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const tpl = await getTemplate(templateId);
     const t = tpl as any;
     if (t?.frames && Array.isArray(t.frames)) {
-      const updated = t.frames.map((f: any) => ({
-        ...framesRef.current.find(lf => lf.id === f.id),
-        html: f.html || "",
-        css: f.css || "",
-      }));
+      const currentFrames = framesRef.current;
+      // Merge: preserve local frame data (x, y, w, h, etc), update html/css from server
+      const updated = t.frames.map((f: any) => {
+        const local = currentFrames.find(lf => lf.id === f.id);
+        if (local) {
+          return { ...local, html: f.html ?? "", css: f.css ?? "" };
+        }
+        // New frame from server (e.g., created by MCP tool)
+        return {
+          id: f.id,
+          name: f.name || "Frame",
+          x: f.x ?? 0, y: f.y ?? 0,
+          width: f.width ?? 1080, height: f.height ?? 1080,
+          html: f.html ?? "", css: f.css ?? "",
+          background: f.background ?? "#ffffff",
+        };
+      });
       if (updated.length > 0) {
         store.replaceAllWithUndo(updated, "edit");
         autoSaveRef.current(updated);

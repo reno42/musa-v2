@@ -71,7 +71,7 @@ export function ImageToDesignModal({ templateId, frameId, onClose, onDesignReady
       };
       if (frameId) params.frameId = frameId;
 
-      const result = await apiFetch<any>("/mcp", {
+      const rawRes = await apiFetch<any>("/mcp", {
         method: "POST",
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -81,12 +81,22 @@ export function ImageToDesignModal({ templateId, frameId, onClose, onDesignReady
         }),
       });
 
-      if (result.error) {
-        throw new Error(result.error.message || "MCP error");
+      // Check JSON-RPC error first
+      if (rawRes.error) {
+        throw new Error(rawRes.error.message || "MCP error");
       }
 
+      // MCP wraps tool results in { content: [{ type: "text", text: "..." }] }
+      const content = rawRes.result?.content?.[0];
+      let data = rawRes.result;
+      if (content?.type === "text" && content.text) {
+        try { data = JSON.parse(content.text); } catch { data = { _raw: content.text }; }
+      }
+
+      if (data.error) throw new Error(data.error.message || data.error);
+
       setStage("done");
-      setMessage(`✅ Design generated! (${result.result?.htmlLength || 0}B HTML, ${result.result?.cssLength || 0}B CSS)`);
+      setMessage(`✅ Design generated! (${data.htmlLength || 0}B HTML, ${data.cssLength || 0}B CSS)`);
       onDesignReady?.();
     } catch (e: any) {
       setStage("upload");
