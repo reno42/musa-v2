@@ -8,6 +8,7 @@ import { StorageTab } from "./StorageTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
+import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 
 interface Template {
   id: string;
@@ -73,6 +74,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [activeTab, setActiveTab] = useState<"templates" | "recipes" | "storage" | "settings" | "graph">("templates");
+  const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
@@ -950,7 +952,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* Template Grid */}
       {activeTab === "templates" && (
-      <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+      <div data-tour="templates-grid" style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
@@ -1147,6 +1149,41 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   color: cardMode === "flow" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
                 }}
               >Flow</button>
+            </div>
+          </div>
+
+          {/* ── Onboarding ── */}
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Onboarding</h3>
+          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32, gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14 }}>🧭</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Tour guiado</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                  Recorrido paso a paso: templates, editor, IA y grafo
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => { setOnboardingEnabled(!tourEnabled); setTourEnabled(v => !v); }}
+                style={{
+                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
+                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
+                  background: tourEnabled ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.06)",
+                  color: tourEnabled ? "#c4b5fd" : "rgba(255,255,255,0.4)",
+                }}
+              >{tourEnabled ? "Activado" : "Desactivado"}</button>
+              <button
+                type="button"
+                onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("templates"); }}
+                style={{
+                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 600,
+                  border: "1px solid rgba(139,92,246,0.5)", cursor: "pointer",
+                  background: "transparent", color: "#a78bfa",
+                }}
+              >Reiniciar tour</button>
             </div>
           </div>
 
@@ -1507,7 +1544,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Graph Tab ── */}
       {activeTab === "graph" && (
-        <div style={{ flex: 1, overflow: "hidden", padding: 20 }}>
+        <div data-tour="graph-view" style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <GraphTab
             workspaceId={selectedWs}
             onOpenTemplate={(id) => {
@@ -1582,6 +1619,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       )}
+
+      {/* ── Guided onboarding tour ── */}
+      <OnboardingTour
+        page="dashboard"
+        onAction={(action: TourAction) => {
+          if (action === "tab-templates") setActiveTab("templates");
+          else if (action === "tab-graph") setActiveTab("graph");
+          else if (action === "open-first-template") {
+            const t = templates[0];
+            if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
+          }
+        }}
+      />
     </motion.div>
   );
 }

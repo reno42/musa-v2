@@ -3,6 +3,7 @@ import html2canvas from "html2canvas";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
+import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { FileInfoPanel } from "../components/FileInfoPanel";
 import { StructurePanel } from "../components/StructurePanel";
@@ -3578,7 +3579,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       )}
 
       {/* ═══ Main Area ═══ */}
-      <div className="editor-v2-main">
+      <div className="editor-v2-main" data-tour="editor-canvas">
         {/* ── Code Panel (slide-in from left) ── */}
         {showCodePanel && (
           <div className="editor-v2-code-panel" style={codeDock.panelStyle(380, 0)}>
@@ -3600,7 +3601,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ── Layers Panel (slide-in from left, next to Code Panel) ── */}
         {showLayersPanel && (
-          <div className="editor-v2-layers-panel" style={layersDock.panelStyle(260, layersDockOffset)}>
+          <div className="editor-v2-layers-panel" data-tour="editor-layers" style={layersDock.panelStyle(260, layersDockOffset)}>
             <div className="dock-handle" {...layersDock.handleProps}>
               <span>Layers</span>
               <button type="button" onClick={() => layersDock.toggleDock("left")} className="dock-pin-btn" title={layersDock.state.isDocked ? "Undock" : "Dock left"}>
@@ -3751,7 +3752,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       </div>
 
       {/* ═══ Floating Left Toolbar ═══ */}
-      <div className="editor-v2-floating-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
+      <div className="editor-v2-floating-toolbar" data-tour="editor-toolbar" style={{ ...toolbarDock.panelStyle(56), ...(toolbarLeft !== undefined ? { left: toolbarLeft } : {}) }}>
         <div className="dock-handle" {...toolbarDock.handleProps} style={{ justifyContent: "center", padding: "2px 4px", minHeight: 16 }}>
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
@@ -3780,7 +3781,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && (
-        <div className="editor-v2-right-panel" style={rightDock.panelStyle(260)}>
+        <div className="editor-v2-right-panel" data-tour="editor-props" style={rightDock.panelStyle(260)}>
           <div className="dock-handle" {...rightDock.handleProps}>
             <span>Properties</span>
             <button type="button" onClick={() => rightDock.toggleDock("right")} className="dock-pin-btn" title={rightDock.state.isDocked ? "Undock" : "Dock right"}>
@@ -4029,6 +4030,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onToast={(msg, type) => addToast(msg, type || "info")}
         />
       )}
+
+      {/* ═══ Guided onboarding tour (editor steps) ═══ */}
+      <OnboardingTour
+        page="editor"
+        onAction={(action: TourAction) => {
+          if (action === "back-to-dashboard") onBack();
+          else if (action === "show-layers") setShowLayersPanel(true);
+          else if (action === "show-props") setShowRightPanel(true);
+        }}
+      />
     </div>
   );
 }
