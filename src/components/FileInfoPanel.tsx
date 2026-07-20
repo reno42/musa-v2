@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 interface FileMeta {
   brand: string;
+  campaign: string;
   tags: string[];
   theme: string;
   format: string;
@@ -21,7 +22,7 @@ const FILE_TYPES = ["", "frame", "deck", "template", "export"];
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
-    brand: "", tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
+    brand: "", campaign: "", tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -40,6 +41,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         if (d.success && d.data) {
           const m = {
             brand: d.data.brand || "",
+            campaign: d.data.campaign || "",
             tags: d.data.tags || [],
             theme: d.data.theme || "",
             format: d.data.format || "",
@@ -166,6 +168,17 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
           value={meta.brand}
           onChange={e => scheduleSave({ brand: e.target.value })}
           placeholder="e.g. BMW, Nike"
+        />
+      </div>
+
+      {/* Campaign */}
+      <div style={sectionStyle}>
+        <label style={labelStyle}>Campaign</label>
+        <input
+          style={inputStyle}
+          value={meta.campaign}
+          onChange={e => scheduleSave({ campaign: e.target.value })}
+          placeholder="e.g. Black Friday 2026, Launch"
         />
       </div>
 

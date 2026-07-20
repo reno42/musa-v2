@@ -8395,11 +8395,34 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
       }
 
+      // 2. Batch-fetch design_file_meta for all scanned templates
+      /** @type {Map<string, any>} */
+      const metaMap = new Map();
+      const sb = getSupabase();
+      if (sb && templatesToScan.length > 0) {
+        try {
+          const tplIds = templatesToScan.map(t => t.id);
+          const { data: metaData } = await sb
+            .from("design_file_meta")
+            .select("template_id, brand, campaign, format, file_type, cover_image_url")
+            .in("template_id", tplIds);
+          if (metaData) {
+            for (const row of metaData) {
+              metaMap.set(row.template_id, row);
+            }
+          }
+        } catch (e) {
+          console.warn("[list_all_texts] Failed to fetch design_file_meta:", e?.message);
+        }
+      }
+
       // Text-bearing tags we care about
       const TEXT_TAGS = "h1, h2, h3, h4, h5, h6, p, span, a, button, li, label, div, td, th, strong, em, blockquote, figcaption, caption, small, mark";
 
       /** @type {any[]} */
       const allTexts = [];
+      /** @type {Map<string, any>} */
+      const framePreviews = new Map(); // frameId → preview data
       /** @type {Map<string, any>} */
       const templatesToUpdate = new Map();
       let autoTaggedCount = 0;
@@ -8407,10 +8430,31 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       for (const tpl of templatesToScan) {
         if (!tpl.frames || !Array.isArray(tpl.frames)) continue;
         let tplModified = false;
+        const meta = metaMap.get(tpl.id) || {};
 
         for (const frame of tpl.frames) {
           if (frameId && frame.id !== frameId) continue;
           if (!frame.html) continue;
+
+          // Build a lightweight frame preview entry (once per frame)
+          if (!framePreviews.has(frame.id)) {
+            framePreviews.set(frame.id, {
+              frameId: frame.id,
+              frameName: frame.name || frame.id,
+              templateId: tpl.id,
+              templateName: tpl.name,
+              frameWidth: frame.width || tpl.width || 1080,
+              frameHeight: frame.height || tpl.height || 1080,
+              frameHtml: frame.html || "",
+              frameCss: frame.css || tpl.css || "",
+              frameBackground: frame.background || null,
+              brand: meta.brand || "",
+              campaign: meta.campaign || "",
+              format: meta.format || "",
+              fileType: meta.file_type || "",
+              coverImage: meta.cover_image_url || tpl.thumbnail || null,
+            });
+          }
 
           const $ = cheerio.load(frame.html);
           let frameModified = false;
@@ -8451,12 +8495,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               tag: ($el.prop("tagName") || "").toLowerCase(),
               text: ownText,
               charCount: ownText.length,
+              // Metadata fields
+              brand: meta.brand || "",
+              campaign: meta.campaign || "",
+              format: meta.format || "",
+              fileType: meta.file_type || "",
             });
           });
 
           if (frameModified) {
             frame.html = $("body").html() || $.html();
             tplModified = true;
+            // Update preview HTML too
+            const prev = framePreviews.get(frame.id);
+            if (prev) prev.frameHtml = frame.html;
           }
         }
 
@@ -8476,6 +8528,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       return {
         texts: allTexts,
+        frames: [...framePreviews.values()],
         autoTagged: autoTaggedCount,
         templatesScanned: templatesToScan.length,
         templatesUpdated: templatesToUpdate.size,

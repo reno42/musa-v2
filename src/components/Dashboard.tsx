@@ -1015,7 +1015,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Texts Tab ── */}
       {activeTab === "texts" && (
-        <TextsTab workspaceId={selectedWs} />
+        <TextsTab workspaceId={selectedWs} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* Key Visuals / Recipes Grid */}

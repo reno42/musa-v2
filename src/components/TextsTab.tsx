@@ -15,10 +15,32 @@ interface TextEntry {
   tag: string;
   text: string;
   charCount: number;
+  brand: string;
+  campaign: string;
+  format: string;
+  fileType: string;
+}
+
+interface FramePreview {
+  frameId: string;
+  frameName: string;
+  templateId: string;
+  templateName: string;
+  frameWidth: number;
+  frameHeight: number;
+  frameHtml: string;
+  frameCss: string;
+  frameBackground: string | null;
+  brand: string;
+  campaign: string;
+  format: string;
+  fileType: string;
+  coverImage: string | null;
 }
 
 interface TextsTabProps {
   workspaceId: string | null;
+  onOpenTemplate?: (templateId: string) => void;
 }
 
 // ── Confirm Modal ──
@@ -165,6 +187,57 @@ function ConfirmModal({
   );
 }
 
+// ── Frame Preview Thumbnail ──
+
+function FramePreviewThumb({ preview, onClick }: { preview: FramePreview; onClick?: () => void }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const THUMB_W = 56;
+  const THUMB_H = 56;
+  const scale = Math.min(THUMB_W / preview.frameWidth, THUMB_H / preview.frameHeight);
+
+  const srcDoc = useMemo(() => {
+    const css = preview.frameCss || "";
+    const html = preview.frameHtml || "";
+    const bg = preview.frameBackground || "";
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:${preview.frameWidth}px; height:${preview.frameHeight}px; overflow:hidden; }
+body { ${bg ? `background:${bg};` : ""} }
+${css}
+</style></head><body>${html}</body></html>`;
+  }, [preview.frameHtml, preview.frameCss, preview.frameBackground, preview.frameWidth, preview.frameHeight]);
+
+  return (
+    <div
+      onClick={onClick}
+      title={`Abrir "${preview.templateName}" en nueva pesta\u00f1a`}
+      style={{
+        width: THUMB_W, height: THUMB_H, borderRadius: 6, overflow: "hidden",
+        border: "1px solid rgba(255,255,255,0.08)", cursor: onClick ? "pointer" : "default",
+        position: "relative", flexShrink: 0,
+        transition: "border-color 0.15s",
+      }}
+      onMouseEnter={e => { if (onClick) e.currentTarget.style.borderColor = "rgba(139,92,246,0.4)"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+    >
+      <iframe
+        ref={iframeRef}
+        srcDoc={srcDoc}
+        sandbox=""
+        scrolling="no"
+        style={{
+          position: "absolute",
+          width: preview.frameWidth, height: preview.frameHeight,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+          border: "none", pointerEvents: "none",
+          opacity: 0.9,
+        }}
+      />
+    </div>
+  );
+}
+
 // ── Bulk Edit Modal ──
 
 function BulkEditModal({
@@ -274,13 +347,35 @@ function BulkEditModal({
 
 // ── Main Component ──
 
-export function TextsTab({ workspaceId }: TextsTabProps) {
+const thStyle: React.CSSProperties = {
+  padding: "10px 10px", textAlign: "left",
+  background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+  color: "rgba(255,255,255,0.4)", fontSize: 11,
+  textTransform: "uppercase", letterSpacing: 0.5,
+};
+
+const selectStyle: React.CSSProperties = {
+  padding: "8px 12px", borderRadius: 100, fontSize: 13,
+  border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.2)",
+  color: "rgba(255,255,255,0.7)", cursor: "pointer",
+};
+
+const actionBtnStyle: React.CSSProperties = {
+  background: "none", border: "none", cursor: "pointer",
+  color: "rgba(255,255,255,0.3)", fontSize: 14, padding: "4px 6px", borderRadius: 4,
+};
+
+export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   const { addToast } = useToast();
   const [allTexts, setAllTexts] = useState<TextEntry[]>([]);
+  const [framePreviews, setFramePreviews] = useState<Map<string, FramePreview>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTpl, setFilterTpl] = useState<string>("");
   const [filterFrame, setFilterFrame] = useState<string>("");
+  const [filterBrand, setFilterBrand] = useState<string>("");
+  const [filterCampaign, setFilterCampaign] = useState<string>("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -296,7 +391,11 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
     try {
       const result = await mcpCall("list_all_texts", { workspaceId: workspaceId || undefined });
       const texts: TextEntry[] = result.texts || [];
+      const frames: FramePreview[] = result.frames || [];
+      const previewMap = new Map<string, FramePreview>();
+      for (const f of frames) previewMap.set(f.frameId, f);
       setAllTexts(texts);
+      setFramePreviews(previewMap);
       if (result.autoTagged > 0) {
         setAutoTagInfo(`${result.autoTagged} textos auto-etiquetados en ${result.templatesUpdated} diseño(s)`);
         setTimeout(() => setAutoTagInfo(null), 5000);
@@ -318,6 +417,18 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   }, [allTexts]);
 
+  const brands = useMemo(() => {
+    const set = new Set<string>();
+    allTexts.forEach(t => { if (t.brand) set.add(t.brand); });
+    return [...set].sort();
+  }, [allTexts]);
+
+  const campaigns = useMemo(() => {
+    const set = new Set<string>();
+    allTexts.forEach(t => { if (t.campaign) set.add(t.campaign); });
+    return [...set].sort();
+  }, [allTexts]);
+
   const frames = useMemo(() => {
     const map = new Map<string, string>();
     allTexts
@@ -331,17 +442,21 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
     let result = allTexts;
     if (filterTpl) result = result.filter(t => t.templateId === filterTpl);
     if (filterFrame) result = result.filter(t => t.frameId === filterFrame);
+    if (filterBrand) result = result.filter(t => t.brand === filterBrand);
+    if (filterCampaign) result = result.filter(t => t.campaign === filterCampaign);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(t =>
         t.text.toLowerCase().includes(q) ||
         t.templateName.toLowerCase().includes(q) ||
         t.frameName.toLowerCase().includes(q) ||
-        (t.layerName || "").toLowerCase().includes(q)
+        (t.layerName || "").toLowerCase().includes(q) ||
+        t.brand.toLowerCase().includes(q) ||
+        t.campaign.toLowerCase().includes(q)
       );
     }
     return result;
-  }, [allTexts, filterTpl, filterFrame, searchQuery]);
+  }, [allTexts, filterTpl, filterFrame, filterBrand, filterCampaign, searchQuery]);
 
   // ── Debounced search ──
   const handleSearch = useCallback((val: string) => {
@@ -490,15 +605,31 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
           Sincronizar
         </button>
 
+        {/* Brand filter */}
+        <select
+          value={filterBrand}
+          onChange={e => setFilterBrand(e.target.value)}
+          style={selectStyle}
+        >
+          <option value="">All Brands ({brands.length})</option>
+          {brands.map(b => <option key={b} value={b}>{b}</option>)}
+        </select>
+
+        {/* Campaign filter */}
+        <select
+          value={filterCampaign}
+          onChange={e => setFilterCampaign(e.target.value)}
+          style={selectStyle}
+        >
+          <option value="">All Campaigns ({campaigns.length})</option>
+          {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+
         {/* Template filter */}
         <select
           value={filterTpl}
           onChange={e => { setFilterTpl(e.target.value); setFilterFrame(""); }}
-          style={{
-            padding: "8px 12px", borderRadius: 100, fontSize: 13,
-            border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.2)",
-            color: "rgba(255,255,255,0.7)", cursor: "pointer",
-          }}
+          style={selectStyle}
         >
           <option value="">All Templates ({templates.length})</option>
           {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -509,12 +640,7 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
           value={filterFrame}
           onChange={e => setFilterFrame(e.target.value)}
           disabled={!filterTpl && frames.length === 0}
-          style={{
-            padding: "8px 12px", borderRadius: 100, fontSize: 13,
-            border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.2)",
-            color: "rgba(255,255,255,0.7)", cursor: "pointer",
-            opacity: (!filterTpl && frames.length === 0) ? 0.4 : 1,
-          }}
+          style={{ ...selectStyle, opacity: (!filterTpl && frames.length === 0) ? 0.4 : 1 }}
         >
           <option value="">All Frames ({frames.length})</option>
           {frames.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -591,10 +717,7 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ position: "sticky", top: 0, zIndex: 2 }}>
-                <th style={{
-                  padding: "10px 8px", textAlign: "left", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)",
-                  borderBottom: "1px solid rgba(255,255,255,0.06)", width: 36,
-                }}>
+                <th style={thStyle}>
                   <input
                     type="checkbox"
                     checked={selectedIds.size === filteredTexts.length && filteredTexts.length > 0}
@@ -602,26 +725,23 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
                     style={{ cursor: "pointer", accentColor: "#8b5cf6" }}
                   />
                 </th>
-                <th style={{ padding: "10px 12px", textAlign: "left", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, minWidth: 200 }}>
-                  Texto
-                </th>
-                <th style={{ padding: "10px 12px", textAlign: "left", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, minWidth: 120 }}>
-                  Frame
-                </th>
-                <th style={{ padding: "10px 12px", textAlign: "left", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, minWidth: 120 }}>
-                  Archivo
-                </th>
-                <th style={{ padding: "10px 12px", textAlign: "center", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, width: 60 }}>
-                  Tag
-                </th>
-                <th style={{ padding: "10px 12px", textAlign: "center", background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)", borderBottom: "1px solid rgba(255,255,255,0.06)", width: 90 }}>
-                </th>
+                <th style={thStyle}>Preview</th>
+                <th style={{ ...thStyle, minWidth: 180 }}>Texto</th>
+                <th style={{ ...thStyle, minWidth: 100 }}>Brand</th>
+                <th style={{ ...thStyle, minWidth: 100 }}>Campaign</th>
+                <th style={{ ...thStyle, minWidth: 80 }}>Type</th>
+                <th style={{ ...thStyle, minWidth: 100 }}>Frame</th>
+                <th style={{ ...thStyle, minWidth: 100 }}>Archivo</th>
+                <th style={{ ...thStyle, width: 60 }}>Tag</th>
+                <th style={{ ...thStyle, width: 80 }}></th>
               </tr>
             </thead>
             <tbody>
               {filteredTexts.map((entry, i) => {
                 const isSelected = selectedIds.has(entry.layerId);
                 const isEditing = editingId === entry.layerId;
+                const preview = framePreviews.get(entry.frameId);
+                const handleOpen = onOpenTemplate ? () => onOpenTemplate(entry.templateId) : undefined;
                 return (
                   <tr
                     key={entry.layerId}
@@ -641,33 +761,40 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
                       />
                     </td>
 
+                    {/* Frame Preview */}
+                    <td style={{ padding: "6px 8px" }}>
+                      {preview ? (
+                        <FramePreviewThumb preview={preview} onClick={handleOpen} />
+                      ) : (
+                        <div style={{ width: 56, height: 56, borderRadius: 6, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, color: "rgba(255,255,255,0.1)" }}>?</div>
+                      )}
+                    </td>
+
                     {/* Text (editable) */}
-                    <td style={{ padding: "8px 12px", maxWidth: 400 }}>
+                    <td style={{ padding: "8px 12px", maxWidth: 350 }}>
                       {isEditing ? (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <input
-                            ref={editInputRef}
-                            type="text"
-                            value={editValue}
-                            onChange={e => setEditValue(e.target.value)}
-                            onBlur={() => commitInlineEdit(entry)}
-                            onKeyDown={e => {
-                              if (e.key === "Enter") commitInlineEdit(entry);
-                              if (e.key === "Escape") setEditingId(null);
-                            }}
-                            style={{
-                              flex: 1, padding: "5px 8px", borderRadius: 6, fontSize: 13,
-                              border: "1px solid rgba(139,92,246,0.4)", background: "rgba(0,0,0,0.3)",
-                              color: "#fff", outline: "none",
-                            }}
-                          />
-                        </div>
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editValue}
+                          onChange={e => setEditValue(e.target.value)}
+                          onBlur={() => commitInlineEdit(entry)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") commitInlineEdit(entry);
+                            if (e.key === "Escape") setEditingId(null);
+                          }}
+                          style={{
+                            width: "100%", padding: "5px 8px", borderRadius: 6, fontSize: 13,
+                            border: "1px solid rgba(139,92,246,0.4)", background: "rgba(0,0,0,0.3)",
+                            color: "#fff", outline: "none",
+                          }}
+                        />
                       ) : (
                         <div
                           onClick={() => startEdit(entry)}
                           style={{
                             cursor: "pointer", color: "rgba(255,255,255,0.8)",
-                            maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis",
+                            maxWidth: 330, overflow: "hidden", textOverflow: "ellipsis",
                             whiteSpace: "nowrap", padding: "4px 6px", borderRadius: 4,
                             border: "1px solid transparent",
                           }}
@@ -680,21 +807,43 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
                       )}
                     </td>
 
+                    {/* Brand */}
+                    <td style={{ padding: "8px 10px", fontSize: 12, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {entry.brand ? <span style={{ color: "#5B9CF6" }}>{entry.brand}</span> : <span style={{ color: "rgba(255,255,255,0.15)" }}>—</span>}
+                    </td>
+
+                    {/* Campaign */}
+                    <td style={{ padding: "8px 10px", fontSize: 12, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {entry.campaign ? <span style={{ color: "#34D399" }}>{entry.campaign}</span> : <span style={{ color: "rgba(255,255,255,0.15)" }}>—</span>}
+                    </td>
+
+                    {/* Type (format) */}
+                    <td style={{ padding: "8px 10px", fontSize: 11 }}>
+                      <span style={{
+                        fontSize: 10, padding: "2px 8px", borderRadius: 100,
+                        background: entry.format ? "rgba(91,156,246,0.1)" : "transparent",
+                        color: entry.format ? "rgba(91,156,246,0.7)" : "rgba(255,255,255,0.15)",
+                        textTransform: "capitalize",
+                      }}>
+                        {entry.format || "—"}
+                      </span>
+                    </td>
+
                     {/* Frame */}
-                    <td style={{ padding: "8px 12px", color: "rgba(255,255,255,0.4)", fontSize: 12, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.35)", fontSize: 11, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {entry.frameName}
                     </td>
 
                     {/* Template */}
-                    <td style={{ padding: "8px 12px", color: "rgba(139,92,246,0.5)", fontSize: 12, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "8px 10px", color: "rgba(139,92,246,0.4)", fontSize: 11, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {entry.templateName}
                     </td>
 
                     {/* Tag */}
-                    <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                    <td style={{ padding: "8px 10px", textAlign: "center" }}>
                       <span style={{
-                        fontSize: 10, padding: "2px 8px", borderRadius: 100,
-                        background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)",
+                        fontSize: 10, padding: "2px 6px", borderRadius: 100,
+                        background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.3)",
                         fontFamily: "monospace",
                       }}>
                         {entry.tag}
@@ -702,24 +851,18 @@ export function TextsTab({ workspaceId }: TextsTabProps) {
                     </td>
 
                     {/* Actions */}
-                    <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                      <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                      <div style={{ display: "flex", gap: 2, justifyContent: "center" }}>
                         <button
                           type="button"
                           onClick={() => startEdit(entry)}
-                          style={{
-                            background: "none", border: "none", cursor: "pointer",
-                            color: "rgba(255,255,255,0.3)", fontSize: 14, padding: "4px 6px", borderRadius: 4,
-                          }}
+                          style={actionBtnStyle}
                           title="Editar"
                         >✏️</button>
                         <button
                           type="button"
                           onClick={() => handleDelete(entry)}
-                          style={{
-                            background: "none", border: "none", cursor: "pointer",
-                            color: "rgba(248,113,113,0.4)", fontSize: 14, padding: "4px 6px", borderRadius: 4,
-                          }}
+                          style={{ ...actionBtnStyle, color: "rgba(248,113,113,0.4)" }}
                           title="Eliminar"
                         >🗑️</button>
                       </div>
