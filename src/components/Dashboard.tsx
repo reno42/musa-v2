@@ -246,12 +246,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       .then(r => {
         const wsList = r.data || [];
         setWorkspaces(wsList);
-        if (wsList[0]) {
-          setSelectedWs(wsList[0].id);
-          loadTemplatesRef.current(wsList[0].id);
-        } else {
-          loadTemplatesRef.current();
-        }
+        // Default: show All Templates, not first workspace
+        setSelectedWs(null);
+        loadTemplatesRef.current();
       })
       .catch(() => {
         addToast("Error al cargar los workspaces.", "error");
