@@ -112,6 +112,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const newTplInputRef = useRef<HTMLInputElement>(null);
+  const renamingRef = useRef(false);
   const searchRef = useRef("");
   const loadingRef = useRef(true);
   const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
@@ -377,13 +378,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     const id = editingTplId;
     const name = editingTplName.trim();
     if (!id || !name) { setEditingTplId(null); return; }
+    // Prevent double-invocation from Enter + blur firing together
+    if (renamingRef.current) return;
+    renamingRef.current = true;
+    console.debug("[Dashboard] commitRename:", { id, name });
     try {
-      await mcpCall("rename_template", { templateId: id, name });
-      setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+      const result = await mcpCall("rename_template", { templateId: id, name });
+      console.debug("[Dashboard] commitRename result:", result);
+      if (result?.success) {
+        setTemplates(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+      } else {
+        throw new Error(result?.error || "Unknown error");
+      }
     } catch (err) {
       console.error("[Dashboard] Rename failed:", err);
       addToast("Error al renombrar la plantilla.", "error");
     }
+    renamingRef.current = false;
     setEditingTplId(null);
   };
 
