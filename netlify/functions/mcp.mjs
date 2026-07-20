@@ -8651,7 +8651,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // Base64 → Supabase Storage. Inline base64 was stored twice (data JSONB +
       // the generated `thumbnail` column) and shipped in every dashboard list —
       // a URL costs ~100 bytes and gets CDN caching instead.
-      const mMatch = thumb.match(/^data:(image\/\w+);base64,(.*)$/);
+      const mMatch = thumb.match(/^data:(image\/[\w.+-]+);base64,(.*)$/);
       if (mMatch) {
         const sbT = getSupabase();
         if (sbT) {
