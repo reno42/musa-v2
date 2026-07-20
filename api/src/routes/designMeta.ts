@@ -12,9 +12,10 @@
  * @module routes/designMeta
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { getSupabase } from "../services/supabase.js";
 import { store } from "../services/store.js";
+import { buildDesignGraphEdges } from "../services/designGraph.js";
 
 export const designMetaRoutes = Router();
 
@@ -96,12 +97,13 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
 });
 
 /** GET /api/graph?workspaceId=...&brand=...&tag=... */
-designMetaRoutes.get("/", async (req, res) => {
+export async function getDesignGraph(req: Request, res: Response): Promise<void> {
   try {
     const { workspaceId, brand, tag, format } = req.query;
     const sb = getSupabase();
     if (!sb) {
-      return res.json({ success: true, data: { nodes: [], edges: [] } });
+      res.json({ success: true, data: { nodes: [], edges: [] } });
+      return;
     }
 
     let query = sb.from("design_file_meta").select("*, templates!inner(id, name, thumbnail)");
@@ -127,44 +129,16 @@ designMetaRoutes.get("/", async (req, res) => {
       obsidian_link: r.obsidian_link,
     }));
 
-    // Build edges: shared brand, shared tags
-    const edges: { source: string; target: string; kind: string }[] = [];
-    const brandGroups = new Map<string, string[]>();
-    const tagGroups = new Map<string, string[]>();
-
-    for (const n of nodes) {
-      if (n.brand) {
-        const group = brandGroups.get(n.brand) || [];
-        group.push(n.id);
-        brandGroups.set(n.brand, group);
-      }
-      for (const t of n.tags) {
-        const group = tagGroups.get(t) || [];
-        group.push(n.id);
-        tagGroups.set(t, group);
-      }
-    }
-
-    for (const [, ids] of brandGroups) {
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          edges.push({ source: ids[i], target: ids[j], kind: "brand" });
-        }
-      }
-    }
-    for (const [, ids] of tagGroups) {
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          edges.push({ source: ids[i], target: ids[j], kind: "tag" });
-        }
-      }
-    }
+    const edges = buildDesignGraphEdges(nodes);
 
     res.json({ success: true, data: { nodes, edges } });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to load design graph";
+    res.status(500).json({ success: false, error: message });
   }
-});
+}
+
+designMetaRoutes.get("/", getDesignGraph);
 
 /** POST /api/meta/:templateId/cover — upload cover image (base64) */
 designMetaRoutes.post("/:templateId/cover", async (req, res) => {

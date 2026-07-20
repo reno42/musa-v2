@@ -23,7 +23,7 @@ import { assetRoutes } from "./routes/assets.js";
 import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
-import { designMetaRoutes } from "./routes/designMeta.js";
+import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
 import { getSupabase } from "./services/supabase.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
@@ -105,68 +105,7 @@ app.use("/api/templates", sectionRoutes);
 app.use("/api/metrics", metricsRoutes);
 // ── Design Knowledge Graph ──
 // GET /api/graph?workspaceId=&brand=&tag=&format=
-app.get("/api/graph", async (req, res) => {
-  try {
-    const { workspaceId, brand, tag, format } = req.query;
-    const sb = getSupabase();
-    if (!sb) return res.json({ success: true, data: { nodes: [], edges: [] } });
-
-    let query = sb.from("design_file_meta").select("*, templates!inner(id, name, thumbnail)");
-    if (workspaceId) query = query.eq("workspace_id", workspaceId as string);
-    if (brand) query = query.eq("brand", brand as string);
-    if (tag) query = query.contains("tags", [tag as string]);
-    if (format) query = query.eq("format", format as string);
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const nodes = (data || []).map((r: any) => ({
-      id: r.template_id,
-      name: r.templates?.name || r.template_id,
-      brand: r.brand,
-      tags: r.tags || [],
-      theme: r.theme,
-      format: r.format,
-      file_type: r.file_type,
-      cover: r.cover_image_url || r.templates?.thumbnail || null,
-      obsidian_link: r.obsidian_link,
-    }));
-
-    const edges: { source: string; target: string; kind: string }[] = [];
-    const brandGroups = new Map<string, string[]>();
-    const tagGroups = new Map<string, string[]>();
-    for (const n of nodes) {
-      if (n.brand) {
-        const group = brandGroups.get(n.brand) || [];
-        group.push(n.id);
-        brandGroups.set(n.brand, group);
-      }
-      for (const t of n.tags) {
-        const group = tagGroups.get(t) || [];
-        group.push(n.id);
-        tagGroups.set(t, group);
-      }
-    }
-    for (const [, ids] of brandGroups) {
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          edges.push({ source: ids[i], target: ids[j], kind: "brand" });
-        }
-      }
-    }
-    for (const [, ids] of tagGroups) {
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          edges.push({ source: ids[i], target: ids[j], kind: "tag" });
-        }
-      }
-    }
-
-    res.json({ success: true, data: { nodes, edges } });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+app.get("/api/graph", getDesignGraph);
 
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);

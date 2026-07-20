@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { apiFetch } from "../lib/supabase";
+import { buildDesignHierarchy, type DesignGraphNode } from "../lib/designGraph";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -15,19 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * Dragging pins the node to the pointer and re-heats alpha so its
  * neighbors are tugged along — the Obsidian feel.
  */
-
-interface GraphNode {
-  id: string;
-  name: string;
-  brand: string;
-  campaign: string | null;
-  tags: string[];
-  theme: string;
-  format: string;
-  file_type: string;
-  cover: string | null;
-  obsidian_link: string;
-}
 
 interface GraphEdge {
   source: string;
@@ -82,9 +71,10 @@ function hexToRgb(hex: string): [number, number, number] {
 export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [nodes, setNodes] = useState<DesignGraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [filterBrand, setFilterBrand] = useState("");
   const [filterTag, setFilterTag] = useState("");
   const [filterFormat, setFilterFormat] = useState("");
@@ -96,19 +86,28 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
   const fetchGraph = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
       const params = new URLSearchParams();
       if (workspaceId) params.set("workspaceId", workspaceId);
       if (filterBrand) params.set("brand", filterBrand);
       if (filterTag) params.set("tag", filterTag);
       if (filterFormat) params.set("format", filterFormat);
-      const res = await fetch(`/api/graph?${params.toString()}`);
-      const d = await res.json();
-      if (d.success) {
-        setNodes(d.data.nodes || []);
-        setEdges(d.data.edges || []);
-      }
-    } catch { /* keep previous graph */ } finally { setLoading(false); }
+      const response = await apiFetch<{
+        success: boolean;
+        data?: { nodes?: DesignGraphNode[]; edges?: GraphEdge[] };
+        error?: string;
+      }>(`/api/graph?${params.toString()}`);
+      if (!response.success) throw new Error(response.error || "No se pudo cargar el grafo.");
+      setNodes(Array.isArray(response.data?.nodes) ? response.data.nodes : []);
+      setEdges(Array.isArray(response.data?.edges) ? response.data.edges : []);
+    } catch (cause: unknown) {
+      setNodes([]);
+      setEdges([]);
+      setError(cause instanceof Error ? cause.message : "No se pudo cargar el grafo.");
+    } finally {
+      setLoading(false);
+    }
   }, [workspaceId, filterBrand, filterTag, filterFormat]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
@@ -116,7 +115,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    if (!canvas || !wrap || nodes.length === 0) return;
+    if (viewMode !== "canvas" || !canvas || !wrap || nodes.length === 0) return;
     const ctx = canvas.getContext("2d")!;
 
     // ── Build simulation state (world coordinates around 0,0) ──
@@ -498,7 +497,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       canvas.removeEventListener("dblclick", onDblClick);
       delete (window as any).__graphProbe;
     };
-  }, [nodes, edges]);
+  }, [nodes, edges, viewMode]);
 
   const brands = [...new Set(nodes.map(n => n.brand).filter(Boolean))];
   const allTags = [...new Set(nodes.flatMap(n => n.tags))];
@@ -511,6 +510,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         <div style={{ display: "flex", gap: 2, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
           <button
             type="button"
+            aria-pressed={viewMode === "tree"}
             onClick={() => setViewMode("tree")}
             style={{
               padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer",
@@ -520,6 +520,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           >📂 Brands</button>
           <button
             type="button"
+            aria-pressed={viewMode === "canvas"}
             onClick={() => setViewMode("canvas")}
             style={{
               padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer",
@@ -529,15 +530,15 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           >🌌 Graph</button>
         </div>
 
-        <select style={filterSelectStyle} value={filterBrand} onChange={e => { setFilterBrand(e.target.value); setFilterTag(""); setFilterFormat(""); }}>
+        <select aria-label="Filtrar por marca" style={filterSelectStyle} value={filterBrand} onChange={e => { setFilterBrand(e.target.value); setFilterTag(""); setFilterFormat(""); }}>
           <option value="">All brands</option>
           {brands.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
-        <select style={filterSelectStyle} value={filterTag} onChange={e => setFilterTag(e.target.value)}>
+        <select aria-label="Filtrar por etiqueta" style={filterSelectStyle} value={filterTag} onChange={e => setFilterTag(e.target.value)}>
           <option value="">All tags</option>
           {allTags.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        <select style={filterSelectStyle} value={filterFormat} onChange={e => setFilterFormat(e.target.value)}>
+        <select aria-label="Filtrar por formato" style={filterSelectStyle} value={filterFormat} onChange={e => setFilterFormat(e.target.value)}>
           <option value="">All formats</option>
           <option value="web">Web</option>
           <option value="mobile">Mobile</option>
@@ -554,17 +555,18 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
       {/* Tree View (brand-grouped) */}
       {viewMode === "tree" && (
-        <BrandTreeView nodes={nodes} loading={loading} onOpenTemplate={onOpenTemplate} />
+        <BrandTreeView nodes={nodes} loading={loading} error={error} onRetry={fetchGraph} onOpenTemplate={onOpenTemplate} />
       )}
 
       {/* Canvas View (force graph) */}
       {viewMode === "canvas" && (
         <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "radial-gradient(ellipse at 50% 40%, rgba(30,41,66,0.55) 0%, rgba(8,10,16,0.85) 100%)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          {loading && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#666", fontSize: 13 }}>Loading graph…</div>}
-          {!loading && nodes.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 13 }}>
+          {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
+          {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
+          {!loading && !error && nodes.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>
             No metadata yet. Tag templates from the Editor → Meta panel.
           </div>}
-          <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, display: loading ? "none" : "block" }} />
+          <canvas ref={canvasRef} aria-label="Grafo interactivo de relaciones entre diseños" style={{ position: "absolute", inset: 0, display: loading || error ? "none" : "block" }} />
         </div>
       )}
     </div>
@@ -573,169 +575,216 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
 // ── Brand Tree View Component ──
 
-function BrandTreeView({ nodes, loading, onOpenTemplate }: {
-  nodes: GraphNode[];
+function BrandTreeView({ nodes, loading, error, onRetry, onOpenTemplate }: {
+  nodes: DesignGraphNode[];
   loading: boolean;
+  error: string;
+  onRetry: () => void;
   onOpenTemplate?: (templateId: string) => void;
 }) {
+  const treeId = useId().replace(/:/g, "");
+  const hierarchy = useMemo(() => buildDesignHierarchy(nodes), [nodes]);
   const [expandedBrands, setExpandedBrands] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
+  const knownBrands = useRef(new Set<string>());
 
-  // Group: brand → campaign → files
-  const tree = useMemo(() => {
-    const brandMap = new Map<string, Map<string, GraphNode[]>>();
-    for (const node of nodes) {
-      const brandKey = node.brand || "Sin marca";
-      if (!brandMap.has(brandKey)) brandMap.set(brandKey, new Map());
-      const campMap = brandMap.get(brandKey)!;
-      const campKey = node.campaign || "Sin campaña";
-      if (!campMap.has(campKey)) campMap.set(campKey, []);
-      campMap.get(campKey)!.push(node);
-    }
-    return brandMap;
-  }, [nodes]);
-
-  const toggleBrand = (brand: string) => {
-    setExpandedBrands(prev => {
-      const next = new Set(prev);
-      if (next.has(brand)) next.delete(brand);
-      else next.add(brand);
-      return next;
-    });
-  };
-
-  const toggleCampaign = (key: string) => {
-    setExpandedCampaigns(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  // Auto-expand all brands on first load
   useEffect(() => {
-    if (nodes.length > 0 && expandedBrands.size === 0) {
-      setExpandedBrands(new Set(tree.keys()));
-    }
-  }, [nodes, tree, expandedBrands.size]);
+    setExpandedBrands((previous) => {
+      const next = new Set(previous);
+      for (const brand of hierarchy) {
+        if (!knownBrands.current.has(brand.name)) next.add(brand.name);
+        knownBrands.current.add(brand.name);
+      }
+      return next;
+    });
+  }, [hierarchy]);
+
+  const toggleExpanded = (
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    key: string,
+  ) => setter((previous) => {
+    const next = new Set(previous);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
 
   if (loading) {
-    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#666", fontSize: 13 }}>Loading…</div>;
+    return <div role="status" aria-live="polite" style={centeredStateStyle}>Cargando patrones…</div>;
   }
-
+  if (error) {
+    return <div style={{ flex: 1, position: "relative" }}><GraphError message={error} onRetry={onRetry} /></div>;
+  }
   if (nodes.length === 0) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-        <div style={{ fontSize: 40, opacity: 0.2 }}>📂</div>
-        <div style={{ color: "#555", fontSize: 13, textAlign: "center", maxWidth: 300 }}>
-          No hay metadata todavía. Abre un diseño → Panel derecho → File Info para asignar marca, campaña y formato.
+      <div style={{ ...centeredStateStyle, flexDirection: "column", gap: 12 }}>
+        <div aria-hidden="true" style={{ fontSize: 40, opacity: 0.2 }}>📂</div>
+        <div style={{ color: "#777", textAlign: "center", maxWidth: 340 }}>
+          No hay metadata todavía. Abre un diseño → File Info para asignar marca, campaña y formato.
         </div>
       </div>
     );
   }
 
-  const BRAND_COLORS = ["#5B9CF6", "#34D399", "#FBBF24", "#A78BFA", "#F472B6", "#22D3EE", "#FB923C", "#F87171"];
-  let brandIdx = 0;
-
   return (
     <div style={{ flex: 1, overflowY: "auto", borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(10,10,20,0.3)", padding: 8 }}>
-      {[...tree.entries()].map(([brand, campMap]) => {
-        const color = BRAND_COLORS[brandIdx++ % BRAND_COLORS.length];
-        const isExpanded = expandedBrands.has(brand);
-        const totalFiles = [...campMap.values()].reduce((sum, files) => sum + files.length, 0);
-        const campCount = campMap.size;
-
+      {hierarchy.map((brand, brandIndex) => {
+        const color = PALETTE[brandIndex % PALETTE.length];
+        const isExpanded = expandedBrands.has(brand.name);
+        const brandPanelId = `${treeId}-brand-${brandIndex}`;
         return (
-          <div key={brand} style={{ marginBottom: 4 }}>
-            {/* Brand header */}
-            <div
-              onClick={() => toggleBrand(brand)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "10px 12px", borderRadius: 8, cursor: "pointer",
-                background: "rgba(255,255,255,0.03)",
-                transition: "background 0.15s",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+          <section key={brand.name} style={{ marginBottom: 4 }}>
+            <button
+              type="button"
+              aria-expanded={isExpanded}
+              aria-controls={brandPanelId}
+              onClick={() => toggleExpanded(setExpandedBrands, brand.name)}
+              style={{ ...treeButtonStyle, padding: "10px 12px", background: "rgba(255,255,255,0.03)" }}
             >
-              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", transition: "transform 0.2s", display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>{brand}</span>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>
-                {totalFiles} archivo{totalFiles !== 1 ? "s" : ""} · {campCount} campaña{campCount !== 1 ? "s" : ""}
+              <span aria-hidden="true" style={{ ...chevronStyle, transform: isExpanded ? "rotate(90deg)" : "none" }}>▶</span>
+              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.82)" }}>{brand.name}</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+                {brand.totalDesigns} diseño{brand.totalDesigns !== 1 ? "s" : ""}
+                {brand.campaigns.length > 0 ? ` · ${brand.campaigns.length} campaña${brand.campaigns.length !== 1 ? "s" : ""}` : ""}
               </span>
-            </div>
+            </button>
 
-            {/* Campaign children */}
             {isExpanded && (
-              <div style={{ marginLeft: 20, marginTop: 2 }}>
-                {[...campMap.entries()].map(([campaign, files]) => {
-                  const campKey = `${brand}::${campaign}`;
-                  const campExpanded = expandedCampaigns.has(campKey);
+              <div id={brandPanelId} style={{ marginLeft: 20, marginTop: 2 }}>
+                {brand.directDesigns.map((design) => (
+                  <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />
+                ))}
+                {brand.campaigns.map((campaign, campaignIndex) => {
+                  const campaignKey = `${brand.name}\u0000${campaign.name}`;
+                  const campaignExpanded = expandedCampaigns.has(campaignKey);
+                  const campaignPanelId = `${brandPanelId}-campaign-${campaignIndex}`;
                   return (
-                    <div key={campKey} style={{ marginBottom: 2 }}>
-                      {/* Campaign header */}
-                      <div
-                        onClick={() => toggleCampaign(campKey)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          padding: "6px 10px", borderRadius: 6, cursor: "pointer",
-                        }}
+                    <section key={campaignKey} style={{ marginBottom: 2 }}>
+                      <button
+                        type="button"
+                        aria-expanded={campaignExpanded}
+                        aria-controls={campaignPanelId}
+                        onClick={() => toggleExpanded(setExpandedCampaigns, campaignKey)}
+                        style={{ ...treeButtonStyle, padding: "7px 10px" }}
                       >
-                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", transition: "transform 0.2s", display: "inline-block", transform: campExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.5)" }}>
-                          {campaign === "Sin campaña" ? <span style={{ fontStyle: "italic", opacity: 0.5 }}>{campaign}</span> : campaign}
-                        </span>
-                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.15)" }}>{files.length}</span>
-                      </div>
-
-                      {/* File children */}
-                      {campExpanded && (
-                        <div style={{ marginLeft: 16, display: "flex", flexDirection: "column", gap: 2 }}>
-                          {files.map(f => (
-                            <div
-                              key={f.id}
-                              onClick={() => onOpenTemplate?.(f.id)}
-                              style={{
-                                display: "flex", alignItems: "center", gap: 8,
-                                padding: "6px 10px", borderRadius: 6, cursor: "pointer",
-                                transition: "background 0.15s",
-                              }}
-                              onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.06)"; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-                            >
-                              {/* Mini cover */}
-                              {f.cover ? (
-                                <img src={f.cover} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", border: `1px solid ${color}40` }} />
-                              ) : (
-                                <div style={{ width: 32, height: 32, borderRadius: 4, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, opacity: 0.2 }}>📄</div>
-                              )}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {f.name}
-                                </div>
-                                <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-                                  {f.format && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 100, background: "rgba(91,156,246,0.1)", color: "rgba(91,156,246,0.6)", textTransform: "capitalize" }}>{f.format}</span>}
-                                  {f.tags.slice(0, 2).map(t => <span key={t} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 100, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.3)" }}>{t}</span>)}
-                                </div>
-                              </div>
-                            </div>
+                        <span aria-hidden="true" style={{ ...chevronStyle, fontSize: 9, transform: campaignExpanded ? "rotate(90deg)" : "none" }}>▶</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.62)" }}>{campaign.name}</span>
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{campaign.designs.length}</span>
+                      </button>
+                      {campaignExpanded && (
+                        <div id={campaignPanelId} style={{ marginLeft: 16, display: "flex", flexDirection: "column", gap: 2 }}>
+                          {campaign.designs.map((design) => (
+                            <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />
                           ))}
                         </div>
                       )}
-                    </div>
+                    </section>
                   );
                 })}
               </div>
             )}
-          </div>
+          </section>
         );
       })}
     </div>
   );
 }
+
+function DesignRow({ design, color, onOpenTemplate }: {
+  design: DesignGraphNode;
+  color: string;
+  onOpenTemplate?: (templateId: string) => void;
+}) {
+  const setHighlighted = (element: HTMLButtonElement, highlighted: boolean) => {
+    element.style.background = highlighted ? "rgba(139,92,246,0.08)" : "transparent";
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenTemplate?.(design.id)}
+      onMouseEnter={(event) => setHighlighted(event.currentTarget, true)}
+      onMouseLeave={(event) => setHighlighted(event.currentTarget, false)}
+      onFocus={(event) => setHighlighted(event.currentTarget, true)}
+      onBlur={(event) => setHighlighted(event.currentTarget, false)}
+      style={{ ...treeButtonStyle, padding: "6px 10px" }}
+    >
+      {design.cover ? (
+        <img src={design.cover} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", border: `1px solid ${color}40` }} />
+      ) : (
+        <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: 4, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, opacity: 0.35 }}>📄</span>
+      )}
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.74)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{design.name}</span>
+        {(design.format || design.tags.length > 0) && (
+          <span style={{ display: "flex", gap: 4, marginTop: 2 }}>
+            {design.format && <span style={formatBadgeStyle}>{design.format}</span>}
+            {design.tags.slice(0, 2).map((tag) => <span key={tag} style={tagBadgeStyle}>{tag}</span>)}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function GraphError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "#fca5a5", fontSize: 13, textAlign: "center", padding: 24 }}>
+      <span>No se pudo cargar el visor de patrones.</span>
+      <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{message}</span>
+      <button type="button" onClick={onRetry} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.07)", color: "#fff", cursor: "pointer" }}>Reintentar</button>
+    </div>
+  );
+}
+
+const centeredStateStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#777",
+  fontSize: 13,
+};
+
+const treeButtonStyle: React.CSSProperties = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  border: "none",
+  borderRadius: 7,
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+  fontFamily: "Inter, system-ui, sans-serif",
+  textAlign: "left",
+  transition: "background 0.15s ease",
+};
+
+const chevronStyle: React.CSSProperties = {
+  display: "inline-block",
+  flexShrink: 0,
+  color: "rgba(255,255,255,0.38)",
+  fontSize: 10,
+  transition: "transform 0.15s ease",
+};
+
+const formatBadgeStyle: React.CSSProperties = {
+  fontSize: 9,
+  padding: "1px 6px",
+  borderRadius: 100,
+  background: "rgba(91,156,246,0.1)",
+  color: "rgba(147,197,253,0.8)",
+  textTransform: "capitalize",
+};
+
+const tagBadgeStyle: React.CSSProperties = {
+  fontSize: 9,
+  padding: "1px 6px",
+  borderRadius: 100,
+  background: "rgba(255,255,255,0.05)",
+  color: "rgba(255,255,255,0.5)",
+};
 
 const filterSelectStyle: React.CSSProperties = {
   padding: "4px 10px",
