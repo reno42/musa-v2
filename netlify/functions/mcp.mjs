@@ -1615,6 +1615,21 @@ const MCP_TOOLS = [
     description: "Modify/enhance a template following a natural language instruction",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, instruction: { type: "string" } }, required: ["templateId", "instruction"] },
   },
+  {
+    name: "image_to_design",
+    description: "Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Requires GEMINI_API_KEY.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to inject the design into" },
+        imageBase64: { type: "string", description: "Base64-encoded image data (data:image/...;base64,...)" },
+        frameId: { type: "string", description: "Optional frame ID. If omitted, writes to the first frame." },
+        width: { type: "number", description: "Target width in px (default: image aspect ratio, fallback 1080)" },
+        height: { type: "number", description: "Target height in px (default: image aspect ratio, fallback 1080)" },
+      },
+      required: ["templateId", "imageBase64"],
+    },
+  },
   // ── Shared: Google Fonts ──
   {
     name: "add_font_to_template",
@@ -5463,6 +5478,139 @@ async function handleMethod(method, params, userId) {
       tpl.engine = "html"; tpl.html = html; tpl.css = css;
       await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: [] });
       return { templateId: tpl.id, previewUrl: "" };
+    }
+
+    case "image_to_design": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw { code: -32000, message: "GEMINI_API_KEY not configured. Set it in Netlify environment variables." };
+
+      // Strip data URI prefix for Gemini inlineData
+      const b64Match = params.imageBase64.match(/^data:image\/\w+;base64,(.+)$/);
+      const rawBase64 = b64Match ? b64Match[1] : params.imageBase64;
+      const mimeType = b64Match ? params.imageBase64.match(/^data:(image\/\w+);/)?.[1] || "image/png" : "image/png";
+
+      // Determine target frame
+      const frames = tpl.frames || [];
+      const targetFrame = params.frameId
+        ? frames.find(f => f.id === params.frameId)
+        : frames[0] || null;
+
+      if (params.frameId && !targetFrame) {
+        throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+
+      const targetW = params.width || 1080;
+      const targetH = params.height || 1080;
+
+      // Call Gemini 2.0 Flash Vision API
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      const systemPrompt = `You are a design-to-code converter. Analyze this image carefully and reproduce it as a self-contained HTML document with embedded CSS inside a <style> tag. Rules:
+- Match colors, typography, layout, spacing, and visual hierarchy exactly.
+- Use absolute positioning (position: absolute; top: Xpx; left: Xpx) for all elements. Do NOT use flexbox or grid for positioning.
+- Target canvas size: ${targetW}x${targetH}px.
+- Do NOT use vh, vw, vmin, vmax, or percentage-based dimensions. Use explicit px values only.
+- Use <div> for all positioned elements, not <span>.
+- Set body { width: ${targetW}px; height: ${targetH}px; margin: 0; padding: 0; overflow: hidden; position: relative; }.
+- Include all Google Fonts as @import url(...) at the very top of the CSS.
+- Do NOT include any @media queries.
+- Do NOT use position: fixed.
+- Return ONLY the complete HTML code. No markdown, no explanations, no code fences. Start directly with <html> or the first element.`;
+
+      try {
+        const aiRes = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inlineData: { mimeType, data: rawBase64 } },
+                { text: systemPrompt },
+              ],
+            }],
+          }),
+        });
+
+        if (!aiRes.ok) {
+          const errText = await aiRes.text().catch(() => "");
+          throw { code: -32000, message: `Gemini API error ${aiRes.status}: ${errText.substring(0, 200)}` };
+        }
+
+        const aiJson = await aiRes.json();
+        const aiText = aiJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!aiText) throw { code: -32000, message: "Gemini returned empty response" };
+
+        // Extract HTML and CSS
+        let html = "";
+        let css = "";
+
+        // Try to find code blocks first
+        const htmlBlock = aiText.match(/```html\n?([\s\S]*?)```/);
+        const cssBlock = aiText.match(/```css\n?([\s\S]*?)```/);
+
+        if (htmlBlock) {
+          let h = htmlBlock[1];
+          h = h.replace(/<html[^>]*>/i, "").replace(/<\/html>/i, "").replace(/<head>[\s\S]*?<\/head>/i, "").replace(/<body[^>]*>/i, "").replace(/<\/body>/i, "").trim();
+          html = h;
+        } else {
+          // Try bare HTML tags
+          const fullHtml = aiText.match(/<html[\s\S]*<\/html>/i);
+          if (fullHtml) {
+            let h = fullHtml[0];
+            h = h.replace(/<html[^>]*>/i, "").replace(/<\/html>/i, "").replace(/<head>[\s\S]*?<\/head>/i, "").replace(/<body[^>]*>/i, "").replace(/<\/body>/i, "").trim();
+            html = h;
+          }
+        }
+
+        if (cssBlock) {
+          css = cssBlock[1];
+        } else {
+          const styleTag = aiText.match(/<style>([\s\S]*?)<\/style>/i);
+          if (styleTag) css = styleTag[1];
+        }
+
+        if (!html && !css) {
+          // Raw response: try to parse as entire HTML doc
+          const raw = aiText.trim();
+          if (raw.startsWith("<")) {
+            html = raw.replace(/<html[^>]*>/i, "").replace(/<\/html>/i, "").replace(/<head>[\s\S]*?<\/head>/i, "").replace(/<body[^>]*>/i, "").replace(/<\/body>/i, "").trim();
+            const styleMatch = raw.match(/<style>([\s\S]*?)<\/style>/i);
+            if (styleMatch) css = styleMatch[1];
+          }
+        }
+
+        if (!html && !css) throw { code: -32000, message: "Could not extract HTML/CSS from AI response" };
+
+        // Inject into frame (or template)
+        if (targetFrame) {
+          if (html) targetFrame.html = html;
+          if (css) targetFrame.css = css;
+        } else {
+          // No frames: write to template-level
+          if (html) tpl.html = html;
+          if (css) tpl.css = css;
+        }
+        tpl.metadata = { ...(tpl.metadata || {}), updatedAt: new Date().toISOString() };
+        await templates.updateTemplate(params.templateId, {
+          html: tpl.html,
+          css: tpl.css,
+          frames: tpl.frames || [],
+        });
+
+        return {
+          success: true,
+          templateId: params.templateId,
+          frameId: targetFrame?.id || null,
+          htmlLength: html.length,
+          cssLength: css.length,
+        };
+      } catch (e) {
+        if (e.code) throw e; // re-throw structured errors
+        throw { code: -32000, message: `image_to_design failed: ${e.message}` };
+      }
     }
 
     case "enhance_template": {

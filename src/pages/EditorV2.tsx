@@ -19,6 +19,8 @@ import { ImageUploadModal } from "../components/ImageUploadModal";
 import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
+import { PasteHtmlModal } from "../components/PasteHtmlModal";
+import { ImageToDesignModal } from "../components/ImageToDesignModal";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
@@ -2316,6 +2318,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImageUpload, setShowImageUpload] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
+  const [showPasteHtml, setShowPasteHtml] = useState(false);
+  const [showImageToDesign, setShowImageToDesign] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   const handleSaveRecipe = useCallback(async () => {
@@ -3300,6 +3304,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <input type="file" accept=".html,.htm" onChange={handleImportHtml} style={{ display: "none" }} />
         </label>
 
+        {/* Paste HTML/CSS */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowPasteHtml(true)}
+          title="Paste HTML & CSS into Frame"
+        >
+          <IconCode size={14} />
+          <span style={{ fontSize: 9, marginLeft: 1 }}>✎</span>
+        </button>
+
+        {/* Image to Design */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowImageToDesign(true)}
+          title="Convert Image to Design (AI Vision)"
+          style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.15))" }}
+        >
+          <span style={{ fontSize: 14 }}>🪄</span>
+        </button>
+
+        <div className="editor-v2-topbar-sep" />
+
         {/* Import template */}
         <label className="editor-v2-topbar-icon-btn" title="Import Template JSON">
           <IconUpload size={14} />
@@ -3492,6 +3520,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconCode size={16} /> Import HTML/CSS
                 </span>
               </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowPasteHtml(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconCode size={16} /> Paste HTML & CSS
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { setShowImageToDesign(true); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px", background: "rgba(139,92,246,0.1)" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>🪄</span> Image to Design
+                </span>
+              </button>
+              
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              
               <button type="button" className="landing-menu-link" onClick={() => { document.querySelector<HTMLInputElement>('input[accept=".json"]')?.click(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -3910,6 +3953,32 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClose={() => setShowBatch(false)}
           onOpenTemplate={onOpenTemplate}
           onBackToDashboard={onBack}
+        />
+      )}
+
+      {/* ═══ Paste HTML/CSS Modal ═══ */}
+      {showPasteHtml && (
+        <PasteHtmlModal
+          templateId={templateId}
+          frameId={selectedFrameId}
+          onClose={() => setShowPasteHtml(false)}
+          onApplied={() => {
+            addToast("✓ HTML/CSS applied. Reload frame to see changes.", "success");
+            reloadFromServer();
+          }}
+        />
+      )}
+
+      {/* ═══ Image to Design Modal ═══ */}
+      {showImageToDesign && (
+        <ImageToDesignModal
+          templateId={templateId}
+          frameId={selectedFrameId}
+          onClose={() => setShowImageToDesign(false)}
+          onDesignReady={() => {
+            addToast("✓ Design generated! Reloading...", "success");
+            reloadFromServer();
+          }}
         />
       )}
 
