@@ -2545,12 +2545,36 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const minY = Math.min(...selected.map(o => o.y));
       const maxX = Math.max(...selected.map(o => o.x + o.width));
       const maxY = Math.max(...selected.map(o => o.y + o.height));
-      // Combine HTML: wrap children in a group div with display:contents
+      // Combine HTML: wrap children in a group div with display:contents.
+      // Adjust each child's left/top to be relative to the group origin so
+      // they preserve their visual canvas position inside the group.
       let combinedHtml = `<div data-layer-id="${groupId}" data-layer-name="Group" data-layer-kind="group" style="display:contents;">`;
       let combinedCss = "";
       for (const o of selected) {
-        combinedHtml += o.html;
-        combinedCss += "\n" + o.css;
+        const relLeft = o.x - minX;
+        const relTop = o.y - minY;
+        // Adjust inline style left/top (for SVG-based orphans)
+        let adjustedHtml = o.html
+          .replace(/(style="[^"]*?left:\s*)\d+px/, `$1${relLeft}px`)
+          .replace(/(style="[^"]*?top:\s*)\d+px/, `$1${relTop}px`);
+        // Adjust CSS left/top/width/height for this child's data-layer-id rule
+        const layerIdMatch = o.html.match(/data-layer-id="([^"]+)"/);
+        if (layerIdMatch) {
+          const lid = layerIdMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          let adjustedCss = o.css;
+          adjustedCss = adjustedCss.replace(
+            new RegExp(`(\\[data-layer-id="${lid}"\\][^{]*\\{[^}]*?left:\\s*)\\d+px`, "s"),
+            `$1${relLeft}px`,
+          );
+          adjustedCss = adjustedCss.replace(
+            new RegExp(`(\\[data-layer-id="${lid}"\\][^{]*\\{[^}]*?top:\\s*)\\d+px`, "s"),
+            `$1${relTop}px`,
+          );
+          combinedCss += "\n" + adjustedCss;
+        } else {
+          combinedCss += "\n" + o.css;
+        }
+        combinedHtml += adjustedHtml;
       }
       combinedHtml += "</div>";
       const groupOrphan: HtmlCanvasObject = {
@@ -2565,19 +2589,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       isDirtyRef.current = true;
       return;
     }
-    // ── Frame element grouping ──
+    // ── Frame element grouping (local, consistent with layers panel) ──
     if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
-    setMcpLoading("group");
-    try {
-      await callMcp("group_elements", {
-        templateId, frameId: selectedFrameId, elementIds: multiSelectLayerIds,
-      });
-      await reloadFromServer();
-      setMcpMsg("✓ Grouped");
-    } catch { setMcpMsg("✗ Group failed"); }
-    setMcpLoading(null);
-    setTimeout(() => setMcpMsg(""), 2000);
-  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, templateId, callMcp, reloadFromServer]);
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    const result = groupLayersInHtml(
+      frame.html,
+      [...multiSelectLayerIds],
+      `grp_${Date.now().toString(36)}`,
+    );
+    if (result) {
+      const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: result } : f);
+      store.replaceAllWithUndo(updated, "group");
+      autoSave(updated);
+    }
+  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, frames, autoSave]);
 
   const handleUngroup = useCallback(async () => {
     // ── Orphan ungrouping ──
@@ -2592,17 +2618,56 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         const doc = parser.parseFromString(obj.html, "text/html");
         const groupWrapper = doc.body.firstElementChild;
         if (groupWrapper && groupWrapper.getAttribute("data-layer-kind") === "group") {
-          // Extract each child as a separate orphan
+          // Extract each child as a separate orphan, preserving visual position
           let idx = 0;
           for (const child of Array.from(groupWrapper.children)) {
             const childHtml = child.outerHTML;
             const childLayerId = child.getAttribute("data-layer-id") || createOrphanId();
-            const childCss = obj.css;
+            // Parse inline style and/or CSS for child's relative position + dimensions
+            let childLeft = 0, childTop = 0, childW = obj.width, childH = obj.height;
+            const inlineStyle = (child as HTMLElement).style?.cssText || "";
+            const inlineLeft = inlineStyle.match(/left:\s*(\d+(?:\.\d+)?)px/);
+            const inlineTop = inlineStyle.match(/top:\s*(\d+(?:\.\d+)?)px/);
+            const inlineW = inlineStyle.match(/width:\s*(\d+(?:\.\d+)?)px/);
+            const inlineH = inlineStyle.match(/height:\s*(\d+(?:\.\d+)?)px/);
+            if (inlineLeft) childLeft = parseFloat(inlineLeft[1]);
+            if (inlineTop) childTop = parseFloat(inlineTop[1]);
+            if (inlineW) childW = parseFloat(inlineW[1]);
+            if (inlineH) childH = parseFloat(inlineH[1]);
+            // Fallback: parse CSS rule for this child's layer-id
+            if (!inlineLeft || !inlineTop) {
+              const escapedId = childLayerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const cssRuleRe = new RegExp(`\\[data-layer-id="${escapedId}"\\]\\s*\\{([^}]*)\\}`, "s");
+              const cssMatch = obj.css.match(cssRuleRe);
+              if (cssMatch) {
+                const ruleBody = cssMatch[1];
+                const cssLeft = ruleBody.match(/left:\s*(\d+(?:\.\d+)?)px/);
+                const cssTop = ruleBody.match(/top:\s*(\d+(?:\.\d+)?)px/);
+                const cssW = ruleBody.match(/width:\s*(\d+(?:\.\d+)?)px/);
+                const cssH = ruleBody.match(/height:\s*(\d+(?:\.\d+)?)px/);
+                if (!inlineLeft && cssLeft) childLeft = parseFloat(cssLeft[1]);
+                if (!inlineTop && cssTop) childTop = parseFloat(cssTop[1]);
+                if (!inlineW && cssW) childW = parseFloat(cssW[1]);
+                if (!inlineH && cssH) childH = parseFloat(cssH[1]);
+              }
+            }
+            // Filter CSS to only this child's rule + restore left/top to 0
+            // (the orphan's x/y now carries the canvas position)
+            let childCss = "";
+            const escapedId2 = childLayerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const cssRuleRe2 = new RegExp(`\\[data-layer-id="${escapedId2}"\\]\\s*\\{[^}]*\\}`, "s");
+            const ruleMatch = obj.css.match(cssRuleRe2);
+            if (ruleMatch) {
+              // Extract the matched rule and reset left/top to 0 for the new standalone orphan
+              childCss = ruleMatch[0]
+                .replace(/left:\s*\d+(?:\.\d+)?px/, "left: 0")
+                .replace(/top:\s*\d+(?:\.\d+)?px/, "top: 0");
+            }
             newOrphans.push({
               id: childLayerId, name: child.getAttribute("data-layer-name") || `Layer ${idx + 1}`,
               html: childHtml, css: childCss,
-              x: obj.x, y: obj.y,
-              width: obj.width, height: obj.height,
+              x: Math.round(obj.x + childLeft), y: Math.round(obj.y + childTop),
+              width: Math.round(childW), height: Math.round(childH),
               zIndex: obj.zIndex + idx,
             });
             idx++;
