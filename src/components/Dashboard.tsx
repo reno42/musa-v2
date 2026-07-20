@@ -243,6 +243,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, []);
 
   useEffect(() => {
+    // Sync URL so reload lands back on dashboard
+    if (window.location.hash !== "#workspace") {
+      window.history.replaceState(null, "", "/#workspace");
+    }
     apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
       .then(r => {
         const wsList = r.data || [];

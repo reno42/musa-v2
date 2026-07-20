@@ -127,6 +127,14 @@ function App() {
       dispatch({ type: "OPEN_TEMPLATE_V2", id: tplId });
     } else if (hash === "workspace") {
       dispatch({ type: "ENTER_WORKSPACE" });
+    } else if (path === "/") {
+      // Root URL with no params: go to dashboard (not landing) if user has been here before
+      const hasVisited = localStorage.getItem("futuraria-api-key") !== null;
+      if (hasVisited) {
+        dispatch({ type: "ENTER_WORKSPACE" });
+        window.history.replaceState(null, "", "/#workspace");
+      }
+      // else: first visit — stays on landing (default)
     }
     // else stays on landing (default)
   }, []);
@@ -174,7 +182,7 @@ function App() {
     <ErrorBoundary>
     <EditorV2
       templateId={templateId!}
-      onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/'); }}
+      onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/#workspace'); }}
       onOpenTemplate={(id) => { dispatch({ type: "OPEN_TEMPLATE_V2", id }); window.history.replaceState(null, '', `/?template=${id}&v=2`); }}
     />
     </ErrorBoundary>
