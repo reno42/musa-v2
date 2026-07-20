@@ -69,6 +69,7 @@ import {
 import { analyzePathData } from "../lib/pathData";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
+import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
 import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
 import {
@@ -251,6 +252,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const storeRef = useRef<DocumentStore | null>(null);
   if (!storeRef.current) storeRef.current = createDocumentStore();
   const store = storeRef.current;
+  // QA probe: verification agents inspect undo depth / frames without guessing.
+  if (typeof window !== "undefined") (window as any).__docStore = store;
   const frames = useSyncExternalStore(store.subscribe, store.getSnapshot) as FrameData[];
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
@@ -2682,17 +2685,43 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
     }
-    // ── Frame element ungrouping ──
+    // ── Frame element ungrouping (safe: bakes positions + text styles first) ──
     if (!selectedFrameId || !selectedElement) return;
+    // Never dissolve a leaf: ungrouping only makes sense with layer children.
+    if (!selectedElement.childLayerCount) {
+      addToast("Ese elemento no es un grupo (no tiene capas hijas).", "info");
+      return;
+    }
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
-    const newHtml = ungroupLayerInHtml(frame.html, selectedElement.layerId);
+    const bake = measureContainerForBake(selectedFrameId, selectedElement.layerId);
+    const newHtml = bake
+      ? ungroupPreservingLayout(frame.html, bake)
+      : ungroupLayerInHtml(frame.html, selectedElement.layerId);
     if (!newHtml) return;
     const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: newHtml } : f);
     store.replaceAllWithUndo(updated, "ungroup");
     autoSave(updated);
     setSelectedElement(null);
   }, [selectedFrameId, selectedElement, selectedOrphanIds, canvasObjects, frames, autoSave]);
+
+  // ── Figma-style container semantics toggle: Grupo (posiciones fijas) ⇄ Contenedor (auto layout) ──
+  const handleGroupModeChange = useCallback((layerId: string, frameId: string, mode: "group" | "container") => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const bake = measureContainerForBake(frameId, layerId);
+    if (!bake) { addToast("No se pudo medir el grupo en el lienzo.", "error"); return; }
+    const newHtml = mode === "group"
+      ? convertContainerToGroup(frame.html, bake)
+      : convertGroupToContainer(frame.html, bake);
+    if (!newHtml || newHtml === frame.html) return;
+    const updated = frames.map(f => f.id === frameId ? { ...f, html: newHtml } : f);
+    store.replaceAllWithUndo(updated, mode === "group" ? "to-group" : "to-container");
+    autoSave(updated);
+    addToast(mode === "group"
+      ? "Convertido a Grupo: cada hijo ahora es dueño de su posición y tipografía."
+      : "Convertido a Contenedor: los hijos fluyen en auto layout.", "success");
+  }, [frames, autoSave, addToast]);
 
   const handleReorder = useCallback(async (direction: "up" | "down" | "top" | "bottom") => {
     if (!selectedFrameId || !selectedElement) return;
@@ -3566,6 +3595,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 onOutlineStroke={handleOutlineStroke}
                 onOffsetPath={handleOffsetPath}
                 onShapeOptionsChange={handleShapeOptionsChange}
+              onGroupModeChange={handleGroupModeChange}
               />
             ) : selectedFrame ? (
               <div style={{ padding: "4px", display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1 }}>

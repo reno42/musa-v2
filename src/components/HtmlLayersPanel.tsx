@@ -1,3 +1,4 @@
+import { measureContainerForBake, ungroupPreservingLayout } from "../lib/groupSemantics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FrameData, HtmlCanvasObject } from "./DesignFrame";
 import type { LayerKind, LayerNode } from "../hooks/useLayerTree";
@@ -317,7 +318,12 @@ export function HtmlLayersPanel({
   const handleUngroup = useCallback((frameId: string, groupId: string) => {
     const frame = frames.find(item => item.id === frameId);
     if (!frame) return;
-    const result = ungroupLayerInHtml(frame.html, groupId);
+    // Safe ungroup: bake each child's rendered position + text styles before
+    // dissolving the wrapper, so nothing jumps and typography never changes.
+    const bake = measureContainerForBake(frameId, groupId);
+    const result = bake
+      ? ungroupPreservingLayout(frame.html, bake)
+      : ungroupLayerInHtml(frame.html, groupId);
     if (result) onHtmlChange(frame.id, result);
     setActionMenu(null);
   }, [frames, onHtmlChange]);

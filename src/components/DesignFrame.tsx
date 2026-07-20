@@ -78,6 +78,10 @@ export interface SelectedElementInfo {
   isSvg: boolean;
   svgChildTag?: string;
   shapeOptions?: ShapeOptions;
+  /** data-layer-kind of the selected element (group | container | frame | …). */
+  layerKind?: string;
+  /** Number of element children with their own data-layer-id. */
+  childLayerCount?: number;
   movableLayers: Array<{
     layerId: string;
     position: string;
@@ -565,6 +569,8 @@ export function DesignFrame({
       isSvg,
       svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
       shapeOptions,
+      layerKind: element.getAttribute("data-layer-kind") || undefined,
+      childLayerCount: [...element.children].filter(c => c.hasAttribute("data-layer-id")).length,
       movableLayers,
     });
   }

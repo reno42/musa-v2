@@ -56,17 +56,39 @@ function collectLayers(root: ParentNode): Map<string, { el: Element; hash: strin
   return map;
 }
 
+/** Place/move `node` under `parent` right after the previously placed child. */
+function ensurePlacement(parent: Node, node: Element, lastPlaced: Map<Node, Element | null>): void {
+  const prev = lastPlaced.get(parent) ?? null;
+  const ref: Node | null = prev ? prev.nextSibling : (parent as Element).firstChild;
+  if (node === ref) return;
+  if (node.parentNode === parent && node.previousSibling === prev) return;
+  (parent as Element).insertBefore(node, ref === node ? node.nextSibling : ref);
+}
+
+/** Copy attributes of `from` onto `to` (add/update + remove extras). */
+function syncAttributes(to: Element, from: Element): void {
+  for (const attr of [...from.attributes]) {
+    if (to.getAttribute(attr.name) !== attr.value) to.setAttribute(attr.name, attr.value);
+  }
+  for (const attr of [...to.attributes]) {
+    if (!from.hasAttribute(attr.name)) to.removeAttribute(attr.name);
+  }
+}
+
 // ── Core reconciler ──
 
 /**
  * Apply minimal DOM mutations to make `content` match `targetHtml`.
  *
- * Strategy:
- *   1. Parse target HTML into a detached DocumentFragment.
- *   2. Walk BOTH trees collecting layerId → element maps.
- *   3. DELETE: current layers not in target.
- *   4. PATCH: layers whose outerHTML hash differs → replaceWith(clone).
- *   5. INSERT: target layers not in current → appendChild.
+ * Strategy (hierarchy-aware — handles re-parenting like group/ungroup):
+ *   1. Parse target HTML into a detached fragment; map layers of both trees.
+ *   2. DELETE: current layers absent from target — but first RESCUE any
+ *      descendant that still exists in target (an ungrouped wrapper must not
+ *      drag its surviving children out of the DOM with it).
+ *   3. SYNC: walk the target tree in document order; for every layer ensure
+ *      the live node (a) has matching content — patch via clone otherwise —
+ *      and (b) sits under the right live parent at the right position. This
+ *      makes moves INTO/OUT OF containers first-class instead of data loss.
  *
  * Preserves untouched elements (no re-parse, no re-attach, no re-paint).
  */
@@ -89,32 +111,103 @@ export function reconcileFrameHtml(
   let removed = 0;
   let skipped = 0;
 
-  // DELETE — layers in current DOM but not in target
+  // DELETE with RESCUE — a removed wrapper must not take surviving layers down.
   for (const [lid, { el }] of currentLayers) {
-    if (!targetLayers.has(lid)) {
-      el.remove();
-      removed++;
+    if (targetLayers.has(lid)) continue;
+    if (!el.isConnected) { removed++; currentLayers.delete(lid); continue; }
+    for (const desc of [...el.querySelectorAll("[data-layer-id]")]) {
+      const did = desc.getAttribute("data-layer-id");
+      if (did && targetLayers.has(did)) content.appendChild(desc); // detached-but-alive; SYNC re-places it
     }
+    el.remove();
+    removed++;
+    currentLayers.delete(lid);
   }
 
-  // PATCH / INSERT / SKIP — layers in target
-  for (const [lid, { el: targetEl, hash: targetHash }] of targetLayers) {
-    const current = currentLayers.get(lid);
+  /** Live element registry, updated as clones replace or arrive. */
+  const liveById = new Map<string, Element>();
+  for (const [lid, { el }] of currentLayers) liveById.set(lid, el);
 
-    if (!current) {
-      // INSERT — clone from template fragment and append
-      const clone = targetEl.cloneNode(true) as Element;
-      content.appendChild(clone);
-      inserted++;
-    } else if (current.hash !== targetHash) {
-      // PATCH — replace in place
-      const clone = targetEl.cloneNode(true) as Element;
-      current.el.replaceWith(clone);
-      patched++;
-    } else {
-      // SKIP — no change
-      skipped++;
+  /** Per live-parent pointer to the last placed child (ordered insertion). */
+  const lastPlaced = new Map<Node, Element | null>();
+
+  const registerSubtree = (root: Element) => {
+    for (const [nlid, entry] of collectLayers(root)) liveById.set(nlid, entry.el);
+    const rid = root.getAttribute("data-layer-id");
+    if (rid) liveById.set(rid, root);
+  };
+  const unregisterDescendants = (root: Element) => {
+    for (const desc of [...root.querySelectorAll("[data-layer-id]")]) {
+      const did = desc.getAttribute("data-layer-id");
+      if (did) liveById.delete(did);
     }
+  };
+
+  // SYNC — explicit DFS over the target tree. Layer parents are visited before
+  // their layer children, so the live parent always exists when needed.
+  type StackItem = { node: Element; liveParent: () => Node };
+  const rootParent = () => content as Node;
+  const stack: StackItem[] = [...template.content.children]
+    .filter((c): c is Element => c.nodeType === 1)
+    .reverse()
+    .map(node => ({ node, liveParent: rootParent }));
+
+  while (stack.length) {
+    const { node: tNode, liveParent } = stack.pop()!;
+    const lid = tNode.getAttribute("data-layer-id");
+
+    if (!lid) {
+      // Non-layer wrapper in target: descend with the same live parent.
+      stack.push(...[...tNode.children].filter((c): c is Element => c.nodeType === 1).reverse()
+        .map(node => ({ node, liveParent })));
+      continue;
+    }
+
+    const parent = liveParent();
+    const live = liveById.get(lid);
+    const targetHash = hashString(tNode.outerHTML);
+
+    if (!live) {
+      // INSERT — whole subtree arrives as a clone.
+      const clone = tNode.cloneNode(true) as Element;
+      ensurePlacement(parent, clone, lastPlaced);
+      lastPlaced.set(parent, clone);
+      registerSubtree(clone);
+      inserted++;
+      continue;
+    }
+
+    if (hashString(live.outerHTML) === targetHash) {
+      // MATCH — identical subtree; still enforce parent + order (re-parenting).
+      ensurePlacement(parent, live, lastPlaced);
+      lastPlaced.set(parent, live);
+      skipped++;
+      continue;
+    }
+
+    const hasLayerChildren = !!tNode.querySelector("[data-layer-id]");
+    if (!hasLayerChildren) {
+      // LEAF PATCH — replace just this subtree.
+      const clone = tNode.cloneNode(true) as Element;
+      if (live.isConnected) live.replaceWith(clone); 
+      ensurePlacement(parent, clone, lastPlaced);
+      lastPlaced.set(parent, clone);
+      unregisterDescendants(live);
+      liveById.set(lid, clone);
+      patched++;
+      continue;
+    }
+
+    // CONTAINER PATCH — sync own attributes, keep the node, recurse into
+    // children so unchanged grandchildren keep their live DOM nodes.
+    syncAttributes(live, tNode);
+    ensurePlacement(parent, live, lastPlaced);
+    lastPlaced.set(parent, live);
+    if (!lastPlaced.has(live)) lastPlaced.set(live, null);
+    patched++;
+    const liveRef = live;
+    stack.push(...[...tNode.children].filter((c): c is Element => c.nodeType === 1).reverse()
+      .map(node => ({ node, liveParent: () => liveRef as Node })));
   }
 
   const durationMs = performance.now() - t0;

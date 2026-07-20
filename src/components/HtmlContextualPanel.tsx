@@ -24,6 +24,7 @@ interface Props {
   onOutlineStroke?: (layerId: string, frameId: string) => void;
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
+  onGroupModeChange?: (layerId: string, frameId: string, mode: "group" | "container") => void;
 }
 
 // ── Constants ──
@@ -371,10 +372,10 @@ function updatePseudoCss(css: string, selector: string, pseudo: string, props: R
 
 // ── Main Component ──
 
-export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange }: Props) {
+export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     typography: true, fill: true, stroke: true, spacing: true, border: true,
-    layout: true, shape: true, position: false, effects: false, transform: false,
+    layout: true, shape: true, groupmode: true, position: false, effects: false, transform: false,
     transition: false, states: false, custom: false,
   });
   const [activePseudo, setActivePseudo] = useState<string>(":hover");
@@ -554,6 +555,40 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
               </PropRow>
               <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(element.selector, "text-decoration", v)} />
               <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(element.selector, "text-transform", v)} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Tipo de grupo (Figma-style): Grupo fijo ⇄ Contenedor auto layout ── */}
+      {onGroupModeChange && !!element.childLayerCount && !isSvg && (
+        <>
+          <SectionHead label="Tipo de grupo" section="groupmode" expanded={expanded} toggle={toggle} />
+          {expanded.groupmode && (
+            <div style={sectionBody}>
+              <div style={{ display: "flex", gap: 4 }}>
+                {([
+                  { mode: "group" as const, label: "Grupo", hint: "Posiciones fijas: cada hijo es dueño de su lugar y tipografía. Mover uno jamás mueve a otro. Desagrupar no cambia nada." },
+                  { mode: "container" as const, label: "Contenedor", hint: "Auto layout: los hijos fluyen (columna/fila/gap) y heredan estilos del contenedor." },
+                ]).map(({ mode, label, hint }) => {
+                  const active = mode === "group" ? element.layerKind === "group" : element.layerKind !== "group";
+                  return (
+                    <button key={mode} type="button" title={hint}
+                      onClick={() => !active && onGroupModeChange(element.layerId, element.frameId, mode)}
+                      style={{ flex: 1, padding: "6px 8px", borderRadius: 6, fontSize: 11, cursor: active ? "default" : "pointer",
+                        background: active ? "rgba(200,184,152,0.14)" : "rgba(15,15,15,0.5)",
+                        border: active ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.06)",
+                        color: active ? "#c8b898" : "#7a7668" }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10, color: "#7a7668", lineHeight: 1.5, marginTop: 6 }}>
+                {element.layerKind === "group"
+                  ? "Grupo: hijos con posición fija (estilo Figma). Convertir a Contenedor los apila en auto layout."
+                  : "Contenedor: hijos en flujo que heredan estilos. Convertir a Grupo fija cada hijo donde está y hornea su tipografía."}
+              </div>
             </div>
           )}
         </>
