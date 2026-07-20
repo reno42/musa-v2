@@ -187,7 +187,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       if (searchRef.current) params.set("search", searchRef.current);
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
-      setTemplates(res.data || []);
+      const data = res.data || [];
+      // Sort by most recently updated first (server does this, but double-check client-side)
+      data.sort((a, b) =>
+        new Date(b.metadata?.updatedAt || 0).getTime() - new Date(a.metadata?.updatedAt || 0).getTime()
+      );
+      setTemplates(data);
       loadMetaCovers(wsId);
     } catch {
       setTemplates([]);
