@@ -5711,11 +5711,14 @@ async function handleMethod(method, params, userId) {
       tpl.metadata.updatedAt = new Date().toISOString();
       // Persist
       autoSnapshot(params.templateId, "update_html_frame");
-      await templates.updateTemplate(params.templateId, {
+      const persisted = await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
         html: tpl.html,
         css: tpl.css,
       });
+      if (!persisted) {
+        throw { code: -32000, message: "Persistence failed: Supabase write did not complete. The data was stored in ephemeral memory only and will be lost on cold start. Retry the operation." };
+      }
       return frame;
     }
 

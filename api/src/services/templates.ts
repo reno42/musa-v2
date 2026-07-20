@@ -368,7 +368,11 @@ export async function updateTemplate(
   if (tpl) {
     // Auto-generate thumbnail from first frame if missing (pipeline)
     ensureThumbnail(tpl);
-    await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
+    const persisted = await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
+    if (!persisted) {
+      console.error("[templates] Supabase upsert failed for template", id, "— data only in ephemeral memory, will vanish on cold start");
+      return null;
+    }
   }
   return tpl || null;
 }
