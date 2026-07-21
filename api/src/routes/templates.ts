@@ -55,10 +55,10 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
     if (!tpl.id) {
       return res.status(500).json({ success: false, error: "Template creation failed: no ID returned" });
     }
-    // HTML engine: create initial frame (objects-first — no monolithic HTML)
+    // HTML engine: create initial frame with content (consistent with MCP handler)
     if (engine === "html") {
       tpl.engine = "html";
-      tpl.html = "";  // Global CSS only, NOT monolithic HTML
+      tpl.html = html || "";
       tpl.css = css || "";
       const defaultFrame = {
         id: `frame_${uuid().slice(0, 12)}`,
@@ -67,12 +67,12 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
         x: 0, y: 0,
         width: width || 1080, height: height || 1080,
         order: 0,
-        objects: [],  // Objects-first: content goes here, NOT in frame.html
+        objects: [],
         layoutMode: "NONE" as const,
         clipsContent: true,
         constraints: {},
         padding: { top: 0, right: 0, bottom: 0, left: 0 },
-        html: "",   // 🛡️ ENFORCED: empty — use objects[] for all content
+        html: html || "",
         css: css || "",
         background: "#ffffff",
       };
@@ -220,27 +220,6 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         ""
       );
     }
-    // 🛡️ DESIGN HARNESS RULE: Reject monolithic HTML blobs
-    // Each frame MUST use objects[] for individual elements.
-    // A frame with populated html but empty objects is a monolithic blob → REJECT.
-    if (updates.frames && Array.isArray(updates.frames)) {
-      for (const f of updates.frames) {
-        const hasMonolithicHTML = f.html && typeof f.html === "string" && f.html.trim().length > 0;
-        const hasObjects = f.objects && Array.isArray(f.objects) && f.objects.length > 0;
-        if (hasMonolithicHTML && !hasObjects) {
-          return res.status(400).json({
-            success: false,
-            error: "DESIGN HARNESS RULE: Frame uses monolithic HTML. Use objects[] instead.",
-            details: {
-              frameId: f.id,
-              message: "Set frame.html to empty string and populate frame.objects[] with individual elements (id, x, y, width, height, html, css). Do not pack everything into one big <div>.",
-              docs: "https://github.com/reno42/design/blob/main/docs/DESIGN_HARNESS_RULES.md",
-            },
-          });
-        }
-      }
-    }
-
     // DOMPurify sanitization: if engine is html and html field is present
     const existing = await templates.getTemplate(req.params.id);
     const engine = updates.engine || existing?.engine;
