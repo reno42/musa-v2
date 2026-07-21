@@ -50,7 +50,7 @@ let rpcId = 0;
 async function mcp(method, params) {
   const res = await fetch(`${API}/mcp`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": KEY },
+    headers: { "Content-Type": "application/json; charset=utf-8", "x-api-key": KEY },
     body: JSON.stringify({ jsonrpc: "2.0", method, params, id: ++rpcId }),
   });
   if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`);

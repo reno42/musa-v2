@@ -3,6 +3,7 @@ import app from "../../api/src/index.js";
 // NOTE: import path "../../api/src/index.js" resolves to TypeScript source
 // at build time via esbuild. If the bundler changes, update this path.
 import { getSupabase } from "../../api/src/services/supabase.js";
+import { getNetlifyBodyBuffer, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 
 // ── Lightweight auth check (defense-in-depth, Express middleware does full validation) ──
 
@@ -22,7 +23,7 @@ function checkAdminKey(event) {
 }
 
 function createRequest(event) {
-  const { path, httpMethod, headers, body, queryStringParameters, isBase64Encoded } = event;
+  const { path, httpMethod, headers, queryStringParameters } = event;
 
   const url = new URL(path, "http://localhost");
   if (queryStringParameters) {
@@ -45,9 +46,13 @@ function createRequest(event) {
   }
   req.rawHeaders = rawHeaders;
 
-  if (body) {
-    const buf = isBase64Encoded ? Buffer.from(body, "base64") : Buffer.from(body, "utf-8");
+  const body = getNetlifyBodyBuffer(event);
+  if (body.byteLength > 0) {
+    const buf = body;
+    req.headers["content-length"] = String(buf.byteLength);
     req.push(buf);
+  } else {
+    delete req.headers["content-length"];
   }
   req.push(null);
 
@@ -67,7 +72,16 @@ export const handler = async (event, context) => {
     }
   }
 
-  const req = createRequest(event);
+  let req;
+  try {
+    req = createRequest(event);
+  } catch {
+    return {
+      statusCode: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE },
+      body: JSON.stringify({ success: false, error: "Request body must be valid UTF-8" }),
+    };
+  }
 
   // ── Public slug resolution (pre-Express, guaranteed no-auth) ──
   // Bypasses the full middleware chain for fast, guaranteed-public
@@ -181,7 +195,7 @@ export const handler = async (event, context) => {
       return this;
     },
     json(data) {
-      resHeaders["content-type"] = "application/json";
+      resHeaders["content-type"] = JSON_UTF8_CONTENT_TYPE;
       return {
         statusCode,
         headers: resHeaders,
@@ -190,7 +204,7 @@ export const handler = async (event, context) => {
     },
     send(data) {
       if (typeof data === "object" && !Buffer.isBuffer(data)) {
-        resHeaders["content-type"] = "application/json";
+        resHeaders["content-type"] = JSON_UTF8_CONTENT_TYPE;
         return { statusCode, headers: resHeaders, body: JSON.stringify(data) };
       }
       return { statusCode, headers: resHeaders, body: String(data || "") };

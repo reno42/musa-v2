@@ -22,7 +22,7 @@ export function hasApiKey(): boolean {
 
 /** Build fetch headers including the API key from localStorage (if configured). */
 export function getApiHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
   const key = getApiKey();
   if (key) headers["x-api-key"] = key;
   if (extra) Object.assign(headers, extra);

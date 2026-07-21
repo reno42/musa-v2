@@ -9,6 +9,7 @@ import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generate
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
+import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -9801,7 +9802,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 }
 
 export const handler = async (event) => {
-  const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json; charset=utf-8" };
+  const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
 
   // Rate limiting
   const clientIp = event.headers["x-forwarded-for"] || event.headers["client-ip"] || "unknown";
@@ -9831,8 +9832,14 @@ export const handler = async (event) => {
   }
 
   // Payload size validation (F4 — prevent OOM from oversized requests)
+  let decodedBody;
   try {
-    validatePayloadSize(event.body);
+    decodedBody = decodeNetlifyBody(event, "{}");
+  } catch {
+    return { statusCode: 400, headers, body: JSON.stringify(jsonRpcError(null, -32700, "Request body must be valid UTF-8")) };
+  }
+  try {
+    validatePayloadSize(decodedBody);
   } catch (e) {
     const err = e?.code ? e : { code: -32000, message: e?.message || "Payload too large" };
     return { statusCode: 413, headers, body: JSON.stringify(jsonRpcError(null, err.code, err.message)) };
@@ -9840,7 +9847,7 @@ export const handler = async (event) => {
 
   let body;
   try {
-    body = JSON.parse(event.body || "{}");
+    body = JSON.parse(decodedBody);
   } catch {
     return { statusCode: 400, headers, body: JSON.stringify(jsonRpcError(null, -32700, "Parse error")) };
   }

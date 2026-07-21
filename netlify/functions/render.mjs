@@ -13,6 +13,8 @@
  * @module functions/render
  */
 
+import { JSON_UTF8_CONTENT_TYPE, parseNetlifyJson } from "./http-encoding.mjs";
+
 const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
 
 // ─── Auth ─────────────────────────────────────────────────
@@ -186,7 +188,7 @@ export const handler = async (event) => {
   const jsonHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
-    "Content-Type": "application/json; charset=utf-8",
+    "Content-Type": JSON_UTF8_CONTENT_TYPE,
   };
   const htmlHeaders = {
     ...jsonHeaders,
@@ -239,8 +241,12 @@ export const handler = async (event) => {
       return { statusCode: 401, headers: jsonHeaders, body: JSON.stringify({ error: "Unauthorized: valid x-api-key required" }) };
     }
 
-    let body = {};
-    try { body = JSON.parse(event.body || "{}"); } catch { /* defaults */ }
+    let body;
+    try {
+      body = parseNetlifyJson(event);
+    } catch {
+      return { statusCode: 400, headers: jsonHeaders, body: JSON.stringify({ error: "Request body must be valid UTF-8 JSON" }) };
+    }
     const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
     let tpl = body.template || await fetchTemplate(templateId);

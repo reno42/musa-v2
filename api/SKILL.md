@@ -62,14 +62,17 @@ Reference files for LinkedIn carousel designs:
 4. Verify with `get_html_frames` — check every frame has `html` AND `css` with proper lengths
 5. Render locally with **Playwright** (`element.screenshot()` per slide), NOT Puppeteer
 
-### Emoji in JSON
+### Unicode in JSON from PowerShell
 
-PowerShell `ConvertTo-Json` can corrupt Unicode emoji. Use HTML entities:
-- 🔴 → `&#x1f534;`
-- 🟣 → `&#x1f7e3;`
-- ⚪ → `&#x26aa;`
-- 🔵 → `&#x1f535;`
-- 🟡 → `&#x1f7e1;`
+`ConvertTo-Json` preserves Unicode. Corruption happens when Windows PowerShell sends the resulting
+string to a native process using a legacy code page. Send explicit UTF-8 bytes and declare the
+charset; do not replace Spanish text or emoji with HTML entities:
+
+```powershell
+$json = $payload | ConvertTo-Json -Depth 100 -Compress
+$utf8Body = [System.Text.Encoding]::UTF8.GetBytes($json)
+Invoke-RestMethod -Uri $url -Method Post -ContentType 'application/json; charset=utf-8' -Body $utf8Body
+```
 
 ### Workflow Checklist
 
