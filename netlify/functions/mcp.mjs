@@ -8,6 +8,7 @@ import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
+import { assertEditableFrame, buildEditableFrameLayers } from "./editable-layers.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -568,7 +569,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. If you pass html/css, an initial frame is created automatically with that content. Returns template with .id and .frames[0].id.",
+    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. For editable designs, create the empty template and then call set_frame_layers: it requires one independent sibling layer per text, image, button, SVG, or shape with explicit coordinates. Raw html/css is accepted only when it satisfies the flat editability contract. Returns template with .id and .frames[0].id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -579,6 +580,7 @@ const MCP_TOOLS = [
         engine: { type: "string", enum: ["html"], description: "Rendering engine (default 'html'). Use 'html' for code-based designs." },
         html: { type: "string", description: "Initial HTML content (HTML engine only)" },
         css: { type: "string", description: "Initial CSS styles (HTML engine only)" },
+        allowGroupedLayers: { type: "boolean", description: "Set true only when groups/components are intentional. Default false rejects grouped raw HTML." },
       },
       required: ["name", "workspaceId"],
     },
@@ -629,7 +631,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_template",
-    description: "Update a template's name, canvas data, or HTML/CSS content. Pass html/css/frames for HTML templates.",
+    description: "Update template metadata or raw HTML/CSS. Prefer set_frame_layers for design generation: it creates flat, independently editable layers with explicit positions. Raw html/frames are rejected when they contain accidental groups, nested objects, missing layer semantics, or missing coordinates. Set allowGroupedLayers=true only for intentional groups/components.",
     inputSchema: {
       type: "object",
       properties: {
@@ -640,6 +642,7 @@ const MCP_TOOLS = [
         html: { type: "string", description: "HTML content for active frame (HTML engine)" },
         css: { type: "string", description: "CSS styles for active frame (HTML engine)" },
         frames: { type: "array", items: { type: "object" }, description: "Full frames array with html/css for each frame (HTML engine)" },
+        allowGroupedLayers: { type: "boolean", description: "Allow explicitly declared group/container/component layers. Default false." },
       },
       required: ["id"],
     },
@@ -1187,7 +1190,7 @@ const MCP_TOOLS = [
   },
   {
     name: "add_element",
-    description: "Add a new HTML element to a template. REQUIRES a frameId for HTML-engine templates — call create_html_frame first if no frames exist.",
+    description: "Add one independent HTML layer. REQUIRES frameId. Keep parentSelector='body' for normal design objects and give the layer explicit position/left/top/width/height in css. Prefer set_frame_layers when creating several objects; nesting is reserved for intentional components/groups.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1222,6 +1225,44 @@ const MCP_TOOLS = [
         borderRadius: { type: "string", description: "Custom border-radius (default 8px for rect, 50% for circle)" },
       },
       required: ["templateId", "frameId", "type"],
+    },
+  },
+  {
+    name: "set_frame_layers",
+    description: "RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "HTML template ID" },
+        frameId: { type: "string", description: "Frame to replace" },
+        background: { type: "string", description: "Optional frame background color" },
+        fontImports: { type: "array", items: { type: "string" }, description: "Optional HTTPS font stylesheet URLs. Existing @imports are preserved." },
+        layers: {
+          type: "array",
+          minItems: 1,
+          description: "Flat paint order from back to front. Later entries appear above earlier entries in Layers and on canvas.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Stable unique ID, e.g. hero_title" },
+              name: { type: "string", description: "Human-readable Layers name, e.g. Hero title" },
+              kind: { type: "string", enum: ["text", "shape", "image", "button", "svg", "bezier"] },
+              x: { type: "number", description: "Left coordinate in frame pixels" },
+              y: { type: "number", description: "Top coordinate in frame pixels" },
+              width: { type: "number", description: "Layer width in pixels" },
+              height: { type: "number", description: "Layer height in pixels" },
+              text: { type: "string", description: "Plain text for text/button layers. Never send nested HTML." },
+              tag: { type: "string", enum: ["div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6"], description: "Semantic tag for text layers" },
+              src: { type: "string", description: "Image URL for image layers" },
+              alt: { type: "string", description: "Image alternative text" },
+              svg: { type: "string", description: "One SVG root for svg/bezier layers; the SVG remains one independent layer" },
+              style: { type: "object", description: "Extra CSS properties. Layout properties are controlled by x/y/width/height." },
+            },
+            required: ["id", "name", "kind", "x", "y", "width", "height"],
+          },
+        },
+      },
+      required: ["templateId", "frameId", "layers"],
     },
   },
   {
@@ -1677,7 +1718,7 @@ const MCP_TOOLS = [
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
-    description: "Create a new HTML frame inside an HTML-engine template. Each frame is a self-contained design surface (like a paper on a desk) with its own HTML/CSS. ALWAYS create a frame BEFORE adding any content (add_element, add_primitive, update_frame_content will fail without one). Position is AUTO-CALCULATED by a cascade-grid algorithm — frames NEVER overlap. For multi-design sets (carousels, ad variants), create one frame per design. For web pages, use frameStrategy='single-web'.",
+    description: "Create an HTML frame. For AI design production, create it empty and then call set_frame_layers so every visible object is independently editable and explicitly positioned. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1689,13 +1730,14 @@ const MCP_TOOLS = [
         css: { type: "string", description: "CSS styles for this frame" },
         background: { type: "string", description: "Background color (default '#ffffff')" },
         frameStrategy: { type: "string", enum: ["multi", "single-web"], description: "'multi' = one design per frame (social, print, ads). 'single-web' = one long frame for a web page with sections inside. Auto-detected from dimensions if omitted." },
+        allowGroupedLayers: { type: "boolean", description: "Allow intentional group/container/component layers in raw HTML. Default false." },
       },
       required: ["templateId", "name"],
     },
   },
   {
     name: "update_html_frame",
-    description: "Update an HTML frame's content (HTML/CSS), dimensions, position, or background. Use to modify a specific frame in a multi-frame HTML template.",
+    description: "Update an HTML frame's metadata or raw HTML/CSS. Prefer set_frame_layers for generated design content. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1709,6 +1751,7 @@ const MCP_TOOLS = [
         x: { type: "number", description: "New X position" },
         y: { type: "number", description: "New Y position" },
         background: { type: "string", description: "New background color" },
+        allowGroupedLayers: { type: "boolean", description: "Allow intentional group/container/component layers in raw HTML. Default false." },
       },
       required: ["templateId", "frameId"],
     },
@@ -2854,6 +2897,14 @@ function hslToRgb(h, s, l) {
   return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
 }
 
+function validateEditableWrite(html, css, allowGroups, context) {
+  try {
+    return assertEditableFrame(html, css, { allowGroups: allowGroups === true });
+  } catch (error) {
+    throw { code: -32602, message: `${context}: ${error.message}` };
+  }
+}
+
 /** Route JSON-RPC method calls to template/workspace services */
 async function handleMethod(method, params, userId) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
@@ -3031,6 +3082,9 @@ async function handleMethod(method, params, userId) {
         throw { code: -32602, message: "width must be a number between 1 and 10000" };
       if (isNaN(tplHeight) || tplHeight <= 0 || tplHeight > 10000)
         throw { code: -32602, message: "height must be a number between 1 and 10000" };
+      const createEditability = params.html?.trim()
+        ? validateEditableWrite(params.html, params.css || "", params.allowGroupedLayers, "create_template")
+        : { valid: true, errors: [], warnings: [], layerCount: 0 };
       const tpl = await templates.createTemplate(
         tplName, tplWidth, tplHeight,
         undefined, userId, params.workspaceId,
@@ -3062,7 +3116,7 @@ async function handleMethod(method, params, userId) {
         });
       }
       autoSnapshot(tpl.id, "create_template");
-      return tpl;
+      return { ...tpl, _editability: createEditability };
     }
     case "create_deck": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
@@ -3096,16 +3150,41 @@ async function handleMethod(method, params, userId) {
       };
     }
     case "update_template": {
+      const tplId = params.id || params.templateId;
+      if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      const currentTemplate = await templates.getTemplate(tplId);
+      if (!currentTemplate) throw { code: -32000, message: `Template not found: ${tplId}` };
       const updates = {};
+      const editabilityAudits = [];
       if (params.name !== undefined) updates.name = params.name;
       if (params.canvas !== undefined) updates.canvas = params.canvas;
       // HTML engine support
       if (params.engine !== undefined) updates.engine = params.engine;
-      if (params.html !== undefined) updates.html = params.html;
+      if (params.html !== undefined || params.css !== undefined) {
+        const audit = validateEditableWrite(
+          params.html !== undefined ? params.html : currentTemplate.html || "",
+          params.css !== undefined ? params.css : currentTemplate.css || "",
+          params.allowGroupedLayers,
+          "update_template.html/css",
+        );
+        editabilityAudits.push({ frameId: null, ...audit });
+      }
+      if (params.html !== undefined) {
+        updates.html = params.html;
+      }
       if (params.css !== undefined) updates.css = params.css;
       if (params.frames !== undefined) {
         const framesArr = typeof params.frames === "string" ? JSON.parse(params.frames) : params.frames;
         validateFrameSizes(framesArr, "update_template");
+        for (const frame of framesArr) {
+          const audit = validateEditableWrite(
+            frame.html || "",
+            frame.css || "",
+            params.allowGroupedLayers,
+            `update_template.frames[${frame.id || frame.name || "unknown"}]`,
+          );
+          editabilityAudits.push({ frameId: frame.id || null, ...audit });
+        }
         updates.frames = framesArr;
       }
       // Support raw objects array (simpler API for programmatic use)
@@ -3113,13 +3192,10 @@ async function handleMethod(method, params, userId) {
         const objects = typeof params.objects === "string" ? JSON.parse(params.objects) : params.objects;
         updates.canvas = { objects, viewport: { x: 0, y: 0, zoom: 1 } };
       }
-      // Also accept id or templateId
-      const tplId = params.id || params.templateId;
-      if (!tplId) throw { code: -32602, message: "id or templateId required" };
       autoSnapshot(tplId, "update_template");
       const tpl = await templates.updateTemplate(tplId, updates);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
-      return tpl;
+      return { ...tpl, _editability: editabilityAudits };
     }
     case "delete_template": {
       const ok = await templates.deleteTemplate(params.id);
@@ -4741,6 +4817,55 @@ async function handleMethod(method, params, userId) {
       return { success: true, templateId: params.templateId, frameId: params.frameId, layerName: layerId, type, ...(overlapWarn ? { warning: overlapWarn } : {}) };
     }
 
+    case "set_frame_layers": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32602, message: "Template is not an HTML template" };
+      requireFrames(tpl);
+      const frame = (tpl.frames || []).find(candidate => candidate.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      let built;
+      try {
+        built = buildEditableFrameLayers(params.layers);
+      } catch (error) {
+        throw { code: -32602, message: `set_frame_layers: ${error.message}` };
+      }
+      if (params.fontImports !== undefined && !Array.isArray(params.fontImports)) {
+        throw { code: -32602, message: "set_frame_layers: fontImports must be an array" };
+      }
+      const preservedImports = (frame.css || "").match(/@import\s+[^;]+;/gi) || [];
+      const requestedImports = (params.fontImports || []).map(url => {
+        if (!/^https:\/\/[^\s"'()]+$/i.test(url)) {
+          throw { code: -32602, message: `Invalid font import URL: ${url}` };
+        }
+        return `@import url("${url}");`;
+      });
+      const imports = [...new Set([...preservedImports, ...requestedImports])];
+      const nextCss = imports.join("\n")
+        + (imports.length ? "\n" : "")
+        + built.css;
+      const editability = validateEditableWrite(built.html, nextCss, false, "set_frame_layers");
+
+      autoSnapshot(params.templateId, "set_frame_layers");
+      frame.html = built.html;
+      frame.css = nextCss;
+      if (params.background !== undefined) frame.background = params.background;
+      const persisted = await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames,
+        html: tpl.html,
+        css: tpl.css,
+      });
+      if (!persisted) throw { code: -32000, message: "Persistence failed while setting frame layers" };
+      return {
+        success: true,
+        templateId: params.templateId,
+        frameId: params.frameId,
+        layerIds: built.layerIds,
+        _editability: editability,
+      };
+    }
+
     // ── change_element_tag (Phase B: semantic tagging) ──
     case "change_element_tag": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -6058,6 +6183,9 @@ async function handleMethod(method, params, userId) {
       const existingFrames = tpl.frames || [];
       const frameWidth = params.width || 1080;
       const frameHeight = params.height || 1080;
+      const frameEditability = params.html?.trim()
+        ? validateEditableWrite(params.html, params.css || "", params.allowGroupedLayers, "create_html_frame")
+        : { valid: true, errors: [], warnings: [], layerCount: 0 };
       // DETERMINISTIC AUTO-PLACEMENT: cascade grid, never overlaps
       const pos = computeFramePosition(existingFrames, frameWidth, frameHeight);
       const frame = {
@@ -6085,7 +6213,7 @@ async function handleMethod(method, params, userId) {
       });
       autoSnapshot(params.templateId, "create_html_frame");
       const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
-      return { ...frame, frameStrategy: strategy, hint: strategy === "single-web"
+      return { ...frame, _editability: frameEditability, frameStrategy: strategy, hint: strategy === "single-web"
         ? "Web mode: add sections (<header>, <section>, <footer>) inside this frame. Do NOT create additional frames for the same page."
         : "Design mode: create a new frame for each separate design variant (e.g. carousel slides, ad sizes)."
       };
@@ -6097,6 +6225,14 @@ async function handleMethod(method, params, userId) {
       requireFrames(tpl);
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      const frameEditability = params.html !== undefined || params.css !== undefined
+        ? validateEditableWrite(
+            params.html !== undefined ? params.html : frame.html || "",
+            params.css !== undefined ? params.css : frame.css || "",
+            params.allowGroupedLayers,
+            "update_html_frame",
+          )
+        : null;
       // Apply updates
       if (params.name !== undefined) frame.name = params.name;
       if (params.html !== undefined) frame.html = params.html;
@@ -6119,7 +6255,7 @@ async function handleMethod(method, params, userId) {
       if (!persisted) {
         throw { code: -32000, message: "Persistence failed: Supabase write did not complete. The data was stored in ephemeral memory only and will be lost on cold start. Retry the operation." };
       }
-      return frame;
+      return { ...frame, ...(frameEditability ? { _editability: frameEditability } : {}) };
     }
 
     case "delete_html_frame": {

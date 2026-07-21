@@ -19,13 +19,18 @@
  *     "frames": [
  *       { "id": "frame_post", "name": "Post", "x": 0, "y": 0,
  *         "width": 1080, "height": 1080, "background": "#0E0D0B",
- *         "html": "<div data-layer-id=\"t\" data-layer-name=\"Título\">Hola</div>",
- *         "css": "[data-layer-id=\"t\"] { position:absolute; left:80px; top:80px; font-size:64px; }" }
+ *         "layers": [
+ *           { "id":"title", "name":"Título", "kind":"text",
+ *             "x":80, "y":80, "width":800, "height":100, "text":"Hola",
+ *             "tag":"h1", "style":{"fontSize":64,"color":"#fff"} }
+ *         ] }
  *     ]
  *   }
  *
- * Every element should carry data-layer-id + data-layer-name so humans can
- * select and edit each piece in the visual editor afterwards.
+ * Every visible object must be an independent sibling layer with
+ * data-layer-id + data-layer-name + data-layer-kind and explicit
+ * position/left/top/width/height. Prefer the MCP set_frame_layers tool when
+ * generating designs; raw grouped HTML is rejected unless explicitly allowed.
  */
 import { readFileSync } from "node:fs";
 
@@ -63,8 +68,11 @@ const EXAMPLE = {
       id: "frame_hola",
       name: "Post 1080",
       x: 0, y: 0, width: 1080, height: 1080, background: "#0E0D0B",
-      html: `<h1 data-layer-id="titulo" data-layer-name="Título">Hola, Futuraria</h1>\n<p data-layer-id="sub" data-layer-name="Subtítulo">Diseñado por un agente, editable por humanos.</p>`,
-      css: `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap');\n[data-layer-id="titulo"] { position: absolute; left: 84px; top: 420px; margin: 0; font-family: 'Inter', sans-serif; font-size: 96px; font-weight: 700; color: #EDE8DC; }\n[data-layer-id="sub"] { position: absolute; left: 84px; top: 560px; margin: 0; font-family: 'Inter', sans-serif; font-size: 34px; font-weight: 300; color: #8A8375; }`,
+      fontImports: ["https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap"],
+      layers: [
+        { id: "titulo", name: "Título", kind: "text", x: 84, y: 420, width: 900, height: 120, text: "Hola, Futuraria", tag: "h1", style: { fontFamily: "Inter, sans-serif", fontSize: 96, fontWeight: 700, color: "#EDE8DC" } },
+        { id: "sub", name: "Subtítulo", kind: "text", x: 84, y: 560, width: 900, height: 60, text: "Diseñado por un agente, editable por humanos.", tag: "p", style: { fontFamily: "Inter, sans-serif", fontSize: 34, fontWeight: 300, color: "#8A8375" } },
+      ],
     },
   ],
 };
@@ -97,7 +105,18 @@ async function push(file) {
     templateId = (created.data || created).id;
   }
 
-  await mcp("update_template", { id: templateId, frames: design.frames });
+  const frames = design.frames.map(({ layers: _layers, fontImports: _fontImports, ...frame }) => ({ ...frame, html: frame.html || "", css: frame.css || "" }));
+  await mcp("update_template", { id: templateId, frames });
+  for (const frame of design.frames) {
+    if (!frame.layers) continue;
+    await mcp("set_frame_layers", {
+      templateId,
+      frameId: frame.id,
+      background: frame.background,
+      fontImports: frame.fontImports,
+      layers: frame.layers,
+    });
+  }
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`✔ ${design.frames.length} frame(s) publicados en ${seconds}s`);

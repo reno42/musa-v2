@@ -204,7 +204,10 @@ export function OnboardingTour({ page, onAction }: Props) {
   const aiPromptText =
     `Conéctate al MCP de Futuraria en ${window.location.origin}/mcp (header x-api-key) ` +
     `y mejora el diseño del template ${tplId}: dale una paleta más atrevida, un titular grande ` +
-    `y mejor jerarquía tipográfica. Usa get_template para leerlo y update_template para aplicar cambios.`;
+    `y mejor jerarquía tipográfica. Usa get_template para leerlo. Para generar la composición usa ` +
+    `set_frame_layers: entrega cada texto, imagen, botón, SVG y figura como una capa hermana independiente ` +
+    `con id, name, kind, x, y, width y height. No envuelvas objetos en divs ni grupos; usa grupos solo si ` +
+    `son una decisión explícita del diseño. Para retoques posteriores usa las herramientas quirúrgicas por layer-id.`;
 
   const copyPrompt = () => {
     navigator.clipboard?.writeText(aiPromptText).then(() => {
