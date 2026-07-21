@@ -71,6 +71,7 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
+import { updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
 import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
@@ -665,6 +666,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setContentFrameId(null);
     setSelectedElement(null);
     setLayerSelectionRequest(null);
+    setMultiSelectLayerIds([]);
   }, []);
 
   const handleActivateFrame = useCallback((frameId: string) => {
@@ -682,6 +684,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     setContentFrameId(null);
     setSelectedElement(null);
+    setMultiSelectLayerIds([]);
   }, []);
 
   const handleMarqueeSelect = useCallback((ids: Set<string>) => {
@@ -690,6 +693,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     else setSelectedFrameId(null);
     setContentFrameId(null);
     setSelectedElement(null);
+    setMultiSelectLayerIds([]);
   }, []);
 
   const handleMarqueeSelectOrphans = useCallback((ids: Set<string>) => {
@@ -710,6 +714,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setContentFrameId(null);
     setSelectedElement(null);
     if (id) setSelectedFrameId(null);
+    setMultiSelectLayerIds([]);
   }, []);
 
   const handleOrphanShiftClick = useCallback((id: string) => {
@@ -720,6 +725,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     });
     setContentFrameId(null);
     setSelectedElement(null);
+    setMultiSelectLayerIds([]);
   }, []);
 
   const handleOrphanMove = useCallback((id: string, x: number, y: number) => {
@@ -1170,16 +1176,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, handleFrameCssChange]);
 
   // ── Layer selection from Layers Panel → click element in canvas ──
-  const handleSelectLayerElement = useCallback((frameId: string, layerId: string, path?: number[]) => {
+  const handleSelectLayerElement = useCallback((frameId: string, layerId: string, path?: number[], additive = false) => {
     setSelectedFrameId(frameId);
     setSelectedFrameIds(new Set());
     setContentFrameId(frameId);
+    setMultiSelectLayerIds(current => updateSelection(current, layerId, additive && selectedFrameId === frameId));
     setLayerSelectionRequest({
       frameId,
       layerId,
       path,
       requestId: ++layerSelectionSequenceRef.current,
     });
+  }, [selectedFrameId]);
+
+  const handleLayerSelectionChange = useCallback((frameId: string, layerIds: string[]) => {
+    setMultiSelectLayerIds(layerIds);
+    if (layerIds.length === 0) return;
+    setSelectedFrameId(frameId);
+    setSelectedFrameIds(new Set());
+    setContentFrameId(frameId);
+    setSelectedOrphanIds(new Set());
   }, []);
 
   // ── Contextual panel CSS change ──
@@ -3633,9 +3649,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               selectedFrameIds={selectedFrameIds}
               selectedOrphanIds={selectedOrphanIds}
               selectedElementId={selectedElement?.layerId || null}
+              selectedElementIds={multiSelectLayerIds}
               onSelectFrame={handleSelectFrame}
+              onFrameShiftClick={handleFrameShiftClick}
               onSelectElement={handleSelectLayerElement}
               onSelectOrphan={handleSelectOrphan}
+              onOrphanShiftClick={handleOrphanShiftClick}
               onOrphanDelete={handleDeleteOrphan}
               onHtmlChange={handleFrameHtmlChange}
               onLayerStackChange={handleLayerStackChange}
@@ -3725,7 +3744,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <InfiniteHtmlCanvas
             frames={frames}
             canvasObjects={canvasObjects}
-            selectedFrameId={selectedFrameId}
             selectedFrameIds={selectedFrameIds}
             selectedOrphanIds={selectedOrphanIds}
             contentFrameId={contentFrameId}
@@ -3743,9 +3761,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onDuplicateFrames={handleDuplicateFramesAtPositions}
             onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
-            onRequestLayerSelect={(frameId, layerId) => handleSelectLayerElement(frameId, layerId)}
+            onRequestLayerSelect={(frameId, layerId, additive) => handleSelectLayerElement(frameId, layerId, undefined, additive)}
             layerSelectionRequest={layerSelectionRequest}
             selectedElement={selectedElement}
+            selectedLayerIds={multiSelectLayerIds}
+            onLayerSelectionChange={handleLayerSelectionChange}
             onFrameCssChange={handleFrameCssChange}
             onFrameHtmlChange={handleFrameHtmlChange}
             onAddPrimitive={handleAddPrimitive}

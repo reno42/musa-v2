@@ -17,9 +17,12 @@ interface Props {
   selectedFrameIds: Set<string>;
   selectedOrphanIds: Set<string>;
   selectedElementId: string | null;
+  selectedElementIds: readonly string[];
   onSelectFrame: (frameId: string) => void;
-  onSelectElement: (frameId: string, layerId: string, path?: number[]) => void;
+  onFrameShiftClick?: (frameId: string) => void;
+  onSelectElement: (frameId: string, layerId: string, path?: number[], additive?: boolean) => void;
   onSelectOrphan?: (id: string | null) => void;
+  onOrphanShiftClick?: (id: string) => void;
   onOrphanDelete?: (id: string) => void;
   onHtmlChange: (frameId: string, newHtml: string) => void;
   onLayerStackChange: (frameId: string, change: LayerStackChange) => void;
@@ -170,9 +173,12 @@ export function HtmlLayersPanel({
   selectedFrameIds,
   selectedOrphanIds,
   selectedElementId,
+  selectedElementIds,
   onSelectFrame,
+  onFrameShiftClick,
   onSelectElement,
   onSelectOrphan,
+  onOrphanShiftClick,
   onOrphanDelete,
   onHtmlChange,
   onLayerStackChange,
@@ -192,7 +198,7 @@ export function HtmlLayersPanel({
     [frameTrees],
   );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set());
+  const multiSelect = useMemo(() => new Set(selectedElementIds), [selectedElementIds]);
   const [dragging, setDragging] = useState<DragSource | null>(null);
   const draggingRef = useRef<DragSource | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -204,14 +210,6 @@ export function HtmlLayersPanel({
   const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState("");
-
-  useEffect(() => {
-    onMultiSelectChange?.([...multiSelect]);
-  }, [multiSelect, onMultiSelectChange]);
-
-  useEffect(() => {
-    setMultiSelect(new Set());
-  }, [selectedFrameId]);
 
   // Reveal the selected layer: auto-expand its ancestors, then scroll its
   // row into view so the user can see where the selection sits in the stack.
@@ -270,19 +268,10 @@ export function HtmlLayersPanel({
   }, []);
 
   const selectLayer = useCallback((frameId: string, layer: LayerNode, event: React.MouseEvent) => {
-    if (event.ctrlKey || event.metaKey) {
-      setMultiSelect(current => {
-        const next = new Set(current);
-        if (next.has(layer.layerId)) next.delete(layer.layerId);
-        else next.add(layer.layerId);
-        return next;
-      });
-    } else {
-      setMultiSelect(new Set([layer.layerId]));
-    }
-    onSelectElement(frameId, layer.layerId, layer.path);
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    onSelectElement(frameId, layer.layerId, layer.path, additive && selectedFrameId === frameId);
     setActionMenu(null);
-  }, [onSelectElement]);
+  }, [onSelectElement, selectedFrameId]);
 
   const applyStackChange = useCallback((frameId: string, change: LayerStackChange | null) => {
     if (!change) {
@@ -338,9 +327,9 @@ export function HtmlLayersPanel({
       nextGroupName(frameTrees),
     );
     if (result) onHtmlChange(frame.id, result);
-    setMultiSelect(new Set());
+    onMultiSelectChange?.([]);
     setActionMenu(null);
-  }, [selectedFrameId, multiSelect, frames, frameTrees, onHtmlChange]);
+  }, [selectedFrameId, multiSelect, frames, frameTrees, onHtmlChange, onMultiSelectChange]);
 
   const handleUngroup = useCallback((frameId: string, groupId: string) => {
     const frame = frames.find(item => item.id === frameId);
@@ -468,7 +457,7 @@ export function HtmlLayersPanel({
     return (
       <div key={key} role="treeitem" aria-level={layer.depth + 2} aria-selected={isSelected}>
         <div
-          ref={isSelected ? selectedRowRef : undefined}
+          ref={selectedElementId === layer.layerId ? selectedRowRef : undefined}
           className={`layers-tree-row${isSelected ? " is-selected" : ""}${dragging?.kind === "layer" && dragging.layerId === layer.layerId ? " is-dragging" : ""}${currentDrop?.placement === "inside" ? " is-drop-inside" : ""}`}
           data-layer-drop-kind="layer"
           data-layer-frame-id={tree.frame.id}
@@ -621,10 +610,11 @@ export function HtmlLayersPanel({
                 <button
                   type="button"
                   className="layers-tree-frame-select"
-                  onClick={() => {
+                  onClick={(event) => {
                     if (suppressLayerClickRef.current) return;
-                    setMultiSelect(new Set());
-                    onSelectFrame(tree.frame.id);
+                    onMultiSelectChange?.([]);
+                    if (event.shiftKey) onFrameShiftClick?.(tree.frame.id);
+                    else onSelectFrame(tree.frame.id);
                   }}
                 >
                   <span className="layers-tree-frame-icon">F</span>
@@ -652,9 +642,10 @@ export function HtmlLayersPanel({
                   aria-level={1}
                   aria-selected={isSelected}
                   className={`layers-tree-row${isSelected ? " is-selected" : ""}`}
-                  onClick={() => {
+                  onClick={(event) => {
                     if (suppressLayerClickRef.current) return;
-                    onSelectOrphan?.(obj.id);
+                    if (event.shiftKey) onOrphanShiftClick?.(obj.id);
+                    else onSelectOrphan?.(obj.id);
                   }}
                   style={{ paddingLeft: 8 }}
                 >

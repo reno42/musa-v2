@@ -8,6 +8,7 @@ import {
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
+import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
   computeBounds,
@@ -116,6 +117,8 @@ interface DesignFrameProps {
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   selectionRequest?: LayerSelectionRequest | null;
   selectedLayerId?: string | null;
+  selectedLayerIds?: readonly string[];
+  onLayerSelectionChange?: (frameId: string, layerIds: string[]) => void;
   onCssChange?: (frameId: string, newCss: string, newHtml?: string) => void;
   onHtmlChange?: (frameId: string, newHtml: string) => void;
   activeTool?: HtmlToolName;
@@ -189,7 +192,7 @@ const TRACKED_PROPS = [
 
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
-  selectionRequest, selectedLayerId,
+  selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
@@ -235,6 +238,8 @@ export function DesignFrame({
   onHtmlChangeRef.current = onHtmlChange;
   const onElementSelectRef = useRef(onElementSelect);
   onElementSelectRef.current = onElementSelect;
+  const onLayerSelectionChangeRef = useRef(onLayerSelectionChange);
+  onLayerSelectionChangeRef.current = onLayerSelectionChange;
   const editingTextRef = useRef<Element | null>(null);
   const zoomRef = useRef(zoom || 1);
   zoomRef.current = zoom || 1;
@@ -385,18 +390,9 @@ export function DesignFrame({
     const register = (): boolean => {
       const content = shadowRef.current?.getElementById("__df_content");
       if (!content) return false;
-      frameHitTestRegistry.set(frame.id, (clientX, clientY) => {
-        const topLevel = [...content.children].filter(c => c.hasAttribute("data-layer-id"));
-        for (let i = topLevel.length - 1; i >= 0; i--) {
-          const el = topLevel[i];
-          const r = getVisualRect(el);
-          if (r.width <= 0 && r.height <= 0) continue;
-          if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-            return el.getAttribute("data-layer-id");
-          }
-        }
-        return null;
-      });
+      frameHitTestRegistry.set(frame.id, (clientX, clientY) =>
+        findTopmostLayerAtPoint(content, clientX, clientY)?.getAttribute("data-layer-id") || null,
+      );
       return true;
     };
     let raf = 0;
@@ -559,6 +555,22 @@ export function DesignFrame({
     clearOverlay();
   }, [selectedLayerId, selectionRequest]);
 
+  useEffect(() => {
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!content) return;
+    const elements = selectedLayerIds.flatMap(layerId => {
+      const element = content.querySelector(`[data-layer-id="${CSS.escape(layerId)}"]`);
+      return element ? [element] : [];
+    });
+    multiSelectedElsRef.current = elements;
+    if (elements.length <= 1) return;
+    const primary = elements.find(element => element.getAttribute("data-layer-id") === selectedLayerId)
+      || elements[elements.length - 1];
+    selectedRef.current = primary;
+    refreshOverlay(primary);
+    drawAdditionalSelectionOutlines(elements.filter(element => element !== primary));
+  }, [selectedLayerIds, selectedLayerId, frame.html]);
+
   function emitElementSelection(element: Element, source: Element = element) {
     const computed = source.ownerDocument.defaultView!.getComputedStyle(source);
     const computedStyles: Record<string, string> = {};
@@ -658,6 +670,34 @@ export function DesignFrame({
     selectedSourceRef.current = source;
     refreshOverlay(element);
     emitElementSelection(element, source);
+  }
+
+  function findTopmostLayerAtPoint(content: Element, clientX: number, clientY: number): Element | null {
+    const topLevel = [...content.children].filter(child => child.hasAttribute("data-layer-id"));
+    return pickTopmostByBounds(topLevel, { x: clientX, y: clientY }, getVisualRect);
+  }
+
+  function drawAdditionalSelectionOutlines(elements: Element[]): void {
+    const overlay = overlayRef.current;
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!overlay || !content) return;
+    const contentRect = content.getBoundingClientRect();
+    const z = zoomRef.current || 1;
+    for (const element of elements) {
+      const rect = getVisualRect(element);
+      const outline = document.createElement("div");
+      Object.assign(outline.style, {
+        position: "absolute",
+        left: `${(rect.left - contentRect.left) / z}px`,
+        top: `${(rect.top - contentRect.top) / z}px`,
+        width: `${rect.width / z}px`,
+        height: `${rect.height / z}px`,
+        border: `1px solid ${SEL}`,
+        pointerEvents: "none",
+        boxSizing: "border-box",
+      });
+      overlay.appendChild(outline);
+    }
   }
 
   function clearOverlay() {
@@ -1752,6 +1792,7 @@ export function DesignFrame({
         multiSelectedElsRef.current = [];
         clearOverlay();
         onElementSelect?.(null);
+        onLayerSelectionChangeRef.current?.(frame.id, []);
         return;
       }
 
@@ -1765,7 +1806,11 @@ export function DesignFrame({
 
       // ── Scope-based hit-testing (Sprint 3) ──
       // Click → top-level ancestor within scope. Ctrl/Cmd+click → deep select.
-      const hitTarget = resolveHitTarget(target as Element, scopeRef.current, me.ctrlKey || me.metaKey);
+      const deepSelect = me.ctrlKey || me.metaKey;
+      const geometricHit = deepSelect || scopeRef.current
+        ? null
+        : findTopmostLayerAtPoint(content, me.clientX, me.clientY);
+      const hitTarget = geometricHit || resolveHitTarget(target as Element, scopeRef.current, deepSelect);
       if (!hitTarget) return;
 
       // If target is an SVG child element (path, circle, rect, etc.), walk up
@@ -1773,7 +1818,7 @@ export function DesignFrame({
       // SVG object — dragging, CSS changes, and selection should target the
       // wrapper, not the individual path child.
       let dragTarget: Element = hitTarget;
-      let dragSource: Element = target as Element;
+      let dragSource: Element = hitTarget.contains(target as Element) ? target as Element : hitTarget;
       const parentSvg = hitTarget.closest?.("svg");
       if (parentSvg && parentSvg !== hitTarget) {
         dragTarget = parentSvg;
@@ -1783,6 +1828,9 @@ export function DesignFrame({
       if (me.shiftKey) {
         const lid = dragTarget.getAttribute("data-layer-id");
         if (!lid) return;
+        if (multiSelectedElsRef.current.length === 0 && selectedRef.current) {
+          multiSelectedElsRef.current = [selectedRef.current];
+        }
         const idx = multiSelectedElsRef.current.findIndex(el => el.getAttribute("data-layer-id") === lid);
         if (idx >= 0) {
           multiSelectedElsRef.current.splice(idx, 1);
@@ -1795,11 +1843,17 @@ export function DesignFrame({
           onElementSelect?.(null);
         } else {
           const last = multiSelectedElsRef.current[multiSelectedElsRef.current.length - 1];
+          const lastSource = last === dragTarget ? dragSource : last;
           selectedRef.current = last;
-          selectedSourceRef.current = dragSource;
+          selectedSourceRef.current = lastSource;
           refreshOverlay(last);
-          emitElementSelection(last, dragSource);
+          drawAdditionalSelectionOutlines(multiSelectedElsRef.current.filter(element => element !== last));
+          emitElementSelection(last, lastSource);
         }
+        onLayerSelectionChangeRef.current?.(
+          frame.id,
+          multiSelectedElsRef.current.flatMap(element => element.getAttribute("data-layer-id") || []),
+        );
         return;
       }
 
@@ -1810,7 +1864,9 @@ export function DesignFrame({
       if (!isInMultiSelect) {
         // Regular click: clear multi-select, select single element
         multiSelectedElsRef.current = [];
-        selectElement(dragTarget, target);
+        selectElement(dragTarget, dragSource);
+        const layerId = dragTarget.getAttribute("data-layer-id");
+        onLayerSelectionChangeRef.current?.(frame.id, layerId ? [layerId] : []);
       }
 
       // ═══════════════════════════════════════════════════
@@ -2417,7 +2473,6 @@ export function DesignFrame({
   return (
     <div
       ref={containerRef}
-      onClick={() => onActivate(frame.id)}
       style={{
         position: "absolute",
         left: frame.x,
@@ -2438,6 +2493,19 @@ export function DesignFrame({
         pointerEvents: (contentMode || (activeTool && activeTool !== "select" && activeTool !== "hand")) ? "none" : "auto",
         zIndex: 1,
       }} />
+      {activeTool === "select" && !contentMode && ([
+        { top: -3, left: 0, right: 0, height: 7, cursor: "move" },
+        { bottom: -3, left: 0, right: 0, height: 7, cursor: "move" },
+        { top: 0, bottom: 0, left: -3, width: 7, cursor: "move" },
+        { top: 0, bottom: 0, right: -3, width: 7, cursor: "move" },
+      ] as const).map((edge, index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          onMouseDown={(event) => onLabelMouseDown?.(frame.id, event)}
+          style={{ position: "absolute", zIndex: 4, pointerEvents: "auto", ...edge }}
+        />
+      ))}
       {/* Visual border — solid for frame-level, dashed for content mode (Phase 2).
           zIndex: 3 sits above content (2) and background (1). */}
       <div style={{
