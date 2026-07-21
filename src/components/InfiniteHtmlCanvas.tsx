@@ -214,9 +214,8 @@ export function InfiniteHtmlCanvas({
       setFrameDrawRect(null);
       return;
     }
-    // Drawing tools on empty canvas: auto-create a frame (Sprint 3.5)
-    // Click → default frame; drag → custom-size frame (handled in mouseup)
-    const drawingTools = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "text-path"];
+    // Drawing tools on empty canvas create independent root objects.
+    const drawingTools = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pencil"];
     if (drawingTools.includes(activeTool) && e.button === 0 && e.target === viewportRef.current) {
       // Start tracking for drag-to-size (same as frame tool), or create on click
       frameDrawStartRef.current = screenToCanvas(e.clientX, e.clientY);
@@ -382,7 +381,7 @@ export function InfiniteHtmlCanvas({
       const rect = frameDrawRectRef.current;
       frameDrawRectRef.current = null;
       setFrameDrawRect(null);
-      const isDrawingTool = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pen-plus", "pen-minus", "pen-edit", "pencil", "text-path"].includes(activeTool);
+      const isDrawingTool = ["rect", "circle", "triangle", "star", "polygon", "text", "pen", "pencil"].includes(activeTool);
       if (rect && rect.w >= 4 && rect.h >= 4) {
         if (isDrawingTool) onCreateOrphanFromTool?.(activeTool, Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));
         else onCreateFrame?.(Math.round(rect.x), Math.round(rect.y), Math.max(20, Math.round(rect.w)), Math.max(20, Math.round(rect.h)));

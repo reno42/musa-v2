@@ -8,7 +8,7 @@ import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
-import { assertEditableFrame, buildEditableFrameLayers } from "./editable-layers.mjs";
+import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -1266,6 +1266,41 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "set_canvas_layers",
+    description: "Create independently editable objects on the document canvas, outside every frame. Use this for working assets, copy, images, SVGs, and shapes that should remain visible in the editor but must not appear in frame exports. Every object is persisted with frameId=null; no visible 'unframed' label is added.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "HTML template ID" },
+        layers: {
+          type: "array",
+          minItems: 1,
+          description: "Root canvas paint order from back to front.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              kind: { type: "string", enum: ["text", "shape", "image", "button", "svg", "bezier"] },
+              x: { type: "number", description: "Absolute canvas X coordinate" },
+              y: { type: "number", description: "Absolute canvas Y coordinate" },
+              width: { type: "number" },
+              height: { type: "number" },
+              text: { type: "string" },
+              tag: { type: "string", enum: ["div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6"] },
+              src: { type: "string" },
+              alt: { type: "string" },
+              svg: { type: "string" },
+              style: { type: "object" },
+            },
+            required: ["id", "name", "kind", "x", "y", "width", "height"],
+          },
+        },
+      },
+      required: ["templateId", "layers"],
+    },
+  },
+  {
     name: "change_element_tag",
     description: "Change the HTML tag of an existing element (semantic tagging). The element keeps its data-layer-id, styles, and content. Use this to apply semantic meaning (e.g. change div to nav, h1, button, etc.) after creating visual primitives.",
     inputSchema: {
@@ -1281,11 +1316,12 @@ const MCP_TOOLS = [
   },
   {
     name: "remove_element",
-    description: "Remove an HTML element by its data-layer-id",
+    description: "Remove an HTML element by data-layer-id. Pass frameId for a framed layer; omit it for a root canvas object or legacy top-level HTML.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Optional frame ID. Omit for root canvas objects." },
         elementId: { type: "string", description: "data-layer-id of the element to remove" },
       },
       required: ["templateId", "elementId"],
@@ -2181,22 +2217,22 @@ const MCP_TOOLS = [
   },
   {
     name: "edit_text_content",
-    description: "Change the text content of a text element inside a frame. Finds the element by data-layer-id and replaces its inner text.",
+    description: "Change text by data-layer-id. Pass frameId for text inside a frame; omit it for a root canvas object whose persisted frameId is null.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
-        frameId: { type: "string", description: "Frame ID containing the text element" },
+        frameId: { type: "string", description: "Frame ID containing the text element. Omit for a root canvas object." },
         layerId: { type: "string", description: "Layer ID (data-layer-id attribute) of the text element" },
         text: { type: "string", description: "New text content to set" },
       },
-      required: ["templateId", "frameId", "layerId", "text"],
+      required: ["templateId", "layerId", "text"],
     },
   },
   // ── Shared: Text Synchronization ──
   {
     name: "list_all_texts",
-    description: "Extract ALL text content from design frames. Scans every text-bearing element (h1-h6, p, span, a, button, li, label, div, etc.) across all templates and frames. Auto-tags elements that lack a data-layer-id with a permanent synthetic ID so they become editable and stay synchronized. Returns a flat list of text entries with template/frame metadata for the Texts sync table.",
+    description: "Extract ALL text content from design frames and root canvas objects. Root objects return frameId=null so the data table can distinguish them without adding a visible label in Layers. Auto-tags missing layer IDs and returns template, frame/location, brand, and campaign metadata.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4866,6 +4902,29 @@ async function handleMethod(method, params, userId) {
       };
     }
 
+    case "set_canvas_layers": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32602, message: "Template is not an HTML template" };
+
+      let canvasObjects;
+      try {
+        canvasObjects = buildEditableCanvasLayers(params.layers);
+      } catch (error) {
+        throw { code: -32602, message: `set_canvas_layers: ${error.message}` };
+      }
+
+      autoSnapshot(params.templateId, "set_canvas_layers");
+      const persisted = await templates.updateTemplate(params.templateId, { canvasObjects });
+      if (!persisted) throw { code: -32000, message: "Persistence failed while setting canvas layers" };
+      return {
+        success: true,
+        templateId: params.templateId,
+        layerIds: canvasObjects.map(object => object.id),
+        frameId: null,
+      };
+    }
+
     // ── change_element_tag (Phase B: semantic tagging) ──
     case "change_element_tag": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -4917,10 +4976,49 @@ async function handleMethod(method, params, userId) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
-      let html = tpl.html || "";
-      const elRe = new RegExp(`<[^>]*data-layer-id="${params.elementId}"[^>]*>[\\s\\S]*?<\\/[a-zA-Z0-9]+>|<[^>]*data-layer-id="${params.elementId}"[^>]*\\s*\\/>`, "g");
-      html = html.replace(elRe, "");
-      await templates.updateTemplate(params.templateId, { html, frames: tpl.frames || [] });
+      const removeLayer = html => {
+        const $ = cheerio.load(html || "", { xmlMode: false });
+        const element = $("[data-layer-id]").filter((_, node) => $(node).attr("data-layer-id") === params.elementId);
+        if (!element.length) return null;
+        element.remove();
+        return $("body").html() || "";
+      };
+
+      let removed = false;
+      if (params.frameId) {
+        const frame = tpl.frames?.find(item => item.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        const nextHtml = removeLayer(frame.html);
+        if (nextHtml !== null) {
+          frame.html = nextHtml;
+          removed = true;
+        }
+      } else {
+        const canvasObjects = Array.isArray(tpl.canvasObjects) ? tpl.canvasObjects : [];
+        for (let index = 0; index < canvasObjects.length; index++) {
+          const object = canvasObjects[index];
+          if (object.id === params.elementId) {
+            canvasObjects.splice(index, 1);
+            removed = true;
+            break;
+          }
+          const nextHtml = removeLayer(object.html);
+          if (nextHtml !== null) {
+            object.html = nextHtml;
+            removed = true;
+            break;
+          }
+        }
+        if (!removed) {
+          const nextHtml = removeLayer(tpl.html);
+          if (nextHtml !== null) {
+            tpl.html = nextHtml;
+            removed = true;
+          }
+        }
+      }
+      if (!removed) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+      await templates.updateTemplate(params.templateId, { html: tpl.html, frames: tpl.frames || [], canvasObjects: tpl.canvasObjects || [] });
       return { success: true, templateId: params.templateId, removed: params.elementId };
     }
 
@@ -8564,26 +8662,34 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       let autoTaggedCount = 0;
 
       for (const tpl of templatesToScan) {
-        if (!tpl.frames || !Array.isArray(tpl.frames)) continue;
+        const templateFrames = Array.isArray(tpl.frames) ? tpl.frames : [];
+        const templateCanvasObjects = Array.isArray(tpl.canvasObjects) ? tpl.canvasObjects : [];
+        if (templateFrames.length === 0 && templateCanvasObjects.length === 0) continue;
         let tplModified = false;
         const meta = metaMap.get(tpl.id) || {};
+        const textSources = [
+          ...templateFrames.map(item => ({ item, location: "frame" })),
+          ...templateCanvasObjects.map(item => ({ item, location: "canvas" })),
+        ];
 
-        for (const frame of tpl.frames) {
-          if (frameId && frame.id !== frameId) continue;
-          if (!frame.html) continue;
+        for (const source of textSources) {
+          const designObject = source.item;
+          const isFrame = source.location === "frame";
+          if (frameId && (!isFrame || designObject.id !== frameId)) continue;
+          if (!designObject.html) continue;
 
           // Build a lightweight frame preview entry (once per frame)
-          if (!framePreviews.has(frame.id)) {
-            framePreviews.set(frame.id, {
-              frameId: frame.id,
-              frameName: frame.name || frame.id,
+          if (isFrame && !framePreviews.has(designObject.id)) {
+            framePreviews.set(designObject.id, {
+              frameId: designObject.id,
+              frameName: designObject.name || designObject.id,
               templateId: tpl.id,
               templateName: tpl.name,
-              frameWidth: frame.width || tpl.width || 1080,
-              frameHeight: frame.height || tpl.height || 1080,
-              frameHtml: frame.html || "",
-              frameCss: frame.css || tpl.css || "",
-              frameBackground: frame.background || null,
+              frameWidth: designObject.width || tpl.width || 1080,
+              frameHeight: designObject.height || tpl.height || 1080,
+              frameHtml: designObject.html || "",
+              frameCss: designObject.css || tpl.css || "",
+              frameBackground: designObject.background || null,
               brand: meta.brand || "",
               campaign: meta.campaign || "",
               format: meta.format || "",
@@ -8592,8 +8698,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             });
           }
 
-          const $ = cheerio.load(frame.html);
-          let frameModified = false;
+          const $ = cheerio.load(designObject.html);
+          let objectModified = false;
 
           $(TEXT_TAGS).each((_, el) => {
             const $el = $(el);
@@ -8617,15 +8723,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               $el.attr("data-layer-id", layerId);
               if (!$el.attr("data-layer-name")) $el.attr("data-layer-name", "Text");
               $el.attr("data-layer-kind", "text");
-              frameModified = true;
+              objectModified = true;
               autoTaggedCount++;
             }
 
             allTexts.push({
               templateId: tpl.id,
               templateName: tpl.name,
-              frameId: frame.id,
-              frameName: frame.name || frame.id,
+              frameId: isFrame ? designObject.id : null,
+              frameName: isFrame ? (designObject.name || designObject.id) : "Outside frames",
+              location: source.location,
               layerId,
               layerName: $el.attr("data-layer-name") || null,
               tag: ($el.prop("tagName") || "").toLowerCase(),
@@ -8639,12 +8746,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             });
           });
 
-          if (frameModified) {
-            frame.html = $("body").html() || $.html();
+          if (objectModified) {
+            designObject.html = $("body").html() || $.html();
             tplModified = true;
             // Update preview HTML too
-            const prev = framePreviews.get(frame.id);
-            if (prev) prev.frameHtml = frame.html;
+            if (isFrame) {
+              const prev = framePreviews.get(designObject.id);
+              if (prev) prev.frameHtml = designObject.html;
+            }
           }
         }
 
@@ -8656,7 +8765,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // 3. Persist auto-tagged templates (non-fatal if it fails — texts still returned)
       for (const [id, tpl] of templatesToUpdate) {
         try {
-          await templates.updateTemplate(id, { frames: tpl.frames });
+          await templates.updateTemplate(id, { frames: tpl.frames, canvasObjects: tpl.canvasObjects });
         } catch (e) {
           console.warn("[list_all_texts] Failed to persist auto-tags for", id, e?.message);
         }
@@ -8675,16 +8784,25 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "edit_text_content": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const frame = tpl.frames?.find(f => f.id === params.frameId);
-      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
-      const html = frame.html || "";
+      const frame = params.frameId ? tpl.frames?.find(f => f.id === params.frameId) : null;
+      const canvasObject = params.frameId
+        ? null
+        : tpl.canvasObjects?.find(object => {
+            const $object = cheerio.load(object.html || "");
+            return $object("[data-layer-id]").toArray().some(node => $object(node).attr("data-layer-id") === params.layerId);
+          });
+      const target = frame || canvasObject;
+      if (!target) {
+        throw { code: -32000, message: params.frameId ? `Frame not found: ${params.frameId}` : `Canvas object not found for layer: ${params.layerId}` };
+      }
+      const html = target.html || "";
       const $ = cheerio.load(html, { xmlMode: false });
-      const el = $(`[data-layer-id="${params.layerId}"]`);
+      const el = $("[data-layer-id]").filter((_, node) => $(node).attr("data-layer-id") === params.layerId);
       if (!el.length) throw { code: -32000, message: `Element not found: ${params.layerId}` };
       const oldText = el.text();
       el.text(params.text);
-      frame.html = $("body").html() || $.html();
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      target.html = $("body").html() || $.html();
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames, canvasObjects: tpl.canvasObjects });
       autoSnapshot(params.templateId, method);
       return { success: true, layerId: params.layerId, oldText, newText: params.text };
     }

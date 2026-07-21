@@ -51,6 +51,19 @@ export const updateTemplateSchema = z.object({
   html: z.string().optional(),
   css: z.string().optional(),
   frames: z.array(z.any()).optional(),
+  canvasObjects: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    kind: z.string().min(1),
+    frameId: z.null(),
+    html: z.string(),
+    css: z.string(),
+    x: z.number(),
+    y: z.number(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    zIndex: z.number(),
+  }).passthrough()).optional(),
   thumbnail: z.string().optional(),
 });
 

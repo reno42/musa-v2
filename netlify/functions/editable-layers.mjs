@@ -46,6 +46,32 @@ export function buildEditableFrameLayers(layers) {
   return { html: html.join("\n"), css: css.join("\n\n"), layerIds: [...ids] };
 }
 
+export function buildEditableCanvasLayers(layers) {
+  if (!Array.isArray(layers) || layers.length === 0) {
+    throw new Error("layers must be a non-empty array");
+  }
+
+  const ids = new Set();
+  return layers.map((layer, index) => {
+    validateLayer(layer, index, ids);
+    const localLayer = { ...layer, x: 0, y: 0 };
+    const built = buildEditableFrameLayers([localLayer]);
+    return {
+      id: layer.id.trim(),
+      name: layer.name.trim(),
+      kind: layer.kind,
+      frameId: null,
+      html: built.html,
+      css: built.css,
+      x: Number(layer.x),
+      y: Number(layer.y),
+      width: Number(layer.width),
+      height: Number(layer.height),
+      zIndex: index,
+    };
+  });
+}
+
 export function auditEditableFrame(html, css, { allowGroups = false } = {}) {
   if (!html?.trim()) return { valid: true, errors: [], warnings: [], layerCount: 0 };
   const $ = cheerio.load(`<div id="__editability_root">${html}</div>`, null, false);

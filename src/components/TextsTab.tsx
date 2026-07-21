@@ -8,8 +8,9 @@ import { useToast } from "./Toast";
 interface TextEntry {
   templateId: string;
   templateName: string;
-  frameId: string;
+  frameId: string | null;
   frameName: string;
+  location: "frame" | "canvas";
   layerId: string;
   layerName: string | null;
   tag: string;
@@ -49,7 +50,7 @@ interface ConfirmAction {
   type: "single-edit" | "bulk-edit" | "delete";
   entries: TextEntry[];
   newText?: string;
-  edits?: { layerId: string; templateId: string; frameId: string; oldText: string; newText: string }[];
+  edits?: { layerId: string; templateId: string; frameId: string | null; oldText: string; newText: string }[];
 }
 
 function ConfirmModal({
@@ -244,7 +245,7 @@ function BulkEditModal({
   entries, onApply, onCancel,
 }: {
   entries: TextEntry[];
-  onApply: (edits: { layerId: string; templateId: string; frameId: string; oldText: string; newText: string }[]) => void;
+  onApply: (edits: { layerId: string; templateId: string; frameId: string | null; oldText: string; newText: string }[]) => void;
   onCancel: () => void;
 }) {
   const [edits, setEdits] = useState(() =>
@@ -433,7 +434,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
     const map = new Map<string, string>();
     allTexts
       .filter(t => !filterTpl || t.templateId === filterTpl)
-      .forEach(t => map.set(t.frameId, t.frameName));
+      .forEach(t => map.set(t.frameId || "__canvas__", t.frameName));
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   }, [allTexts, filterTpl]);
 
@@ -441,7 +442,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   const filteredTexts = useMemo(() => {
     let result = allTexts;
     if (filterTpl) result = result.filter(t => t.templateId === filterTpl);
-    if (filterFrame) result = result.filter(t => t.frameId === filterFrame);
+    if (filterFrame) result = result.filter(t => (t.frameId || "__canvas__") === filterFrame);
     if (filterBrand) result = result.filter(t => t.brand === filterBrand);
     if (filterCampaign) result = result.filter(t => t.campaign === filterCampaign);
     if (searchQuery.trim()) {
@@ -535,7 +536,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
         const entry = action.entries[0];
         await mcpCall("edit_text_content", {
           templateId: entry.templateId,
-          frameId: entry.frameId,
+          frameId: entry.frameId || undefined,
           layerId: entry.layerId,
           text: action.newText!,
         });
@@ -546,7 +547,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
           try {
             await mcpCall("edit_text_content", {
               templateId: edit.templateId,
-              frameId: edit.frameId,
+              frameId: edit.frameId || undefined,
               layerId: edit.layerId,
               text: edit.newText,
             });
@@ -570,7 +571,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   };
 
   // ── Apply bulk edits from modal ──
-  const applyBulkEdits = (edits: { layerId: string; templateId: string; frameId: string; oldText: string; newText: string }[]) => {
+  const applyBulkEdits = (edits: { layerId: string; templateId: string; frameId: string | null; oldText: string; newText: string }[]) => {
     const entries = edits.map(e => allTexts.find(t => t.layerId === e.layerId)!).filter(Boolean);
     setConfirmAction({ type: "bulk-edit", entries, edits });
     setShowBulkEdit(false);
@@ -740,7 +741,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
               {filteredTexts.map((entry, i) => {
                 const isSelected = selectedIds.has(entry.layerId);
                 const isEditing = editingId === entry.layerId;
-                const preview = framePreviews.get(entry.frameId);
+                const preview = entry.frameId ? framePreviews.get(entry.frameId) : undefined;
                 const handleOpen = onOpenTemplate ? () => onOpenTemplate(entry.templateId) : undefined;
                 return (
                   <tr

@@ -70,6 +70,9 @@ export interface ShapeOptions {
 export interface HtmlCanvasObject {
   id: string;
   name: string;
+  kind: string;
+  /** Root document objects are intentionally outside every frame. */
+  frameId: null;
   html: string;
   css: string;
   x: number;

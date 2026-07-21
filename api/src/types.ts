@@ -52,6 +52,19 @@ export interface DesignTemplate {
   html?: string;
   css?: string;
   frames: Frame[];
+  canvasObjects?: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    frameId: null;
+    html: string;
+    css: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    zIndex: number;
+  }>;
   styles: Style[];
   comments: Comment[];
   versions: Version[];

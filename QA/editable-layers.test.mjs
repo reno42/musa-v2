@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertEditableFrame,
   auditEditableFrame,
+  buildEditableCanvasLayers,
   buildEditableFrameLayers,
 } from "../netlify/functions/editable-layers.mjs";
 
@@ -46,4 +47,17 @@ test("rejects layers without independent coordinates", () => {
   assert.equal(audit.valid, false);
   assert.match(audit.errors.join(" "), /position:absolute/);
   assert.match(audit.errors.join(" "), /left and top/);
+});
+
+test("builds root canvas objects with explicit null frame ownership", () => {
+  const [object] = buildEditableCanvasLayers([
+    { id: "working_copy", name: "Working copy", kind: "text", x: 1400, y: 120, width: 480, height: 80, text: "Outside frame" },
+  ]);
+
+  assert.equal(object.frameId, null);
+  assert.equal(object.x, 1400);
+  assert.equal(object.y, 120);
+  assert.equal(object.kind, "text");
+  assert.match(object.css, /left: 0px/);
+  assert.match(object.html, /Outside frame/);
 });

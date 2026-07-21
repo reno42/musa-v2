@@ -238,6 +238,14 @@ export function HtmlLayersPanel({
   }, [selectedFrameId, selectedElementId, frameTrees]);
 
   useEffect(() => {
+    if (selectedOrphanIds.size === 0) return;
+    const raf = requestAnimationFrame(() => {
+      selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selectedOrphanIds]);
+
+  useEffect(() => {
     if (!actionMenu) return;
     actionMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -561,7 +569,7 @@ export function HtmlLayersPanel({
   return (
     <div style={panelStyle} onClick={() => setActionMenu(null)}>
       <div className="layers-tree-header">
-        <span>Layers · {frames.length} frames{frames.length !== 1 ? "s" : ""} · {totalLayers} objects{canvasObjects.length > 0 ? ` · ${canvasObjects.length} orphan${canvasObjects.length !== 1 ? "s" : ""}` : ""}</span>
+        <span>Layers · {frames.length} frame{frames.length !== 1 ? "s" : ""} · {totalLayers + canvasObjects.length} objects</span>
         {multiSelect.size > 1 && (
           <button type="button" className="layers-tree-group" onClick={handleGroup}>
             Group ({multiSelect.size})
@@ -628,15 +636,14 @@ export function HtmlLayersPanel({
             </div>
           );
         })}
-        {/* Canvas-level orphan objects */}
         {canvasObjects.length > 0 && (
           <>
-            <div className="layers-tree-separator" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "4px 0" }} />
-            <div className="layers-tree-section-label" style={{ padding: "2px 8px", fontSize: 10, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1 }}>Canvas</div>
-            {canvasObjects.map(obj => {
+            {[...canvasObjects].sort((a, b) => b.zIndex - a.zIndex).map(obj => {
               const isSelected = selectedOrphanIds.has(obj.id);
+              const meta = KIND_META[obj.kind as LayerKind] || KIND_META.shape;
               return (
                 <div
+                  ref={isSelected ? selectedRowRef : undefined}
                   key={obj.id}
                   role="treeitem"
                   aria-level={1}
@@ -655,7 +662,7 @@ export function HtmlLayersPanel({
                     className="layers-tree-select"
                     style={{ width: "100%", textAlign: "left" }}
                   >
-                    <span className="layers-tree-kind" style={{ color: "#c8a8e8" }}>◇</span>
+                    <span className="layers-tree-kind" style={{ color: meta.color }}>{meta.icon}</span>
                     <span className="layers-tree-name">{obj.name}</span>
                   </button>
                   {isSelected && onOrphanDelete && (
@@ -663,7 +670,7 @@ export function HtmlLayersPanel({
                       <button
                         type="button"
                         className="layers-tree-action"
-                        title="Delete orphan"
+                        title="Delete object"
                         onClick={(e) => { e.stopPropagation(); onOrphanDelete(obj.id); }}
                       >
                         ×

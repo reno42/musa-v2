@@ -207,7 +207,9 @@ export function OnboardingTour({ page, onAction }: Props) {
     `y mejor jerarquía tipográfica. Usa get_template para leerlo. Para generar la composición usa ` +
     `set_frame_layers: entrega cada texto, imagen, botón, SVG y figura como una capa hermana independiente ` +
     `con id, name, kind, x, y, width y height. No envuelvas objetos en divs ni grupos; usa grupos solo si ` +
-    `son una decisión explícita del diseño. Para retoques posteriores usa las herramientas quirúrgicas por layer-id.`;
+    `son una decisión explícita del diseño. Para material de trabajo que debe quedar fuera de los frames usa ` +
+    `set_canvas_layers; esas capas llevan frameId null y no aparecen en las exportaciones. Para retoques posteriores ` +
+    `usa las herramientas quirúrgicas por layer-id.`;
 
   const copyPrompt = () => {
     navigator.clipboard?.writeText(aiPromptText).then(() => {

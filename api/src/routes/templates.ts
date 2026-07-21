@@ -214,6 +214,15 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         return f;
       });
     }
+    if (updates.canvasObjects && Array.isArray(updates.canvasObjects)) {
+      updates.canvasObjects = updates.canvasObjects.map((object: any) => ({
+        ...object,
+        frameId: null,
+        html: typeof object.html === "string"
+          ? object.html.replace(/data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g, "")
+          : "",
+      }));
+    }
     if (updates.html && typeof updates.html === "string" && updates.html.includes("data:image/")) {
       updates.html = updates.html.replace(
         /data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g,

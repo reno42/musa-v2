@@ -18,6 +18,7 @@ export interface HtmlTemplate {
   html?: string;
   css?: string;
   frames?: any[];
+  canvasObjects?: any[];
   /** Preview thumbnail: Storage public URL (preferred) or legacy base64 data URL */
   thumbnail?: string;
   metadata: TemplateMetadata;

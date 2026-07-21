@@ -74,6 +74,7 @@ import { analyzePathData } from "../lib/pathData";
 import { updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
+import { findCanvasObjectPosition, normalizeCanvasObject } from "../lib/canvasObjects";
 import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
 import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
@@ -411,10 +412,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }));
           store.replaceAll(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
-          // Canvas-level orphan objects (outside all frames)
-          if (Array.isArray(t.canvasObjects) && t.canvasObjects.length > 0) {
-            setCanvasObjects(t.canvasObjects.map((o: any) => ({ ...o })));
-          }
           // Loaded data is the baseline, not an undoable user action.
           lastPushTimeRef.current = 0;
           setCanUndo(false);
@@ -438,6 +435,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           setCanUndo(false);
           setCanRedo(false);
         }
+        const loadedCanvasObjects = Array.isArray(t.canvasObjects)
+          ? t.canvasObjects.map((object: any, index: number) => normalizeCanvasObject(object, index))
+          : [];
+        canvasObjectsRef.current = loadedCanvasObjects;
+        setCanvasObjects(loadedCanvasObjects);
       } catch (err: any) {
         if (!cancelled) setError(err.message || "Failed to load template");
       } finally {
@@ -516,6 +518,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // Keep autoSaveRef in sync so undo/redo can call the latest version
   autoSaveRef.current = autoSave;
 
+  const commitCanvasObjects = useCallback((next: HtmlCanvasObject[], updatedFrames = framesRef.current) => {
+    canvasObjectsRef.current = next;
+    setCanvasObjects(next);
+    autoSave(updatedFrames);
+  }, [autoSave]);
+
   // ── Flush pending save on tab close / navigation ──
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -527,6 +535,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         const active = lastFrames.find(f => f.id === selectedFrameId) || lastFrames[0];
         const payload = JSON.stringify({
           frames: lastFrames.map(f => ({...f, contentHash: simpleHash((f.html || "") + "||" + (f.css || "")), lastModifiedBy: "human", lastModifiedAt: new Date().toISOString()})),
+          canvasObjects: canvasObjectsRef.current,
           html: active?.html || "",
           css: active?.css || "",
           name: templateName,
@@ -580,6 +589,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           const remoteUpdated = t.metadata?.updatedAt;
           if (remoteUpdated && remoteUpdated !== lastRemoteUpdateRef.current) {
             if (lastRemoteUpdateRef.current !== null) {
+              const remoteCanvasObjects = Array.isArray(t.canvasObjects)
+                ? t.canvasObjects.map((object: any, index: number) => normalizeCanvasObject(object, index))
+                : [];
+              if (JSON.stringify(canvasObjectsRef.current) !== JSON.stringify(remoteCanvasObjects)) {
+                canvasObjectsRef.current = remoteCanvasObjects;
+                setCanvasObjects(remoteCanvasObjects);
+              }
               // Safety: never replace non-empty local frames with empty remote frames
               if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
                 // Only update if frame data actually differs (avoid unnecessary re-renders)
@@ -729,15 +745,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, []);
 
   const handleOrphanMove = useCallback((id: string, x: number, y: number) => {
-    setCanvasObjects(prev => prev.map(o => o.id === id ? { ...o, x: Math.round(x), y: Math.round(y) } : o));
-    isDirtyRef.current = true;
-  }, []);
+    commitCanvasObjects(canvasObjectsRef.current.map(object =>
+      object.id === id ? { ...object, x: Math.round(x), y: Math.round(y) } : object
+    ));
+  }, [commitCanvasObjects]);
 
   const handleDeleteOrphan = useCallback((id: string) => {
-    setCanvasObjects(prev => prev.filter(o => o.id !== id));
+    commitCanvasObjects(canvasObjectsRef.current.filter(object => object.id !== id));
     setSelectedOrphanIds(prev => { const next = new Set(prev); next.delete(id); return next; });
-    isDirtyRef.current = true;
-  }, []);
+  }, [commitCanvasObjects]);
 
   /** Create a canvas-level orphan object from a drawing tool on empty canvas. */
   const handleCreateOrphanFromTool = useCallback((type: string, x: number, y: number, w: number, h: number) => {
@@ -766,42 +782,49 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const d = generatePolygonPath(s, n);
       html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="polygon" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
       css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
+    } else if (type === "pen" || type === "pencil") {
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="bezier" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;"><path d="M 0 ${h} C ${w * 0.25} ${h * 0.25}, ${w * 0.75} ${h * 0.75}, ${w} 0" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round"/></svg>`;
+      css = `[data-layer-id="${orphanId}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${w}px;
+  height: ${h}px;
+  overflow: visible;
+}`;
     } else {
-      // text or other: default shape
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:0;top:0;">Type something</div>`;
       css = `[data-layer-id="${orphanId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: 0;\n  top: 0;\n}`;
     }
     const newOrphan: HtmlCanvasObject = {
       id: orphanId,
       name: oname,
+      kind: type === "text" ? "text" : type === "pen" || type === "pencil" ? "bezier" : "shape",
+      frameId: null,
       html, css,
       x: Math.round(x), y: Math.round(y),
       width: w, height: h,
       zIndex: canvasObjectsRef.current.length + frames.length,
     };
-    setCanvasObjects(prev => [...prev, newOrphan]);
+    commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
     setSelectedOrphanIds(new Set([orphanId]));
-    isDirtyRef.current = true;
     setActiveTool("select");
-  }, [frames.length]);
+  }, [frames.length, commitCanvasObjects]);
 
   /** Orphan CSS change (from inline editing or context panel) */
   const handleOrphanCssChange = useCallback((orphanId: string, newCss: string, newHtml?: string) => {
-    setCanvasObjects(prev => prev.map(o =>
+    commitCanvasObjects(canvasObjectsRef.current.map(o =>
       o.id === orphanId ? { ...o, css: newCss, ...(newHtml !== undefined ? { html: newHtml } : {}) } : o
     ));
-    isDirtyRef.current = true;
-  }, []);
+  }, [commitCanvasObjects]);
 
   /** Reorder orphan z-index in layers panel */
   const handleOrphanZReorder = useCallback((orphanId: string, newZ: number) => {
-    setCanvasObjects(prev => {
-      const list = prev.map(o => o.id === orphanId ? { ...o, zIndex: newZ } : o);
-      list.sort((a, b) => a.zIndex - b.zIndex);
-      return list;
-    });
-    isDirtyRef.current = true;
-  }, []);
+    const next = canvasObjectsRef.current
+      .map(object => object.id === orphanId ? { ...object, zIndex: newZ } : object)
+      .sort((a, b) => a.zIndex - b.zIndex);
+    commitCanvasObjects(next);
+  }, [commitCanvasObjects]);
 
   /** Move a layer from a frame to canvas (orphan) preserving visual position */
   const handleMoveLayerToCanvas = useCallback((frameId: string, layerId: string) => {
@@ -814,7 +837,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // Get visual position: use frame's position as offset
     const newOrphan: HtmlCanvasObject = {
       id: createOrphanId(),
-      name: "Layer",
+      name: /data-layer-name=["']([^"']+)["']/i.exec(extracted.layerHtml)?.[1] || "Object",
+      kind: /data-layer-kind=["']([^"']+)["']/i.exec(extracted.layerHtml)?.[1] || "shape",
+      frameId: null,
       html: extracted.layerHtml,
       css: transferredCss,
       x: frame.x, y: frame.y,
@@ -823,10 +848,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
     const updated = frames.map(f => f.id === frameId ? { ...f, html: extracted.html, css: sourceCss } : f);
     store.replaceAllWithUndo(updated, "move to canvas");
-    autoSave(updated);
-    setCanvasObjects(prev => [...prev, newOrphan]);
+    commitCanvasObjects([...canvasObjectsRef.current, newOrphan], updated);
     addToast("Layer moved to canvas.", "success");
-  }, [frames, autoSave, addToast]);
+  }, [frames, commitCanvasObjects, addToast]);
 
   /** Move an orphan into a target frame */
   const handleMoveOrphanToFrame = useCallback((orphanId: string, targetFrameId: string) => {
@@ -834,15 +858,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const targetFrame = frames.find(f => f.id === targetFrameId);
     if (!orphan || !targetFrame) return;
     const inserted = insertLayerIntoHtml(targetFrame.html, orphan.html, null, "inside");
-    if (!inserted) { addToast("Could not insert orphan into frame.", "error"); return; }
+    if (!inserted) { addToast("Could not insert object into frame.", "error"); return; }
     const combinedCss = mergeCssRules(targetFrame.css, orphan.css);
     const updated = frames.map(f => f.id === targetFrameId ? { ...f, html: inserted.html, css: combinedCss } : f);
     store.replaceAllWithUndo(updated, "move to frame");
-    autoSave(updated);
-    setCanvasObjects(prev => prev.filter(o => o.id !== orphanId));
+    commitCanvasObjects(canvasObjectsRef.current.filter(object => object.id !== orphanId), updated);
     setSelectedOrphanIds(prev => { const next = new Set(prev); next.delete(orphanId); return next; });
-    addToast("Orphan moved into frame.", "success");
-  }, [canvasObjects, frames, autoSave, addToast]);
+    addToast("Object moved into frame.", "success");
+  }, [canvasObjects, frames, commitCanvasObjects, addToast]);
 
   const handleRenameFrame = useCallback((frameId: string, newName: string) => {
         const updated = frames.map(f => f.id === frameId ? { ...f, name: newName } : f);
@@ -1540,10 +1563,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const handleRasterImageImported = useCallback(async (image: RasterImageImport) => {
     const frame = frames.find(item => item.id === selectedFrameId);
-    if (!frame) {
-      addToast("Selecciona un frame antes de importar la imagen.", "error");
-      return;
-    }
 
     // Upload to Supabase Storage instead of embedding base64 in HTML.
     // This keeps the JSONB template row small and prevents 502 timeouts.
@@ -1573,14 +1592,47 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     imageElement.setAttribute("src", imgSrc);
     imageElement.setAttribute("draggable", "false");
 
+    const sourceWidth = Math.max(1, image.width || 512);
+    const sourceHeight = Math.max(1, image.height || 512);
+    if (!frame) {
+      const scale = Math.min(1, 800 / sourceWidth, 800 / sourceHeight);
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const position = findCanvasObjectPosition(frames, canvasObjectsRef.current);
+      const imageCss = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${width}px;
+  height: ${height}px;
+  display: block;
+  object-fit: contain;
+}`;
+      const object: HtmlCanvasObject = {
+        id: layerId,
+        name: image.name,
+        kind: "image",
+        frameId: null,
+        html: imageElement.outerHTML,
+        css: imageCss,
+        ...position,
+        width,
+        height,
+        zIndex: frames.length + canvasObjectsRef.current.length,
+      };
+      commitCanvasObjects([...canvasObjectsRef.current, object]);
+      handleSelectOrphan(object.id);
+      setShowSvgImport(false);
+      addToast("Imagen insertada en el canvas.", "success");
+      return;
+    }
+
     const inserted = insertLayerIntoHtml(frame.html, imageElement.outerHTML, null, "inside");
     if (!inserted) {
       addToast("No se pudo insertar la imagen en el frame.", "error");
       return;
     }
 
-    const sourceWidth = Math.max(1, image.width || 512);
-    const sourceHeight = Math.max(1, image.height || 512);
     const availableWidth = Math.max(1, frame.width - 80);
     const availableHeight = Math.max(1, frame.height - 80);
     const scale = Math.min(1, availableWidth / sourceWidth, availableHeight / sourceHeight);
@@ -1605,7 +1657,61 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
     handleSelectLayerElement(frame.id, layerId);
     addToast("Imagen insertada en el frame.", "success");
-  }, [frames, selectedFrameId, autoSave, handleSelectLayerElement, addToast, templateWorkspaceId]);
+  }, [frames, selectedFrameId, autoSave, handleSelectLayerElement, handleSelectOrphan, addToast, templateWorkspaceId, commitCanvasObjects]);
+
+  const handleAssetUploaded = useCallback(async (asset: { name: string; url: string; width?: number; height?: number }) => {
+    let sourceWidth = asset.width || 512;
+    let sourceHeight = asset.height || 512;
+    if (!asset.width || !asset.height) {
+      const dimensions = await new Promise<{ width: number; height: number } | null>((resolve) => {
+        const probe = new Image();
+        probe.onload = () => resolve({ width: probe.naturalWidth, height: probe.naturalHeight });
+        probe.onerror = () => resolve(null);
+        probe.src = asset.url;
+      });
+      if (dimensions) {
+        sourceWidth = dimensions.width;
+        sourceHeight = dimensions.height;
+      }
+    }
+    const scale = Math.min(1, 800 / sourceWidth, 800 / sourceHeight);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const position = findCanvasObjectPosition(frames, canvasObjectsRef.current);
+    const layerId = createLayerId();
+    const imageElement = document.createElement("img");
+    imageElement.setAttribute("data-layer-id", layerId);
+    imageElement.setAttribute("data-layer-name", asset.name);
+    imageElement.setAttribute("data-layer-kind", "image");
+    imageElement.setAttribute("src", asset.url);
+    imageElement.setAttribute("alt", asset.name);
+    imageElement.setAttribute("draggable", "false");
+    const html = imageElement.outerHTML;
+    const css = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${width}px;
+  height: ${height}px;
+  display: block;
+  object-fit: contain;
+}`;
+    const object: HtmlCanvasObject = {
+      id: layerId,
+      name: asset.name,
+      kind: "image",
+      frameId: null,
+      html,
+      css,
+      ...position,
+      width,
+      height,
+      zIndex: frames.length + canvasObjectsRef.current.length,
+    };
+    commitCanvasObjects([...canvasObjectsRef.current, object]);
+    handleSelectOrphan(object.id);
+    addToast("Imagen añadida al canvas.", "success");
+  }, [frames, commitCanvasObjects, handleSelectOrphan, addToast]);
 
   // ── Phase C: Delete element inside frame ──
   const handleDeleteElement = useCallback((layerId: string, frameId = selectedFrameId) => {
@@ -2443,7 +2549,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleExportJSON = useCallback(async () => {
     const tpl = await getTemplate(templateId);
     if (tpl) {
-      const blob = new Blob([JSON.stringify({ ...tpl, frames }, null, 2)], { type: "application/json" });
+      const blob = new Blob([JSON.stringify({ ...tpl, frames, canvasObjects: canvasObjectsRef.current }, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `${templateName}.futuraria.json`;
@@ -2618,14 +2724,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       combinedHtml += "</div>";
       const groupOrphan: HtmlCanvasObject = {
         id: groupId, name: "Group",
+        kind: "group", frameId: null,
         html: combinedHtml, css: combinedCss,
         x: minX, y: minY,
         width: maxX - minX, height: maxY - minY,
         zIndex: Math.max(...selected.map(o => o.zIndex)),
       };
-      setCanvasObjects(prev => [...prev.filter(o => !selectedOrphanIds.has(o.id)), groupOrphan]);
+      commitCanvasObjects([...canvasObjectsRef.current.filter(o => !selectedOrphanIds.has(o.id)), groupOrphan]);
       setSelectedOrphanIds(new Set([groupId]));
-      isDirtyRef.current = true;
       return;
     }
     // ── Frame element grouping (local, consistent with layers panel) ──
@@ -2642,7 +2748,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       store.replaceAllWithUndo(updated, "group");
       autoSave(updated);
     }
-  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, frames, autoSave]);
+  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, frames, autoSave, commitCanvasObjects]);
 
   const handleUngroup = useCallback(async () => {
     // ── Orphan ungrouping ──
@@ -2704,6 +2810,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             }
             newOrphans.push({
               id: childLayerId, name: child.getAttribute("data-layer-name") || `Layer ${idx + 1}`,
+              kind: child.getAttribute("data-layer-kind") || "shape", frameId: null,
               html: childHtml, css: childCss,
               x: Math.round(obj.x + childLeft), y: Math.round(obj.y + childTop),
               width: Math.round(childW), height: Math.round(childH),
@@ -2715,9 +2822,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         }
       }
       if (newOrphans.length > 0) {
-        setCanvasObjects(prev => [...prev.filter(o => !toRemove.has(o.id)), ...newOrphans]);
+        commitCanvasObjects([...canvasObjectsRef.current.filter(o => !toRemove.has(o.id)), ...newOrphans]);
         setSelectedOrphanIds(new Set(newOrphans.map(o => o.id)));
-        isDirtyRef.current = true;
         return;
       }
     }
@@ -2739,7 +2845,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "ungroup");
     autoSave(updated);
     setSelectedElement(null);
-  }, [selectedFrameId, selectedElement, selectedOrphanIds, canvasObjects, frames, autoSave]);
+  }, [selectedFrameId, selectedElement, selectedOrphanIds, canvasObjects, frames, autoSave, commitCanvasObjects]);
 
   // ── Figma-style container semantics toggle: Grupo (posiciones fijas) ⇄ Contenedor (auto layout) ──
   const handleGroupModeChange = useCallback((layerId: string, frameId: string, mode: "group" | "container") => {
@@ -3992,13 +4098,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showImageUpload && (
         <ImageUploadModal
           onClose={() => setShowImageUpload(false)}
-          onAssetUploaded={(asset) => {
-            if (asset) {
-              addToast("✓ Imagen subida correctamente.", "success");
-            } else {
-              addToast("Error al subir la imagen.", "error");
-            }
-          }}
+          onAssetUploaded={handleAssetUploaded}
         />
       )}
 

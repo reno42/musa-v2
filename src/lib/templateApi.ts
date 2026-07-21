@@ -26,7 +26,7 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
 
     // Helper: check if data has meaningful content (V2: html/css/frames)
     const hasContent = (d: any) =>
-      Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0);
+      Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0) || (d?.canvasObjects?.length > 0);
 
     // If localStorage has a newer version with content, prefer it
     // Grace window: server clock is typically 200-800ms ahead of client clock.

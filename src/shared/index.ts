@@ -9,6 +9,7 @@ export interface DesignTemplate {
   html?: string;
   css?: string;
   frames?: any[];
+  canvasObjects?: any[];
   styles?: any[];
   comments?: any[];
   versions?: any[];
