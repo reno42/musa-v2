@@ -282,6 +282,7 @@ workspaceSaasRoutes.delete("/:id/connections/:connectionId", requireWorkspaceRol
 const contactSchema = z.object({
   brandId: z.string().nullable().optional(),
   brandName: z.string().max(120).optional(),
+  relationshipStatus: z.enum(["lead", "client"]).optional(),
   firstName: z.string().min(1).max(100),
   lastName: z.string().max(100).optional(),
   email: z.string().email().or(z.literal("")).optional(),
@@ -291,6 +292,78 @@ const contactSchema = z.object({
   status: z.enum(["lead", "active", "inactive"]).default("active"),
   tags: z.array(z.string().max(50)).max(30).default([]),
   notes: z.string().max(5000).optional(),
+});
+
+const brandAccountSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  relationshipStatus: z.enum(["lead", "client"]).default("lead"),
+});
+
+workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { data, error } = await sb.from("brands").select("*")
+      .eq("workspace_id", req.params.id).order("name");
+    if (error) throw error;
+    res.json({ success: true, data: (data || []).map((brand: any) => ({
+      id: brand.id,
+      name: brand.name,
+      relationship_status: brand.relationship_status || "lead",
+      created_at: brand.created_at,
+      updated_at: brand.updated_at,
+    })) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.post("/:id/brands", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = brandAccountSchema.parse(req.body);
+    const sb = dbOrThrow();
+    const { data: existing } = await sb.from("brands").select("*")
+      .eq("workspace_id", req.params.id).ilike("name", parsed.name).limit(1).maybeSingle();
+    if (existing) {
+      const { data, error } = await sb.from("brands")
+        .update({ relationship_status: parsed.relationshipStatus, updated_at: new Date().toISOString() })
+        .eq("workspace_id", req.params.id).eq("id", existing.id).select("*").single();
+      if (error) throw error;
+      res.json({ success: true, data });
+      return;
+    }
+    const { data, error } = await sb.from("brands").insert({
+      id: `brand_${crypto.randomBytes(10).toString("hex")}`,
+      workspace_id: req.params.id,
+      name: parsed.name,
+      relationship_status: parsed.relationshipStatus,
+    }).select("*").single();
+    if (error) throw error;
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = brandAccountSchema.partial().parse(req.body);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (parsed.name !== undefined) patch.name = parsed.name;
+    if (parsed.relationshipStatus !== undefined) patch.relationship_status = parsed.relationshipStatus;
+    const sb = dbOrThrow();
+    const { data, error } = await sb.from("brands").update(patch)
+      .eq("workspace_id", req.params.id).eq("id", req.params.brandId).select("*").single();
+    if (error) throw error;
+    if (parsed.name !== undefined) {
+      await sb.from("crm_contacts").update({ brand_name: parsed.name, updated_at: new Date().toISOString() })
+        .eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
+      await sb.from("design_file_meta").update({ brand: parsed.name, updated_at: new Date().toISOString() })
+        .eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
+    }
+    res.json({ success: true, data });
+  } catch (error: any) {
+    res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
+  }
 });
 
 workspaceSaasRoutes.get("/:id/contacts", requireWorkspaceRole("viewer"), async (req, res) => {
@@ -310,10 +383,35 @@ workspaceSaasRoutes.post("/:id/contacts", requireWorkspaceRole("editor"), async 
   try {
     const parsed = contactSchema.parse(req.body);
     const sb = dbOrThrow();
+    let brandId = parsed.brandId || null;
+    let brandName = parsed.brandName?.trim() || null;
+    if (brandId) {
+      const { data: brand } = await sb.from("brands").select("id, name")
+        .eq("workspace_id", req.params.id).eq("id", brandId).maybeSingle();
+      if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+      brandName = brand.name;
+    } else if (brandName) {
+      const { data: existingBrand } = await sb.from("brands").select("id, name")
+        .eq("workspace_id", req.params.id).ilike("name", brandName).limit(1).maybeSingle();
+      if (existingBrand) {
+        brandId = existingBrand.id;
+        brandName = existingBrand.name;
+      } else {
+        const { data: createdBrand, error: brandError } = await sb.from("brands").insert({
+          id: `brand_${crypto.randomBytes(10).toString("hex")}`,
+          workspace_id: req.params.id,
+          name: brandName,
+          relationship_status: parsed.relationshipStatus || (parsed.status === "lead" ? "lead" : "client"),
+        }).select("id, name").single();
+        if (brandError) throw brandError;
+        brandId = createdBrand.id;
+        brandName = createdBrand.name;
+      }
+    }
     const { data, error } = await sb.from("crm_contacts").insert({
       workspace_id: req.params.id,
-      brand_id: parsed.brandId || null,
-      brand_name: parsed.brandName || null,
+      brand_id: brandId,
+      brand_name: brandName,
       first_name: parsed.firstName,
       last_name: parsed.lastName || null,
       email: parsed.email || null,
@@ -345,6 +443,13 @@ workspaceSaasRoutes.patch("/:id/contacts/:contactId", requireWorkspaceRole("edit
       if (clientKey in parsed) patch[dbKey] = (parsed as any)[clientKey] || null;
     }
     const sb = dbOrThrow();
+    if (parsed.brandId) {
+      const { data: brand } = await sb.from("brands").select("id, name")
+        .eq("workspace_id", req.params.id).eq("id", parsed.brandId).maybeSingle();
+      if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+      patch.brand_id = brand.id;
+      patch.brand_name = brand.name;
+    }
     const { data, error } = await sb.from("crm_contacts").update(patch)
       .eq("workspace_id", req.params.id).eq("id", req.params.contactId).select("*").single();
     if (error) throw error;

@@ -16,6 +16,7 @@ import { Router, type Request, type Response } from "express";
 import { getSupabase } from "../services/supabase.js";
 import { store } from "../services/store.js";
 import { buildDesignGraphEdges } from "../services/designGraph.js";
+import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 
 export const designMetaRoutes = Router();
 
@@ -44,10 +45,14 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 designMetaRoutes.put("/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;
-    const { brand, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
+    const { brand_id, brand, campaign_id, campaign, asset_type, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
 
     const patch: Record<string, any> = {};
+    if (brand_id !== undefined) patch.brand_id = brand_id || null;
     if (brand !== undefined) patch.brand = brand;
+    if (campaign_id !== undefined) patch.campaign_id = campaign_id || null;
+    if (campaign !== undefined) patch.campaign = campaign;
+    if (asset_type !== undefined) patch.asset_type = asset_type || "other";
     if (tags !== undefined) patch.tags = tags;
     if (theme !== undefined) patch.theme = theme;
     if (format !== undefined) patch.format = format;
@@ -60,6 +65,41 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
       // memory fallback
       store.setMeta?.(templateId, patch);
       return res.json({ success: true });
+    }
+
+    const { data: template } = await sb.from("templates")
+      .select("workspace_id").eq("id", templateId).maybeSingle();
+    if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
+
+    if (patch.brand_id) {
+      const { data: selectedBrand } = await sb.from("brands").select("id, name")
+        .eq("workspace_id", template.workspace_id).eq("id", patch.brand_id).maybeSingle();
+      if (!selectedBrand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+      patch.brand = selectedBrand.name;
+    }
+
+    if (patch.campaign === "" || patch.brand_id === null) {
+      patch.campaign_id = null;
+    } else if (patch.campaign && patch.brand_id) {
+      const campaignName = String(patch.campaign).trim();
+      const { data: existingCampaign } = await sb.from("campaigns").select("id, name")
+        .eq("workspace_id", template.workspace_id)
+        .eq("brand_id", patch.brand_id)
+        .ilike("name", campaignName)
+        .maybeSingle();
+      if (existingCampaign) {
+        patch.campaign_id = existingCampaign.id;
+        patch.campaign = existingCampaign.name;
+      } else {
+        const { data: createdCampaign, error: campaignError } = await sb.from("campaigns").insert({
+          workspace_id: template.workspace_id,
+          brand_id: patch.brand_id,
+          name: campaignName,
+        }).select("id, name").single();
+        if (campaignError) throw campaignError;
+        patch.campaign_id = createdCampaign.id;
+        patch.campaign = createdCampaign.name;
+      }
     }
 
     // Upsert: try update first, insert if not found
@@ -77,15 +117,8 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
         .eq("template_id", templateId);
       if (error) throw error;
     } else {
-      // Need workspace_id for insert — derive from template
-      const { data: tpl } = await sb
-        .from("templates")
-        .select("workspace_id")
-        .eq("id", templateId)
-        .maybeSingle();
-
       patch.template_id = templateId;
-      patch.workspace_id = tpl?.workspace_id || null;
+      patch.workspace_id = template.workspace_id;
       const { error } = await sb.from("design_file_meta").insert(patch);
       if (error) throw error;
     }
@@ -106,21 +139,55 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       return;
     }
 
+    if (!req.auth) {
+      res.status(401).json({ success: false, error: "Authentication required" });
+      return;
+    }
+
+    const requestedWorkspaceId = typeof workspaceId === "string" ? workspaceId : "";
+    const workspaceIds = requestedWorkspaceId
+      ? [requestedWorkspaceId]
+      : await listAccessibleWorkspaceIds(req.auth);
+    if (requestedWorkspaceId && !(await canAccessWorkspace(req.auth, requestedWorkspaceId, "viewer"))) {
+      res.status(403).json({ success: false, error: "You do not have access to this workspace" });
+      return;
+    }
+    if (workspaceIds.length === 0) {
+      res.json({ success: true, data: { workspace: null, brands: [], contacts: [], nodes: [], edges: [] } });
+      return;
+    }
+
     let query = sb.from("design_file_meta").select("*, templates!inner(id, name, thumbnail)");
 
-    if (workspaceId) query = query.eq("workspace_id", workspaceId as string);
-    if (brand) query = query.eq("brand", brand as string);
+    query = workspaceIds.length === 1
+      ? query.eq("workspace_id", workspaceIds[0])
+      : query.in("workspace_id", workspaceIds);
+    if (brand) query = query.ilike("brand", brand as string);
     if (tag) query = query.contains("tags", [tag as string]);
     if (format) query = query.eq("format", format as string);
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const [designResult, workspaceResult, brandResult, contactResult] = await Promise.all([
+      query,
+      sb.from("workspaces").select("id, name").in("id", workspaceIds).order("name"),
+      sb.from("brands").select("*").in("workspace_id", workspaceIds).order("name"),
+      sb.from("crm_contacts")
+        .select("id, workspace_id, brand_id, brand_name, first_name, last_name, email, job_title, status")
+        .in("workspace_id", workspaceIds)
+        .order("first_name"),
+    ]);
+    if (designResult.error) throw designResult.error;
+    if (workspaceResult.error) throw workspaceResult.error;
+    if (brandResult.error) throw brandResult.error;
+    if (contactResult.error) throw contactResult.error;
 
-    const nodes = (data || []).map((r: any) => ({
+    const nodes = (designResult.data || []).map((r: any) => ({
       id: r.template_id,
       name: r.templates?.name || r.template_id,
+      brand_id: r.brand_id || null,
       brand: r.brand,
+      campaign_id: r.campaign_id || null,
       campaign: r.campaign || null,
+      asset_type: r.asset_type || null,
       tags: r.tags || [],
       theme: r.theme,
       format: r.format,
@@ -130,8 +197,19 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     }));
 
     const edges = buildDesignGraphEdges(nodes);
+    const brands = (brandResult.data || [])
+      .filter((item: any) => !brand || item.name?.toLocaleLowerCase() === String(brand).toLocaleLowerCase())
+      .map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        relationship_status: item.relationship_status || null,
+      }));
+    const contacts = (contactResult.data || [])
+      .filter((contact: any) => !brand || contact.brand_name?.toLocaleLowerCase() === String(brand).toLocaleLowerCase() || brands.some((item: any) => item.id === contact.brand_id));
+    const workspaces = workspaceResult.data || [];
+    const workspace = workspaces.length === 1 ? workspaces[0] : { id: "all", name: "Tus marcas" };
 
-    res.json({ success: true, data: { nodes, edges } });
+    res.json({ success: true, data: { workspace, brands, contacts, nodes, edges } });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load design graph";
     res.status(500).json({ success: false, error: message });
@@ -139,6 +217,37 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
 }
 
 designMetaRoutes.get("/", getDesignGraph);
+
+/** Workspace brands and campaigns available to this design file. */
+designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return res.json({ success: true, data: { brands: [], campaigns: [] } });
+    const { data: template, error: templateError } = await sb.from("templates")
+      .select("workspace_id").eq("id", req.params.templateId).maybeSingle();
+    if (templateError) throw templateError;
+    if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
+
+    const [brandResult, campaignResult] = await Promise.all([
+      sb.from("brands").select("*").eq("workspace_id", template.workspace_id).order("name"),
+      sb.from("campaigns").select("id, brand_id, name, status").eq("workspace_id", template.workspace_id).order("name"),
+    ]);
+    if (brandResult.error) throw brandResult.error;
+    res.json({
+      success: true,
+      data: {
+        brands: (brandResult.data || []).map((brand: any) => ({
+          id: brand.id,
+          name: brand.name,
+          relationship_status: brand.relationship_status || "lead",
+        })),
+        campaigns: campaignResult.error ? [] : (campaignResult.data || []),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 /** POST /api/meta/:templateId/cover — upload cover image (base64) */
 designMetaRoutes.post("/:templateId/cover", async (req, res) => {
@@ -201,7 +310,10 @@ function rowToMeta(row: any) {
     templateId: row.template_id,
     workspaceId: row.workspace_id,
     brand: row.brand || "",
+    brand_id: row.brand_id || null,
     campaign: row.campaign || "",
+    campaign_id: row.campaign_id || null,
+    asset_type: row.asset_type || "other",
     tags: row.tags || [],
     theme: row.theme || "",
     format: row.format || "",

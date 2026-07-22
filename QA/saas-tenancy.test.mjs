@@ -57,6 +57,18 @@ test("v9 migration enables tenancy RLS for designs, storage, MCP and CRM", () =>
   assert.match(sql, /to_regclass\('public\.client_sessions'\)/i);
 });
 
+test("v10 migration links CRM accounts, campaigns, asset categories and graph RLS", () => {
+  const sql = readFileSync(new URL("../supabase_migrations_v10.sql", import.meta.url), "utf8");
+  assert.match(sql, /ALTER TABLE brands ADD COLUMN IF NOT EXISTS relationship_status/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS campaigns/i);
+  assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS brand_id/i);
+  assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS campaign_id/i);
+  assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS asset_type/i);
+  assert.match(sql, /UPDATE crm_contacts[\s\S]*SET brand_id = b\.id/i);
+  assert.match(sql, /ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /CREATE POLICY "campaigns_workspace_write"[\s\S]*has_workspace_role\(workspace_id, 'editor'\)/i);
+});
+
 test("browser auth can load public Supabase config at runtime", () => {
   const client = readFileSync(new URL("../src/lib/supabaseClient.ts", import.meta.url), "utf8");
   const middleware = readFileSync(new URL("../api/src/middleware/auth.ts", import.meta.url), "utf8");

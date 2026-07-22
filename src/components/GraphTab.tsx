@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
-import { buildDesignHierarchy, type DesignGraphNode } from "../lib/designGraph";
+import {
+  buildDesignHierarchy,
+  buildKnowledgeGraph,
+  type AccountStatus,
+  type DesignBrandGroup,
+  type DesignGraphBrand,
+  type DesignGraphContact,
+  type DesignGraphNode,
+  type DesignGraphWorkspace,
+  type KnowledgeGraphEdge,
+  type KnowledgeNodeKind,
+} from "../lib/designGraph";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -17,12 +28,6 @@ import { buildDesignHierarchy, type DesignGraphNode } from "../lib/designGraph";
  * Dragging pins the node to the pointer and re-heats alpha so its
  * neighbors are tugged along — the Obsidian feel.
  */
-
-interface GraphEdge {
-  source: string;
-  target: string;
-  kind: string;
-}
 
 interface Props {
   workspaceId: string | null;
@@ -41,8 +46,10 @@ interface SimNode {
   radius: number;
   degree: number;
   name: string;
-  brand: string;
-  obsidian_link: string;
+  colorKey: string;
+  kind: KnowledgeNodeKind;
+  externalLink?: string;
+  templateId?: string;
   phase: number;       // wander/pulse phase
   hoverScale: number;  // animated 1 → 1.28 on hover
 }
@@ -63,6 +70,16 @@ const MAX_ZOOM = 3.5;
 
 const PALETTE = ["#5B9CF6", "#F87171", "#34D399", "#FBBF24", "#A78BFA", "#F472B6", "#22D3EE", "#FB923C"];
 
+const NODE_RADIUS: Record<KnowledgeNodeKind, number> = {
+  workspace: 15,
+  status: 12,
+  brand: 10,
+  person: 5,
+  campaign: 8,
+  asset_type: 7,
+  design: 6,
+};
+
 function hexToRgb(hex: string): [number, number, number] {
   const v = parseInt(hex.slice(1), 16);
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
@@ -71,14 +88,29 @@ function hexToRgb(hex: string): [number, number, number] {
 export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [nodes, setNodes] = useState<DesignGraphNode[]>([]);
-  const [edges, setEdges] = useState<GraphEdge[]>([]);
+  const [designNodes, setDesignNodes] = useState<DesignGraphNode[]>([]);
+  const [brandAccounts, setBrandAccounts] = useState<DesignGraphBrand[]>([]);
+  const [contacts, setContacts] = useState<DesignGraphContact[]>([]);
+  const [workspace, setWorkspace] = useState<DesignGraphWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filterBrand, setFilterBrand] = useState("");
   const [filterTag, setFilterTag] = useState("");
   const [filterFormat, setFilterFormat] = useState("");
   const [viewMode, setViewMode] = useState<"tree" | "canvas">("tree");
+  const [accountView, setAccountView] = useState<"all" | AccountStatus>("all");
+  const [showPeople, setShowPeople] = useState(true);
+
+  const hierarchy = useMemo(() => {
+    const complete = buildDesignHierarchy(designNodes, brandAccounts, contacts);
+    return accountView === "all"
+      ? complete
+      : complete.filter((brand) => brand.relationshipStatus === accountView);
+  }, [designNodes, brandAccounts, contacts, accountView]);
+  const { nodes, edges } = useMemo(
+    () => buildKnowledgeGraph(workspace, hierarchy, showPeople),
+    [workspace, hierarchy, showPeople],
+  );
 
   // Parent may pass an inline lambda — keep it out of the effect deps.
   const openRef = useRef(onOpenTemplate);
@@ -95,15 +127,25 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       if (filterFormat) params.set("format", filterFormat);
       const response = await apiFetch<{
         success: boolean;
-        data?: { nodes?: DesignGraphNode[]; edges?: GraphEdge[] };
+        data?: {
+          workspace?: DesignGraphWorkspace | null;
+          brands?: DesignGraphBrand[];
+          contacts?: DesignGraphContact[];
+          nodes?: DesignGraphNode[];
+          edges?: KnowledgeGraphEdge[];
+        };
         error?: string;
       }>(`/api/graph?${params.toString()}`);
       if (!response.success) throw new Error(response.error || "No se pudo cargar el grafo.");
-      setNodes(Array.isArray(response.data?.nodes) ? response.data.nodes : []);
-      setEdges(Array.isArray(response.data?.edges) ? response.data.edges : []);
+      setDesignNodes(Array.isArray(response.data?.nodes) ? response.data.nodes : []);
+      setBrandAccounts(Array.isArray(response.data?.brands) ? response.data.brands : []);
+      setContacts(Array.isArray(response.data?.contacts) ? response.data.contacts : []);
+      setWorkspace(response.data?.workspace || null);
     } catch (cause: unknown) {
-      setNodes([]);
-      setEdges([]);
+      setDesignNodes([]);
+      setBrandAccounts([]);
+      setContacts([]);
+      setWorkspace(null);
       setError(cause instanceof Error ? cause.message : "No se pudo cargar el grafo.");
     } finally {
       setLoading(false);
@@ -135,11 +177,13 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         vx: 0, vy: 0,
         wx: r * Math.cos(golden),
         wy: r * Math.sin(golden),
-        radius: 5 + Math.min(12, Math.sqrt(deg) * 1.7),
+        radius: NODE_RADIUS[n.kind] + Math.min(6, Math.sqrt(deg) * 0.9),
         degree: deg,
         name: n.name,
-        brand: n.brand,
-        obsidian_link: n.obsidian_link,
+        colorKey: n.colorKey,
+        kind: n.kind,
+        externalLink: n.externalLink,
+        templateId: n.templateId,
         phase: i * 1.7,
         hoverScale: 1,
       };
@@ -147,7 +191,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     const byId = new Map(sim.map(n => [n.id, n]));
     const links = edges
       .map(e => ({ a: byId.get(e.source), b: byId.get(e.target), kind: e.kind }))
-      .filter((l): l is { a: SimNode; b: SimNode; kind: string } => !!l.a && !!l.b);
+      .filter((l): l is { a: SimNode; b: SimNode; kind: KnowledgeGraphEdge["kind"] } => !!l.a && !!l.b);
     const neighbors = new Map<string, Set<string>>();
     for (const l of links) {
       if (!neighbors.has(l.a.id)) neighbors.set(l.a.id, new Set());
@@ -156,12 +200,16 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       neighbors.get(l.b.id)!.add(l.a.id);
     }
 
-    const brandColor = new Map<string, string>();
+    const brandColor = new Map<string, string>([
+      ["workspace", "#F8FAFC"],
+      ["lead", "#FBBF24"],
+      ["client", "#34D399"],
+    ]);
     let ci = 0;
     for (const n of sim) {
-      if (n.brand && !brandColor.has(n.brand)) brandColor.set(n.brand, PALETTE[ci++ % PALETTE.length]);
+      if (n.colorKey && !brandColor.has(n.colorKey)) brandColor.set(n.colorKey, PALETTE[ci++ % PALETTE.length]);
     }
-    const colorOf = (n: SimNode) => brandColor.get(n.brand) || "#8B93A7";
+    const colorOf = (n: SimNode) => brandColor.get(n.colorKey) || "#8B93A7";
 
     // ── Interaction state (refs only — never re-runs this effect) ──
     const view = { x: 0, y: 0, k: 1 };
@@ -175,6 +223,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     let moved = false;
     let raf = 0;
     let cssW = 0, cssH = 0;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     // Until the user pans/zooms, every canvas resize re-fits the view — the
     // tab often mounts before layout settles, so the first fit uses a stale size.
     let userMovedView = false;
@@ -279,8 +328,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       // eye sees is decoupled from layout. The dragged node stays pinned.
       for (const n of sim) {
         if (n === dragging) { n.wx = n.x; n.wy = n.y; continue; }
-        n.wx = n.x + 3.5 * Math.sin(t / 1300 + n.phase);
-        n.wy = n.y + 3.5 * Math.cos(t / 1750 + n.phase * 1.31);
+        n.wx = n.x + (reduceMotion ? 0 : 3.5 * Math.sin(t / 1300 + n.phase));
+        n.wy = n.y + (reduceMotion ? 0 : 3.5 * Math.cos(t / 1750 + n.phase * 1.31));
       }
 
       // Edges: one dim batch + one highlighted batch (screen-constant width)
@@ -442,8 +491,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         dragging = null;
         alphaTarget = 0;
         if (!moved) {
-          if (n.obsidian_link) window.open(n.obsidian_link, "_blank");
-          else openRef.current?.(n.id);
+          if (n.externalLink) window.open(n.externalLink, "_blank", "noopener,noreferrer");
+          else if (n.templateId) openRef.current?.(n.templateId);
         }
       }
       panning = false;
@@ -499,47 +548,52 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     };
   }, [nodes, edges, viewMode]);
 
-  const brands = [...new Set(nodes.map(n => n.brand).filter(Boolean))];
-  const allTags = [...new Set(nodes.flatMap(n => n.tags))];
+  const brands = [...new Set([
+    ...brandAccounts.map(brand => brand.name),
+    ...designNodes.map(node => node.brand),
+  ].filter(Boolean))].sort((first, second) => first.localeCompare(second, "es", { sensitivity: "base" }));
+  const allTags = [...new Set(designNodes.flatMap(node => node.tags))];
+  const visibleDesignCount = hierarchy.reduce((sum, brand) => sum + brand.totalDesigns, 0);
+  const visiblePeopleCount = hierarchy.reduce((sum, brand) => sum + brand.people.length, 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 8 }}>
-      {/* Filters + View Toggle */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "4px 0" }}>
-        {/* View mode toggle */}
-        <div style={{ display: "flex", gap: 2, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <div role="group" aria-label="Modo del visor" style={segmentedControlStyle}>
           <button
             type="button"
             aria-pressed={viewMode === "tree"}
             onClick={() => setViewMode("tree")}
-            style={{
-              padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer",
-              border: "none", color: viewMode === "tree" ? "#fff" : "rgba(255,255,255,0.4)",
-              background: viewMode === "tree" ? "rgba(139,92,246,0.2)" : "transparent",
-            }}
-          >📂 Brands</button>
+            style={segmentStyle(viewMode === "tree")}
+          >Jerarquía</button>
           <button
             type="button"
             aria-pressed={viewMode === "canvas"}
             onClick={() => setViewMode("canvas")}
-            style={{
-              padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer",
-              border: "none", color: viewMode === "canvas" ? "#fff" : "rgba(255,255,255,0.4)",
-              background: viewMode === "canvas" ? "rgba(139,92,246,0.2)" : "transparent",
-            }}
-          >🌌 Graph</button>
+            style={segmentStyle(viewMode === "canvas")}
+          >Grafo</button>
         </div>
 
+        <div role="group" aria-label="Relación comercial" style={segmentedControlStyle}>
+          {([['all', 'Todos'], ['lead', 'Leads'], ['client', 'Clientes']] as const).map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={accountView === value} onClick={() => setAccountView(value)} style={segmentStyle(accountView === value)}>{label}</button>
+          ))}
+        </div>
+
+        <button type="button" aria-pressed={showPeople} onClick={() => setShowPeople(value => !value)} style={segmentStyle(showPeople)}>
+          {showPeople ? "Personas visibles" : "Personas ocultas"}
+        </button>
+
         <select aria-label="Filtrar por marca" style={filterSelectStyle} value={filterBrand} onChange={e => { setFilterBrand(e.target.value); setFilterTag(""); setFilterFormat(""); }}>
-          <option value="">All brands</option>
+          <option value="">Todas las marcas</option>
           {brands.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
         <select aria-label="Filtrar por etiqueta" style={filterSelectStyle} value={filterTag} onChange={e => setFilterTag(e.target.value)}>
-          <option value="">All tags</option>
+          <option value="">Todas las etiquetas</option>
           {allTags.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         <select aria-label="Filtrar por formato" style={filterSelectStyle} value={filterFormat} onChange={e => setFilterFormat(e.target.value)}>
-          <option value="">All formats</option>
+          <option value="">Todos los formatos</option>
           <option value="web">Web</option>
           <option value="mobile">Mobile</option>
           <option value="social">Social</option>
@@ -547,62 +601,56 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           <option value="email">Email</option>
         </select>
         <span style={{ fontSize: 11, color: "#8b93a7" }}>
-          {viewMode === "canvas"
-            ? `${nodes.length} templates · ${edges.length} connections`
-            : `${nodes.length} templates across ${brands.length} brand${brands.length !== 1 ? "s" : ""}`}
+          {hierarchy.length} marcas · {visibleDesignCount} archivos{showPeople ? ` · ${visiblePeopleCount} personas` : ""}
         </span>
       </div>
 
-      {/* Tree View (brand-grouped) */}
       {viewMode === "tree" && (
-        <BrandTreeView nodes={nodes} loading={loading} error={error} onRetry={fetchGraph} onOpenTemplate={onOpenTemplate} />
+        <CommercialTreeView workspace={workspace} hierarchy={hierarchy} showPeople={showPeople} loading={loading} error={error} onRetry={fetchGraph} onOpenTemplate={onOpenTemplate} />
       )}
 
-      {/* Canvas View (force graph) */}
       {viewMode === "canvas" && (
-        <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "radial-gradient(ellipse at 50% 40%, rgba(30,41,66,0.55) 0%, rgba(8,10,16,0.85) 100%)", border: "1px solid rgba(255,255,255,0.07)" }}>
+        <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
           {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
           {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
-          {!loading && !error && nodes.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>
-            No metadata yet. Tag templates from the Editor → Meta panel.
+          {!loading && !error && hierarchy.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>
+            No hay marcas para este filtro. Agrégalas desde Workspace → CRM.
           </div>}
-          <canvas ref={canvasRef} aria-label="Grafo interactivo de relaciones entre diseños" style={{ position: "absolute", inset: 0, display: loading || error ? "none" : "block" }} />
+          <canvas ref={canvasRef} aria-label="Grafo comercial interactivo de marcas, campañas, assets, archivos y personas" style={{ position: "absolute", inset: 0, display: loading || error || hierarchy.length === 0 ? "none" : "block" }} />
         </div>
       )}
     </div>
   );
 }
 
-// ── Brand Tree View Component ──
+// ── Commercial hierarchy ──
 
-function BrandTreeView({ nodes, loading, error, onRetry, onOpenTemplate }: {
-  nodes: DesignGraphNode[];
+function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, onRetry, onOpenTemplate }: {
+  workspace: DesignGraphWorkspace | null;
+  hierarchy: DesignBrandGroup[];
+  showPeople: boolean;
   loading: boolean;
   error: string;
   onRetry: () => void;
   onOpenTemplate?: (templateId: string) => void;
 }) {
   const treeId = useId().replace(/:/g, "");
-  const hierarchy = useMemo(() => buildDesignHierarchy(nodes), [nodes]);
-  const [expandedBrands, setExpandedBrands] = useState<Set<string>>(new Set());
-  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
-  const knownBrands = useRef(new Set<string>());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["status:lead", "status:client"]));
+  const knownBranches = useRef(new Set<string>());
 
   useEffect(() => {
-    setExpandedBrands((previous) => {
+    setExpanded((previous) => {
       const next = new Set(previous);
       for (const brand of hierarchy) {
-        if (!knownBrands.current.has(brand.name)) next.add(brand.name);
-        knownBrands.current.add(brand.name);
+        const key = `brand:${brand.id}`;
+        if (!knownBranches.current.has(key)) next.add(key);
+        knownBranches.current.add(key);
       }
       return next;
     });
   }, [hierarchy]);
 
-  const toggleExpanded = (
-    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
-    key: string,
-  ) => setter((previous) => {
+  const toggleExpanded = (key: string) => setExpanded((previous) => {
     const next = new Set(previous);
     if (next.has(key)) next.delete(key);
     else next.add(key);
@@ -615,12 +663,11 @@ function BrandTreeView({ nodes, loading, error, onRetry, onOpenTemplate }: {
   if (error) {
     return <div style={{ flex: 1, position: "relative" }}><GraphError message={error} onRetry={onRetry} /></div>;
   }
-  if (nodes.length === 0) {
+  if (hierarchy.length === 0) {
     return (
       <div style={{ ...centeredStateStyle, flexDirection: "column", gap: 12 }}>
-        <div aria-hidden="true" style={{ fontSize: 40, opacity: 0.2 }}>📂</div>
         <div style={{ color: "#777", textAlign: "center", maxWidth: 340 }}>
-          No hay metadata todavía. Abre un diseño → File Info para asignar marca, campaña y formato.
+          No hay marcas para este filtro. Agrégalas desde Workspace → CRM y vincula los archivos desde File Info.
         </div>
       </div>
     );
@@ -628,55 +675,94 @@ function BrandTreeView({ nodes, loading, error, onRetry, onOpenTemplate }: {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(10,10,20,0.3)", padding: 8 }}>
-      {hierarchy.map((brand, brandIndex) => {
-        const color = PALETTE[brandIndex % PALETTE.length];
-        const isExpanded = expandedBrands.has(brand.name);
-        const brandPanelId = `${treeId}-brand-${brandIndex}`;
+      <div style={{ ...treeButtonStyle, padding: "12px", background: "rgba(255,255,255,0.05)", cursor: "default" }}>
+        <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#f8fafc" }} />
+        <strong style={{ color: "#f8fafc", fontSize: 14 }}>{workspace?.name || "Tu marca"}</strong>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Centro comercial</span>
+      </div>
+
+      {(["lead", "client"] as const).map((status) => {
+        const statusBrands = hierarchy.filter((brand) => brand.relationshipStatus === status);
+        if (statusBrands.length === 0) return null;
+        const statusKey = `status:${status}`;
+        const statusExpanded = expanded.has(statusKey);
+        const statusPanelId = `${treeId}-${status}`;
         return (
-          <section key={brand.name} style={{ marginBottom: 4 }}>
+          <section key={status} style={{ margin: "6px 0 0 18px" }}>
             <button
               type="button"
-              aria-expanded={isExpanded}
-              aria-controls={brandPanelId}
-              onClick={() => toggleExpanded(setExpandedBrands, brand.name)}
-              style={{ ...treeButtonStyle, padding: "10px 12px", background: "rgba(255,255,255,0.03)" }}
+              aria-expanded={statusExpanded}
+              aria-controls={statusPanelId}
+              onClick={() => toggleExpanded(statusKey)}
+              style={{ ...treeButtonStyle, padding: "8px 10px" }}
             >
-              <span aria-hidden="true" style={{ ...chevronStyle, transform: isExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.82)" }}>{brand.name}</span>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
-                {brand.totalDesigns} diseño{brand.totalDesigns !== 1 ? "s" : ""}
-                {brand.campaigns.length > 0 ? ` · ${brand.campaigns.length} campaña${brand.campaigns.length !== 1 ? "s" : ""}` : ""}
-              </span>
+              <span aria-hidden="true" style={{ ...chevronStyle, transform: statusExpanded ? "rotate(90deg)" : "none" }}>▶</span>
+              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: status === "client" ? "#34d399" : "#fbbf24" }} />
+              <strong style={{ fontSize: 13 }}>{status === "client" ? "Clientes" : "Leads"}</strong>
+              <span style={countStyle}>{statusBrands.length}</span>
             </button>
 
-            {isExpanded && (
-              <div id={brandPanelId} style={{ marginLeft: 20, marginTop: 2 }}>
-                {brand.directDesigns.map((design) => (
-                  <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />
-                ))}
-                {brand.campaigns.map((campaign, campaignIndex) => {
-                  const campaignKey = `${brand.name}\u0000${campaign.name}`;
-                  const campaignExpanded = expandedCampaigns.has(campaignKey);
-                  const campaignPanelId = `${brandPanelId}-campaign-${campaignIndex}`;
+            {statusExpanded && (
+              <div id={statusPanelId} style={{ marginLeft: 18 }}>
+                {statusBrands.map((brand, brandIndex) => {
+                  const brandKey = `brand:${brand.id}`;
+                  const brandExpanded = expanded.has(brandKey);
+                  const brandPanelId = `${statusPanelId}-brand-${brandIndex}`;
+                  const color = PALETTE[brandIndex % PALETTE.length];
                   return (
-                    <section key={campaignKey} style={{ marginBottom: 2 }}>
+                    <section key={brand.id} style={{ marginBottom: 3 }}>
                       <button
                         type="button"
-                        aria-expanded={campaignExpanded}
-                        aria-controls={campaignPanelId}
-                        onClick={() => toggleExpanded(setExpandedCampaigns, campaignKey)}
-                        style={{ ...treeButtonStyle, padding: "7px 10px" }}
+                        aria-expanded={brandExpanded}
+                        aria-controls={brandPanelId}
+                        onClick={() => toggleExpanded(brandKey)}
+                        style={{ ...treeButtonStyle, padding: "9px 10px", background: "rgba(255,255,255,0.025)" }}
                       >
-                        <span aria-hidden="true" style={{ ...chevronStyle, fontSize: 9, transform: campaignExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.62)" }}>{campaign.name}</span>
-                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{campaign.designs.length}</span>
+                        <span aria-hidden="true" style={{ ...chevronStyle, transform: brandExpanded ? "rotate(90deg)" : "none" }}>▶</span>
+                        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+                        <strong style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}>{brand.name}</strong>
+                        <span style={countStyle}>{brand.campaigns.length} campañas · {brand.totalDesigns} archivos</span>
                       </button>
-                      {campaignExpanded && (
-                        <div id={campaignPanelId} style={{ marginLeft: 16, display: "flex", flexDirection: "column", gap: 2 }}>
-                          {campaign.designs.map((design) => (
-                            <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />
+
+                      {brandExpanded && (
+                        <div id={brandPanelId} style={{ marginLeft: 18 }}>
+                          {showPeople && brand.people.length > 0 && (
+                            <section aria-label={`Personas de ${brand.name}`} style={branchSectionStyle}>
+                              <div style={branchLabelStyle}>Personas <span style={countStyle}>{brand.people.length}</span></div>
+                              {brand.people.map(person => (
+                                <div key={person.id} style={personRowStyle}>
+                                  <span>{person.first_name} {person.last_name}</span>
+                                  <span style={countStyle}>{person.job_title || person.email || "Stakeholder"}</span>
+                                </div>
+                              ))}
+                            </section>
+                          )}
+
+                          {brand.directAssetGroups.map(assetGroup => (
+                            <AssetGroupRows key={`direct:${assetGroup.type}`} assetGroup={assetGroup} color={color} onOpenTemplate={onOpenTemplate} />
                           ))}
+
+                          {brand.campaigns.map((campaign, campaignIndex) => {
+                            const campaignKey = `campaign:${campaign.id}`;
+                            const campaignExpanded = expanded.has(campaignKey);
+                            const campaignPanelId = `${brandPanelId}-campaign-${campaignIndex}`;
+                            return (
+                              <section key={campaign.id} style={branchSectionStyle}>
+                                <button type="button" aria-expanded={campaignExpanded} aria-controls={campaignPanelId} onClick={() => toggleExpanded(campaignKey)} style={{ ...treeButtonStyle, padding: "7px 9px" }}>
+                                  <span aria-hidden="true" style={{ ...chevronStyle, transform: campaignExpanded ? "rotate(90deg)" : "none" }}>▶</span>
+                                  <span style={{ fontSize: 12, fontWeight: 600 }}>{campaign.name}</span>
+                                  <span style={countStyle}>{campaign.designs.length} archivos</span>
+                                </button>
+                                {campaignExpanded && (
+                                  <div id={campaignPanelId} style={{ marginLeft: 16 }}>
+                                    {campaign.assetGroups.map(assetGroup => (
+                                      <AssetGroupRows key={assetGroup.type} assetGroup={assetGroup} color={color} onOpenTemplate={onOpenTemplate} />
+                                    ))}
+                                  </div>
+                                )}
+                              </section>
+                            );
+                          })}
                         </div>
                       )}
                     </section>
@@ -691,39 +777,62 @@ function BrandTreeView({ nodes, loading, error, onRetry, onOpenTemplate }: {
   );
 }
 
+function AssetGroupRows({ assetGroup, color, onOpenTemplate }: {
+  assetGroup: DesignBrandGroup["directAssetGroups"][number];
+  color: string;
+  onOpenTemplate?: (templateId: string) => void;
+}) {
+  return (
+    <section aria-label={assetGroup.label} style={branchSectionStyle}>
+      <div style={branchLabelStyle}>{assetGroup.label} <span style={countStyle}>{assetGroup.designs.length}</span></div>
+      <div style={{ marginLeft: 10 }}>
+        {assetGroup.designs.map(design => <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />)}
+      </div>
+    </section>
+  );
+}
+
 function DesignRow({ design, color, onOpenTemplate }: {
   design: DesignGraphNode;
   color: string;
   onOpenTemplate?: (templateId: string) => void;
 }) {
   const setHighlighted = (element: HTMLButtonElement, highlighted: boolean) => {
-    element.style.background = highlighted ? "rgba(139,92,246,0.08)" : "transparent";
+    element.style.background = highlighted ? "rgba(255,255,255,0.06)" : "transparent";
   };
   return (
-    <button
-      type="button"
-      onClick={() => onOpenTemplate?.(design.id)}
-      onMouseEnter={(event) => setHighlighted(event.currentTarget, true)}
-      onMouseLeave={(event) => setHighlighted(event.currentTarget, false)}
-      onFocus={(event) => setHighlighted(event.currentTarget, true)}
-      onBlur={(event) => setHighlighted(event.currentTarget, false)}
-      style={{ ...treeButtonStyle, padding: "6px 10px" }}
-    >
-      {design.cover ? (
-        <img src={design.cover} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", border: `1px solid ${color}40` }} />
-      ) : (
-        <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: 4, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, opacity: 0.35 }}>📄</span>
-      )}
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.74)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{design.name}</span>
-        {(design.format || design.tags.length > 0) && (
-          <span style={{ display: "flex", gap: 4, marginTop: 2 }}>
-            {design.format && <span style={formatBadgeStyle}>{design.format}</span>}
-            {design.tags.slice(0, 2).map((tag) => <span key={tag} style={tagBadgeStyle}>{tag}</span>)}
-          </span>
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        onClick={() => onOpenTemplate?.(design.id)}
+        onMouseEnter={(event) => setHighlighted(event.currentTarget, true)}
+        onMouseLeave={(event) => setHighlighted(event.currentTarget, false)}
+        onFocus={(event) => setHighlighted(event.currentTarget, true)}
+        onBlur={(event) => setHighlighted(event.currentTarget, false)}
+        style={{ ...treeButtonStyle, padding: "6px 10px", flex: 1 }}
+      >
+        {design.cover ? (
+          <img src={design.cover} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", border: `1px solid ${color}40` }} />
+        ) : (
+          <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: 4, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, opacity: 0.35 }}>📄</span>
         )}
-      </span>
-    </button>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.74)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{design.name}</span>
+          {(design.format || design.tags.length > 0) && (
+            <span style={{ display: "flex", gap: 4, marginTop: 2 }}>
+              {design.format && <span style={formatBadgeStyle}>{design.format}</span>}
+              {design.tags.slice(0, 2).map((tag) => <span key={tag} style={tagBadgeStyle}>{tag}</span>)}
+            </span>
+          )}
+        </span>
+        <span style={countStyle}>Abrir archivo</span>
+      </button>
+      {design.obsidian_link && (
+        <a href={design.obsidian_link} target="_blank" rel="noreferrer" style={externalLinkStyle} aria-label={`Abrir ${design.name} en Obsidian`}>
+          Obsidian ↗
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -786,6 +895,69 @@ const tagBadgeStyle: React.CSSProperties = {
   color: "rgba(255,255,255,0.5)",
 };
 
+const segmentedControlStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 2,
+  borderRadius: 8,
+  overflow: "hidden",
+  border: "1px solid rgba(255,255,255,0.1)",
+  padding: 2,
+};
+
+function segmentStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: "4px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    border: "none",
+    borderRadius: 5,
+    color: active ? "#fff" : "rgba(255,255,255,0.55)",
+    background: active ? "rgba(255,255,255,0.12)" : "transparent",
+  };
+}
+
+const countStyle: React.CSSProperties = {
+  color: "rgba(255,255,255,0.4)",
+  fontSize: 10,
+  fontVariantNumeric: "tabular-nums",
+};
+
+const branchSectionStyle: React.CSSProperties = {
+  margin: "3px 0",
+  borderLeft: "1px solid rgba(255,255,255,0.07)",
+  paddingLeft: 8,
+};
+
+const branchLabelStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+  padding: "6px 9px",
+  color: "rgba(255,255,255,0.58)",
+  fontSize: 11,
+  fontWeight: 600,
+};
+
+const personRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "5px 9px 5px 18px",
+  color: "rgba(255,255,255,0.68)",
+  fontSize: 11,
+};
+
+const externalLinkStyle: React.CSSProperties = {
+  color: "#93c5fd",
+  fontSize: 10,
+  padding: "5px 7px",
+  borderRadius: 5,
+  textDecoration: "none",
+  whiteSpace: "nowrap",
+};
+
 const filterSelectStyle: React.CSSProperties = {
   padding: "4px 10px",
   fontSize: 11,
@@ -793,7 +965,6 @@ const filterSelectStyle: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.1)",
   borderRadius: 6,
   color: "#ccc",
-  outline: "none",
   fontFamily: "Inter, system-ui, sans-serif",
   cursor: "pointer",
 };

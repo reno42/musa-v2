@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 
 interface FileMeta {
+  brand_id: string | null;
   brand: string;
+  campaign_id: string | null;
   campaign: string;
+  asset_type: string;
   tags: string[];
   theme: string;
   format: string;
@@ -11,6 +14,9 @@ interface FileMeta {
   cover_image_url: string;
   obsidian_link: string;
 }
+
+interface BrandOption { id: string; name: string; relationship_status: "lead" | "client" }
+interface CampaignOption { id: string; brand_id: string; name: string; status: string }
 
 interface Props {
   templateId: string | null;
@@ -20,11 +26,21 @@ interface Props {
 
 const FORMATS = ["", "web", "mobile", "social", "print", "email"];
 const FILE_TYPES = ["", "frame", "deck", "template", "export"];
+const ASSET_TYPES = [
+  ["key_visual", "Key visual"],
+  ["social_media", "Social media"],
+  ["web", "Web"],
+  ["mailing", "Mailing"],
+  ["other", "Otro"],
+] as const;
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
-    brand: "", campaign: "", tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
+    brand_id: null, brand: "", campaign_id: null, campaign: "", asset_type: "other",
+    tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
   });
+  const [brands, setBrands] = useState<BrandOption[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -41,8 +57,11 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       .then(d => {
         if (d.success && d.data) {
           const m = {
+            brand_id: d.data.brand_id || null,
             brand: d.data.brand || "",
+            campaign_id: d.data.campaign_id || null,
             campaign: d.data.campaign || "",
+            asset_type: d.data.asset_type || "other",
             tags: d.data.tags || [],
             theme: d.data.theme || "",
             format: d.data.format || "",
@@ -56,6 +75,15 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    fetch(`/api/meta/${templateId}/taxonomy`, { headers: getApiHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return;
+        setBrands(Array.isArray(d.data?.brands) ? d.data.brands : []);
+        setCampaigns(Array.isArray(d.data?.campaigns) ? d.data.campaigns : []);
+      })
+      .catch(() => { setBrands([]); setCampaigns([]); });
   }, [templateId]);
 
   // Debounced auto-save
@@ -162,26 +190,48 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       </div>
 
       {/* Brand */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>Brand</label>
-        <input
-          style={inputStyle}
-          value={meta.brand}
-          onChange={e => scheduleSave({ brand: e.target.value })}
-          placeholder="e.g. BMW, Nike"
-        />
-      </div>
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Marca</span>
+        <select
+          style={selectStyle}
+          value={meta.brand_id || (meta.brand ? `legacy:${meta.brand}` : "")}
+          onChange={event => {
+            const selected = brands.find(brand => brand.id === event.target.value);
+            scheduleSave({ brand_id: selected?.id || null, brand: selected?.name || "", campaign_id: null, campaign: "" });
+          }}
+        >
+          <option value="">Sin marca</option>
+          {meta.brand && !meta.brand_id && <option value={`legacy:${meta.brand}`}>{meta.brand} (sin vincular)</option>}
+          {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name} · {brand.relationship_status === "client" ? "Cliente" : "Lead"}</option>)}
+        </select>
+      </label>
 
       {/* Campaign */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>Campaign</label>
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Campaña</span>
         <input
           style={inputStyle}
+          list={`campaigns-${templateId || "none"}`}
           value={meta.campaign}
-          onChange={e => scheduleSave({ campaign: e.target.value })}
-          placeholder="e.g. Black Friday 2026, Launch"
+          onChange={event => {
+            const campaign = campaigns.find(item => item.name === event.target.value && (!meta.brand_id || item.brand_id === meta.brand_id));
+            scheduleSave({ campaign_id: campaign?.id || null, campaign: event.target.value });
+          }}
+          placeholder="Ej. Black Friday 2026"
         />
-      </div>
+        <datalist id={`campaigns-${templateId || "none"}`}>
+          {campaigns.filter(campaign => !meta.brand_id || campaign.brand_id === meta.brand_id).map(campaign => (
+            <option key={campaign.id} value={campaign.name} />
+          ))}
+        </datalist>
+      </label>
+
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Tipo de asset</span>
+        <select style={selectStyle} value={meta.asset_type} onChange={event => scheduleSave({ asset_type: event.target.value })}>
+          {ASSET_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
 
       {/* Tags */}
       <div style={sectionStyle}>
@@ -199,7 +249,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
           {meta.tags.map(tag => (
             <span key={tag} style={chipStyle}>
               {tag}
-              <button type="button" onClick={() => removeTag(tag)} style={chipRemoveStyle}>×</button>
+              <button type="button" aria-label={`Eliminar etiqueta ${tag}`} onClick={() => removeTag(tag)} style={chipRemoveStyle}>×</button>
             </span>
           ))}
         </div>
@@ -276,6 +326,7 @@ const panelStyle: React.CSSProperties = {
 };
 
 const sectionStyle: React.CSSProperties = {
+  display: "block",
   marginBottom: 12,
 };
 
@@ -296,7 +347,6 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.1)",
   borderRadius: 4,
   color: "#ddd",
-  outline: "none",
   fontFamily: "Inter, system-ui, sans-serif",
   boxSizing: "border-box",
 };
