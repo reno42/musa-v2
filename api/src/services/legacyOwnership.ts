@@ -6,6 +6,66 @@ export function isLegacyWorkspaceOwner(ownerId: unknown): boolean {
   return typeof ownerId !== "string" || !UUID_PATTERN.test(ownerId);
 }
 
+export async function ensurePersonalWorkspace(
+  sb: SupabaseClient,
+  user: User,
+): Promise<string | null> {
+  const { data: owned, error: ownedError } = await sb
+    .from("workspaces")
+    .select("id")
+    .eq("owner_id", user.id)
+    .limit(1)
+    .maybeSingle();
+  if (ownedError) throw ownedError;
+  if (owned?.id) {
+    const { error: membershipError } = await sb.from("workspace_members").upsert({
+      workspace_id: owned.id,
+      user_id: user.id,
+      role: "owner",
+    }, { onConflict: "workspace_id,user_id" });
+    if (membershipError) throw membershipError;
+    return owned.id;
+  }
+
+  const compactUserId = user.id.replaceAll("-", "");
+  const workspaceId = `ws_user_${compactUserId.slice(0, 20)}`;
+  const slug = `workspace-${compactUserId.slice(0, 20)}`;
+  const displayName = String(
+    user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "Mi cuenta",
+  ).trim();
+  const name = `Workspace de ${displayName || "Mi cuenta"}`;
+  const now = new Date().toISOString();
+  const workspace = {
+    id: workspaceId,
+    name,
+    slug,
+    ownerId: user.id,
+    memberIds: [user.id],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const { error: workspaceError } = await sb.from("workspaces").upsert({
+    id: workspaceId,
+    name,
+    slug,
+    owner_id: user.id,
+    member_ids: [user.id],
+    data: workspace,
+    created_at: now,
+    updated_at: now,
+  });
+  if (workspaceError) throw workspaceError;
+
+  const { error: membershipError } = await sb.from("workspace_members").upsert({
+    workspace_id: workspaceId,
+    user_id: user.id,
+    role: "owner",
+  }, { onConflict: "workspace_id,user_id" });
+  if (membershipError) throw membershipError;
+  return workspaceId;
+}
+
 /**
  * Transfers pre-SaaS workspaces to the initial account exactly once.
  * An explicit SAAS_INITIAL_OWNER_EMAIL wins; otherwise automatic claiming is

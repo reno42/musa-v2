@@ -6,7 +6,7 @@ import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 import { useAuth } from "./lib/auth";
-import { AuthConfigurationScreen, AuthScreen } from "./components/AuthScreen";
+import { AuthConfigurationScreen, AuthScreen, InvitationGate, PasswordUpdateScreen } from "./components/AuthScreen";
 
 type ViewMode = "landing" | "dashboard" | "editor-v2";
 
@@ -37,7 +37,16 @@ const initialAppState: AppState = {
 };
 
 function App() {
-  const { configured: authConfigured, authRequired, configurationError, loading: authLoading, user } = useAuth();
+  const {
+    configured: authConfigured,
+    authRequired,
+    configurationError,
+    loading: authLoading,
+    user,
+    passwordRecovery,
+    needsPasswordSetup,
+    completePasswordRecovery,
+  } = useAuth();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const { addToast } = useToast();
   const [resolving, setResolving] = useState(false);
@@ -97,7 +106,14 @@ function App() {
     if (authLoading) return;
     const params = new URLSearchParams(window.location.search);
     const tplId = params.get("template");
+    const inviteToken = params.get("invite");
+    const resetPassword = params.get("reset") === "1";
     const hash = window.location.hash.replace("#", "");
+
+    if (inviteToken || resetPassword) {
+      dispatch({ type: "ENTER_WORKSPACE" });
+      return;
+    }
 
     // ── Clean URL routing (/w/:wsSlug[/:tplSlug]) ──
     const path = window.location.pathname;
@@ -143,6 +159,28 @@ function App() {
     }
     // else stays on landing (default)
   }, [authConfigured, authLoading]);
+
+  const inviteToken = new URLSearchParams(window.location.search).get("invite");
+
+  if (authLoading && (Boolean(inviteToken) || passwordRecovery)) {
+    return <main className="auth-shell"><p className="auth-copy" role="status">Cargando sesión…</p></main>;
+  }
+
+  if (authRequired && !authConfigured && !authLoading && (Boolean(inviteToken) || passwordRecovery)) {
+    return <AuthConfigurationScreen error={configurationError || "No se pudo configurar Supabase Auth."} onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
+  }
+
+  if (passwordRecovery) {
+    return <PasswordUpdateScreen kind="recovery" onComplete={() => { completePasswordRecovery(); dispatch({ type: "ENTER_WORKSPACE" }); }} />;
+  }
+
+  if (needsPasswordSetup) {
+    return <PasswordUpdateScreen kind="invitation" onComplete={() => dispatch({ type: "ENTER_WORKSPACE" })} />;
+  }
+
+  if (inviteToken && authConfigured) {
+    return <InvitationGate token={inviteToken} onBack={() => { window.history.replaceState(null, "", "/"); dispatch({ type: "SET_VIEW", view: "landing" }); }} />;
+  }
 
   if (authLoading && view !== "landing") {
     return <main className="auth-shell"><p className="auth-copy" role="status">Cargando sesión…</p></main>;

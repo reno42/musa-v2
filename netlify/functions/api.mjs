@@ -13,6 +13,12 @@ function checkAdminKey(event) {
 
   const headers = event.headers || {};
   const apiKey = headers["x-api-key"] || "";
+  const bearer = headers.authorization || headers.Authorization || "";
+
+  // User-session writes are validated by the Express auth middleware. The
+  // Netlify preflight must not reject a valid Supabase Bearer token merely
+  // because an MCP admin key is also configured in the deployment.
+  if (/^Bearer\s+\S+/i.test(bearer)) return true;
 
   // Admin key bypass
   if (apiKey === adminKey) return true;

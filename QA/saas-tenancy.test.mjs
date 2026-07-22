@@ -70,13 +70,40 @@ test("v10 migration links CRM accounts, campaigns, asset categories and graph RL
   assert.match(sql, /CREATE POLICY "campaigns_workspace_write"[\s\S]*has_workspace_role\(workspace_id, 'editor'\)/i);
 });
 
+test("v11 migration provisions personal workspaces and secures invitation lifecycle", () => {
+  const sql = readFileSync(new URL("../supabase_migrations_v11.sql", import.meta.url), "utf8");
+  for (const column of ["accepted_by", "declined_at", "revoked_at", "last_sent_at", "delivery_method", "requires_account_setup"]) {
+    assert.match(sql, new RegExp(`workspace_invitations ADD COLUMN IF NOT EXISTS ${column}`, "i"));
+  }
+  assert.match(sql, /CREATE OR REPLACE FUNCTION handle_new_futuraria_user/i);
+  assert.match(sql, /UPDATE OF email, email_confirmed_at ON auth\.users/i);
+  assert.match(sql, /WHERE u\.email_confirmed_at IS NOT NULL/i);
+  assert.match(sql, /INSERT INTO workspaces[\s\S]*ws_user_/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION accept_workspace_invitation/i);
+  assert.match(sql, /FOR UPDATE/i);
+  assert.match(sql, /lower\(target_invitation\.email\) <> current_email/i);
+  assert.match(sql, /REVOKE EXECUTE ON FUNCTION accept_workspace_invitation\(TEXT, UUID\) FROM PUBLIC, anon/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION accept_workspace_invitation\(TEXT, UUID\) TO authenticated/i);
+});
+
 test("browser auth can load public Supabase config at runtime", () => {
   const client = readFileSync(new URL("../src/lib/supabaseClient.ts", import.meta.url), "utf8");
   const middleware = readFileSync(new URL("../api/src/middleware/auth.ts", import.meta.url), "utf8");
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const authScreen = readFileSync(new URL("../src/components/AuthScreen.tsx", import.meta.url), "utf8");
+  const invitations = readFileSync(new URL("../api/src/services/workspaceInvitations.ts", import.meta.url), "utf8");
+  const netlifyApi = readFileSync(new URL("../netlify/functions/api.mjs", import.meta.url), "utf8");
   assert.match(client, /fetch\("\/api\/auth\/config"/);
   assert.match(client, /config\?\.publishableKey \|\| config\?\.anonKey/);
   assert.match(middleware, /req\.path === "\/api\/auth\/config"/);
+  assert.match(middleware, /req\.path\.startsWith\("\/api\/invitations\/"\)/);
   assert.match(app, /if \(authLoading\) return;/);
+  assert.match(app, /<InvitationGate token=\{inviteToken\}/);
+  assert.match(authScreen, /resetPasswordForEmail/);
+  assert.match(authScreen, /updateUser\(\{ password/);
+  assert.match(invitations, /inviteUserByEmail/);
+  assert.match(invitations, /signInWithOtp/);
+  assert.match(invitations, /maskEmail/);
+  assert.match(netlifyApi, /if \(\/\^Bearer\\s\+\\S\+\/i\.test\(bearer\)\) return true/);
   assert.doesNotMatch(client, /SUPABASE_(?:SERVICE|SECRET)_KEY/);
 });

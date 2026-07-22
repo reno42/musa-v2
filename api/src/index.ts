@@ -25,7 +25,7 @@ import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
-import { accountRoutes, workspaceSaasRoutes } from "./routes/saas.js";
+import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
@@ -101,6 +101,7 @@ app.get("/api/health/storage", (_req, res) => {
 });
 
 // Route groups
+app.use("/api/invitations", invitationRoutes);
 app.use("/api/account", requireUserSession, accountRoutes);
 app.use("/api/workspaces", workspaceSaasRoutes);
 app.use("/api/workspaces", workspaceRoutes);

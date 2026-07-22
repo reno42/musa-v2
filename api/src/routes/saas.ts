@@ -1,11 +1,12 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import crypto from "node:crypto";
 import { z } from "zod";
-import { getSupabaseAdmin } from "../services/supabase.js";
+import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
 import { encryptWorkspaceSecret } from "../services/secrets.js";
 import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations.js";
 import { requireWorkspaceRole } from "../services/tenancy.js";
-import { claimLegacyWorkspacesForInitialUser } from "../services/legacyOwnership.js";
+import { claimLegacyWorkspacesForInitialUser, ensurePersonalWorkspace } from "../services/legacyOwnership.js";
+import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../services/workspaceInvitations.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -20,6 +21,47 @@ function hash(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function invitationState(invitation: any) {
+  if (invitation.accepted_at) return "accepted";
+  if (invitation.declined_at) return "declined";
+  if (invitation.revoked_at) return "revoked";
+  if (new Date(invitation.expires_at) <= new Date()) return "expired";
+  return "pending";
+}
+
+async function invitationDetails(sb: ReturnType<typeof dbOrThrow>, invitations: any[]) {
+  const workspaceIds = [...new Set(invitations.map((item) => item.workspace_id).filter(Boolean))];
+  const inviterIds = [...new Set(invitations.map((item) => item.invited_by).filter(Boolean))];
+  const [{ data: workspaces }, { data: inviters }] = await Promise.all([
+    workspaceIds.length ? sb.from("workspaces").select("id, name").in("id", workspaceIds) : Promise.resolve({ data: [] }),
+    inviterIds.length ? sb.from("user_profiles").select("id, display_name, email").in("id", inviterIds) : Promise.resolve({ data: [] }),
+  ]);
+  const workspaceMap = new Map((workspaces || []).map((item: any) => [item.id, item]));
+  const inviterMap = new Map((inviters || []).map((item: any) => [item.id, item]));
+  return invitations.map((invitation) => ({
+    id: invitation.id,
+    workspaceId: invitation.workspace_id,
+    workspaceName: (workspaceMap.get(invitation.workspace_id) as any)?.name || "Workspace",
+    email: invitation.email,
+    role: invitation.role,
+    status: invitationState(invitation),
+    expiresAt: invitation.expires_at,
+    createdAt: invitation.created_at,
+    lastSentAt: invitation.last_sent_at,
+    deliveryMethod: invitation.delivery_method || "link",
+    requiresAccountSetup: Boolean(invitation.requires_account_setup),
+    invitedBy: (inviterMap.get(invitation.invited_by) as any)?.display_name
+      || (inviterMap.get(invitation.invited_by) as any)?.email
+      || "Un administrador",
+  }));
+}
+
+function invitationRpcStatus(error: any) {
+  if (error?.code === "P0002") return 404;
+  if (error?.code === "42501") return 403;
+  return 400;
+}
+
 export const accountRoutes = Router();
 
 accountRoutes.post("/bootstrap", async (req, res) => {
@@ -30,15 +72,17 @@ accountRoutes.post("/bootstrap", async (req, res) => {
     const user = userResult.user;
     const profile = {
       id: user.id,
-      email: user.email,
+      email: user.email?.toLowerCase(),
       display_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0],
       avatar_url: user.user_metadata?.avatar_url || null,
       updated_at: new Date().toISOString(),
     };
-    await sb.from("user_profiles").upsert(profile);
+    const { error: profileError } = await sb.from("user_profiles").upsert(profile);
+    if (profileError) throw profileError;
     const legacyWorkspacesClaimed = await claimLegacyWorkspacesForInitialUser(sb, user);
+    const personalWorkspaceId = await ensurePersonalWorkspace(sb, user);
 
-    res.json({ success: true, data: { profile, legacyWorkspacesClaimed } });
+    res.json({ success: true, data: { profile, legacyWorkspacesClaimed, personalWorkspaceId } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -54,28 +98,180 @@ accountRoutes.get("/me", async (req, res) => {
   }
 });
 
-accountRoutes.post("/invitations/accept", async (req, res) => {
+accountRoutes.get("/invitations", async (req, res) => {
   try {
-    const token = z.string().min(20).parse(req.body.token);
+    res.setHeader("Cache-Control", "no-store");
     const sb = dbOrThrow();
-    const { data: userResult } = await sb.auth.admin.getUserById(req.auth!.userId);
-    const email = userResult.user?.email?.toLowerCase();
-    if (!email || !userResult.user?.email_confirmed_at) {
-      return res.status(400).json({ success: false, error: "A verified email is required to accept an invitation" });
+    const { data: userResult, error: userError } = await sb.auth.admin.getUserById(req.auth!.userId);
+    if (userError || !userResult.user?.email || !userResult.user.email_confirmed_at) {
+      return res.status(400).json({ success: false, error: "A verified email is required" });
     }
-    const { data: invitation } = await sb.from("workspace_invitations")
-      .select("id, workspace_id, email, role, expires_at")
-      .eq("token_hash", hash(token)).is("accepted_at", null).maybeSingle();
-    if (!invitation || invitation.email.toLowerCase() !== email || new Date(invitation.expires_at) <= new Date()) {
-      return res.status(404).json({ success: false, error: "Invitation not found or expired" });
-    }
-    await sb.from("workspace_members").upsert({ workspace_id: invitation.workspace_id, user_id: req.auth!.userId, role: invitation.role });
-    await sb.from("workspace_invitations").update({ accepted_at: new Date().toISOString() }).eq("id", invitation.id);
-    res.json({ success: true, data: { workspaceId: invitation.workspace_id } });
+    const { data, error } = await sb.from("workspace_invitations")
+      .select("id, workspace_id, email, role, invited_by, expires_at, accepted_at, declined_at, revoked_at, created_at, last_sent_at, delivery_method, requires_account_setup")
+      .eq("email", userResult.user.email.trim().toLowerCase())
+      .is("accepted_at", null)
+      .is("declined_at", null)
+      .is("revoked_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    res.json({ success: true, data: await invitationDetails(sb, data || []) });
   } catch (error: any) {
-    res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
+
+async function respondToInvitation(req: any, res: any, response: "accept" | "decline") {
+  try {
+    const selector = z.object({ token: z.string().min(20).optional(), invitationId: z.string().uuid().optional() })
+      .refine((value) => Boolean(value.token || value.invitationId), "Invitation token or id is required")
+      .parse({ token: req.body?.token, invitationId: req.params?.invitationId });
+    const sb = getSupabase();
+    if (!sb) throw new Error("Supabase is required for workspace invitations");
+    const functionName = response === "accept" ? "accept_workspace_invitation" : "decline_workspace_invitation";
+    const { data, error } = await sb.rpc(functionName, {
+      invitation_token_hash: selector.token ? hash(selector.token) : null,
+      target_invitation_id: selector.invitationId || null,
+    });
+    if (error) return res.status(invitationRpcStatus(error)).json({ success: false, error: error.message });
+    return res.json({ success: true, data: { workspaceId: data } });
+  } catch (error: any) {
+    const status = error instanceof z.ZodError ? 400 : 500;
+    return res.status(status).json({ success: false, error: error.message });
+  }
+}
+
+accountRoutes.post("/invitations/accept", async (req, res) => {
+  return respondToInvitation(req, res, "accept");
+});
+
+accountRoutes.post("/invitations/decline", async (req, res) => respondToInvitation(req, res, "decline"));
+accountRoutes.post("/invitations/:invitationId/accept", async (req, res) => respondToInvitation(req, res, "accept"));
+accountRoutes.post("/invitations/:invitationId/decline", async (req, res) => respondToInvitation(req, res, "decline"));
+
+export const invitationRoutes = Router();
+
+invitationRoutes.get("/:token", async (req, res) => {
+  try {
+    const token = z.string().min(20).max(200).parse(req.params.token);
+    const sb = dbOrThrow();
+    const { data: invitation, error } = await sb.from("workspace_invitations")
+      .select("id, workspace_id, email, role, invited_by, expires_at, accepted_at, declined_at, revoked_at, created_at, last_sent_at, delivery_method, requires_account_setup")
+      .eq("token_hash", hash(token))
+      .maybeSingle();
+    if (error) throw error;
+    if (!invitation || invitationState(invitation) !== "pending") {
+      return res.status(404).json({ success: false, error: "Invitation not found or expired" });
+    }
+    const [details] = await invitationDetails(sb, [invitation]);
+    const { data: profile } = await sb.from("user_profiles").select("id").eq("email", invitation.email).limit(1).maybeSingle();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      data: {
+        ...details,
+        email: undefined,
+        maskedEmail: maskEmail(invitation.email),
+        accountExists: Boolean(profile),
+      },
+    });
+  } catch (error: any) {
+    const status = error instanceof z.ZodError ? 400 : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+async function issueWorkspaceInvitation(
+  req: Request,
+  workspaceId: string,
+  emailInput: string,
+  role: z.infer<typeof roleSchema>,
+  invitationId?: string,
+) {
+  const sb = dbOrThrow();
+  const email = emailInput.trim().toLowerCase();
+  const { data: recipientProfile } = await sb.from("user_profiles")
+    .select("id, email")
+    .eq("email", email)
+    .limit(1)
+    .maybeSingle();
+
+  if (recipientProfile?.id === req.auth!.userId) {
+    throw Object.assign(new Error("You already have access to this workspace"), { statusCode: 409 });
+  }
+  if (recipientProfile?.id) {
+    const { data: existingMember } = await sb.from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", recipientProfile.id)
+      .maybeSingle();
+    if (existingMember) {
+      throw Object.assign(new Error("This person is already a workspace member"), { statusCode: 409 });
+    }
+  }
+
+  const rawToken = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  const now = new Date().toISOString();
+  let invitation: any;
+
+  if (invitationId) {
+    const { data, error } = await sb.from("workspace_invitations").update({
+      token_hash: hash(rawToken),
+      role,
+      expires_at: expiresAt,
+      last_sent_at: now,
+      accepted_at: null,
+      accepted_by: null,
+      declined_at: null,
+      revoked_at: null,
+      revoked_by: null,
+    }).eq("workspace_id", workspaceId).eq("id", invitationId)
+      .select("id, email, role, expires_at, created_at").single();
+    if (error) throw error;
+    invitation = data;
+  } else {
+    await sb.from("workspace_invitations").update({
+      revoked_at: now,
+      revoked_by: req.auth!.userId,
+    }).eq("workspace_id", workspaceId)
+      .eq("email", email)
+      .is("accepted_at", null)
+      .is("declined_at", null)
+      .is("revoked_at", null);
+
+    const { data, error } = await sb.from("workspace_invitations").insert({
+      workspace_id: workspaceId,
+      email,
+      role,
+      token_hash: hash(rawToken),
+      invited_by: req.auth!.userId,
+      expires_at: expiresAt,
+      accepted_at: null,
+      last_sent_at: now,
+    }).select("id, email, role, expires_at, created_at").single();
+    if (error) throw error;
+    invitation = data;
+  }
+
+  const inviteLink = invitationUrl(req, rawToken);
+  const delivery = await deliverWorkspaceInvitation(sb, email, inviteLink, Boolean(recipientProfile));
+  const { error: deliveryUpdateError } = await sb.from("workspace_invitations").update({
+    delivery_method: delivery.method,
+    requires_account_setup: delivery.requiresAccountSetup,
+    last_sent_at: now,
+  }).eq("id", invitation.id);
+  if (deliveryUpdateError) throw deliveryUpdateError;
+
+  return {
+    ...invitation,
+    inviteLink,
+    emailSent: delivery.emailSent,
+    deliveryMethod: delivery.method,
+    requiresAccountSetup: delivery.requiresAccountSetup,
+    warning: delivery.warning,
+  };
+}
 
 export const workspaceSaasRoutes = Router();
 
@@ -104,25 +300,67 @@ workspaceSaasRoutes.get("/:id/members", requireWorkspaceRole("viewer"), async (r
 
 workspaceSaasRoutes.post("/:id/invitations", requireWorkspaceRole("admin"), async (req, res) => {
   try {
+    res.setHeader("Cache-Control", "no-store");
     const parsed = z.object({ email: z.string().email(), role: roleSchema.default("editor") }).parse(req.body);
-    const sb = dbOrThrow();
-    const rawToken = crypto.randomBytes(24).toString("base64url");
-    await sb.from("workspace_invitations").delete()
-      .eq("workspace_id", req.params.id).ilike("email", parsed.email.trim()).is("accepted_at", null);
-    const { data, error } = await sb.from("workspace_invitations").insert({
-      workspace_id: req.params.id,
-      email: parsed.email.trim().toLowerCase(),
-      role: parsed.role,
-      token_hash: hash(rawToken),
-      invited_by: req.auth!.userId,
-      expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-      accepted_at: null,
-    }).select("id, email, role, expires_at").single();
-    if (error) throw error;
-    res.status(201).json({ success: true, data: { ...data, inviteToken: rawToken } });
+    const data = await issueWorkspaceInvitation(req, req.params.id, parsed.email, parsed.role);
+    res.status(201).json({ success: true, data });
   } catch (error: any) {
-    const status = error instanceof z.ZodError ? 400 : 500;
+    const status = error instanceof z.ZodError ? 400 : error.statusCode || 500;
     res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.get("/:id/invitations", requireWorkspaceRole("admin"), async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const sb = dbOrThrow();
+    const { data, error } = await sb.from("workspace_invitations")
+      .select("id, workspace_id, email, role, invited_by, expires_at, accepted_at, declined_at, revoked_at, created_at, last_sent_at, delivery_method, requires_account_setup")
+      .eq("workspace_id", req.params.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json({ success: true, data: await invitationDetails(sb, data || []) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.post("/:id/invitations/:invitationId/resend", requireWorkspaceRole("admin"), async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const sb = dbOrThrow();
+    const { data: invitation, error } = await sb.from("workspace_invitations")
+      .select("id, email, role, accepted_at")
+      .eq("workspace_id", req.params.id)
+      .eq("id", req.params.invitationId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!invitation || invitation.accepted_at) {
+      return res.status(404).json({ success: false, error: "Pending invitation not found" });
+    }
+    const role = roleSchema.parse(invitation.role);
+    const data = await issueWorkspaceInvitation(req, req.params.id, invitation.email, role, invitation.id);
+    res.json({ success: true, data });
+  } catch (error: any) {
+    const status = error instanceof z.ZodError ? 400 : error.statusCode || 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.delete("/:id/invitations/:invitationId", requireWorkspaceRole("admin"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { error } = await sb.from("workspace_invitations").update({
+      revoked_at: new Date().toISOString(),
+      revoked_by: req.auth!.userId,
+    }).eq("workspace_id", req.params.id)
+      .eq("id", req.params.invitationId)
+      .is("accepted_at", null);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

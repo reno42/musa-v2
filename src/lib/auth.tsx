@@ -10,6 +10,9 @@ type AuthContextValue = {
   loading: boolean;
   session: Session | null;
   user: User | null;
+  passwordRecovery: boolean;
+  needsPasswordSetup: boolean;
+  completePasswordRecovery: () => void;
   signOut: () => Promise<void>;
 };
 
@@ -21,33 +24,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authRequired, setAuthRequired] = useState(isSupabaseAuthConfigured);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [passwordRecovery, setPasswordRecovery] = useState(() => new URLSearchParams(window.location.search).get("reset") === "1");
 
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
 
-    const activateSession = async (nextSession: Session | null) => {
+    const activateSession = (nextSession: Session | null) => {
       if (!active) return;
       setAccessToken(nextSession?.access_token || "");
-      if (nextSession) {
-        const headers = { Authorization: `Bearer ${nextSession.access_token}`, "Content-Type": "application/json; charset=utf-8" };
-        await fetch("/api/account/bootstrap", { method: "POST", headers, body: "{}" }).catch(() => undefined);
-        const inviteToken = new URLSearchParams(window.location.search).get("invite");
-        if (inviteToken) {
-          await fetch("/api/account/invitations/accept", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ token: inviteToken }),
-          }).then((response) => {
-            if (response.ok) {
-              const url = new URL(window.location.href);
-              url.searchParams.delete("invite");
-              window.history.replaceState(null, "", `${url.pathname}${url.search}#workspace`);
-            }
-          }).catch(() => undefined);
-        }
-      }
-      if (active) setSession(nextSession);
+      setSession(nextSession);
+    };
+
+    const bootstrapAccount = (nextSession: Session | null) => {
+      if (!nextSession) return;
+      const headers = { Authorization: `Bearer ${nextSession.access_token}`, "Content-Type": "application/json; charset=utf-8" };
+      void fetch("/api/account/bootstrap", { method: "POST", headers, body: "{}" }).catch(() => undefined);
     };
 
     void initializeBrowserSupabase().then(async ({ client, authRequired: required, error }) => {
@@ -58,13 +50,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!client) return;
 
       const { data } = await client.auth.getSession();
-      await activateSession(data.session);
+      activateSession(data.session);
+      bootstrapAccount(data.session);
       if (!active) return;
 
-      const { data: listener } = client.auth.onAuthStateChange((_event, nextSession) => {
-        void activateSession(nextSession).finally(() => {
-          if (active) setLoading(false);
-        });
+      const { data: listener } = client.auth.onAuthStateChange((event, nextSession) => {
+        if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+        activateSession(nextSession);
+        bootstrapAccount(nextSession);
+        if (active) setLoading(false);
       });
       unsubscribe = () => listener.subscription.unsubscribe();
     }).finally(() => {
@@ -84,12 +78,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     session,
     user: session?.user || null,
+    passwordRecovery,
+    needsPasswordSetup: Boolean(session?.user?.user_metadata?.needs_password_setup),
+    completePasswordRecovery: () => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("reset");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash || "#workspace"}`);
+      setPasswordRecovery(false);
+    },
     signOut: async () => {
       const { client } = await initializeBrowserSupabase();
-      if (client) await client.auth.signOut();
+      if (client) await client.auth.signOut({ scope: "local" });
       setAccessToken("");
     },
-  }), [authRequired, configurationError, configured, loading, session]);
+  }), [authRequired, configurationError, configured, loading, passwordRecovery, session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

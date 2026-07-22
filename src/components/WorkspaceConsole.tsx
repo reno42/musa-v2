@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 import { useAuth } from "../lib/auth";
+import { browserSupabase } from "../lib/supabaseClient";
 
-type Section = "team" | "agents" | "crm";
+type Section = "team" | "agents" | "crm" | "account";
 type Member = { id: string; email?: string; display_name?: string; role: "owner" | "admin" | "editor" | "viewer" };
+type Invitation = { id: string; email: string; role: "admin" | "editor" | "viewer"; status: "pending" | "accepted" | "declined" | "revoked" | "expired"; expiresAt: string; createdAt: string; lastSentAt?: string; deliveryMethod: string; workspaceName?: string; invitedBy?: string };
 type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
 type Connection = { id: string; name: string; kind: string; provider: string; endpointUrl: string; enabled: boolean; hasCredentials: boolean };
 type Contact = { id: string; brand_id?: string; first_name: string; last_name?: string; email?: string; job_title?: string; company?: string; brand_name?: string; status: string; tags?: string[] };
@@ -40,6 +42,7 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
   const { user, signOut } = useAuth();
   const [section, setSection] = useState<Section>("team");
   const [members, setMembers] = useState<Member[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -56,14 +59,22 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
     try {
       if (section === "team") {
         const result = await workspaceFetch<{ data: Member[] }>(`/api/workspaces/${workspaceId}/members`);
-        setMembers(result.data || []);
+        const nextMembers = result.data || [];
+        setMembers(nextMembers);
+        const currentRole = nextMembers.find((member) => member.id === user?.id)?.role;
+        if (currentRole === "owner" || currentRole === "admin") {
+          const invitationResult = await workspaceFetch<{ data: Invitation[] }>(`/api/workspaces/${workspaceId}/invitations`);
+          setInvitations(invitationResult.data || []);
+        } else {
+          setInvitations([]);
+        }
       } else if (section === "agents") {
         const [keyResult, connectionResult] = await Promise.all([
           workspaceFetch<{ data: ApiKey[] }>(`/api/workspaces/${workspaceId}/api-keys`),
           workspaceFetch<{ data: Connection[] }>(`/api/workspaces/${workspaceId}/connections`),
         ]);
         setKeys(keyResult.data || []); setConnections(connectionResult.data || []);
-      } else {
+      } else if (section === "crm") {
         const [contactResult, brandResult] = await Promise.all([
           workspaceFetch<{ data: Contact[] }>(`/api/workspaces/${workspaceId}/contacts`),
           workspaceFetch<{ data: BrandAccount[] }>(`/api/workspaces/${workspaceId}/brands`),
@@ -73,7 +84,7 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
       }
     } catch (cause: any) { setError(cause.message); }
     setLoading(false);
-  }, [workspaceId, section]);
+  }, [workspaceId, section, user?.id]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -88,39 +99,266 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
         <div className="workspace-account"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>
       </header>
       <nav className="workspace-subnav" aria-label="Administración del workspace">
-        {([['team', 'Equipo'], ['agents', 'APIs y MCPs'], ['crm', 'CRM']] as const).map(([id, label]) => (
+        {([['team', 'Equipo'], ['agents', 'APIs y MCPs'], ['crm', 'CRM'], ['account', 'Cuenta']] as const).map(([id, label]) => (
           <button key={id} type="button" aria-current={section === id ? "page" : undefined} className={section === id ? "active" : ""} onClick={() => { setSection(id); setError(""); setNotice(""); }}>{label}</button>
         ))}
       </nav>
       {(error || notice) && <p id={statusId} className={error ? "workspace-status error" : "workspace-status success"} role={error ? "alert" : "status"}>{error || notice}</p>}
-      {section === "team" && <TeamSection workspaceId={workspaceId} members={members} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+      {section === "team" && <TeamSection workspaceId={workspaceId} members={members} invitations={invitations} currentUserId={user?.id} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
       {section === "agents" && <AgentsSection workspaceId={workspaceId} keys={keys} connections={connections} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
       {section === "crm" && <CrmSection workspaceId={workspaceId} contacts={contacts} brands={brands} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+      {section === "account" && <AccountSection setError={setError} setNotice={setNotice} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} body={confirmAction.body} confirmLabel={confirmAction.label} onConfirm={confirmAction.run} onClose={() => setConfirmAction(null)} />}
     </section>
   );
 }
 
-function TeamSection({ workspaceId, members, reload, setError, setNotice, setConfirmAction }: any) {
-  const [email, setEmail] = useState(""); const [role, setRole] = useState("editor"); const [submitting, setSubmitting] = useState(false);
+function TeamSection({ workspaceId, members, invitations, currentUserId, reload, setError, setNotice, setConfirmAction }: any) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("editor");
+  const [submitting, setSubmitting] = useState(false);
+  const currentRole = members.find((member: Member) => member.id === currentUserId)?.role;
+  const canManage = currentRole === "owner" || currentRole === "admin";
+
+  const copyLink = async (link: string) => {
+    if (!navigator.clipboard) return false;
+    await navigator.clipboard.writeText(link);
+    return true;
+  };
+
   const invite = async (event: FormEvent) => {
-    event.preventDefault(); setSubmitting(true); setError("");
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
     try {
-      const result = await workspaceFetch<any>(`/api/workspaces/${workspaceId}/invitations`, { method: "POST", body: JSON.stringify({ email, role }) });
-      await navigator.clipboard?.writeText(`${location.origin}/?invite=${encodeURIComponent(result.data.inviteToken)}#workspace`);
-      setEmail(""); setNotice("Invitación creada. El enlace se copió al portapapeles.");
+      const result = await workspaceFetch<any>(`/api/workspaces/${workspaceId}/invitations`, {
+        method: "POST",
+        body: JSON.stringify({ email, role }),
+      });
+      const copied = await copyLink(result.data.inviteLink).catch(() => false);
+      setEmail("");
+      setNotice(result.data.emailSent
+        ? `Invitación enviada por correo${copied ? " y enlace copiado" : ""}.`
+        : `${result.data.warning || "Invitación creada."}${copied ? " El enlace se copió al portapapeles." : ""}`);
+      await reload();
     } catch (cause: any) { setError(cause.message); }
     setSubmitting(false);
   };
-  const updateRole = async (userId: string, nextRole: string) => {
-    try { await workspaceFetch(`/api/workspaces/${workspaceId}/members/${userId}`, { method: "PATCH", body: JSON.stringify({ role: nextRole }) }); await reload(); }
-    catch (cause: any) { setError(cause.message); }
+
+  const resend = async (invitation: Invitation) => {
+    setError("");
+    try {
+      const result = await workspaceFetch<any>(`/api/workspaces/${workspaceId}/invitations/${invitation.id}/resend`, { method: "POST", body: "{}" });
+      const copied = await copyLink(result.data.inviteLink).catch(() => false);
+      setNotice(result.data.emailSent
+        ? `Invitación reenviada a ${invitation.email}${copied ? " y enlace copiado" : ""}.`
+        : `${result.data.warning || "Invitación renovada."}${copied ? " El enlace se copió." : ""}`);
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
   };
-  const remove = (member: Member) => setConfirmAction({ title: "Quitar acceso", body: `${member.display_name || member.email || "Este usuario"} dejará de ver el workspace.`, label: "Quitar", run: async () => {
-    try { await workspaceFetch(`/api/workspaces/${workspaceId}/members/${member.id}`, { method: "DELETE" }); await reload(); }
-    catch (cause: any) { setError(cause.message); }
-  }});
-  return <div className="workspace-grid"><article className="workspace-panel"><h3>Invitar persona</h3><form className="workspace-form-row" onSubmit={invite}><Field label="Correo"><input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></Field><Field label="Rol"><select value={role} onChange={e => setRole(e.target.value)}><option value="admin">Admin</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select></Field><button className="workspace-button" disabled={submitting}>{submitting ? "Invitando…" : "Invitar"}</button></form></article><article className="workspace-panel span"><h3>Personas con acceso</h3><div className="workspace-list">{members.map((member: Member) => <div className="workspace-row" key={member.id}><div><strong>{member.display_name || member.email || member.id}</strong><span>{member.email}</span></div><div className="workspace-row-actions">{member.role === "owner" ? <span className="workspace-pill">Owner</span> : <><select aria-label={`Rol de ${member.display_name || member.email}`} value={member.role} onChange={e => void updateRole(member.id, e.target.value)}><option value="admin">Admin</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select><button type="button" className="workspace-link danger" onClick={() => remove(member)}>Quitar</button></>}</div></div>)}</div></article></div>;
+
+  const revoke = (invitation: Invitation) => setConfirmAction({
+    title: "Revocar invitación",
+    body: `${invitation.email} ya no podrá usar este acceso.`,
+    label: "Revocar",
+    run: async () => {
+      try {
+        await workspaceFetch(`/api/workspaces/${workspaceId}/invitations/${invitation.id}`, { method: "DELETE" });
+        await reload();
+      } catch (cause: any) { setError(cause.message); }
+    },
+  });
+
+  const updateRole = async (userId: string, nextRole: string) => {
+    try {
+      await workspaceFetch(`/api/workspaces/${workspaceId}/members/${userId}`, { method: "PATCH", body: JSON.stringify({ role: nextRole }) });
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+  };
+
+  const remove = (member: Member) => setConfirmAction({
+    title: "Quitar acceso",
+    body: `${member.display_name || member.email || "Este usuario"} dejará de ver el workspace.`,
+    label: "Quitar",
+    run: async () => {
+      try {
+        await workspaceFetch(`/api/workspaces/${workspaceId}/members/${member.id}`, { method: "DELETE" });
+        await reload();
+      } catch (cause: any) { setError(cause.message); }
+    },
+  });
+
+  return (
+    <div className="workspace-grid">
+      {canManage && (
+        <article className="workspace-panel span">
+          <h3>Invitar persona</h3>
+          <p className="workspace-muted">Recibirá un correo seguro. El enlace también se copia para que puedas compartirlo directamente.</p>
+          <form className="workspace-form-row" onSubmit={invite}>
+            <Field label="Correo"><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></Field>
+            <Field label="Rol"><select value={role} onChange={(event) => setRole(event.target.value)}><option value="admin">Admin</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select></Field>
+            <button className="workspace-button" disabled={submitting}>{submitting ? "Invitando…" : "Enviar invitación"}</button>
+          </form>
+        </article>
+      )}
+      <article className="workspace-panel span">
+        <h3>Personas con acceso</h3>
+        <div className="workspace-list">
+          {members.length === 0 && <p className="workspace-muted">Todavía no hay miembros en este workspace.</p>}
+          {members.map((member: Member) => (
+            <div className="workspace-row" key={member.id}>
+              <div><strong>{member.display_name || member.email || member.id}</strong><span>{member.email}</span></div>
+              <div className="workspace-row-actions">
+                {member.role === "owner" || !canManage
+                  ? <span className="workspace-pill">{member.role}</span>
+                  : <><select aria-label={`Rol de ${member.display_name || member.email}`} value={member.role} onChange={(event) => void updateRole(member.id, event.target.value)}><option value="admin">Admin</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select><button type="button" className="workspace-link danger" onClick={() => remove(member)}>Quitar</button></>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </article>
+      {canManage && (
+        <article className="workspace-panel span">
+          <h3>Invitaciones</h3>
+          <div className="workspace-list">
+            {invitations.length === 0 && <p className="workspace-muted">No hay invitaciones todavía.</p>}
+            {invitations.map((invitation: Invitation) => (
+              <div className="workspace-row" key={invitation.id}>
+                <div><strong>{invitation.email}</strong><span>{invitation.role} · {invitation.status}</span></div>
+                {invitation.status === "pending" && <div className="workspace-row-actions"><button type="button" className="workspace-link" onClick={() => void resend(invitation)}>Reenviar</button><button type="button" className="workspace-link danger" onClick={() => revoke(invitation)}>Revocar</button></div>}
+              </div>
+            ))}
+          </div>
+        </article>
+      )}
+    </div>
+  );
+}
+
+function AccountSection({ setError, setNotice }: { setError: (value: string) => void; setNotice: (value: string) => void }) {
+  const { user } = useAuth();
+  const [displayName, setDisplayName] = useState(() => String(user?.user_metadata?.full_name || user?.user_metadata?.name || ""));
+  const [newEmail, setNewEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [incoming, setIncoming] = useState<Invitation[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadIncoming = useCallback(async () => {
+    try {
+      const result = await workspaceFetch<{ data: Invitation[] }>("/api/account/invitations");
+      setIncoming(result.data || []);
+    } catch (cause: any) { setError(cause.message); }
+  }, [setError]);
+
+  useEffect(() => { void loadIncoming(); }, [loadIncoming]);
+
+  const saveProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!browserSupabase) return;
+    setSubmitting(true); setError("");
+    const { error } = await browserSupabase.auth.updateUser({
+      data: { ...user?.user_metadata, full_name: displayName.trim() },
+    });
+    if (error) setError(error.message);
+    else {
+      await workspaceFetch("/api/account/bootstrap", { method: "POST", body: "{}" });
+      setNotice("Perfil actualizado.");
+    }
+    setSubmitting(false);
+  };
+
+  const changeEmail = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!browserSupabase) return;
+    setSubmitting(true); setError("");
+    const { error } = await browserSupabase.auth.updateUser({ email: newEmail.trim() });
+    if (error) setError(error.message);
+    else {
+      setNewEmail("");
+      setNotice("Revisa tu correo actual y el nuevo para confirmar el cambio.");
+    }
+    setSubmitting(false);
+  };
+
+  const changePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!browserSupabase || !user?.email) return;
+    if (newPassword !== passwordConfirmation) {
+      setError("Las contraseñas nuevas no coinciden.");
+      return;
+    }
+    setSubmitting(true); setError("");
+    const { error: signInError } = await browserSupabase.auth.signInWithPassword({ email: user.email, password: currentPassword });
+    if (signInError) {
+      setError("La contraseña actual no es correcta.");
+      setSubmitting(false);
+      return;
+    }
+    const { error } = await browserSupabase.auth.updateUser({ password: newPassword });
+    if (error) setError(error.message);
+    else {
+      setCurrentPassword(""); setNewPassword(""); setPasswordConfirmation("");
+      setNotice("Contraseña actualizada.");
+    }
+    setSubmitting(false);
+  };
+
+  const respond = async (invitation: Invitation, decision: "accept" | "decline") => {
+    setError("");
+    try {
+      await workspaceFetch(`/api/account/invitations/${invitation.id}/${decision}`, { method: "POST", body: "{}" });
+      if (decision === "accept") {
+        window.location.replace("/#workspace");
+        return;
+      }
+      setNotice(`Invitación a ${invitation.workspaceName || "workspace"} rechazada.`);
+      await loadIncoming();
+    } catch (cause: any) { setError(cause.message); }
+  };
+
+  return (
+    <div className="workspace-grid">
+      <article className="workspace-panel">
+        <h3>Perfil</h3>
+        <form className="workspace-form" onSubmit={saveProfile}>
+          <Field label="Nombre"><input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></Field>
+          <Field label="Correo actual"><input value={user?.email || ""} readOnly /></Field>
+          <button className="workspace-button" disabled={submitting}>Guardar perfil</button>
+        </form>
+      </article>
+      <article className="workspace-panel">
+        <h3>Cambiar correo</h3>
+        <p className="workspace-muted">Supabase solicitará confirmación antes de mover tu cuenta al correo nuevo.</p>
+        <form className="workspace-form" onSubmit={changeEmail}>
+          <Field label="Correo nuevo"><input type="email" autoComplete="email" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} required /></Field>
+          <button className="workspace-button" disabled={submitting}>Solicitar cambio</button>
+        </form>
+      </article>
+      <article className="workspace-panel span">
+        <h3>Cambiar contraseña</h3>
+        <form className="workspace-form-row" onSubmit={changePassword}>
+          <Field label="Contraseña actual"><input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></Field>
+          <Field label="Contraseña nueva"><input type="password" minLength={10} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></Field>
+          <Field label="Confirmar"><input type="password" minLength={10} autoComplete="new-password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} required /></Field>
+          <button className="workspace-button" disabled={submitting}>Actualizar</button>
+        </form>
+      </article>
+      <article className="workspace-panel span">
+        <h3>Invitaciones recibidas</h3>
+        <div className="workspace-list">
+          {incoming.length === 0 && <p className="workspace-muted">No tienes invitaciones pendientes.</p>}
+          {incoming.map((invitation) => (
+            <div className="workspace-row" key={invitation.id}>
+              <div><strong>{invitation.workspaceName}</strong><span>{invitation.invitedBy} · acceso {invitation.role}</span></div>
+              <div className="workspace-row-actions"><button type="button" className="workspace-link" onClick={() => void respond(invitation, "accept")}>Aceptar</button><button type="button" className="workspace-link danger" onClick={() => void respond(invitation, "decline")}>Rechazar</button></div>
+            </div>
+          ))}
+        </div>
+      </article>
+    </div>
+  );
 }
 
 function AgentsSection({ workspaceId, keys, connections, reload, setError, setNotice, setConfirmAction }: any) {

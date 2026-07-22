@@ -27,7 +27,8 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
     return withRequestAuth(authData, next);
   };
 
-  if (req.method === "OPTIONS" || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog") {
+  const publicInvitationPreview = req.method === "GET" && req.path.startsWith("/api/invitations/");
+  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog") {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 
