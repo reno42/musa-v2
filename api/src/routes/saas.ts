@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from "../services/supabase.js";
 import { encryptWorkspaceSecret } from "../services/secrets.js";
 import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations.js";
 import { requireWorkspaceRole } from "../services/tenancy.js";
+import { claimLegacyWorkspacesForInitialUser } from "../services/legacyOwnership.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -35,8 +36,9 @@ accountRoutes.post("/bootstrap", async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     await sb.from("user_profiles").upsert(profile);
+    const legacyWorkspacesClaimed = await claimLegacyWorkspacesForInitialUser(sb, user);
 
-    res.json({ success: true, data: profile });
+    res.json({ success: true, data: { profile, legacyWorkspacesClaimed } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

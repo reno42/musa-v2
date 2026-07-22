@@ -53,9 +53,10 @@ Vite Dev Server (:5173)        API Server (:3001)
 |---|---|---|
 | `SUPABASE_URL` | For persistence | Supabase project URL (data CRUD) |
 | `SUPABASE_SERVICE_KEY` | For persistence | Server-side `service_role` key |
-| `SUPABASE_ANON_KEY` | Optional | Fallback auth key |
+| `SUPABASE_ANON_KEY` | For SaaS login | Public anon key delivered to the browser at runtime |
 | `VITE_SUPABASE_URL` | Optional | Real-time collaboration (browser) |
 | `VITE_SUPABASE_ANON_KEY` | Optional | Real-time collaboration (browser) |
+| `SAAS_INITIAL_OWNER_EMAIL` | Optional | Explicit account allowed to claim pre-SaaS workspaces |
 | `API_KEY` | Optional | MCP API key (default: `dev-key`) |
 
 **No Supabase?** The editor works fully in memory — data is lost on server restart. Add the `SUPABASE_*` variables for cloud persistence.

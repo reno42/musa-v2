@@ -6,7 +6,7 @@ import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 import { useAuth } from "./lib/auth";
-import { AuthScreen } from "./components/AuthScreen";
+import { AuthConfigurationScreen, AuthScreen } from "./components/AuthScreen";
 
 type ViewMode = "landing" | "dashboard" | "editor-v2";
 
@@ -37,7 +37,7 @@ const initialAppState: AppState = {
 };
 
 function App() {
-  const { configured: authConfigured, loading: authLoading, user } = useAuth();
+  const { configured: authConfigured, authRequired, configurationError, loading: authLoading, user } = useAuth();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const { addToast } = useToast();
   const [resolving, setResolving] = useState(false);
@@ -92,7 +92,9 @@ function App() {
 
   // Check URL params for direct template/slug loading
   useEffect(() => {
-    if (authConfigured && authLoading) return;
+    // Runtime auth configuration must finish before any protected view mounts;
+    // otherwise Dashboard fires unauthenticated requests during the first paint.
+    if (authLoading) return;
     const params = new URLSearchParams(window.location.search);
     const tplId = params.get("template");
     const hash = window.location.hash.replace("#", "");
@@ -148,6 +150,10 @@ function App() {
 
   if (authConfigured && !user && view !== "landing") {
     return <AuthScreen onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
+  }
+
+  if (authRequired && !authConfigured && !authLoading && view !== "landing") {
+    return <AuthConfigurationScreen error={configurationError || "No se pudo configurar Supabase Auth."} onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
   }
 
   // Landing view

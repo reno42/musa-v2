@@ -42,6 +42,13 @@ function supabaseConfig() {
   return { url, serviceKey, anonKey };
 }
 
+/** Public browser configuration. The anon key is intentionally public; the service key never is. */
+export function getPublicSupabaseConfig(): { url: string; anonKey: string } | null {
+  const { url, anonKey } = supabaseConfig();
+  if (!url || !anonKey || url.includes("your-project") || anonKey.includes("your_anon_key")) return null;
+  return { url, anonKey };
+}
+
 export function getSupabaseAdmin(): SupabaseClient | null {
   const { url, serviceKey, anonKey } = supabaseConfig();
   const key = serviceKey || anonKey;

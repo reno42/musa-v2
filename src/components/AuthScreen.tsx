@@ -1,6 +1,23 @@
 import { useId, useState, type FormEvent } from "react";
 import { browserSupabase } from "../lib/supabaseClient";
 
+export function AuthConfigurationScreen({ onBack, error }: { onBack: () => void; error: string }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card" aria-labelledby="auth-config-title">
+        <button type="button" className="auth-back" onClick={onBack}>← Volver</button>
+        <div className="auth-mark" aria-hidden="true">F</div>
+        <h1 id="auth-config-title" className="auth-title">Falta conectar el acceso</h1>
+        <p className="auth-copy">La base de datos está activa, pero el navegador todavía no recibió la clave pública de Supabase.</p>
+        <p className="auth-error" role="alert">{error}</p>
+        <div className="auth-setup-help">
+          Agrega <code>SUPABASE_ANON_KEY</code> en las variables del servidor y vuelve a desplegar. No uses aquí la clave <code>service_role</code>.
+        </div>
+      </section>
+    </main>
+  );
+}
+
 export function AuthScreen({ onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");

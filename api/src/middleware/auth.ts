@@ -26,7 +26,7 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
     return withRequestAuth(authData, next);
   };
 
-  if (req.method === "OPTIONS" || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/fonts/catalog") {
+  if (req.method === "OPTIONS" || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog") {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

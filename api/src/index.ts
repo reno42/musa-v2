@@ -26,7 +26,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
 import { accountRoutes, workspaceSaasRoutes } from "./routes/saas.js";
-import { getSupabase } from "./services/supabase.js";
+import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
@@ -61,6 +61,22 @@ app.post("/mcp", async (req, res) => {
 // Health
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Supabase's anon key is a public browser credential. Serving it at runtime
+// keeps authentication working even when Netlify did not receive VITE_* vars
+// during the frontend build. The service-role key is never returned.
+app.get("/api/auth/config", (_req, res) => {
+  const config = getPublicSupabaseConfig();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    success: true,
+    data: {
+      configured: Boolean(config),
+      authRequired: Boolean(getSupabaseAdmin()),
+      ...(config || {}),
+    },
+  });
 });
 
 // Storage health: answers "is Supabase actually connected?" so the

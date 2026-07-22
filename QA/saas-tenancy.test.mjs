@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { encryptWorkspaceSecret, decryptWorkspaceSecret } from "../api/src/services/secrets.ts";
 import { hasMinimumWorkspaceRole, workspaceKeyAllows } from "../api/src/services/workspaceRoles.ts";
+import { isLegacyWorkspaceOwner } from "../api/src/services/legacyOwnership.ts";
 
 test("workspace roles isolate viewers, editors and workspace API keys", () => {
   assert.equal(hasMinimumWorkspaceRole("owner", "admin"), true);
@@ -10,6 +11,12 @@ test("workspace roles isolate viewers, editors and workspace API keys", () => {
   assert.equal(hasMinimumWorkspaceRole("viewer", "editor"), false);
   assert.equal(workspaceKeyAllows("workspace-a", "editor", "workspace-a", "editor"), true);
   assert.equal(workspaceKeyAllows("workspace-a", "editor", "workspace-b", "viewer"), false);
+});
+
+test("only non-UUID pre-SaaS owner identifiers are considered legacy", () => {
+  assert.equal(isLegacyWorkspaceOwner("dev_user_default"), true);
+  assert.equal(isLegacyWorkspaceOwner(null), true);
+  assert.equal(isLegacyWorkspaceOwner("2bd6af57-94e3-4b24-8ae8-b616ee257bfa"), false);
 });
 
 test("BYOK credentials use authenticated encryption and reject tampering", () => {
@@ -40,4 +47,14 @@ test("v9 migration enables tenancy RLS for designs, storage, MCP and CRM", () =>
   assert.match(sql, /prevent_client_workspace_owner_change/i);
   assert.match(sql, /to_regclass\('public\.api_keys'\)/i);
   assert.match(sql, /to_regclass\('public\.client_sessions'\)/i);
+});
+
+test("browser auth can load public Supabase config at runtime", () => {
+  const client = readFileSync(new URL("../src/lib/supabaseClient.ts", import.meta.url), "utf8");
+  const middleware = readFileSync(new URL("../api/src/middleware/auth.ts", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(client, /fetch\("\/api\/auth\/config"/);
+  assert.match(middleware, /req\.path === "\/api\/auth\/config"/);
+  assert.match(app, /if \(authLoading\) return;/);
+  assert.doesNotMatch(client, /SUPABASE_SERVICE_KEY/);
 });
