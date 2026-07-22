@@ -11,6 +11,8 @@ import { useToast } from "./Toast";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { WorkspaceConsole } from "./WorkspaceConsole";
+import { useAuth } from "../lib/auth";
+import { browserSupabase } from "../lib/supabaseClient";
 
 interface Template {
   id: string;
@@ -63,6 +65,9 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
 
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
+  const { user, configured: authConfigured, authRequired, signOut } = useAuth();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [authConfigChecked, setAuthConfigChecked] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedWs, setSelectedWs] = useState<string | null>(null);
@@ -83,6 +88,20 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   });
   const [flowIndex, setFlowIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  /* Check auth config once on mount */
+  useEffect(() => {
+    fetch("/api/auth/config", { headers: { Accept: "application/json" } })
+      .then(r => r.json())
+      .then(() => setAuthConfigChecked(true))
+      .catch(() => setAuthConfigChecked(true));
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    setUserMenuOpen(false);
+    window.location.href = "/";
+  }, [signOut]);
 
   /* Fetch storage health when Settings tab is active */
   useEffect(() => {
@@ -826,8 +845,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </div>
           </div>
 
-          {/* Right: Search — replaces Enter Workspace button position */}
-          <div className="dash-search-desktop" style={{ flexShrink: 0 }}>
+          {/* Right: Search + User Account Menu */}
+          <div className="dash-search-desktop" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
             <input
               ref={searchInputRef}
               aria-label="Search templates"
@@ -838,11 +857,120 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               style={{
                 borderRadius: 100, padding: "8px 20px", fontSize: 13,
                 color: "#ffffff", outline: "none",
-                width: 180,
+                width: 160,
                 background: "rgba(255,255,255,0.01)",
                 border: "none",
               }}
             />
+
+            {/* ── User Account Button ── */}
+            {authConfigured && user ? (
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className="liquid-glass"
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  aria-label="Account menu"
+                  style={{
+                    borderRadius: 100, padding: "8px 12px", fontSize: 12,
+                    cursor: "pointer", fontWeight: 500,
+                    display: "flex", alignItems: "center", gap: 6,
+                    color: "rgba(255,255,255,0.8)",
+                    transition: "all 0.25s ease",
+                    maxWidth: 140,
+                  }}
+                >
+                  <span style={{
+                    width: 22, height: 22, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0,
+                  }}>
+                    {(user.email || "?")[0].toUpperCase()}
+                  </span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {user.email?.split("@")[0] || "Account"}
+                  </span>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M2 3l3 4 3-4" />
+                  </svg>
+                </button>
+                {userMenuOpen && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setUserMenuOpen(false)} />
+                    <div
+                      className="liquid-glass"
+                      style={{
+                        position: "absolute", top: "calc(100% + 6px)", right: 0,
+                        minWidth: 200, borderRadius: 12, padding: 6, zIndex: 50,
+                      }}
+                    >
+                      <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5 }}>Sesión activa</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2, wordBreak: "break-all" }}>{user.email}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("workspace"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" /></svg>
+                        CRM y Equipo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("settings"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                        Configuración
+                      </button>
+                      <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
+                      <button
+                        type="button"
+                        onClick={() => void handleSignOut()}
+                        style={{ ...dropdownItemStyle, color: "#f87171", display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+                        Cerrar sesión
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : authConfigured && !user ? (
+              <button
+                type="button"
+                className="liquid-glass"
+                onClick={() => window.location.reload()}
+                style={{
+                  borderRadius: 100, padding: "8px 16px", fontSize: 12,
+                  cursor: "pointer", fontWeight: 500,
+                  color: "#fff",
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: "rgba(99,102,241,0.2)",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>
+                Iniciar sesión
+              </button>
+            ) : authConfigChecked && authRequired && !authConfigured ? (
+              <button
+                type="button"
+                className="liquid-glass"
+                onClick={() => setActiveTab("settings")}
+                title="Falta SUPABASE_PUBLISHABLE_KEY en el servidor"
+                style={{
+                  borderRadius: 100, padding: "8px 12px", fontSize: 11,
+                  cursor: "pointer", fontWeight: 500,
+                  color: "#fbbf24",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                Auth sin configurar
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -942,6 +1070,56 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   ))}
                 </select>
               </div>
+
+              {/* ── User Account Section in Mobile Menu ── */}
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
+              {authConfigured && user ? (
+                <div style={{ padding: "0 4px" }}>
+                  <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{
+                      width: 32, height: 32, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 14, fontWeight: 700, color: "#fff", flexShrink: 0,
+                    }}>
+                      {(user.email || "?")[0].toUpperCase()}
+                    </span>
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {user.email}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="landing-menu-link"
+                    onClick={() => { void handleSignOut(); }}
+                    style={{ color: "#f87171" }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+                      Cerrar sesión
+                    </span>
+                  </button>
+                </div>
+              ) : authConfigured && !user ? (
+                <button
+                  type="button"
+                  className="landing-menu-link"
+                  onClick={() => window.location.reload()}
+                  style={{ color: "#a5b4fc" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>
+                    Iniciar sesión
+                  </span>
+                </button>
+              ) : authConfigChecked && authRequired && !authConfigured ? (
+                <div style={{ padding: "8px 12px", fontSize: 12, color: "#fbbf24", display: "flex", alignItems: "center", gap: 8 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                  Auth sin configurar. Agrega SUPABASE_PUBLISHABLE_KEY.
+                </div>
+              ) : null}
             </div>
           </div>
         </>
