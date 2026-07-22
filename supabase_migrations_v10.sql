@@ -35,6 +35,9 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_workspace_brand
 CREATE UNIQUE INDEX IF NOT EXISTS idx_campaigns_workspace_brand_name
   ON campaigns(workspace_id, brand_id, lower(name));
 
+-- Some installations applied v9 without the small v8 campaign migration.
+-- Keep v10 self-contained before any backfill references dfm.campaign.
+ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS campaign TEXT;
 ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS brand_id TEXT REFERENCES brands(id) ON DELETE SET NULL;
 ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL;
 ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'other';

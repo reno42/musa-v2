@@ -61,6 +61,7 @@ test("v10 migration links CRM accounts, campaigns, asset categories and graph RL
   const sql = readFileSync(new URL("../supabase_migrations_v10.sql", import.meta.url), "utf8");
   assert.match(sql, /ALTER TABLE brands ADD COLUMN IF NOT EXISTS relationship_status/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS campaigns/i);
+  assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS campaign TEXT/i);
   assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS brand_id/i);
   assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS campaign_id/i);
   assert.match(sql, /ALTER TABLE design_file_meta ADD COLUMN IF NOT EXISTS asset_type/i);
