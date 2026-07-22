@@ -28,6 +28,7 @@ function friendlyAuthError(message: string) {
 
 function authRedirectUrl(extra?: Record<string, string>) {
   const url = new URL(window.location.href);
+  url.hash = "";
   for (const [key, value] of Object.entries(extra || {})) url.searchParams.set(key, value);
   return url.toString();
 }

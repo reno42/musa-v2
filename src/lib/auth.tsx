@@ -18,9 +18,12 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** Parse tokens from the URL hash fragment (e.g. #access_token=...&type=recovery). */
+/** Parse tokens from the URL hash fragment, handling double-hash URLs. */
 function parseHashParams(): URLSearchParams {
-  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const raw = window.location.hash.replace(/^#/, "");
+  const lastHash = raw.lastIndexOf("#");
+  const fragment = lastHash >= 0 ? raw.slice(lastHash + 1) : raw;
+  return new URLSearchParams(fragment);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
