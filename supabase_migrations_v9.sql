@@ -192,8 +192,20 @@ ALTER TABLE brands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE design_file_meta ENABLE ROW LEVEL SECURITY;
 ALTER TABLE batch_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE section_locks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
-ALTER TABLE client_sessions ENABLE ROW LEVEL SECURITY;
+
+-- These are legacy v5 tables. SaaS uses workspace_api_keys, so installations
+-- which never enabled the old session/key persistence must still be able to
+-- apply the tenant migration.
+DO $$
+BEGIN
+  IF to_regclass('public.api_keys') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY';
+  END IF;
+
+  IF to_regclass('public.client_sessions') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE public.client_sessions ENABLE ROW LEVEL SECURITY';
+  END IF;
+END $$;
 
 -- Replace any legacy permissive policies on tenant-owned tables. Keeping even
 -- one old USING (true) policy would bypass the isolation policies below.

@@ -38,4 +38,6 @@ test("v9 migration enables tenancy RLS for designs, storage, MCP and CRM", () =>
   assert.match(sql, /CREATE POLICY "workspace_storage_read"[\s\S]*AS RESTRICTIVE FOR SELECT/i);
   assert.match(sql, /REVOKE SELECT ON workspace_mcp_connections FROM anon, authenticated/i);
   assert.match(sql, /prevent_client_workspace_owner_change/i);
+  assert.match(sql, /to_regclass\('public\.api_keys'\)/i);
+  assert.match(sql, /to_regclass\('public\.client_sessions'\)/i);
 });
