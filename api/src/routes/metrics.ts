@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { store } from "../services/store.js";
 import { getSupabase } from "../services/supabase.js";
+import { requireWorkspaceRole } from "../services/tenancy.js";
 
 export const metricsRoutes = Router();
 
@@ -26,8 +27,9 @@ interface DayMetrics {
  *
  * Falls back gracefully when Supabase is not configured.
  */
-metricsRoutes.get("/activity", async (_req, res) => {
+metricsRoutes.get("/activity", requireWorkspaceRole("viewer", "query"), async (_req, res) => {
   try {
+    const workspaceId = String(_req.query.workspaceId);
     const fromDate = _req.query.from ? new Date(_req.query.from as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const toDate = _req.query.to ? new Date(_req.query.to as string) : new Date();
 
@@ -41,7 +43,7 @@ metricsRoutes.get("/activity", async (_req, res) => {
     };
 
     // ── 1. In-memory snapshots ──
-    const snaps = store.listAllSnapshots();
+    const snaps = store.listAllSnapshots().filter(snapshot => snapshot.data?.workspaceId === workspaceId);
     for (const s of snaps) {
       const ts = new Date(s.timestamp);
       if (ts < fromDate || ts > toDate) continue;
@@ -62,6 +64,7 @@ metricsRoutes.get("/activity", async (_req, res) => {
         const { data: tpls, error } = await sb
           .from("templates")
           .select("created_at, data")
+          .eq("workspace_id", workspaceId)
           .gte("created_at", fromDate.toISOString())
           .lte("created_at", toDate.toISOString())
           .is("deleted_at", null);
@@ -83,7 +86,7 @@ metricsRoutes.get("/activity", async (_req, res) => {
     }
 
     // ── 3. Templates created in in-memory store ──
-    const allTpls = store.listTemplates(undefined, 1000, 0);
+    const allTpls = store.listTemplates(workspaceId, 1000, 0);
     for (const tpl of allTpls.data) {
       const created = tpl.metadata?.createdAt;
       if (!created) continue;

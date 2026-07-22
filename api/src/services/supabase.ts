@@ -26,8 +26,31 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { RequestAuth } from "./requestContext.js";
 
-let client: SupabaseClient | null = null;
+let adminClient: SupabaseClient | null = null;
+
+function currentRequestAuth(): RequestAuth | undefined {
+  const context = (globalThis as any)[Symbol.for("futuraria.requestContext")];
+  return context?.getStore?.();
+}
+
+function supabaseConfig() {
+  const url = process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  return { url, serviceKey, anonKey };
+}
+
+export function getSupabaseAdmin(): SupabaseClient | null {
+  const { url, serviceKey, anonKey } = supabaseConfig();
+  const key = serviceKey || anonKey;
+  if (!url || !key || url.includes("your-project")) return null;
+  if (!adminClient) {
+    adminClient = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  }
+  return adminClient;
+}
 
 /**
  * Get or initialize the Supabase client (lazy singleton).
@@ -39,20 +62,20 @@ let client: SupabaseClient | null = null;
  *            webhooks.ts (dispatch), renderer.ts (storage)
  */
 export function getSupabase(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL ||
-    process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN;
-  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN ||
-    process.env.SUPABASE_ANON_KEY;
-
-  if (!url || !key || url.includes("your-project")) {
-    console.warn("[SUPABASE] Not configured — using in-memory storage");
-    return null;
+  const { url, anonKey } = supabaseConfig();
+  const auth = currentRequestAuth();
+  if (auth?.accessToken && url && anonKey) {
+    if (!auth.scopedClient) {
+      auth.scopedClient = createClient(url, anonKey, {
+        global: { headers: { Authorization: `Bearer ${auth.accessToken}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+    }
+    return auth.scopedClient;
   }
 
-  if (!client) {
-    client = createClient(url, key);
-  }
-
+  const client = getSupabaseAdmin();
+  if (!client) console.warn("[SUPABASE] Not configured — using in-memory storage");
   return client;
 }
 
@@ -60,38 +83,46 @@ export function getSupabase(): SupabaseClient | null {
 
 const LOCAL_ASSETS_DIR = resolve(process.cwd(), "public", "assets");
 
+export function sanitizeAssetFileName(fileName: string) {
+  const baseName = fileName.split(/[\\/]/).pop()?.replace(/[^a-zA-Z0-9._-]/g, "_") || "";
+  if (!baseName || baseName === "." || baseName === "..") throw new Error("Invalid asset filename");
+  return baseName;
+}
+
 /** Upload a file buffer to Supabase Storage. Falls back to local disk. */
 export async function uploadAsset(
   fileName: string, buffer: Buffer, contentType: string, workspaceId = "default"
 ): Promise<string> {
+  const safeName = sanitizeAssetFileName(fileName);
   const sb = getSupabase();
   if (sb) {
-    const filePath = `${workspaceId}/${fileName}`;
+    const filePath = `${workspaceId}/${safeName}`;
     const { error } = await sb.storage.from("design-assets").upload(filePath, buffer, {
       contentType, upsert: true,
     });
     if (error) throw new Error(`Storage upload failed: ${error.message}`);
-    const { data } = sb.storage.from("design-assets").getPublicUrl(filePath);
-    return data?.publicUrl || "";
+    const { data } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31_536_000);
+    return data?.signedUrl || "";
   }
 
   // Local disk fallback
   const dir = resolve(LOCAL_ASSETS_DIR, workspaceId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const localPath = resolve(dir, fileName);
+  const localPath = resolve(dir, safeName);
   writeFileSync(localPath, buffer);
-  return `/assets/${workspaceId}/${fileName}`;
+  return `/assets/${workspaceId}/${safeName}`;
 }
 
 /** Delete an asset from Supabase Storage or local disk. */
 export async function deleteAsset(fileName: string, workspaceId = "default"): Promise<void> {
+  const safeName = sanitizeAssetFileName(fileName);
   const sb = getSupabase();
   if (sb) {
-    await sb.storage.from("design-assets").remove([`${workspaceId}/${fileName}`]);
+    await sb.storage.from("design-assets").remove([`${workspaceId}/${safeName}`]);
     return;
   }
   // Local cleanup
-  const localPath = resolve(LOCAL_ASSETS_DIR, workspaceId, fileName);
+  const localPath = resolve(LOCAL_ASSETS_DIR, workspaceId, safeName);
   try {
     const { unlinkSync } = await import("node:fs");
     unlinkSync(localPath);
@@ -112,13 +143,31 @@ export async function migrateBase64FromHtml(
   // Also match CSS url(data:...) and background: url(...) syntax
   const base64Re = /(?:src|href)\s*=\s*["'](data:image\/[^;]+;base64,([^"']+))["']|(?:url|background)\s*\(\s*(data:image\/[^;]+;base64,([^)]+))\s*\)/gi;
 
-  const replaced = html.replace(base64Re, (fullMatch, attrDataUri, attrB64, cssDataUri, cssB64) => {
+  const matches = [...html.matchAll(base64Re)];
+  let cursor = 0;
+  const chunks: string[] = [];
+
+  for (const match of matches) {
+    const matchIndex = match.index ?? 0;
+    const fullMatch = match[0];
+    const attrDataUri = match[1];
+    const attrB64 = match[2];
+    const cssDataUri = match[3];
+    const cssB64 = match[4];
     const dataUri = attrDataUri || cssDataUri;
     const b64 = attrB64 || cssB64;
-    if (!b64 || !dataUri) return fullMatch;
+    chunks.push(html.slice(cursor, matchIndex));
+    cursor = matchIndex + fullMatch.length;
+    if (!b64 || !dataUri) {
+      chunks.push(fullMatch);
+      continue;
+    }
 
     const buffer = Buffer.from(b64, "base64");
-    if (buffer.length < minSizeBytes) return fullMatch; // keep small images inline
+    if (buffer.length < minSizeBytes) {
+      chunks.push(fullMatch);
+      continue;
+    }
 
     const mimeMatch = dataUri.match(/data:(image\/\w+);base64,/);
     const mimeType = mimeMatch?.[1] || "image/png";
@@ -126,25 +175,13 @@ export async function migrateBase64FromHtml(
     const hash = createHash("sha256").update(buffer).digest("hex").slice(0, 16);
     const fileName = `migrated_${hash}.${ext}`;
 
-    // Synchronous fallback for migration (called from template service)
-    const sb = getSupabase();
-    if (sb) {
-      const filePath = `${workspaceId}/${fileName}`;
-      sb.storage.from("design-assets").upload(filePath, buffer, {
-        contentType: mimeType, upsert: true,
-      }).then(() => {}).catch(() => {});
-      const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/design-assets/${workspaceId}/${fileName}`;
-      migrated++;
-      return fullMatch.replace(dataUri, publicUrl);
-    }
-
-    // Local disk fallback
-    const dir = resolve(LOCAL_ASSETS_DIR, workspaceId);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(resolve(dir, fileName), buffer);
+    const assetUrl = await uploadAsset(fileName, buffer, mimeType, workspaceId);
     migrated++;
-    return fullMatch.replace(dataUri, `/assets/${workspaceId}/${fileName}`);
-  });
+    chunks.push(fullMatch.replace(dataUri, assetUrl));
+  }
+
+  chunks.push(html.slice(cursor));
+  const replaced = chunks.join("");
 
   return { html: replaced, css, migrated };
 }

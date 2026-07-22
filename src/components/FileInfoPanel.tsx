@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getApiHeaders } from "../lib/apiKey";
 
 interface FileMeta {
   brand: string;
@@ -35,7 +36,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
   useEffect(() => {
     if (!templateId) { setLoading(false); return; }
     setLoading(true);
-    fetch(`/api/meta/${templateId}`)
+    fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() })
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -70,7 +71,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       try {
         await fetch(`/api/meta/${templateId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: getApiHeaders(),
           body: JSON.stringify(next),
         });
       } catch {} finally { setSaving(false); }
@@ -105,7 +106,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       });
       const res = await fetch(`/api/meta/${templateId}/cover`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ imageBase64: b64 }),
       });
       const d = await res.json();
@@ -121,7 +122,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       if (!b64) return;
       const res = await fetch(`/api/meta/${templateId}/cover`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getApiHeaders(),
         body: JSON.stringify({ imageBase64: b64 }),
       });
       const d = await res.json();

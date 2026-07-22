@@ -1,72 +1,82 @@
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
-import { getSupabase } from "../services/supabase.js";
+import { getSupabaseAdmin } from "../services/supabase.js";
+import { withRequestAuth, type RequestAuth } from "../services/requestContext.js";
 
 declare global {
   namespace Express {
     interface Request {
-      auth?: { userId: string; isAdmin?: boolean };
+      auth?: RequestAuth;
     }
   }
 }
 
 function keyHash(rawKey: string): string {
-  const hash = crypto.createHash("sha256");
-  hash.update(rawKey);
-  return hash.digest("hex");
+  return crypto.createHash("sha256").update(rawKey).digest("hex");
 }
 
 export async function auth(req: Request, res: Response, next: NextFunction) {
   const adminKey = process.env.MCP_ADMIN_KEY;
   const apiKey = (req.headers["x-api-key"] as string) || "";
-  const bearer = req.headers.authorization?.replace("Bearer ", "");
+  const bearer = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const sb = getSupabaseAdmin();
 
-  // Dev mode: if MCP_ADMIN_KEY is not set, accept all (backward compat)
-  if (!adminKey) {
-    if (apiKey) {
-      req.auth = { userId: apiKey, isAdmin: true };
-    } else if (bearer) {
-      req.auth = { userId: bearer };
-    } else {
-      req.auth = { userId: "dev_user_default", isAdmin: true };
-    }
-    return next();
+  const proceed = (authData: RequestAuth) => {
+    req.auth = authData;
+    return withRequestAuth(authData, next);
+  };
+
+  if (req.method === "OPTIONS" || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/fonts/catalog") {
+    return proceed({ userId: "anonymous", authType: "dev" });
   }
 
-  // Admin key bypass
-  if (apiKey === adminKey) {
-    req.auth = { userId: "admin", isAdmin: true };
-    return next();
+  if (bearer && sb) {
+    try {
+      const { data, error } = await sb.auth.getUser(bearer);
+      if (!error && data.user) {
+        return proceed({ userId: data.user.id, authType: "user", accessToken: bearer });
+      }
+    } catch { /* reject below */ }
   }
 
-  // Check api_keys table for non-admin keys
-  if (apiKey) {
-    const sb = getSupabase();
-    if (sb) {
-      try {
-        const { data } = await sb.from("api_keys")
-          .select("id, user_id, label")
-          .eq("key_hash", keyHash(apiKey))
-          .is("revoked_at", null)
-          .maybeSingle();
-        if (data) {
-          req.auth = { userId: data.user_id, isAdmin: false };
-          return next();
-        }
-      } catch { /* fall through to reject */ }
-    } else {
-      // No Supabase — accept any non-empty key
-      req.auth = { userId: apiKey, isAdmin: false };
-      return next();
-    }
+  // Preserve zero-config local development only when no database/auth service exists.
+  if (!adminKey && !sb) {
+    if (apiKey) return proceed({ userId: apiKey, isAdmin: true, authType: "dev" });
+    if (bearer) return proceed({ userId: bearer, authType: "dev" });
+    return proceed({ userId: "dev_user_default", isAdmin: true, authType: "dev" });
   }
 
-  // GET requests: allow public read access
-  if (req.method === "GET" || req.method === "OPTIONS" || req.method === "HEAD") {
-    req.auth = { userId: "anonymous" };
-    return next();
+  if (adminKey && apiKey === adminKey) {
+    return proceed({ userId: "admin", isAdmin: true, authType: "admin" });
   }
 
-  // Write without valid auth → reject
-  res.status(401).json({ success: false, error: "Unauthorized: valid x-api-key required" });
+  if (apiKey && sb) {
+    try {
+      const { data } = await sb.from("workspace_api_keys")
+        .select("id, created_by, workspace_id, role")
+        .eq("key_hash", keyHash(apiKey))
+        .is("revoked_at", null)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        .maybeSingle();
+      if (data) {
+        void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
+        return proceed({
+          userId: data.created_by,
+          authType: "workspace_key",
+          workspaceId: data.workspace_id,
+          workspaceRole: data.role,
+          keyId: data.id,
+        });
+      }
+    } catch { /* reject below */ }
+  }
+
+  res.status(401).json({ success: false, error: "Unauthorized: sign in or provide a valid workspace API key" });
+}
+
+export function requireUserSession(req: Request, res: Response, next: NextFunction) {
+  if (req.auth?.authType !== "user") {
+    return res.status(403).json({ success: false, error: "A signed-in user session is required" });
+  }
+  next();
 }

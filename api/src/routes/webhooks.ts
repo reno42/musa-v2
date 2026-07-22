@@ -28,6 +28,13 @@ import { validate, webhookSchema } from "../middleware/index.js";
 
 export const webhookRoutes = Router();
 
+webhookRoutes.use((req, res, next) => {
+  if (req.auth?.authType === "workspace_key") {
+    return res.status(403).json({ success: false, error: "Workspace API keys cannot access account-level webhooks" });
+  }
+  next();
+});
+
 /**
  * POST /api/webhooks
  * ──────────────────────────────────────────────────────────────

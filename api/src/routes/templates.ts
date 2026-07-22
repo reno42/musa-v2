@@ -29,6 +29,7 @@ import {
   updateTemplateSchema,
   duplicateTemplateSchema,
 } from "../middleware/index.js";
+import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 
 export const templateRoutes = Router();
 
@@ -51,6 +52,9 @@ export const templateRoutes = Router();
 templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
   try {
     const { name, width, height, canvas, workspaceId, engine, html, css } = req.body;
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
     const tpl = await templates.createTemplate(name || "Untitled", width || 1080, height || 1080, canvas, req.auth!.userId, workspaceId);
     if (!tpl.id) {
       return res.status(500).json({ success: false, error: "Template creation failed: no ID returned" });
@@ -118,10 +122,22 @@ templateRoutes.get("/", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;
+    const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
+    if (workspaceId && !accessibleIds.includes(workspaceId)) {
+      return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
+    }
 
     // listTemplatesPaginated returns lean summaries (first frame only, no
     // versions/canvas) — see toListSummary in services/templates.ts (502 fix).
-    const result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
+    let result;
+    if (workspaceId) {
+      result = await templates.listTemplatesPaginated(limit, offset, workspaceId, search);
+    } else {
+      const batches = await Promise.all(accessibleIds.map(id => templates.listTemplatesPaginated(1000, 0, id, search)));
+      const all = batches.flatMap(batch => batch.data)
+        .sort((a, b) => new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime());
+      result = { data: all.slice(offset, offset + limit), total: all.length };
+    }
 
     res.json({
       success: true,
@@ -152,8 +168,11 @@ templateRoutes.get("/trash", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
-    const result = await templates.listTrash(limit, offset);
-    res.json({ success: true, data: result.data, total: result.total, limit, offset });
+    const result = await templates.listTrash(10_000, 0);
+    const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
+    result.data = result.data.filter((template) => accessibleIds.includes(template.workspaceId));
+    result.total = result.data.length;
+    res.json({ success: true, data: result.data.slice(offset, offset + limit), total: result.total, limit, offset });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -354,7 +373,11 @@ templateRoutes.delete("/:id/permanent", async (req, res) => {
 templateRoutes.post("/trash/purge-expired", async (req, res) => {
   try {
     const olderThanDays = parseInt(req.body.olderThanDays as string) || 30;
-    const count = await templates.purgeExpiredTemplates(olderThanDays);
+    const workspaceId = String(req.body.workspaceId || "");
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
+    const count = await templates.purgeExpiredTemplates(olderThanDays, workspaceId);
     res.json({ success: true, purged: count });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -394,6 +417,11 @@ templateRoutes.post("/bulk/delete", async (req, res) => {
     const deleted: string[] = [];
     const notFound: string[] = [];
     for (const id of ids) {
+      const template = await templates.getTemplate(id);
+      if (!template || !req.auth || !(await canAccessWorkspace(req.auth, template.workspaceId, "editor"))) {
+        notFound.push(id);
+        continue;
+      }
       const ok = await templates.deleteTemplate(id);
       if (ok) deleted.push(id);
       else notFound.push(id);
@@ -467,6 +495,9 @@ templateRoutes.post("/import", async (req, res) => {
     }
     if (!workspaceId) {
       return res.status(400).json({ success: false, error: "workspaceId required" });
+    }
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
     }
 
     const newTpl = store.createTemplate({

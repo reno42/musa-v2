@@ -2,6 +2,7 @@ import { Router } from "express";
 import { v4 as uuid } from "uuid";
 import { getSupabase } from "../services/supabase.js";
 import * as templates from "../services/templates.js";
+import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 
 export const recipeRoutes = Router();
 
@@ -13,6 +14,9 @@ recipeRoutes.post("/", async (req, res) => {
     const id = `rec_${uuid().slice(0, 12)}`;
     const now = new Date().toISOString();
     const { name, description, workspaceId, structure, templateHtml, templateCss } = req.body;
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to a workspace is required" });
+    }
     const { error } = await supabase.from("recipes").insert({
       id, name, description,
       workspace_id: workspaceId,
@@ -34,8 +38,12 @@ recipeRoutes.get("/", async (req, res) => {
     const supabase = getSupabase()!;
     if (!supabase) throw new Error("Supabase not configured");
     const workspaceId = req.query.workspaceId as string;
+    const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
+    if (workspaceId && !accessibleIds.includes(workspaceId)) return res.status(403).json({ success: false, error: "Workspace access is required" });
     let query = supabase.from("recipes").select("*").order("created_at", { ascending: false });
     if (workspaceId) query = query.eq("workspace_id", workspaceId);
+    else if (accessibleIds.length) query = query.in("workspace_id", accessibleIds);
+    else return res.json({ success: true, data: [], total: 0 });
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     res.json({ success: true, data: data || [], total: data?.length || 0 });
@@ -96,7 +104,11 @@ recipeRoutes.post("/:id/execute", async (req, res) => {
     if (!supabase) throw new Error("Supabase not configured");
     const { data: recipe, error: sbError } = await supabase.from("recipes").select("*").eq("id", req.params.id).single();
     if (sbError || !recipe) return res.status(404).json({ success: false, error: "Recipe not found" });
-    const { variables, workspaceId } = req.body;
+    const { variables } = req.body;
+    const workspaceId = recipe.workspace_id;
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the recipe workspace is required" });
+    }
     let html = recipe.template_html || "";
     let css = recipe.template_css || "";
     if (variables?.texts) for (const [k, v] of Object.entries(variables.texts)) { html = html.replace(new RegExp(k, "g"), String(v)); }

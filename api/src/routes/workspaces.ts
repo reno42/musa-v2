@@ -6,6 +6,9 @@ import {
   validate, createWorkspaceSchema, updateWorkspaceSchema, addMemberSchema,
 } from "../middleware/index.js";
 import type { Workspace } from "../types.js";
+import type { RequestAuth } from "../services/requestContext.js";
+import { listAccessibleWorkspaceIds, requireWorkspaceRole } from "../services/tenancy.js";
+import * as templates from "../services/templates.js";
 
 type SupabaseWsRow = {
   id: string;
@@ -27,17 +30,19 @@ function rowToWorkspace(row: SupabaseWsRow): Workspace {
   };
 }
 
-async function listFromSupabase(userId: string): Promise<Workspace[] | null> {
+async function listFromSupabase(auth: RequestAuth): Promise<Workspace[] | null> {
   const sb = getSupabase();
   if (!sb) return null;
   try {
-    const { data, error } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
+    const accessibleIds = await listAccessibleWorkspaceIds(auth);
+    if (accessibleIds.length === 0) return [];
+    const { data, error } = await sb.from("workspaces").select("*").in("id", accessibleIds).order("updated_at", { ascending: false });
     if (error) throw error;
     const workspaces = (data || []).map((r: any) => rowToWorkspace(r));
 
     // If the workspaces table is empty but templates reference workspace IDs,
     // auto-create workspace records so the Dashboard Data tab isn't blank.
-    if (workspaces.length === 0) {
+    if (workspaces.length === 0 && auth.authType === "dev") {
       await syncWorkspacesFromTemplates(sb);
       // Re-fetch after sync
       const { data: refetched, error: refetchErr } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
@@ -116,13 +121,15 @@ async function upsertSupabase(ws: Workspace) {
       // slug column added by v7 migration — retry without it if missing
       if (error.message?.includes("slug") && error.message?.includes("does not exist")) {
         delete row.slug;
-        await sb.from("workspaces").upsert(row);
+        const { error: retryError } = await sb.from("workspaces").upsert(row);
+        if (retryError) throw retryError;
       } else {
-        console.warn("[workspaces] Supabase upsert failed:", error.message);
+        throw error;
       }
     }
   } catch (e) {
     console.warn("[workspaces] Supabase upsert failed:", (e as Error).message);
+    throw e;
   }
 }
 
@@ -136,12 +143,19 @@ export const workspaceRoutes = Router();
 
 workspaceRoutes.post("/", validate(createWorkspaceSchema), async (req, res) => {
   try {
+    if (req.auth?.authType === "workspace_key") {
+      return res.status(403).json({ success: false, error: "Workspace API keys cannot create workspaces" });
+    }
     const ws = store.createWorkspace({
       name: req.body.name,
       description: req.body.description,
       ownerId: req.auth!.userId,
     });
     await upsertSupabase(ws);
+    const sb = getSupabase();
+    if (sb && /^[0-9a-f-]{36}$/i.test(req.auth!.userId)) {
+      await sb.from("workspace_members").upsert({ workspace_id: ws.id, user_id: req.auth!.userId, role: "owner" });
+    }
     res.status(201).json({ success: true, data: ws });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -150,7 +164,7 @@ workspaceRoutes.post("/", validate(createWorkspaceSchema), async (req, res) => {
 
 workspaceRoutes.get("/", async (req, res) => {
   try {
-    const fromSb = await listFromSupabase(req.auth!.userId);
+    const fromSb = await listFromSupabase(req.auth!);
     if (fromSb) return res.json({ success: true, data: fromSb, total: fromSb.length });
     const data = store.listWorkspaces(req.auth!.userId);
     res.json({ success: true, data, total: data.length });
@@ -159,9 +173,16 @@ workspaceRoutes.get("/", async (req, res) => {
   }
 });
 
-workspaceRoutes.get("/:id", async (req, res) => {
+workspaceRoutes.get("/:id", requireWorkspaceRole("viewer"), async (req, res) => {
   try {
-    const ws = store.getWorkspace(req.params.id);
+    let ws = store.getWorkspace(req.params.id);
+    if (!ws) {
+      const sb = getSupabase();
+      if (sb) {
+        const { data } = await sb.from("workspaces").select("*").eq("id", req.params.id).maybeSingle();
+        if (data) ws = rowToWorkspace(data as SupabaseWsRow);
+      }
+    }
     if (!ws) return res.status(404).json({ success: false, error: "Workspace not found" });
     res.json({ success: true, data: ws });
   } catch (err: any) {
@@ -169,9 +190,16 @@ workspaceRoutes.get("/:id", async (req, res) => {
   }
 });
 
-workspaceRoutes.put("/:id", validate(updateWorkspaceSchema), async (req, res) => {
+workspaceRoutes.put("/:id", requireWorkspaceRole("admin"), validate(updateWorkspaceSchema), async (req, res) => {
   try {
-    const ws = store.updateWorkspace(req.params.id, req.body);
+    let ws = store.updateWorkspace(req.params.id, req.body);
+    if (!ws) {
+      const sb = getSupabase();
+      if (sb) {
+        const { data } = await sb.from("workspaces").select("*").eq("id", req.params.id).maybeSingle();
+        if (data) ws = { ...rowToWorkspace(data as SupabaseWsRow), ...req.body, updatedAt: new Date().toISOString() };
+      }
+    }
     if (!ws) return res.status(404).json({ success: false, error: "Workspace not found" });
     await upsertSupabase(ws);
     res.json({ success: true, data: ws });
@@ -180,7 +208,7 @@ workspaceRoutes.put("/:id", validate(updateWorkspaceSchema), async (req, res) =>
   }
 });
 
-workspaceRoutes.delete("/:id", async (req, res) => {
+workspaceRoutes.delete("/:id", requireWorkspaceRole("owner"), async (req, res) => {
   try {
     store.deleteWorkspace(req.params.id);
     await deleteFromSupabase(req.params.id);
@@ -190,7 +218,7 @@ workspaceRoutes.delete("/:id", async (req, res) => {
   }
 });
 
-workspaceRoutes.post("/:id/members", validate(addMemberSchema), async (req, res) => {
+workspaceRoutes.post("/:id/members", requireWorkspaceRole("admin"), validate(addMemberSchema), async (req, res) => {
   try {
     const ws = store.addMember(req.params.id, req.body.userId);
     if (!ws) return res.status(404).json({ success: false, error: "Workspace not found" });
@@ -201,11 +229,11 @@ workspaceRoutes.post("/:id/members", validate(addMemberSchema), async (req, res)
   }
 });
 
-workspaceRoutes.get("/:id/templates", async (req, res) => {
+workspaceRoutes.get("/:id/templates", requireWorkspaceRole("viewer"), async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
-    const result = store.listTemplates(req.params.id, limit, offset);
+    const result = await templates.listTemplatesPaginated(limit, offset, req.params.id);
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

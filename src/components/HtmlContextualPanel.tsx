@@ -13,6 +13,7 @@ import { getApiHeaders } from "../lib/apiKey";
  */
 
 interface Props {
+  workspaceId: string;
   element: SelectedElementInfo | null;
   css: string;
   onCssChange: (newCss: string) => void;
@@ -372,7 +373,7 @@ function updatePseudoCss(css: string, selector: string, pseudo: string, props: R
 
 // ── Main Component ──
 
-export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange }: Props) {
+export function HtmlContextualPanel({ workspaceId, element, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle, onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     typography: true, fill: true, stroke: true, spacing: true, border: true,
     layout: true, shape: true, groupmode: true, position: false, effects: false, transform: false,
@@ -442,7 +443,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
       const result = await fetch(`/api/assets/upload`, {
         method: "POST",
         headers: getApiHeaders(),
-        body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64 }),
+        body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64, workspaceId }),
       }).then(r => r.json());
 
       if (!result.url) throw new Error("Upload succeeded but no URL returned");
@@ -456,7 +457,7 @@ export function HtmlContextualPanel({ element, css, onCssChange, onChangeTag, on
     } catch (err: any) {
       console.error("[BG_IMAGE] Upload failed:", err);
     }
-  }, [css, element, onCssChange]);
+  }, [css, element, onCssChange, workspaceId]);
 
   if (!element) {
     return (

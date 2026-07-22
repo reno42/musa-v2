@@ -166,7 +166,9 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
     }
 
     const ext = mimeType === "image/jpeg" ? "jpg" : "png";
-    const path = `covers/${templateId}.${ext}`;
+    const { data: template } = await sb.from("templates").select("workspace_id").eq("id", templateId).single();
+    if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
+    const path = `${template.workspace_id}/covers/${templateId}.${ext}`;
 
     const { error: uploadErr } = await sb.storage
       .from("design-covers")
@@ -174,12 +176,13 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
 
     if (uploadErr) throw uploadErr;
 
-    const { data: urlData } = sb.storage.from("design-covers").getPublicUrl(path);
-    const coverUrl = urlData?.publicUrl || "";
+    const { data: urlData } = await sb.storage.from("design-covers").createSignedUrl(path, 31_536_000);
+    const coverUrl = urlData?.signedUrl || "";
 
     // Save URL to meta
     await sb.from("design_file_meta").upsert({
       template_id: templateId,
+      workspace_id: template.workspace_id,
       cover_image_url: coverUrl,
       updated_at: new Date().toISOString(),
     }, { onConflict: "template_id" });

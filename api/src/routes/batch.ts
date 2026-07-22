@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as templates from "../services/templates.js";
 import { createTemplate, updateTemplate } from "../services/templates.js";
+import { canAccessWorkspace } from "../services/tenancy.js";
 
 export const batchRoutes = Router();
 
@@ -271,7 +272,11 @@ batchRoutes.post("/:id/batch/validate", async (req, res) => {
  */
 batchRoutes.get("/batch-ready", async (req, res) => {
   try {
-    const { data: allTemplates } = await templates.listTemplatesPaginated(200, 0);
+    const workspaceId = String(req.query.workspaceId || "");
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+      return res.status(403).json({ success: false, error: "Workspace access is required" });
+    }
+    const { data: allTemplates } = await templates.listTemplatesPaginated(200, 0, workspaceId);
     const batchReady = [];
     for (const tpl of allTemplates) {
       const texts = collectText(tpl);

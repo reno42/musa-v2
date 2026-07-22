@@ -1,4 +1,9 @@
 const STORAGE_KEY = "futuraria-api-key";
+let accessToken = "";
+
+export function setAccessToken(token: string) {
+  accessToken = token;
+}
 
 /** Read the user's API key from localStorage. Returns empty string if not configured. */
 export function getApiKey(): string {
@@ -25,6 +30,7 @@ export function getApiHeaders(extra?: Record<string, string>): Record<string, st
   const headers: Record<string, string> = { "Content-Type": "application/json; charset=utf-8" };
   const key = getApiKey();
   if (key) headers["x-api-key"] = key;
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (extra) Object.assign(headers, extra);
   return headers;
 }

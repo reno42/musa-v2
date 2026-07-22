@@ -1,5 +1,7 @@
 import { Router } from "express";
-import { getSupabase, uploadAsset, migrateBase64FromHtml } from "../services/supabase.js";
+import { getSupabase, uploadAsset, migrateBase64FromHtml, sanitizeAssetFileName } from "../services/supabase.js";
+import { canAccessWorkspace } from "../services/tenancy.js";
+import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations.js";
 
 export const assetRoutes = Router();
 
@@ -8,6 +10,10 @@ assetRoutes.post("/upload", async (req, res) => {
   try {
     const { name, data, url, workspaceId, tags } = req.body;
     if (!name) return res.status(400).json({ success: false, error: "name is required" });
+    if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
 
     const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     let imageBuffer: Buffer;
@@ -15,7 +21,7 @@ assetRoutes.post("/upload", async (req, res) => {
     let filename: string;
 
     if (data) {
-      const matches = data.match(/^data:(image\/\w+);base64,(.+)$/);
+      const matches = data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
       if (!matches) return res.status(400).json({ success: false, error: "Invalid base64 data format" });
       mimeType = matches[1];
       imageBuffer = Buffer.from(matches[2], "base64");
@@ -23,10 +29,12 @@ assetRoutes.post("/upload", async (req, res) => {
       filename = `${assetId}.${ext}`;
     } else if (url) {
       try {
-        const fetchResp = await fetch(url);
+        await assertSafeIntegrationEndpoint(url);
+        const fetchResp = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(15_000) });
         if (!fetchResp.ok) throw new Error(`Fetch failed: ${fetchResp.status}`);
         const contentType = fetchResp.headers.get("content-type") || "image/png";
         mimeType = contentType.split(";")[0].trim();
+        if (!mimeType.startsWith("image/")) throw new Error("Remote URL is not an image");
         imageBuffer = Buffer.from(await fetchResp.arrayBuffer());
         const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
         filename = `${assetId}.${ext}`;
@@ -36,14 +44,17 @@ assetRoutes.post("/upload", async (req, res) => {
     } else {
       return res.status(400).json({ success: false, error: "Provide either data (base64) or url" });
     }
+    if (imageBuffer.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ success: false, error: "Image exceeds the 10MB workspace limit" });
+    }
 
     // Use the unified upload helper (Supabase Storage or local disk fallback)
-    const publicUrl = await uploadAsset(filename, imageBuffer, mimeType, workspaceId || "default");
+    const publicUrl = await uploadAsset(filename, imageBuffer, mimeType, workspaceId);
 
     // Record in assets table if Supabase is available
     const sb = getSupabase();
     if (sb) {
-      await sb.from("assets").upsert({
+      const { error } = await sb.from("assets").upsert({
         id: assetId, name, filename,
         mime_type: mimeType,
         size_bytes: imageBuffer.length,
@@ -51,6 +62,7 @@ assetRoutes.post("/upload", async (req, res) => {
         tags: tags || [],
         workspace_id: workspaceId || null,
       });
+      if (error) throw error;
     }
 
     res.status(201).json({
@@ -69,6 +81,10 @@ assetRoutes.get("/", async (req, res) => {
     if (!supabase) return res.json({ success: true, assets: [], total: 0 });
 
     const { workspaceId, search, mimeType, limit, offset } = req.query as Record<string, string>;
+    if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+      return res.status(403).json({ success: false, error: "Workspace access is required" });
+    }
     let q = supabase.from("assets").select("*", { count: "exact" }).is("deleted_at", null);
     if (workspaceId) q = q.eq("workspace_id", workspaceId);
     if (mimeType) q = q.eq("mime_type", mimeType);
@@ -109,10 +125,15 @@ assetRoutes.get("/trash", async (req, res) => {
   try {
     const supabase = getSupabase();
     if (!supabase) return res.json({ success: true, data: [], total: 0 });
+    const workspaceId = String(req.query.workspaceId || "");
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) {
+      return res.status(403).json({ success: false, error: "Workspace access is required" });
+    }
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const { data, count, error } = await supabase.from("assets")
       .select("id, name, filename, mime_type, size_bytes, url, workspace_id, created_at, deleted_at", { count: "exact" })
+      .eq("workspace_id", workspaceId)
       .not("deleted_at", "is", null)
       .order("deleted_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -166,11 +187,16 @@ assetRoutes.post("/trash/purge-expired", async (req, res) => {
   try {
     const supabase = getSupabase();
     if (!supabase) return res.json({ success: true, purged: 0 });
+    const workspaceId = String(req.body?.workspaceId || "");
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
     const olderThanDays = parseInt(req.body?.olderThanDays as string) || 30;
     const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
     // Get expired assets
     const { data: expired } = await supabase.from("assets")
       .select("id, filename, workspace_id")
+      .eq("workspace_id", workspaceId)
       .not("deleted_at", "is", null)
       .lt("deleted_at", cutoff);
     // Remove from storage
@@ -205,26 +231,33 @@ assetRoutes.post("/upload-file", async (req, res) => {
     if (!data || !name) {
       return res.status(400).json({ success: false, error: "name and data (base64) are required" });
     }
+    if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
 
-    const matches = data.match(/^data:(image\/\w+);base64,(.+)$/);
+    const matches = data.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
     const mimeType = clientMime || (matches?.[1]) || "image/png";
     const b64 = matches?.[2] || data;
     const imageBuffer = Buffer.from(b64, "base64");
+    if (imageBuffer.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ success: false, error: "Image exceeds the 10MB workspace limit" });
+    }
     const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
     const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const filename = clientFilename || `${assetId}.${ext}`;
+    const filename = sanitizeAssetFileName(clientFilename || `${assetId}.${ext}`);
 
-    const publicUrl = await uploadAsset(filename, imageBuffer, mimeType, workspaceId || "default");
+    const publicUrl = await uploadAsset(filename, imageBuffer, mimeType, workspaceId);
 
     const sb = getSupabase();
     if (sb) {
-      await sb.from("assets").upsert({
+      const { error } = await sb.from("assets").upsert({
         id: assetId, name, filename,
         mime_type: mimeType,
         size_bytes: imageBuffer.length,
         url: publicUrl,
-        workspace_id: workspaceId || null,
+        workspace_id: workspaceId,
       });
+      if (error) throw error;
     }
 
     res.status(201).json({
@@ -248,6 +281,9 @@ assetRoutes.post("/migrate-base64", async (req, res) => {
     const { getTemplate, updateTemplate } = await import("../services/templates.js");
     const tpl = await getTemplate(templateId);
     if (!tpl) return res.status(404).json({ success: false, error: "Template not found" });
+    if (!req.auth || !(await canAccessWorkspace(req.auth, tpl.workspaceId, "editor"))) {
+      return res.status(404).json({ success: false, error: "Template not found" });
+    }
 
     let totalMigrated = 0;
     const migratedFrames: { frameId: string; migrated: number }[] = [];
@@ -255,7 +291,7 @@ assetRoutes.post("/migrate-base64", async (req, res) => {
     for (const frame of tpl.frames) {
       if (frame.html) {
         const result = await migrateBase64FromHtml(
-          frame.html, frame.css || "", workspaceId || tpl.workspaceId || "default"
+          frame.html, frame.css || "", tpl.workspaceId
         );
         if (result.migrated > 0) {
           frame.html = result.html;

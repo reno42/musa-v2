@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { store } from "../services/store.js";
+import { canAccessWorkspace } from "../services/tenancy.js";
 
 /**
  * POST /api/design-system/extract
@@ -29,6 +30,9 @@ designSystemRoutes.post("/extract", async (req, res) => {
     for (var t = 0; t < templateIds.length; t++) {
       var tpl = store.getTemplate(templateIds[t]);
       if (!tpl) {
+        return res.status(404).json({ success: false, error: "Template not found: " + templateIds[t] });
+      }
+      if (!req.auth || !(await canAccessWorkspace(req.auth, tpl.workspaceId, "viewer"))) {
         return res.status(404).json({ success: false, error: "Template not found: " + templateIds[t] });
       }
 

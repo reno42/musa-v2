@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
 import { store } from "../../api/src/services/store.js";
-import { getSupabase } from "../../api/src/services/supabase.js";
+import { getSupabase, getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../api/src/services/tenancy.js";
+import { withRequestAuth } from "../../api/src/services/requestContext.js";
+import { callWorkspaceMcp } from "../../api/src/services/workspaceIntegrations.js";
 import DOMPurify from "dompurify";
 import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
@@ -2183,9 +2186,10 @@ const MCP_TOOLS = [
       properties: {
         workspaceId: {
           type: "string",
-          description: "Optional: filter by workspace ID",
+          description: "Workspace to scan",
         },
       },
+      required: ["workspaceId"],
     },
   },
   {
@@ -2237,7 +2241,7 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        workspaceId: { type: "string", description: "Filter by workspace. If omitted, scans all templates." },
+        workspaceId: { type: "string", description: "Workspace to scan. May be omitted only when templateId is supplied." },
         templateId: { type: "string", description: "Filter to a single template. If omitted, scans all (max 100)." },
         frameId: { type: "string", description: "Filter to a single frame within the template(s)." },
         includeEmpty: { type: "boolean", description: "Include elements with no text content (default false)." },
@@ -2527,12 +2531,15 @@ const MCP_TOOLS = [
   },
   {
     name: "create_api_key",
-    description: "Create a new API key for agent access. Returns the raw key — store it securely, it will not be shown again. Key format: fdr_<random24>.",
+    description: "Create a workspace-scoped API key for agent access. The raw key is returned once.",
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string", description: "Workspace the key is restricted to" },
         label: { type: "string", description: "Human-readable label for this key (e.g., 'Claude Code', 'OpenClaw')" },
+        role: { type: "string", enum: ["editor", "viewer"] },
       },
+      required: ["workspaceId", "label"],
     },
   },
   {
@@ -2541,9 +2548,10 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string" },
         keyId: { type: "string", description: "ID of the key to revoke" },
       },
-      required: ["keyId"],
+      required: ["workspaceId", "keyId"],
     },
   },
   {
@@ -2551,7 +2559,27 @@ const MCP_TOOLS = [
     description: "List all active API keys. Keys are masked for security (only last 4 chars shown).",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: { workspaceId: { type: "string" } },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "list_workspace_integrations",
+    description: "List enabled MCP and model API connections for a workspace without exposing credentials.",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
+    name: "call_workspace_mcp",
+    description: "Call a tool on an enabled MCP connection owned by this workspace. BYOK credentials stay server-side.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        connectionId: { type: "string" },
+        toolName: { type: "string" },
+        arguments: { type: "object" },
+      },
+      required: ["workspaceId", "connectionId", "toolName"],
     },
   },
   {
@@ -2560,9 +2588,11 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string", description: "Workspace to aggregate" },
         from: { type: "string", description: "Start date (ISO format, default 30 days ago)" },
         to: { type: "string", description: "End date (ISO format, default today)" },
       },
+      required: ["workspaceId"],
     },
   },
   {
@@ -2596,11 +2626,11 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         tags: { type: "array", items: { type: "string" }, description: "Tags to match (templates must have ALL specified tags)" },
-        workspaceId: { type: "string", description: "Optional workspace filter" },
+        workspaceId: { type: "string", description: "Workspace to search" },
         similarTo: { type: "string", description: "Optional template ID to rank results by similarity (higher score = more similar)" },
         limit: { type: "integer", description: "Max results (default 50)" },
       },
-      required: ["tags"],
+      required: ["tags", "workspaceId"],
     },
   },
   // ── Design File Metadata (Sprint: Design Knowledge Graph) ──
@@ -2715,19 +2745,21 @@ function keyHash(rawKey) {
  * Returns { valid, userId, keyId, label } or { valid: false }.
  */
 async function validateApiKey(apiKey) {
-  const sb = getSupabase();
+  const sb = getSupabaseAdmin();
   if (!sb) {
     // No Supabase — accept any non-empty key as valid (dev mode)
     return apiKey ? { valid: true, userId: apiKey, keyId: "local", label: "Local Dev Key" } : { valid: false };
   }
   try {
-    const { data, error } = await sb.from("api_keys")
-      .select("id, user_id, label, revoked_at")
+    const { data, error } = await sb.from("workspace_api_keys")
+      .select("id, created_by, workspace_id, role, label, revoked_at")
       .eq("key_hash", keyHash(apiKey))
       .is("revoked_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .maybeSingle();
     if (error || !data) return { valid: false };
-    return { valid: true, userId: data.user_id, keyId: data.id, label: data.label };
+    void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
+    return { valid: true, userId: data.created_by, workspaceId: data.workspace_id, role: data.role, keyId: data.id, label: data.label };
   } catch {
     return { valid: false };
   }
@@ -2741,78 +2773,140 @@ async function validateApiKey(apiKey) {
  */
 async function checkAuth(event) {
   const adminKey = process.env.MCP_ADMIN_KEY;
-  if (!adminKey) {
-    // Dev mode: no auth required
-    return { valid: true, userId: getUserId(event), isAdmin: true, keyLabel: "dev" };
-  }
-
   const headers = event.headers || {};
   const apiKey = headers["x-api-key"] || "";
+  const bearer = (headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const sb = getSupabaseAdmin();
+
+  if (bearer && sb) {
+    const { data, error } = await sb.auth.getUser(bearer);
+    if (!error && data.user) {
+      return { valid: true, userId: data.user.id, isAdmin: false, authType: "user", accessToken: bearer, keyLabel: "browser" };
+    }
+  }
+
+  if (!adminKey && !sb) {
+    return { valid: true, userId: getUserId(event), isAdmin: true, authType: "dev", keyLabel: "dev" };
+  }
+
   if (!apiKey) return { valid: false };
 
   // Admin key — bypasses api_keys table entirely
   if (apiKey === adminKey) {
-    return { valid: true, userId: "admin", isAdmin: true, keyLabel: "admin" };
+    return { valid: true, userId: "admin", isAdmin: true, authType: "admin", keyLabel: "admin" };
   }
 
   // Check api_keys table
   const result = await validateApiKey(apiKey);
   if (result.valid) {
-    return { valid: true, userId: result.userId, isAdmin: false, keyLabel: result.label };
+    return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label };
   }
 
   return { valid: false };
+}
+
+const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
+const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
+
+async function authorizeMcpCall(method, inputParams, auth) {
+  const params = { ...(inputParams || {}) };
+  if (auth.isAdmin) return params;
+  if (auth.authType === "workspace_key") {
+    if (params.workspaceId && params.workspaceId !== auth.workspaceId) {
+      throw { code: -32003, message: "This API key is restricted to another workspace" };
+    }
+    params.workspaceId ||= auth.workspaceId;
+    if (method === "create_workspace") throw { code: -32003, message: "Workspace API keys cannot create workspaces" };
+  }
+
+  const templateIds = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (/templateId$/i.test(key) && typeof value === "string") templateIds.push(value);
+    if (/templateIds$/i.test(key) && Array.isArray(value)) templateIds.push(...value.filter(v => typeof v === "string"));
+  }
+  let workspaceId = params.workspaceId || auth.workspaceId || null;
+  for (const templateId of templateIds) {
+    const templateWorkspace = await getTemplateWorkspaceId(templateId);
+    if (!templateWorkspace) throw { code: -32004, message: `Template not found: ${templateId}` };
+    if (workspaceId && workspaceId !== templateWorkspace) throw { code: -32003, message: "Template belongs to another workspace" };
+    workspaceId = templateWorkspace;
+  }
+  if (workspaceId) params.workspaceId ||= workspaceId;
+
+  if (!workspaceId && auth.authType === "workspace_key") {
+    throw { code: -32602, message: "workspaceId or templateId is required for this tool" };
+  }
+  if (workspaceId) {
+    const minimum = MCP_ADMIN_METHODS.has(method) ? "admin" : MCP_READ_PREFIX.test(method) ? "viewer" : "editor";
+    const accessAuth = {
+      userId: auth.userId,
+      isAdmin: auth.isAdmin,
+      authType: auth.authType || "user",
+      workspaceId: auth.workspaceId,
+      workspaceRole: auth.workspaceRole,
+    };
+    if (!(await canAccessWorkspace(accessAuth, workspaceId, minimum))) {
+      throw { code: -32003, message: `Insufficient ${minimum} access for this workspace` };
+    }
+  }
+  return params;
 }
 
 /**
  * Create a new API key. Returns the raw key (only time it's visible).
  * Raw key format: fdr_<random24> — prefixed for easy identification.
  */
-async function createApiKey(userId, label) {
-  const rawKey = "fdr_" + Array.from({ length: 24 }, () =>
-    "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]
-  ).join("");
-  const id = "key_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+async function createApiKey(userId, workspaceId, label, role = "editor") {
+  const rawKey = "fdr_ws_" + crypto.randomBytes(24).toString("base64url");
   const now = new Date().toISOString();
 
-  const sb = getSupabase();
+  const sb = getSupabaseAdmin();
   if (sb) {
-    await sb.from("api_keys").insert({
-      id, user_id: userId, key_hash: keyHash(rawKey), label: label || "API Key",
-      created_at: now,
-    });
+    let createdBy = userId;
+    if (!UUID_RE.test(createdBy)) {
+      const { data: workspace } = await sb.from("workspaces").select("owner_id").eq("id", workspaceId).maybeSingle();
+      createdBy = workspace?.owner_id || "";
+    }
+    if (!UUID_RE.test(createdBy)) throw new Error("A workspace owner is required to create an API key");
+    const { data, error } = await sb.from("workspace_api_keys").insert({
+      workspace_id: workspaceId, created_by: createdBy, key_hash: keyHash(rawKey),
+      key_prefix: `${rawKey.slice(0, 12)}…${rawKey.slice(-4)}`,
+      label: label || "API Key", role: role === "viewer" ? "viewer" : "editor", created_at: now,
+    }).select("id").single();
+    if (error) throw error;
+    return { id: data.id, key: rawKey, label, userId, workspaceId, createdAt: now };
   }
-  return { id, key: rawKey, label, userId, createdAt: now };
+  return { id: "local", key: rawKey, label, userId, workspaceId, createdAt: now };
 }
 
 /**
  * Revoke an API key (soft-delete by setting revoked_at).
  */
-async function revokeApiKey(keyId, userId) {
-  const sb = getSupabase();
+async function revokeApiKey(keyId, workspaceId) {
+  const sb = getSupabaseAdmin();
   if (!sb) return false;
-  const { error } = await sb.from("api_keys")
+  const { error } = await sb.from("workspace_api_keys")
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", keyId)
-    .eq("user_id", userId);
+    .eq("workspace_id", workspaceId);
   return !error;
 }
 
 /**
  * List active API keys for a user (masked — only last 4 chars shown).
  */
-async function listApiKeys(userId) {
-  const sb = getSupabase();
+async function listApiKeys(workspaceId) {
+  const sb = getSupabaseAdmin();
   if (!sb) return [];
-  const { data, error } = await sb.from("api_keys")
-    .select("id, label, created_at, revoked_at")
-    .eq("user_id", userId)
+  const { data, error } = await sb.from("workspace_api_keys")
+    .select("id, label, key_prefix, role, created_at, last_used_at, revoked_at")
+    .eq("workspace_id", workspaceId)
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
   if (error) return [];
   return (data || []).map(k => ({
     id: k.id, label: k.label, createdAt: k.created_at,
-    preview: `fdr_...${k.id.slice(-4)}`,
+    preview: k.key_prefix, role: k.role, lastUsedAt: k.last_used_at,
   }));
 }
 
@@ -2943,7 +3037,7 @@ function validateEditableWrite(html, css, allowGroups, context) {
 }
 
 /** Route JSON-RPC method calls to template/workspace services */
-async function handleMethod(method, params, userId) {
+async function handleMethod(method, params, userId, auth) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
   const autoSnapshot = (templateId, trigger, tplData) => {
     try {
@@ -3055,12 +3149,13 @@ async function handleMethod(method, params, userId) {
   switch (method) {
     // ── Workspaces ──
     case "list_workspaces": {
+      const accessibleIds = new Set(await listAccessibleWorkspaceIds(auth));
       const sb = getSupabase();
       if (sb) {
         try {
           const { data } = await sb.from("workspaces").select("*").order("updated_at", { ascending: false });
           if (data?.length) {
-            const items = data.map(r => ({
+            const items = data.filter(r => accessibleIds.has(r.id)).map(r => ({
               ...r.data, id: r.id, name: r.name, ownerId: r.owner_id,
               createdAt: r.created_at, updatedAt: r.updated_at,
             }));
@@ -3068,27 +3163,45 @@ async function handleMethod(method, params, userId) {
           }
         } catch { /* fall through to store */ }
       }
-      const data = store.listWorkspaces(userId);
+      const data = store.listWorkspaces(userId).filter(workspace => accessibleIds.has(workspace.id));
       return { data, total: data.length };
     }
     case "create_workspace": {
       const ws = store.createWorkspace({ name: params.name, description: params.description, ownerId: userId });
       const sb = getSupabase();
       if (sb) {
-        try {
-          const row = {
-            id: ws.id, name: ws.name,
-            data: ws, updated_at: new Date().toISOString(),
-          };
-          if (UUID_RE.test(userId)) row.user_id = userId;
-          await sb.from("workspaces").upsert(row);
-        } catch { /* non-blocking */ }
+        const row = {
+          id: ws.id, name: ws.name,
+          data: ws, updated_at: new Date().toISOString(),
+        };
+        if (UUID_RE.test(userId)) {
+          row.user_id = userId;
+          row.owner_id = userId;
+        }
+        const { error: workspaceError } = await sb.from("workspaces").upsert(row);
+        if (workspaceError) throw workspaceError;
+        if (UUID_RE.test(userId)) {
+          const { error: membershipError } = await sb.from("workspace_members")
+            .upsert({ workspace_id: ws.id, user_id: userId, role: "owner" });
+          if (membershipError) throw membershipError;
+        }
       }
       return ws;
     }
 
     // ── Templates ──
     case "list_templates": {
+      if (!params.workspaceId) {
+        const accessibleIds = await listAccessibleWorkspaceIds(auth);
+        const batches = await Promise.all(accessibleIds.map(workspaceId =>
+          templates.listTemplatesPaginated(1000, 0, workspaceId, params.search)
+        ));
+        const data = batches.flatMap(batch => batch.data)
+          .sort((a, b) => new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime());
+        const offset = params.offset || 0;
+        const limit = params.limit || 50;
+        return { data: data.slice(offset, offset + limit), total: data.length };
+      }
       const result = await templates.listTemplatesPaginated(
         params.limit || 50, params.offset || 0,
         params.workspaceId, params.search,
@@ -5624,8 +5737,8 @@ async function handleMethod(method, params, userId) {
       });
       if (uploadErr) throw { code: -32000, message: `Upload failed: ${uploadErr.message}` };
 
-      const { data: publicUrlData } = sb.storage.from("design-assets").getPublicUrl(filePath);
-      const publicUrl = publicUrlData?.publicUrl || "";
+      const { data: signedUrlData } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31536000);
+      const publicUrl = signedUrlData?.signedUrl || "";
 
       const asset = {
         id: assetId,
@@ -8521,7 +8634,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     // ── list_batch_templates: discover templates with {{slot}} or data-slot ──
     case "list_batch_templates": {
       var wsFilter = params.workspaceId;
-      var listResult = await templates.listTemplatesPaginated(wsFilter || undefined, 200, 0);
+      if (!wsFilter) throw { code: -32602, message: "workspaceId is required" };
+      var listResult = await templates.listTemplatesPaginated(200, 0, wsFilter);
       var allTpls = listResult.data || [];
 
       var batchReady = [];
@@ -8611,6 +8725,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     // ── list_all_texts ──
     case "list_all_texts": {
       const { workspaceId, templateId, frameId, includeEmpty } = params;
+      if (!workspaceId && !templateId) throw { code: -32602, message: "workspaceId or templateId is required" };
 
       // 1. Determine which templates to scan
       /** @type {any[]} */
@@ -9476,13 +9591,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             const mime = mMatch[1];
             const buf = Buffer.from(mMatch[2], "base64");
             const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : "png";
-            const path = `thumbnails/${params.templateId}.${ext}`;
+            const path = `${params.workspaceId}/thumbnails/${params.templateId}.${ext}`;
             const { error: thErr } = await sbT.storage.from("design-covers")
               .upload(path, buf, { contentType: mime, upsert: true });
             if (!thErr) {
-              const { data: thUrl } = sbT.storage.from("design-covers").getPublicUrl(path);
-              // cache-buster: upsert keeps the same path, CDN would serve stale
-              if (thUrl?.publicUrl) thumb = `${thUrl.publicUrl}?v=${Date.now()}`;
+              const { data: thUrl } = await sbT.storage.from("design-covers").createSignedUrl(path, 31536000);
+              if (thUrl?.signedUrl) thumb = thUrl.signedUrl;
             }
           } catch { /* fall back to inline base64 (e.g. local without Supabase) */ }
         }
@@ -9494,22 +9608,36 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── API Keys (F5) ──
     case "create_api_key": {
-      const keyData = await createApiKey(userId, params.label);
+      const keyData = await createApiKey(userId, params.workspaceId, params.label, params.role);
       return { id: keyData.id, key: keyData.key, label: keyData.label, createdAt: keyData.createdAt,
         note: "Store this key securely. It will not be shown again." };
     }
     case "revoke_api_key": {
       if (!params.keyId) throw { code: -32602, message: "keyId required" };
-      const ok = await revokeApiKey(params.keyId, userId);
+      const ok = await revokeApiKey(params.keyId, params.workspaceId);
       return { revoked: ok, keyId: params.keyId };
     }
     case "list_api_keys": {
-      const keys = await listApiKeys(userId);
+      const keys = await listApiKeys(params.workspaceId);
       return { keys, total: keys.length };
+    }
+    case "list_workspace_integrations": {
+      const sb = getSupabaseAdmin();
+      if (!sb) return { integrations: [], total: 0 };
+      const { data, error } = await sb.from("workspace_mcp_connections")
+        .select("id, name, kind, provider, endpoint_url, enabled, public_config")
+        .eq("workspace_id", params.workspaceId).eq("enabled", true).order("name");
+      if (error) throw error;
+      const integrations = (data || []).map(({ endpoint_url, public_config, ...row }) => ({ ...row, endpointUrl: endpoint_url, publicConfig: public_config }));
+      return { integrations, total: integrations.length };
+    }
+    case "call_workspace_mcp": {
+      return callWorkspaceMcp(params.workspaceId, params.connectionId, params.toolName, params.arguments || {});
     }
 
     // ── Metrics (M1) ──
     case "get_metrics": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const fromDate = params.from ? new Date(params.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const toDate = params.to ? new Date(params.to) : new Date();
       const dayMap = new Map();
@@ -9521,7 +9649,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
 
       // In-memory snapshots
-      const snaps = store.listAllSnapshots();
+      const snaps = store.listAllSnapshots().filter(snapshot => snapshot.data?.workspaceId === params.workspaceId);
       for (const s of snaps) {
         const ts = new Date(s.timestamp);
         if (ts < fromDate || ts > toDate) continue;
@@ -9535,7 +9663,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
 
       // Templates
-      const allTpls = store.listTemplates(undefined, 1000, 0);
+      const allTpls = store.listTemplates(params.workspaceId, 1000, 0);
       for (const tpl of allTpls.data) {
         const created = tpl.metadata?.createdAt;
         if (!created) continue;
@@ -9592,6 +9720,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
 
     case "find_templates": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const limit = params.limit || 50;
       const searchTags = params.tags || [];
       let results = store.listTemplates(params.workspaceId, 1000, 0).data;
@@ -9787,11 +9916,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const buf = Buffer.from(b64Data, "base64");
       if (buf.length > 1_048_576) throw { code: -32000, message: "Cover image exceeds 1MB limit" };
       const ext = mimeType === "image/jpeg" ? "jpg" : "png";
-      const path = `covers/${params.templateId}.${ext}`;
+      const path = `${params.workspaceId}/covers/${params.templateId}.${ext}`;
       const { error: upErr } = await sbUp.storage.from("design-covers").upload(path, buf, { contentType: mimeType, upsert: true });
       if (upErr) throw upErr;
-      const { data: urlData } = sbUp.storage.from("design-covers").getPublicUrl(path);
-      const coverUrl = urlData?.publicUrl || "";
+      const { data: urlData } = await sbUp.storage.from("design-covers").createSignedUrl(path, 31536000);
+      const coverUrl = urlData?.signedUrl || "";
       await sbUp.from("design_file_meta").upsert({ template_id: params.templateId, cover_image_url: coverUrl, updated_at: new Date().toISOString() }, { onConflict: "template_id" });
       return { success: true, cover_image_url: coverUrl, templateId: params.templateId };
     }
@@ -9887,15 +10016,11 @@ export const handler = async (event) => {
     if (!auth.valid) {
       return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
     }
-    // Admin-only tools
-    const ADMIN_TOOLS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
-    if (ADMIN_TOOLS.has(params.name) && !auth.isAdmin) {
-      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: admin key required for this tool")) };
-    }
     trackSession(auth.keyLabel, event);
 
     try {
-      const result = await handleMethod(params.name, params.arguments || {}, auth.userId);
+      const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
+      const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
@@ -9916,14 +10041,11 @@ export const handler = async (event) => {
     if (!auth.valid) {
       return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
     }
-    const ADMIN_TOOLS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
-    if (ADMIN_TOOLS.has(method) && !auth.isAdmin) {
-      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: admin key required for this tool")) };
-    }
     trackSession(auth.keyLabel, event);
 
     try {
-      const result = await handleMethod(method, params || {}, auth.userId);
+      const scopedParams = await authorizeMcpCall(method, params || {}, auth);
+      const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,

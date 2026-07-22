@@ -15,7 +15,7 @@
  *   - All statements use IF NOT EXISTS / ON CONFLICT — safe to re-run
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -101,42 +101,24 @@ async function main() {
   console.log(`  Project:  ${supabaseUrl}`);
   console.log(`  Ref:      ${projectRef}`);
 
-  // Read schema SQL
-  let sql;
-  try {
-    sql = readFileSync(resolve(ROOT, "supabase_schema_complete.sql"), "utf-8");
-  } catch {
-    console.error(`\n  ERROR: Could not read supabase_schema_complete.sql`);
-    console.error(`  Make sure the file exists at the project root.\n`);
-    process.exit(1);
-  }
-
-  // Split into individual statements (handle multi-statement file)
-  // Simple split by semicolons on their own line or at end of meaningful line
-  const statements = sql
-    .split(/;\s*\n\s*/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0 && !s.startsWith("--") || s.includes("\n"));
-
-  // Re-filter: keep only non-empty statements that aren't pure comments
-  const filtered = [];
-  for (const stmt of statements) {
-    const lines = stmt.split("\n").filter(l => !l.trim().startsWith("--")).join("\n").trim();
-    if (lines.length > 0) filtered.push(stmt + ";");
-  }
-
-  console.log(`  Schema:   ${filtered.length} statements to execute\n`);
+  // Execute complete SQL files as units. Splitting on semicolons corrupts
+  // PL/pgSQL functions because their bodies contain semicolons too.
+  const migrationFiles = readdirSync(ROOT)
+    .filter(name => /^supabase_migrations_v\d+\.sql$/.test(name))
+    .sort((a, b) => Number(a.match(/v(\d+)/)?.[1]) - Number(b.match(/v(\d+)/)?.[1]));
+  const files = ["supabase_schema_complete.sql", ...migrationFiles];
+  console.log(`  Schema:   ${files.length} idempotent SQL files to execute\n`);
 
   let ok = 0;
   let failed = 0;
 
-  for (let i = 0; i < filtered.length; i++) {
-    const stmt = filtered[i];
-    const preview = stmt.split("\n")[0].slice(0, 60);
-    process.stdout.write(`  [${i + 1}/${filtered.length}] ${preview}... `);
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const sql = readFileSync(resolve(ROOT, file), "utf-8");
+    process.stdout.write(`  [${i + 1}/${files.length}] ${file}... `);
 
     try {
-      await execSql(pat, projectRef, stmt);
+      await execSql(pat, projectRef, sql);
       console.log("OK");
       ok++;
     } catch (err) {
@@ -151,8 +133,12 @@ async function main() {
 
   if (failed > 0) {
     console.log("  Some statements failed — this is often harmless (e.g. objects already exist).");
+    console.error("  Database setup is incomplete. Fix every reported SQL error before deploying.");
     console.log("  Verify your tables in: https://app.supabase.com/project/" + projectRef + "/database/tables\n");
+    process.exitCode = 1;
   } else {
+    const latestVersion = Math.max(...migrationFiles.map(file => Number(file.match(/v(\d+)/)?.[1]) || 0));
+    writeFileSync(resolve(ROOT, ".migration-version"), `v${latestVersion}\n`, "utf8");
     console.log("  Schema ready. Your AI can now persist designs across restarts.\n");
   }
 }

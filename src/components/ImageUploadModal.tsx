@@ -17,6 +17,7 @@ interface Asset {
 }
 
 interface ImageUploadModalProps {
+  workspaceId: string;
   onClose: () => void;
   onAssetUploaded?: (asset: Asset) => void;
 }
@@ -38,7 +39,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
   return res.json();
 }
 
-export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalProps) {
+export function ImageUploadModal({ workspaceId, onClose, onAssetUploaded }: ImageUploadModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<Asset[]>([]);
@@ -53,13 +54,13 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
   const loadAssets = useCallback(async () => {
     setLoadingAssets(true);
     try {
-      const data = await apiFetch<{ assets: Asset[] }>("/assets");
+      const data = await apiFetch<{ assets: Asset[] }>(`/assets?workspaceId=${encodeURIComponent(workspaceId)}`);
       setAssetsList(data.assets || []);
     } catch {
       setAssetsList([]);
     }
     setLoadingAssets(false);
-  }, []);
+  }, [workspaceId]);
 
   const uploadFile = useCallback(async (file: File) => {
     const warning = imageStorageWarning(file);
@@ -86,6 +87,7 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
         body: JSON.stringify({
           name: file.name.replace(/\.[^.]+$/, ""),
           data: base64,
+          workspaceId,
         }),
       });
 
@@ -105,7 +107,7 @@ export function ImageUploadModal({ onClose, onAssetUploaded }: ImageUploadModalP
       setError(e.message || "Upload failed");
     }
     setUploading(false);
-  }, [onAssetUploaded]);
+  }, [onAssetUploaded, workspaceId]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

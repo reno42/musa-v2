@@ -158,11 +158,11 @@ class Store {
   }
 
   /** Purge templates deleted more than `olderThanDays` ago. Returns count. */
-  purgeExpiredTemplates(olderThanDays = 30): number {
+  purgeExpiredTemplates(olderThanDays = 30, workspaceId?: string): number {
     const cutoff = new Date(Date.now() - olderThanDays * 86400000);
     let count = 0;
     for (const [id, tpl] of this.templates) {
-      if (tpl.metadata.deletedAt && new Date(tpl.metadata.deletedAt) < cutoff) {
+      if ((!workspaceId || tpl.workspaceId === workspaceId) && tpl.metadata.deletedAt && new Date(tpl.metadata.deletedAt) < cutoff) {
         this.templates.delete(id);
         count++;
       }

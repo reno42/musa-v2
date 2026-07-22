@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { auth } from "./middleware/auth.js";
+import { auth, requireUserSession } from "./middleware/auth.js";
 import { rateLimit } from "./middleware/rateLimit.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { templateRoutes } from "./routes/templates.js";
@@ -25,7 +25,9 @@ import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
+import { accountRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { getSupabase } from "./services/supabase.js";
+import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -35,6 +37,11 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(rateLimit);
 app.use(auth);
+app.use(enforceWorkspaceKeyScope);
+app.use("/api/templates/:templateId", requireTemplateAccess);
+app.use("/api/assets/:resourceId", requireResourceAccess("assets", ["upload", "upload-file", "trash", "migrate-base64"]));
+app.use("/api/recipes/:resourceId", requireResourceAccess("recipes"));
+app.use("/api/meta/:templateId", requireTemplateAccess);
 
 // Local development bridge for the same MCP handler used by Netlify.
 app.post("/mcp", async (req, res) => {
@@ -82,6 +89,8 @@ app.get("/api/health/storage", (_req, res) => {
 });
 
 // Route groups
+app.use("/api/account", requireUserSession, accountRoutes);
+app.use("/api/workspaces", workspaceSaasRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/templates", templateRoutes);
 app.use("/api/templates", layerRoutes);

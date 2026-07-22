@@ -27,6 +27,7 @@ import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
+import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
@@ -2478,7 +2479,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     try {
       const mcpRes = await fetch("/mcp", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getApiHeaders(),
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "tools/call",
@@ -3123,7 +3124,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         // Upload to server
         const res = await fetch(`${API_BASE}/api/render/job/${job.jobId}/complete`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getApiHeaders(),
           body: JSON.stringify({ pngDataUrl: dataUrl }),
         });
         const json = await res.json();
@@ -3140,7 +3141,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const poll = async () => {
       if (renderingRef.current) return; // Don't stack polls
       try {
-        const res = await fetch(`${API_BASE}/api/render/queue/pending?templateId=${encodeURIComponent(templateId)}`);
+        const res = await fetch(`${API_BASE}/api/render/queue/pending?templateId=${encodeURIComponent(templateId)}`, { headers: getApiHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         const pending: any[] = data.pending || [];
@@ -3940,6 +3941,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {rightPanelTab === "contextual" && (
             selectedElement ? (
               <HtmlContextualPanel
+                workspaceId={templateWorkspaceId}
                 element={selectedElement}
                 css={activeCss}
                 onCssChange={handleContextualCssChange}
@@ -4097,6 +4099,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Image Upload Modal ═══ */}
       {showImageUpload && (
         <ImageUploadModal
+          workspaceId={templateWorkspaceId}
           onClose={() => setShowImageUpload(false)}
           onAssetUploaded={handleAssetUploaded}
         />
@@ -4106,6 +4109,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showBatch && (
         <BatchAMator
           templateId={templateId}
+          workspaceId={templateWorkspaceId}
           onClose={() => setShowBatch(false)}
           onOpenTemplate={onOpenTemplate}
           onBackToDashboard={onBack}

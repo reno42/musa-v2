@@ -170,10 +170,19 @@ CREATE POLICY "Delete from design-assets"
 -- ============================================================
 -- REALTIME: Enable on collaboration tables
 -- ============================================================
-ALTER PUBLICATION supabase_realtime ADD TABLE recipes;
-ALTER PUBLICATION supabase_realtime ADD TABLE batch_jobs;
-ALTER PUBLICATION supabase_realtime ADD TABLE section_locks;
-ALTER PUBLICATION supabase_realtime ADD TABLE brands;
+DO $$
+DECLARE table_name TEXT;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY['recipes', 'batch_jobs', 'section_locks', 'brands']
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = table_name
+    ) THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', table_name);
+    END IF;
+  END LOOP;
+END $$;
 
 -- ============================================================
 -- TABLE 8: api_keys (F5 — API key management)

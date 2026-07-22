@@ -5,6 +5,8 @@ import { EditorV2 } from "./pages/EditorV2";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
+import { useAuth } from "./lib/auth";
+import { AuthScreen } from "./components/AuthScreen";
 
 type ViewMode = "landing" | "dashboard" | "editor-v2";
 
@@ -35,6 +37,7 @@ const initialAppState: AppState = {
 };
 
 function App() {
+  const { configured: authConfigured, loading: authLoading, user } = useAuth();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const { addToast } = useToast();
   const [resolving, setResolving] = useState(false);
@@ -42,14 +45,13 @@ function App() {
   const { view, templateId } = state;
 
   // ── Slug → UUID resolution ──────────────────────────────
-  // Calls the public /api/resolve endpoint (no auth required).
-  // Returns null if the slug doesn't resolve.
+  // Resolves only inside the authenticated tenant boundary.
   const resolveSlug = async (wsSlug: string, tplSlug?: string) => {
     const url = tplSlug
       ? `/api/resolve/workspace/${wsSlug}/${tplSlug}`
       : `/api/resolve/workspace/${wsSlug}`;
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getApiHeaders() });
       const json = await res.json();
       return json.success ? json.data : null;
     } catch { return null; }
@@ -90,6 +92,7 @@ function App() {
 
   // Check URL params for direct template/slug loading
   useEffect(() => {
+    if (authConfigured && authLoading) return;
     const params = new URLSearchParams(window.location.search);
     const tplId = params.get("template");
     const hash = window.location.hash.replace("#", "");
@@ -137,7 +140,15 @@ function App() {
       // else: first visit — stays on landing (default)
     }
     // else stays on landing (default)
-  }, []);
+  }, [authConfigured, authLoading]);
+
+  if (authLoading && view !== "landing") {
+    return <main className="auth-shell"><p className="auth-copy" role="status">Cargando sesión…</p></main>;
+  }
+
+  if (authConfigured && !user && view !== "landing") {
+    return <AuthScreen onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
+  }
 
   // Landing view
   if (view === "landing") {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getSupabase } from "../services/supabase.js";
+import { requireWorkspaceRole } from "../services/tenancy.js";
 
 export const storageRoutes = Router();
 
@@ -19,32 +20,32 @@ interface StorageFile {
  * List real objects in a Storage bucket, one folder level deep (our buckets
  * use flat {folder}/{file} layouts: workspace ids, "covers", "thumbnails").
  */
-async function listBucketFiles(sb: any, bucket: string, maxFiles = 400): Promise<StorageFile[]> {
+async function listBucketFiles(sb: any, bucket: string, workspaceId: string, maxFiles = 400): Promise<StorageFile[]> {
   const out: StorageFile[] = [];
   const baseUrl = process.env.SUPABASE_URL || "";
-  const toFile = (path: string, item: any): StorageFile => ({
+  const toFile = async (path: string, item: any): Promise<StorageFile> => ({
     bucket,
     path,
     name: item.name,
     sizeBytes: item.metadata?.size || 0,
     mimeType: item.metadata?.mimetype || "application/octet-stream",
     updatedAt: item.updated_at || item.created_at || null,
-    url: `${baseUrl}/storage/v1/object/public/${bucket}/${path}`,
+    url: (await sb.storage.from(bucket).createSignedUrl(path, 3600)).data?.signedUrl || `${baseUrl}/storage/v1/object/authenticated/${bucket}/${path}`,
   });
-  const { data: root, error } = await sb.storage.from(bucket).list("", { limit: 100, sortBy: { column: "updated_at", order: "desc" } });
+  const { data: root, error } = await sb.storage.from(bucket).list(workspaceId, { limit: 100, sortBy: { column: "updated_at", order: "desc" } });
   if (error || !root) return out;
   for (const item of root) {
     if (out.length >= maxFiles) break;
     if (item.id) {
       // A file at the bucket root
-      out.push(toFile(item.name, item));
+      out.push(await toFile(`${workspaceId}/${item.name}`, item));
     } else {
       // A folder — list its contents
       const { data: children } = await sb.storage.from(bucket)
-        .list(item.name, { limit: 200, sortBy: { column: "updated_at", order: "desc" } });
+        .list(`${workspaceId}/${item.name}`, { limit: 200, sortBy: { column: "updated_at", order: "desc" } });
       for (const child of children || []) {
         if (out.length >= maxFiles) break;
-        if (child.id) out.push(toFile(`${item.name}/${child.name}`, child));
+        if (child.id) out.push(await toFile(`${workspaceId}/${item.name}/${child.name}`, child));
       }
     }
   }
@@ -59,13 +60,14 @@ async function listBucketFiles(sb: any, bucket: string, maxFiles = 400): Promise
  *
  * @returns {200} { success, data: { files: StorageFile[], byBucket } }
  */
-storageRoutes.get("/files", async (req, res) => {
+storageRoutes.get("/files", requireWorkspaceRole("viewer", "query"), async (req, res) => {
   try {
     const sb = getSupabase();
     if (!sb) return res.json({ success: true, data: { files: [], byBucket: {} } });
     const only = req.query.bucket as string | undefined;
+    const workspaceId = req.query.workspaceId as string;
     const buckets = only && (KNOWN_BUCKETS as readonly string[]).includes(only) ? [only] : [...KNOWN_BUCKETS];
-    const results = await Promise.all(buckets.map(b => listBucketFiles(sb, b).catch(() => [] as StorageFile[])));
+    const results = await Promise.all(buckets.map(b => listBucketFiles(sb, b, workspaceId).catch(() => [] as StorageFile[])));
     const files = results.flat().sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
     const byBucket: Record<string, { count: number; sizeBytes: number }> = {};
     for (const f of files) {
@@ -88,7 +90,7 @@ storageRoutes.get("/files", async (req, res) => {
  *
  * @body { bucket, path }
  */
-storageRoutes.delete("/file", async (req, res) => {
+storageRoutes.delete("/file", requireWorkspaceRole("editor", "body"), async (req, res) => {
   try {
     const { bucket, path } = req.body || {};
     if (!bucket || !path || !(KNOWN_BUCKETS as readonly string[]).includes(bucket)) {
@@ -96,6 +98,9 @@ storageRoutes.delete("/file", async (req, res) => {
     }
     if (typeof path !== "string" || path.includes("..")) {
       return res.status(400).json({ success: false, error: "Invalid path" });
+    }
+    if (!path.startsWith(`${req.body.workspaceId}/`)) {
+      return res.status(403).json({ success: false, error: "Storage path belongs to another workspace" });
     }
     const sb = getSupabase();
     if (!sb) return res.status(500).json({ success: false, error: "Supabase not configured" });
@@ -115,9 +120,10 @@ storageRoutes.delete("/file", async (req, res) => {
  *
  * @returns {200} { success, data: { totalBytes, buckets, counts, trash } }
  */
-storageRoutes.get("/summary", async (_req, res) => {
+storageRoutes.get("/summary", requireWorkspaceRole("viewer", "query"), async (_req, res) => {
   try {
     const sb = getSupabase();
+    const workspaceId = _req.query.workspaceId as string;
 
     // ── Asset stats from DB ──
     let activeAssets = 0;
@@ -132,6 +138,7 @@ storageRoutes.get("/summary", async (_req, res) => {
         // Active assets (not deleted)
         const { count: assetCount, data: assetData } = await sb.from("assets")
           .select("size_bytes", { count: "exact", head: false })
+          .eq("workspace_id", workspaceId)
           .is("deleted_at", null);
         activeAssets = assetCount || 0;
         activeBytes = (assetData || []).reduce((sum: number, r: any) => sum + (r.size_bytes || 0), 0);
@@ -139,24 +146,28 @@ storageRoutes.get("/summary", async (_req, res) => {
         // Trashed assets
         const { count: trashAssetCount } = await sb.from("assets")
           .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId)
           .not("deleted_at", "is", null);
         trashAssets = trashAssetCount || 0;
 
         // Templates count (active)
         const { count: tplCount } = await sb.from("templates")
           .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId)
           .is("deleted_at", null);
         templatesCount = tplCount || 0;
 
         // Trashed templates
         const { count: trashTplCount } = await sb.from("templates")
           .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId)
           .not("deleted_at", "is", null);
         trashTemplates = trashTplCount || 0;
 
         // Recipes count
         const { count: recipeCount } = await sb.from("recipes")
           .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId)
           .is("deleted_at", null);
         recipesCount = recipeCount || 0;
       } catch { /* DB queries optional; fall through to zeros */ }
@@ -170,7 +181,7 @@ storageRoutes.get("/summary", async (_req, res) => {
     ];
     const buckets = bucketMeta.map(b => ({ ...b, assetCount: 0, sizeBytes: 0 }));
     if (sb) {
-      const listings = await Promise.all(bucketMeta.map(b => listBucketFiles(sb, b.name).catch(() => [])));
+      const listings = await Promise.all(bucketMeta.map(b => listBucketFiles(sb, b.name, workspaceId).catch(() => [])));
       listings.forEach((files, i) => {
         buckets[i].assetCount = files.length;
         buckets[i].sizeBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0);

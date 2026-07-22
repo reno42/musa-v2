@@ -68,7 +68,7 @@ const BUCKET_LABELS: Record<string, string> = {
 
 // ── Component ──
 
-export function StorageTab() {
+export function StorageTab({ workspaceId }: { workspaceId: string | null }) {
   const { addToast } = useToast();
 
   const [summary, setSummary] = useState<StorageSummary | null>(null);
@@ -93,15 +93,16 @@ export function StorageTab() {
   // ── Data fetching ──
 
   const fetchAll = useCallback(async () => {
+    if (!workspaceId) { setLoading(false); return; }
     setLoading(true);
     const headers = getApiHeaders();
     try {
       const [sumRes, filesRes, tplRes, trashTplRes, trashAssetRes] = await Promise.all([
-        fetch("/api/storage/summary", { headers }).then(r => r.json()).catch(() => null),
-        fetch("/api/storage/files", { headers }).then(r => r.json()).catch(() => null),
-        fetch("/api/templates?limit=100", { headers }).then(r => r.json()).catch(() => null),
-        fetch("/api/templates/trash?limit=100", { headers }).then(r => r.json()).catch(() => null),
-        fetch("/api/assets/trash?limit=100", { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/storage/summary?workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/storage/files?workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/templates?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/templates/trash?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
+        fetch(`/api/assets/trash?limit=100&workspaceId=${encodeURIComponent(workspaceId)}`, { headers }).then(r => r.json()).catch(() => null),
       ]);
       if (sumRes?.success) setSummary(sumRes.data);
       if (filesRes?.success) setBucketFiles(filesRes.data.files || []);
@@ -117,7 +118,7 @@ export function StorageTab() {
       addToast("No se pudo cargar Storage.", "error");
     }
     setLoading(false);
-  }, [addToast]);
+  }, [addToast, workspaceId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -134,7 +135,7 @@ export function StorageTab() {
         const res = await fetch("/api/storage/file", {
           method: "DELETE",
           headers: { ...getApiHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ bucket: item.bucket, path: item.path }),
+          body: JSON.stringify({ bucket: item.bucket, path: item.path, workspaceId }),
         });
         if (!res.ok) throw new Error();
         setBucketFiles(prev => prev.filter(f => `${f.bucket}:${f.path}` !== item.id));
@@ -145,7 +146,7 @@ export function StorageTab() {
       addToast("No se pudo eliminar. Intenta de nuevo.", "error");
       fetchAll();
     }
-  }, [addToast, fetchAll]);
+  }, [addToast, fetchAll, workspaceId]);
 
   const handleRestoreTemplate = async (id: string) => {
     playRestoreSound();
@@ -180,8 +181,8 @@ export function StorageTab() {
     playEmptyTrashSound();
     try {
       await Promise.all([
-        fetch("/api/assets/trash/purge-expired", { method: "POST", headers: getApiHeaders() }),
-        fetch("/api/templates/trash/purge-expired", { method: "POST", headers: getApiHeaders() }),
+        fetch("/api/assets/trash/purge-expired", { method: "POST", headers: getApiHeaders(), body: JSON.stringify({ workspaceId }) }),
+        fetch("/api/templates/trash/purge-expired", { method: "POST", headers: getApiHeaders(), body: JSON.stringify({ workspaceId }) }),
       ]);
       addToast("Papelera purgada (elementos expirados).", "success");
       fetchAll();

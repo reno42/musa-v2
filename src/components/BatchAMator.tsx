@@ -4,6 +4,7 @@ import { getApiHeaders } from "../lib/apiKey";
 
 interface BatchAMatorProps {
   templateId: string | null;
+  workspaceId: string;
   onClose: () => void;
   onOpenTemplate?: (id: string) => void;
   onBackToDashboard?: () => void;
@@ -151,7 +152,7 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   return { headers: h, rows: dataRows };
 }
 
-export function BatchAMator({ templateId, onClose, onOpenTemplate, onBackToDashboard }: BatchAMatorProps) {
+export function BatchAMator({ templateId, workspaceId, onClose, onOpenTemplate, onBackToDashboard }: BatchAMatorProps) {
   const [state, dispatch] = useReducer(batchReducer, {
     mode: "single-post",
     csvText: "",
@@ -178,7 +179,7 @@ export function BatchAMator({ templateId, onClose, onOpenTemplate, onBackToDashb
     if (!activeTplId) { dispatch({ type: "SET_SLOTS", slotInfo: null }); return; }
     setSlotsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/templates/${activeTplId}/batch/slots`);
+      const res = await fetch(`${API_BASE}/templates/${activeTplId}/batch/slots`, { headers: getApiHeaders() });
       const json = await res.json();
       if (json.success) {
         dispatch({ type: "SET_SLOTS", slotInfo: { name: "slots", mustacheSlots: json.mustacheSlots || [], dataSlots: json.dataSlots || [], rules: json.rules || [] } });
@@ -193,14 +194,14 @@ export function BatchAMator({ templateId, onClose, onOpenTemplate, onBackToDashb
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/templates/batch-ready`);
+        const res = await fetch(`${API_BASE}/templates/batch-ready?workspaceId=${encodeURIComponent(workspaceId)}`, { headers: getApiHeaders() });
         const json = await res.json();
         if (json.success) {
           dispatch({ type: "SET_BATCH_READY", batchReadyTemplates: json.data || [] });
         }
       } catch { /* non-blocking */ }
     })();
-  }, []);
+  }, [workspaceId]);
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];

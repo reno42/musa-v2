@@ -24,19 +24,24 @@ function checkApiKey(event) {
   if (!adminKey) return true; // Dev mode: no auth required
 
   const apiKey = (event.headers || {})["x-api-key"] || "";
+  const bearer = (event.headers || {}).authorization || "";
   if (apiKey === adminKey) return true;
 
   // For non-admin keys: at minimum require *some* key header
   // Full api_keys table validation happens at the Express layer
-  return apiKey.length > 0;
+  return apiKey.length > 0 || /^Bearer\s+\S+/i.test(bearer);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
 
 /** Fetch template from REST API (reads Supabase across containers) */
-async function fetchTemplate(id) {
+async function fetchTemplate(id, event) {
   try {
-    const res = await fetch(`${API_BASE}/api/templates/${id}`);
+    const incoming = event?.headers || {};
+    const headers = {};
+    if (incoming.authorization) headers.Authorization = incoming.authorization;
+    if (incoming["x-api-key"]) headers["x-api-key"] = incoming["x-api-key"];
+    const res = await fetch(`${API_BASE}/api/templates/${id}`, { headers });
     if (!res.ok) return null;
     const json = await res.json();
     return json?.success ? json.data : null;
@@ -206,7 +211,7 @@ export const handler = async (event) => {
     const match = rawPath.match(/^\/api\/render\/(.+?)\/frame\/(.+)$/);
     if (match) {
       const [, templateId, frameId] = match;
-      const tpl = await fetchTemplate(templateId);
+      const tpl = await fetchTemplate(templateId, event);
       if (!tpl) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
       }
@@ -249,7 +254,11 @@ export const handler = async (event) => {
     }
     const format = ["png", "jpg"].includes(body.format) ? body.format : "png";
     const scale = Math.min(Math.max(parseInt(String(body.scale), 10) || 1, 1), 4);
-    let tpl = body.template || await fetchTemplate(templateId);
+    const authorizedTemplate = await fetchTemplate(templateId, event);
+    let tpl = body.template || authorizedTemplate;
+    if (!authorizedTemplate) {
+      return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
+    }
     if (!tpl) {
       return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Template not found", templateId }) };
     }

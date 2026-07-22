@@ -1,5 +1,15 @@
 # Futuraria Design — Zero-to-Deploy Install Guide
 
+> **SaaS v9 prerequisite:** before deploying this version, run
+> `node scripts/setup-supabase.mjs`. The script applies the base schema and all
+> numbered migrations as complete SQL units. Confirm that
+> `supabase_migrations_v9.sql` succeeds, then update `.migration-version` to
+> `v9`. Configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
+> `WORKSPACE_SECRET_ENCRYPTION_KEY`, and `MCP_ADMIN_KEY` in addition to the
+> existing server-side Supabase variables. The `VITE_` key must always be the
+> anon key, never the service-role key. Enable Email/Password in Supabase Auth
+> and allow both local and production URLs as authentication redirect URLs.
+
 **Two audiences, one file:**
 - [For AI Agents](#for-ai-agents) — execute phases in order, each ends with ✓ checkpoint
 - [For Humans](#for-humans) — click-through instructions with dashboard directions

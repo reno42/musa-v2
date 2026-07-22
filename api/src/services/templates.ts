@@ -322,7 +322,11 @@ export async function createTemplate(
   _canvas: CanvasData | undefined, userId: string, workspaceId: string
 ): Promise<DesignTemplate> {
   const tpl = store.createTemplate({ workspaceId, name, width, height, userId });
-  await upsertSupabase(tpl, userId);
+  const persisted = await upsertSupabase(tpl, userId);
+  if (getSupabase() && !persisted) {
+    store.purgeTemplate(tpl.id);
+    throw new Error("Template could not be persisted");
+  }
   return tpl;
 }
 
@@ -424,14 +428,16 @@ export async function listTrash(limit = 50, offset = 0): Promise<{ data: DesignT
   return { data: data.slice(offset, offset + limit), total };
 }
 
-export async function purgeExpiredTemplates(olderThanDays = 30): Promise<number> {
-  const count = store.purgeExpiredTemplates(olderThanDays);
+export async function purgeExpiredTemplates(olderThanDays = 30, workspaceId?: string): Promise<number> {
+  const count = store.purgeExpiredTemplates(olderThanDays, workspaceId);
   // Also purge from Supabase
   const sb = getSupabase();
   if (sb) {
     const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
     try {
-      await sb.from("templates").delete().lt("deleted_at", cutoff);
+      let query = sb.from("templates").delete().lt("deleted_at", cutoff);
+      if (workspaceId) query = query.eq("workspace_id", workspaceId);
+      await query;
     } catch { /* best-effort */ }
   }
   return count;

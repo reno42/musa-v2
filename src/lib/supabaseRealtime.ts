@@ -1,16 +1,7 @@
-import { createClient, RealtimeChannel } from "@supabase/supabase-js";
+import { RealtimeChannel } from "@supabase/supabase-js";
+import { browserSupabase } from "./supabaseClient";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-
-let supabaseClient: ReturnType<typeof createClient> | null = null;
-
-function getClient() {
-  if (!supabaseClient && supabaseUrl && supabaseAnonKey) {
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-  }
-  return supabaseClient;
-}
+function getClient() { return browserSupabase; }
 
 /** Subscribe to template changes via Supabase Realtime Broadcast */
 export function subscribeTemplate(
