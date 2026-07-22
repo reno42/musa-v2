@@ -18,13 +18,23 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** Parse tokens from the URL hash fragment (e.g. #access_token=...&type=recovery). */
+function parseHashParams(): URLSearchParams {
+  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // ── Snapshot hash params at mount — these survive detectSessionInUrl cleanup ──
+  const hashParams = parseHashParams();
+  const isRecoveryInHash = hashParams.get("type") === "recovery";
+  const hasResetParam = new URLSearchParams(window.location.search).get("reset") === "1";
+
   const [session, setSession] = useState<Session | null>(null);
   const [configured, setConfigured] = useState(isSupabaseAuthConfigured);
   const [authRequired, setAuthRequired] = useState(isSupabaseAuthConfigured);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [passwordRecovery, setPasswordRecovery] = useState(() => new URLSearchParams(window.location.search).get("reset") === "1");
+  const [passwordRecovery, setPasswordRecovery] = useState(hasResetParam || isRecoveryInHash);
 
   useEffect(() => {
     let active = true;
@@ -49,9 +59,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setConfigurationError(error);
       if (!client) return;
 
+      // Standard session check (handles persisted sessions + detectSessionInUrl).
       const { data } = await client.auth.getSession();
       activateSession(data.session);
       bootstrapAccount(data.session);
+
+      // ── PKCE fallback ──────────────────────────────────────────────
+      // detectSessionInUrl relies on a PKCE code_verifier stored in the
+      // browser when the email was requested. If the user opens the link
+      // in a different tab or after storage was cleared the exchange
+      // fails silently → no session → "expired". Extract tokens from the
+      // hash directly as a safety net.
+      if (!data.session && isRecoveryInHash) {
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+        if (accessToken && refreshToken) {
+          try {
+            const { data: recovered } = await client.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            if (recovered.session) {
+              activateSession(recovered.session);
+              bootstrapAccount(recovered.session);
+              setPasswordRecovery(true);
+              // Clean hash so the URL doesn't carry stale tokens.
+              window.history.replaceState(
+                null,
+                "",
+                window.location.pathname + window.location.search + "#workspace",
+              );
+            }
+          } catch {
+            // Token is genuinely expired or invalid — let the UI handle it.
+          }
+        }
+      }
+
       if (!active) return;
 
       const { data: listener } = client.auth.onAuthStateChange((event, nextSession) => {
