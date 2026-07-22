@@ -52,10 +52,10 @@ Vite Dev Server (:5173)        API Server (:3001)
 | Variable | Required | Purpose |
 |---|---|---|
 | `SUPABASE_URL` | For persistence | Supabase project URL (data CRUD) |
-| `SUPABASE_SERVICE_KEY` | For persistence | Server-side `service_role` key |
-| `SUPABASE_ANON_KEY` | For SaaS login | Public anon key delivered to the browser at runtime |
+| `SUPABASE_SECRET_KEY` | For persistence | Server-only `sb_secret_…` key; legacy `SUPABASE_SERVICE_KEY` also works |
+| `SUPABASE_PUBLISHABLE_KEY` | For SaaS login | Browser-safe `sb_publishable_…` key delivered at runtime |
 | `VITE_SUPABASE_URL` | Optional | Real-time collaboration (browser) |
-| `VITE_SUPABASE_ANON_KEY` | Optional | Real-time collaboration (browser) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Optional | Build-time real-time collaboration key |
 | `SAAS_INITIAL_OWNER_EMAIL` | Optional | Explicit account allowed to claim pre-SaaS workspaces |
 | `API_KEY` | Optional | MCP API key (default: `dev-key`) |
 

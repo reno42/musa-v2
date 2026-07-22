@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
-import { getSupabaseAdmin } from "../services/supabase.js";
+import { getSupabaseAdmin, getSupabaseAuthClient } from "../services/supabase.js";
 import { withRequestAuth, type RequestAuth } from "../services/requestContext.js";
 
 declare global {
@@ -20,6 +20,7 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   const apiKey = (req.headers["x-api-key"] as string) || "";
   const bearer = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   const sb = getSupabaseAdmin();
+  const authClient = getSupabaseAuthClient() || sb;
 
   const proceed = (authData: RequestAuth) => {
     req.auth = authData;
@@ -30,9 +31,9 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 
-  if (bearer && sb) {
+  if (bearer && authClient) {
     try {
-      const { data, error } = await sb.auth.getUser(bearer);
+      const { data, error } = await authClient.auth.getUser(bearer);
       if (!error && data.user) {
         return proceed({ userId: data.user.id, authType: "user", accessToken: bearer });
       }
@@ -40,7 +41,7 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   }
 
   // Preserve zero-config local development only when no database/auth service exists.
-  if (!adminKey && !sb) {
+  if (!adminKey && !authClient) {
     if (apiKey) return proceed({ userId: apiKey, isAdmin: true, authType: "dev" });
     if (bearer) return proceed({ userId: bearer, authType: "dev" });
     return proceed({ userId: "dev_user_default", isAdmin: true, authType: "dev" });

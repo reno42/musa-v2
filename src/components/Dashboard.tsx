@@ -1331,7 +1331,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Real-time Collaboration</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {storageHealth?.realtime ? "VITE_SUPABASE_* configured" : "Not configured (set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY)"}
+                    {storageHealth?.realtime ? "Supabase browser key configured" : "Not configured (set SUPABASE_PUBLISHABLE_KEY)"}
                   </div>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import test from "node:test";
 import { encryptWorkspaceSecret, decryptWorkspaceSecret } from "../api/src/services/secrets.ts";
 import { hasMinimumWorkspaceRole, workspaceKeyAllows } from "../api/src/services/workspaceRoles.ts";
 import { isLegacyWorkspaceOwner } from "../api/src/services/legacyOwnership.ts";
+import { parseSupabaseKey } from "../api/src/services/supabase.ts";
 
 test("workspace roles isolate viewers, editors and workspace API keys", () => {
   assert.equal(hasMinimumWorkspaceRole("owner", "admin"), true);
@@ -17,6 +18,13 @@ test("only non-UUID pre-SaaS owner identifiers are considered legacy", () => {
   assert.equal(isLegacyWorkspaceOwner("dev_user_default"), true);
   assert.equal(isLegacyWorkspaceOwner(null), true);
   assert.equal(isLegacyWorkspaceOwner("2bd6af57-94e3-4b24-8ae8-b616ee257bfa"), false);
+});
+
+test("modern Supabase key sets resolve their default publishable or secret key", () => {
+  assert.equal(parseSupabaseKey("sb_publishable_direct"), "sb_publishable_direct");
+  assert.equal(parseSupabaseKey('{"default":"sb_publishable_default","rotated":"sb_publishable_other"}'), "sb_publishable_default");
+  assert.equal(parseSupabaseKey('{"primary":"sb_secret_primary"}'), "sb_secret_primary");
+  assert.equal(parseSupabaseKey("{invalid"), undefined);
 });
 
 test("BYOK credentials use authenticated encryption and reject tampering", () => {
@@ -54,7 +62,8 @@ test("browser auth can load public Supabase config at runtime", () => {
   const middleware = readFileSync(new URL("../api/src/middleware/auth.ts", import.meta.url), "utf8");
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(client, /fetch\("\/api\/auth\/config"/);
+  assert.match(client, /config\?\.publishableKey \|\| config\?\.anonKey/);
   assert.match(middleware, /req\.path === "\/api\/auth\/config"/);
   assert.match(app, /if \(authLoading\) return;/);
-  assert.doesNotMatch(client, /SUPABASE_SERVICE_KEY/);
+  assert.doesNotMatch(client, /SUPABASE_(?:SERVICE|SECRET)_KEY/);
 });

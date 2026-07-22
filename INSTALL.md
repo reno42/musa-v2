@@ -4,12 +4,15 @@
 > `node scripts/setup-supabase.mjs`. The script applies the base schema and all
 > numbered migrations as complete SQL units. Confirm that
 > `supabase_migrations_v9.sql` succeeds, then update `.migration-version` to
-> `v9`. Configure `SUPABASE_ANON_KEY`, `WORKSPACE_SECRET_ENCRYPTION_KEY`, and
+> `v9`. Configure `SUPABASE_PUBLISHABLE_KEY`, `WORKSPACE_SECRET_ENCRYPTION_KEY`, and
 > `MCP_ADMIN_KEY` in addition to the existing server-side Supabase variables.
-> Authentication receives the anon key from the server at runtime; `VITE_*`
-> remains optional for Realtime. A `VITE_` key must always be the anon key,
-> never the service-role key. Enable Email/Password in Supabase Auth
+> Authentication receives the publishable key from the server at runtime;
+> `VITE_*` remains optional for Realtime. A `VITE_` key must always be
+> publishable, never secret/service-role. Enable Email/Password in Supabase Auth
 > and allow both local and production URLs as authentication redirect URLs.
+> Commands farther below that use `SUPABASE_ANON_KEY` or
+> `SUPABASE_SERVICE_KEY` document the compatible legacy path; new projects
+> should use publishable/secret keys.
 
 **Two audiences, one file:**
 - [For AI Agents](#for-ai-agents) — execute phases in order, each ends with ✓ checkpoint

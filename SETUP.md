@@ -66,8 +66,8 @@ Edit `.env`:
 ```env
 # Supabase (https://app.supabase.com → Project Settings → API)
 SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGciOi...        # service_role key
-SUPABASE_ANON_KEY=eyJhbGciOi...           # anon key (fallback)
+SUPABASE_SECRET_KEY=sb_secret_...          # backend only
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_... # browser-safe login key
 ```
 
 > **Without Supabase:** The app uses in-memory storage. Works perfectly for development. Data lost on restart.
@@ -139,8 +139,8 @@ netlify link
 
 # Set environment variables
 netlify env:set SUPABASE_URL "https://your-project.supabase.co"
-netlify env:set SUPABASE_SERVICE_KEY "sb_secret_..."
-netlify env:set SUPABASE_ANON_KEY "sb_anon_..."
+netlify env:set SUPABASE_SECRET_KEY "sb_secret_..."
+netlify env:set SUPABASE_PUBLISHABLE_KEY "sb_publishable_..."
 ```
 
 ### Deploy

@@ -26,7 +26,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
 import { accountRoutes, workspaceSaasRoutes } from "./routes/saas.js";
-import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin } from "./services/supabase.js";
+import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
@@ -73,7 +73,7 @@ app.get("/api/auth/config", (_req, res) => {
     success: true,
     data: {
       configured: Boolean(config),
-      authRequired: Boolean(getSupabaseAdmin()),
+      authRequired: Boolean(getSupabaseAuthClient() || getSupabaseAdmin()),
       ...(config || {}),
     },
   });
@@ -85,22 +85,18 @@ app.get("/api/health/storage", (_req, res) => {
   const sb = getSupabase();
   const supabaseConnected = sb !== null;
 
-  // Realtime requires the browser-side VITE_* vars, which we can't check
-  // server-side. The Dashboard queries this to show the correct status.
+  // Realtime can use build-time VITE_* values or the runtime publishable key.
   const hasRealtimeVars = !!(
-    process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY
+    process.env.VITE_SUPABASE_URL &&
+    (process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
   );
 
-  // Also check Netlify-side env vars as fallback
-  const hasFallbackVars = !!(
-    (process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN) &&
-    (process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN)
-  );
+  const hasRuntimeBrowserConfig = Boolean(getPublicSupabaseConfig());
 
   res.json({
     supabase: supabaseConnected,
     mode: supabaseConnected ? "supabase" : "memory",
-    realtime: hasRealtimeVars || hasFallbackVars,
+    realtime: hasRealtimeVars || hasRuntimeBrowserConfig,
   });
 });
 

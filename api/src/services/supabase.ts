@@ -10,8 +10,10 @@
  *
  * Environment variables:
  *   SUPABASE_URL                        → https://<project>.supabase.co
- *   SUPABASE_SERVICE_KEY                → service_role JWT (server-side only)
- *   SUPABASE_ANON_KEY                   → fallback anon key
+ *   SUPABASE_SECRET_KEY                 → modern secret key (server-side only)
+ *   SUPABASE_PUBLISHABLE_KEY            → modern browser-safe key
+ *   SUPABASE_SERVICE_KEY                → legacy service_role fallback
+ *   SUPABASE_ANON_KEY                   → legacy anon fallback
  *   SUPABASE_PROJECT_URL_DE_REPO_DESIGN → Netlify-deployed fallback URL
  *   SUPABASE_SECRET_KEY_DE_REPO_DESIGN  → Netlify-deployed fallback key
  *
@@ -29,34 +31,76 @@ import { resolve } from "node:path";
 import type { RequestAuth } from "./requestContext.js";
 
 let adminClient: SupabaseClient | null = null;
+let authClient: SupabaseClient | null = null;
 
 function currentRequestAuth(): RequestAuth | undefined {
   const context = (globalThis as any)[Symbol.for("futuraria.requestContext")];
   return context?.getStore?.();
 }
 
-function supabaseConfig() {
-  const url = process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN;
-  const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN;
-  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  return { url, serviceKey, anonKey };
+export function parseSupabaseKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!trimmed.startsWith("{")) return trimmed;
+  try {
+    const keySet = JSON.parse(trimmed) as Record<string, unknown>;
+    const preferred = keySet.default;
+    if (typeof preferred === "string" && preferred.trim()) return preferred.trim();
+    return Object.values(keySet).find((candidate): candidate is string => typeof candidate === "string" && Boolean(candidate.trim()))?.trim();
+  } catch {
+    return undefined;
+  }
 }
 
-/** Public browser configuration. The anon key is intentionally public; the service key never is. */
-export function getPublicSupabaseConfig(): { url: string; anonKey: string } | null {
-  const { url, anonKey } = supabaseConfig();
-  if (!url || !anonKey || url.includes("your-project") || anonKey.includes("your_anon_key")) return null;
-  return { url, anonKey };
+function firstSupabaseKey(...values: Array<string | undefined>) {
+  for (const value of values) {
+    const key = parseSupabaseKey(value);
+    if (key) return key;
+  }
+  return undefined;
+}
+
+function supabaseConfig() {
+  const url = process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL_DE_REPO_DESIGN;
+  const secretKey = firstSupabaseKey(
+    process.env.SUPABASE_SECRET_KEY,
+    process.env.SUPABASE_SECRET_KEYS,
+    process.env.SUPABASE_SERVICE_KEY,
+    process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN,
+  );
+  const publishableKey = firstSupabaseKey(
+    process.env.SUPABASE_PUBLISHABLE_KEY,
+    process.env.SUPABASE_PUBLISHABLE_KEYS,
+    process.env.SUPABASE_ANON_KEY,
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    process.env.VITE_SUPABASE_ANON_KEY,
+  );
+  return { url, secretKey, publishableKey };
+}
+
+/** The publishable key is public by design; secret/service keys never leave the server. */
+export function getPublicSupabaseConfig(): { url: string; publishableKey: string } | null {
+  const { url, publishableKey } = supabaseConfig();
+  if (!url || !publishableKey || url.includes("your-project") || publishableKey.includes("your_publishable_key") || publishableKey.includes("your_anon_key")) return null;
+  return { url, publishableKey };
 }
 
 export function getSupabaseAdmin(): SupabaseClient | null {
-  const { url, serviceKey, anonKey } = supabaseConfig();
-  const key = serviceKey || anonKey;
-  if (!url || !key || url.includes("your-project")) return null;
+  const { url, secretKey } = supabaseConfig();
+  if (!url || !secretKey || url.includes("your-project")) return null;
   if (!adminClient) {
-    adminClient = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    adminClient = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   }
   return adminClient;
+}
+
+export function getSupabaseAuthClient(): SupabaseClient | null {
+  const { url, publishableKey } = supabaseConfig();
+  if (!url || !publishableKey || url.includes("your-project")) return null;
+  if (!authClient) {
+    authClient = createClient(url, publishableKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  }
+  return authClient;
 }
 
 /**
@@ -69,11 +113,11 @@ export function getSupabaseAdmin(): SupabaseClient | null {
  *            webhooks.ts (dispatch), renderer.ts (storage)
  */
 export function getSupabase(): SupabaseClient | null {
-  const { url, anonKey } = supabaseConfig();
+  const { url, publishableKey } = supabaseConfig();
   const auth = currentRequestAuth();
-  if (auth?.accessToken && url && anonKey) {
+  if (auth?.accessToken && url && publishableKey) {
     if (!auth.scopedClient) {
-      auth.scopedClient = createClient(url, anonKey, {
+      auth.scopedClient = createClient(url, publishableKey, {
         global: { headers: { Authorization: `Bearer ${auth.accessToken}` } },
         auth: { persistSession: false, autoRefreshToken: false },
       });

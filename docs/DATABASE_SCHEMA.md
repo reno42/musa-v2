@@ -12,8 +12,8 @@
 |----------|-------|
 | **URL** | `https://npdycbfhtcccznbndrkl.supabase.co` |
 | **Project** | Futuraria Design Editor (separate from CRM Supabase `unhiumdpcywchtsykakj`) |
-| **Auth Model** | Service role key (server-side only) + anon key fallback |
-| **Env Vars** | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_PROJECT_URL_DE_REPO_DESIGN`, `SUPABASE_SECRET_KEY_DE_REPO_DESIGN` |
+| **Auth Model** | Secret key (server-side only) + publishable key for user sessions |
+| **Env Vars** | `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_PUBLISHABLE_KEY` (legacy service/anon names remain supported) |
 | **Storage Buckets** | `design-exports` (rendered images) |
 
 ---
@@ -182,7 +182,7 @@ The Design Editor uses a **JSONB-hybrid pattern**. Instead of normalized relatio
 
 ⚠️ **[VERIFY MANUALLY]** RLS policies could not be verified via code analysis. Based on the code:
 
-- **Server-side** uses `SUPABASE_SERVICE_KEY` (bypasses RLS entirely)
+- **Server-side** uses `SUPABASE_SECRET_KEY` (bypasses RLS entirely); the legacy service-role variable remains supported
 - **API key auth** is handled at the Express middleware level (`x-api-key: dev-key`)
 - **Frontend** uses a simple API fetch wrapper (`src/lib/supabase.ts`), not direct Supabase client
 

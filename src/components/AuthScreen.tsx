@@ -11,7 +11,7 @@ export function AuthConfigurationScreen({ onBack, error }: { onBack: () => void;
         <p className="auth-copy">La base de datos está activa, pero el navegador todavía no recibió la clave pública de Supabase.</p>
         <p className="auth-error" role="alert">{error}</p>
         <div className="auth-setup-help">
-          Agrega <code>SUPABASE_ANON_KEY</code> en las variables del servidor y vuelve a desplegar. No uses aquí la clave <code>service_role</code>.
+          Copia la clave <strong>Publishable</strong> de Supabase en una variable llamada <code>SUPABASE_PUBLISHABLE_KEY</code> y vuelve a desplegar. No uses aquí la clave <code>Secret</code> ni <code>service_role</code>.
         </div>
       </section>
     </main>

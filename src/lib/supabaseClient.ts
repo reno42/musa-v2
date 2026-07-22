@@ -1,12 +1,12 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const supabasePublicKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
-export let isSupabaseAuthConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export let isSupabaseAuthConfigured = Boolean(supabaseUrl && supabasePublicKey);
 
 export let browserSupabase: SupabaseClient | null = isSupabaseAuthConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+  ? createClient(supabaseUrl, supabasePublicKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })
   : null;
@@ -30,16 +30,17 @@ export function initializeBrowserSupabase(): Promise<BrowserAuthInitialization> 
       if (!response.ok) throw new Error(`No se pudo cargar la configuración (${response.status}).`);
       const payload = await response.json();
       const config = payload?.data;
-      if (!config?.configured || !config.url || !config.anonKey) {
+      const publishableKey = config?.publishableKey || config?.anonKey;
+      if (!config?.configured || !config.url || !publishableKey) {
         return {
           client: null,
           authRequired: Boolean(config?.authRequired),
           error: config?.authRequired
-            ? "Falta SUPABASE_ANON_KEY en el entorno del servidor."
+            ? "Falta SUPABASE_PUBLISHABLE_KEY en el entorno del servidor."
             : null,
         };
       }
-      browserSupabase = createClient(config.url, config.anonKey, {
+      browserSupabase = createClient(config.url, publishableKey, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
       });
       isSupabaseAuthConfigured = true;

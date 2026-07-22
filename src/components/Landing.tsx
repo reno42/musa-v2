@@ -444,8 +444,8 @@ npm run dev`}</pre>
               <div>
                 <div className="landing-step-title">Configure Supabase</div>
                 <p className="landing-step-desc">
-                  Set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_KEY</code> in your <code>.env</code> file for data persistence.
-                  Optionally, add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> for real-time collaboration.
+                  Set <code>SUPABASE_URL</code>, <code>SUPABASE_SECRET_KEY</code>, and <code>SUPABASE_PUBLISHABLE_KEY</code> in your <code>.env</code> file.
+                  Optionally, add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> for build-time real-time collaboration.
                   <br /><br />
                   Run <code>node scripts/setup-supabase.mjs</code> to initialize your database schema using your Supabase Personal Access Token.
                   The harness connects automatically — your AI is now ready to design.
