@@ -239,3 +239,123 @@ workspaceRoutes.get("/:id/templates", requireWorkspaceRole("viewer"), async (req
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * GET /api/workspaces/:id/texts
+ * ──────────────────────────────────────────────────────────────
+ * Efficient text extraction: single Supabase query pulling only
+ * frames data (not full template JSONB), then cheerio scan.
+ * Replaces the heavy list_all_texts MCP call that timed out at 10s.
+ */
+workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) {
+      return res.json({ success: true, texts: [], frames: [], templatesScanned: 0 });
+    }
+
+    // Single query: only frames + thumbnail, NOT the full data column
+    const { data: rows, error } = await sb
+      .from("templates")
+      .select("id, name, data->frames, data->>thumbnail")
+      .eq("workspace_id", req.params.id)
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    // Parallel fetch of design_file_meta for metadata enrichment
+    const tplIds = (rows || []).map((r: any) => r.id);
+    const metaMap = new Map<string, any>();
+    if (tplIds.length > 0) {
+      const { data: metaData } = await sb
+        .from("design_file_meta")
+        .select("template_id, brand, campaign, format, file_type, cover_image_url")
+        .in("template_id", tplIds);
+      if (metaData) {
+        for (const row of metaData) metaMap.set(row.template_id, row);
+      }
+    }
+
+    const TEXT_TAGS = "h1, h2, h3, h4, h5, h6, p, span, a, button, li, label, div, td, th, strong, em, blockquote, figcaption, caption, small, mark";
+    const allTexts: any[] = [];
+    const framePreviews = new Map<string, any>();
+
+    // Import once outside the loop
+    const { load: cheerioLoad } = await import("cheerio");
+
+    for (const row of rows || []) {
+      const frames: any[] = Array.isArray(row.frames) ? row.frames : [];
+      if (frames.length === 0) continue;
+      const meta = metaMap.get(row.id) || {};
+
+      for (const frame of frames) {
+        const f: any = frame;
+        if (!f.html) continue;
+
+        // Build frame preview
+        if (!framePreviews.has(f.id)) {
+          framePreviews.set(f.id, {
+            frameId: f.id,
+            frameName: f.name || f.id,
+            templateId: row.id,
+            templateName: row.name,
+            frameWidth: f.width || 1080,
+            frameHeight: f.height || 1080,
+            frameHtml: f.html || "",
+            frameCss: f.css || "",
+            frameBackground: f.background || null,
+            brand: meta.brand || "",
+            campaign: meta.campaign || "",
+            format: meta.format || "",
+            fileType: meta.file_type || "",
+            coverImage: meta.cover_image_url || row.thumbnail || null,
+          });
+        }
+
+        const $ = cheerioLoad(f.html);
+        $(TEXT_TAGS).each((_, el) => {
+          const $el = $(el);
+          let ownText = "";
+          const node = $el[0];
+          if (node && node.children) {
+            for (const child of node.children) {
+              if (child.type === "text") ownText += child.data || "";
+            }
+          }
+          ownText = ownText.trim();
+          if (!ownText) return;
+
+          allTexts.push({
+            templateId: row.id,
+            templateName: row.name,
+            frameId: f.id,
+            frameName: f.name || f.id,
+            location: "frame",
+            layerId: $el.attr("data-layer-id") || null,
+            layerName: $el.attr("data-layer-name") || null,
+            tag: ($el.prop("tagName") || "").toLowerCase(),
+            text: ownText,
+            charCount: ownText.length,
+            brand: meta.brand || "",
+            campaign: meta.campaign || "",
+            format: meta.format || "",
+            fileType: meta.file_type || "",
+          });
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      texts: allTexts,
+      frames: [...framePreviews.values()],
+      autoTagged: 0,
+      templatesScanned: (rows || []).length,
+      templatesUpdated: 0,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

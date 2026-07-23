@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { mcpCall } from "../lib/mcpClient";
+import { apiFetch } from "../lib/supabase";
 import { useToast } from "./Toast";
 
 // ── Types ──
@@ -390,7 +391,10 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   const loadTexts = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await mcpCall("list_all_texts", { workspaceId: workspaceId || undefined });
+      // Use REST endpoint instead of MCP — avoids 10s timeout on heavy list_all_texts
+      const result = await apiFetch<{ success: boolean; texts: TextEntry[]; frames: FramePreview[]; autoTagged: number; templatesUpdated: number }>(
+        `/workspaces/${workspaceId || "ws_user_8e9f031817184e0ab205"}/texts`,
+      );
       const texts: TextEntry[] = result.texts || [];
       const frames: FramePreview[] = result.frames || [];
       const previewMap = new Map<string, FramePreview>();
