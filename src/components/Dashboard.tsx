@@ -180,18 +180,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     addToast("API key removed.", "info");
   };
 
+  const handleGenerateKey = async () => {
+    setApiKeyRotating(true);
+    try {
+      const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
+        `/workspaces/${DEFAULT_WORKSPACE_ID}/api-keys`,
+        { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
+      );
+      if (res.success && res.data?.key) {
+        setApiKey(res.data.key);
+        setApiKeyValue(res.data.key);
+        setShowApiKeyInput(false);
+        addToast(`Key generated: ${res.data.key_prefix}`, "success");
+      } else {
+        throw new Error("No key in response");
+      }
+    } catch (err: any) {
+      addToast(`Generate failed: ${err.message}. Sign in required.`, "info");
+    }
+    setApiKeyRotating(false);
+  };
+
   const handleRotateKey = async () => {
     setApiKeyRotating(true);
     try {
-      // Call MCP to create a new key (requires admin key in current key slot)
-      const result = await mcpCall("create_api_key", { label: "ren-browser" });
-      if (result?.key) {
-        setApiKey(result.key);
-        setApiKeyValue(result.key);
-        addToast("Key rotated successfully.", "success");
+      const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
+        `/workspaces/${DEFAULT_WORKSPACE_ID}/api-keys`,
+        { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
+      );
+      if (res.success && res.data?.key) {
+        setApiKey(res.data.key);
+        setApiKeyValue(res.data.key);
+        addToast(`Key rotated: ${res.data.key_prefix}`, "success");
+      } else {
+        throw new Error("No key in response");
       }
-    } catch {
-      addToast("Rotate requires admin key. Paste a new key manually.", "info");
+    } catch (err: any) {
+      addToast(`Rotate failed: ${err.message}. Sign in required.`, "info");
     }
     setApiKeyRotating(false);
   };
@@ -1432,7 +1457,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* API Key Input / Rotate */}
           <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
             {showApiKeyInput || !hasApiKey() ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input
                   autoFocus
                   value={apiKeyValue}
@@ -1440,7 +1465,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   onKeyDown={e => { if (e.key === "Enter") handleSaveApiKey(); if (e.key === "Escape") setShowApiKeyInput(false); }}
                   placeholder="Paste your API key (fdr_…)"
                   style={{
-                    flex: 1, padding: "8px 14px", borderRadius: 8,
+                    flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
                     background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
                     color: "#fff", fontSize: 12, outline: "none",
                   }}
@@ -1459,6 +1484,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 >
                   Save
                 </button>
+                {!hasApiKey() && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateKey}
+                    disabled={apiKeyRotating}
+                    style={{
+                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
+                      border: "none", cursor: apiKeyRotating ? "wait" : "pointer",
+                      background: "rgba(34,197,94,0.12)", color: "#4ade80",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {apiKeyRotating ? "Generating…" : "Generate Key"}
+                  </button>
+                )}
                 {hasApiKey() && (
                   <button
                     type="button"
