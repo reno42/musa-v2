@@ -187,6 +187,16 @@ function resolveTag(layer) {
   return "div";
 }
 
+const BACKGROUND_PROPERTIES = new Set([
+  "background", "background-color", "background-image",
+  "backgroundColor", "backgroundImage",
+]);
+
+function hasBackgroundProperty(style) {
+  if (!style || typeof style !== "object") return false;
+  return Object.keys(style).some(key => BACKGROUND_PROPERTIES.has(key));
+}
+
 function buildLayerCss(id, layer) {
   const declarations = [
     "position: absolute",
@@ -198,7 +208,7 @@ function buildLayerCss(id, layer) {
   ];
   if (layer.kind === "text") declarations.push("margin: 0");
   if (layer.kind === "image") declarations.push("display: block", "object-fit: cover");
-  if (layer.kind === "shape" && !layer.style?.background && !layer.style?.["background-color"]) {
+  if (layer.kind === "shape" && !hasBackgroundProperty(layer.style)) {
     declarations.push("background: #8B5CF6");
   }
   for (const [rawProperty, rawValue] of Object.entries(layer.style || {})) {

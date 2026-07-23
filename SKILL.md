@@ -267,6 +267,78 @@ tools/call: add_primitive({ templateId: tplId, frameId, type: "rect", x: 50, y: 
 
 **Note:** `create_template({ engine: "html" })` already creates Frame 1 with an auto-generated ID. You can use that frameId directly or create additional frames with `create_html_frame`. Frame positions are auto-calculated (never overlap).
 
+### Creative Mode vs Editable Mode — Choosing the Right Tools
+
+The MCP offers two distinct workflows for building designs. Understanding when to use each is critical for achieving creative freedom.
+
+#### Creative Mode (no restrictions): `set_html` + `set_css`
+
+This is the **unrestricted** path. These tools write raw HTML and CSS directly to a frame without any editability contract validation. Use this when creative expression matters more than per-element editability.
+
+**What works:**
+- Full `<style>` blocks with `@keyframes`, `@media`, pseudo-elements (`::before`, `::after`)
+- `text-shadow` with unlimited layers: `textShadow: "0 1px 0 #ccc, 0 2px 0 #b9b9b9, 0 5px 5px rgba(0,0,0,0.3)"`
+- `transform: rotate(-3deg)`, `transform: perspective(1000px) rotateY(15deg)`
+- Complex `background` shorthand: `linear-gradient(135deg, #667eea 0%, #764ba2 100%)`
+- `background-image: url(https://images.unsplash.com/...)` with overlays
+- Multi-layer `box-shadow`: `0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2)`
+- CSS Grid, Flexbox, nested HTML structures
+- Any valid HTML5 + CSS3 that DOMPurify allows
+
+**Workflow:**
+```
+1. create_template({ name: "Flyer", workspaceId: wsId, engine: "html" })  → tplId, frame1Id
+2. set_html({ templateId: tplId, frameId: frame1Id, html: "<full HTML>" })
+3. set_css({ templateId: tplId, frameId: frame1Id, css: "<full CSS with @imports, @keyframes, etc.>" })
+```
+
+**Trade-off:** The editor cannot select individual elements for drag/resize. The frame is treated as one visual unit.
+
+#### Editable Mode (per-element editing): `set_frame_layers`
+
+This is the **structured** path. Every visual object becomes an independently selectable, draggable, resizable layer. The editability contract enforces flat siblings (no nesting) with explicit coordinates.
+
+**What works in the `style` object:**
+- ALL CSS properties are passed through — `textShadow`, `transform`, `boxShadow`, `backgroundImage`, `background`, `filter`, `clipPath`, etc.
+- camelCase keys are auto-converted to kebab-case: `textShadow` → `text-shadow`, `backgroundColor` → `background-color`
+- CSS custom properties: `--my-var: value`
+
+**Constraints:**
+- Layout properties (`position`, `left`, `top`, `width`, `height`) are reserved — controlled by `x`, `y`, `width`, `height` params
+- No `{`, `}`, or `;` in style values (these are for `<style>` blocks, not inline objects)
+- Flat siblings only: every text, image, shape must be a separate top-level layer (no nesting)
+- `text` must be plain text (no nested HTML)
+
+**Workflow:**
+```
+1. create_template({ name: "Editable Post", workspaceId: wsId, engine: "html" })  → tplId, frame1Id
+2. set_frame_layers({
+     templateId: tplId,
+     frameId: frame1Id,
+     layers: [
+       { id: "bg", name: "Background", kind: "shape", x: 0, y: 0, width: 1080, height: 1080,
+         style: { background: "linear-gradient(135deg, #667eea, #764ba2)" } },
+       { id: "hero_title", name: "Hero Title", kind: "text", tag: "h1", x: 100, y: 400, width: 880, height: 120,
+         text: "ACELERA", style: { fontSize: 96, fontWeight: 900, color: "#fff",
+         textShadow: "0 2px 0 #b9b9b9, 0 4px 0 #a0a0a0, 0 6px 10px rgba(0,0,0,0.5)",
+         transform: "rotate(-3deg)", textAlign: "center" } }
+     ]
+   })
+```
+
+**Trade-off:** Every element is independently editable in the visual editor. However, `@keyframes`, `@media` queries, and pseudo-elements (`::before`) are not available because they require a `<style>` block context that lives outside per-element CSS rules.
+
+#### When to use which
+
+| Scenario | Mode | Why |
+|----------|------|-----|
+| Flyer with Unsplash bg + 3D text | Creative | Needs `background-image` overlays, multi-layer `text-shadow`, `transform` |
+| Social post with per-element editing | Editable | Human will fine-tune text/positions in editor |
+| Landing page with animations | Creative | Needs `@keyframes`, pseudo-elements, nested structure |
+| Brand template for CSV batch | Editable | Each text layer is a `{{column}}` slot |
+| One-shot creative export (PNG/PDF) | Creative | No post-edit needed, full CSS freedom |
+| Template for team collaboration | Editable | Multiple users select/edit individual elements |
+
 ### ⚠️ CRITICAL RULE: Frame-First Enforcement (System-Enforced)
 
 **The system will REJECT any attempt to add content without a frame.** This is not a recommendation — it is a hard server-side gate.
