@@ -47,6 +47,14 @@ interface Workspace {
   slug?: string;
 }
 
+interface Brand {
+  id: string;
+  name: string;
+  relationship_status?: string;
+}
+
+const DEFAULT_WORKSPACE_ID = "ws_user_8e9f031817184e0ab205";
+
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
   onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
@@ -70,7 +78,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [authConfigChecked, setAuthConfigChecked] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [selectedWs, setSelectedWs] = useState<string | null>(null);
+  const [selectedWs, setSelectedWs] = useState<string | null>(DEFAULT_WORKSPACE_ID);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [brandDropdownOpen, setBrandDropdownOpen] = useState(false);
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
@@ -138,7 +149,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const renamingRef = useRef(false);
   const searchRef = useRef("");
   const loadingRef = useRef(true);
-  const loadTemplatesRef = useRef<(wsId?: string) => void>(() => {});
+  const loadTemplatesRef = useRef<(wsId?: string, brandId?: string) => void>(() => {});
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
 
@@ -202,11 +213,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     forceRender();
   }, []);
 
-  const loadTemplates = useCallback(async (wsId?: string) => {
+  const loadTemplates = useCallback(async (wsId?: string, brandId?: string) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
+      if (brandId) params.set("brandId", brandId);
       if (searchRef.current) params.set("search", searchRef.current);
       const qs = params.toString();
       const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
@@ -262,12 +274,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleSearch = useCallback((value: string) => {
     setSearchDisplay(value);
     searchRef.current = value;
-    loadTemplatesRef.current(selectedWs ?? undefined);
-  }, [selectedWs]);
+    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID, selectedBrand ?? undefined);
+  }, [selectedBrand]);
 
-  const handleWsChange = useCallback((wsId: string | null) => {
-    setSelectedWs(wsId);
-    loadTemplatesRef.current(wsId ?? undefined);
+  const handleBrandChange = useCallback((brandId: string | null) => {
+    setSelectedBrand(brandId);
+    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID, brandId ?? undefined);
   }, []);
 
   useEffect(() => {
@@ -275,17 +287,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (window.location.hash !== "#workspace") {
       window.history.replaceState(null, "", "/#workspace");
     }
+    // Load brands for filtering (single-workspace architecture)
+    apiFetch<{ success: boolean; data: Brand[] }>(`/saas/workspaces/${DEFAULT_WORKSPACE_ID}/brands`)
+      .then(r => setBrands(r.data || []))
+      .catch(() => {});
+    // Load workspaces for legacy reference
     apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
       .then(r => {
         const wsList = r.data || [];
         setWorkspaces(wsList);
-        // Default: show All Templates, not first workspace
-        setSelectedWs(null);
-        loadTemplatesRef.current();
+        setSelectedWs(DEFAULT_WORKSPACE_ID);
+        loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
       })
       .catch(() => {
         addToast("Error al cargar los workspaces.", "error");
-        loadTemplatesRef.current();
+        loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
       });
   }, [addToast]);
 
@@ -432,10 +448,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleCreateWithName = async () => {
     const name = newTplName.trim() || "Untitled";
-    if (!selectedWs) return;
     setCreatingTpl(false);
     setNewTplName("");
-    onCreateHtmlTemplate(selectedWs, name);
+    onCreateHtmlTemplate(DEFAULT_WORKSPACE_ID, name);
   };
 
   /* Snapshot all templates: capture each frame via html2canvas → save as base64 thumbnail */
@@ -469,8 +484,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     }
     setSnapshotProgress({ running: false, done: 0, total: 0 });
     addToast(`${htmlTemplates.length} thumbnails captured.`, "success");
-    loadTemplatesRef.current(selectedWs ?? undefined);
-  }, [templates, selectedWs, addToast]);
+    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
+  }, [templates, addToast]);
 
   const handleDeleteRecipe = async (id: string) => {
     try {
@@ -485,7 +500,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try {
       const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/recipes/${recipeId}/execute`, {
         method: "POST",
-        body: JSON.stringify({ variables: {}, workspaceId: selectedWs || "default" }),
+        body: JSON.stringify({ variables: {}, workspaceId: DEFAULT_WORKSPACE_ID }),
       });
       if (res.data) {
         onSelectTemplate(res.data.templateId);
@@ -736,12 +751,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </button>
             ))}
 
-            {/* ── Glassmorphic Workspace Dropdown ── */}
+            {/* ── Brand Filter Dropdown ── */}
             <div style={{ position: "relative" }}>
               <button
                 type="button"
                 className="liquid-glass"
-                onClick={() => setWsDropdownOpen(!wsDropdownOpen)}
+                onClick={() => setBrandDropdownOpen(!brandDropdownOpen)}
                 style={{
                   borderRadius: 100, padding: "8px 14px", fontSize: 13, cursor: "pointer",
                   fontWeight: 500, color: "rgba(255,255,255,0.7)",
@@ -749,96 +764,51 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   transition: "all 0.25s ease",
                 }}
               >
-                {selectedWs ? (workspaces.find(w => w.id === selectedWs)?.name || "Workspace") : "All Templates"}
+                {selectedBrand ? (brands.find(b => b.id === selectedBrand)?.name || "Marca") : "Todas las marcas"}
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <path d="M2 3l3 4 3-4" />
                 </svg>
               </button>
-              {wsDropdownOpen && (
+              {brandDropdownOpen && (
                 <>
-                  {/* Backdrop to close */}
                   <div
                     style={{ position: "fixed", inset: 0, zIndex: 49 }}
-                    onClick={() => setWsDropdownOpen(false)}
+                    onClick={() => setBrandDropdownOpen(false)}
                   />
-                  {/* Dropdown menu */}
                   <div
                     className="liquid-glass"
                     style={{
                       position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
                       minWidth: 180, borderRadius: 12, padding: 6, zIndex: 50,
-                      display: "flex", flexDirection: "column",
+                      display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto",
                     }}
                   >
                     <button
                       type="button"
-                      onClick={() => { handleWsChange(null); setWsDropdownOpen(false); }}
+                      onClick={() => { handleBrandChange(null); setBrandDropdownOpen(false); }}
                       style={{
                         ...dropdownItemStyle,
-                        color: !selectedWs ? "#ffffff" : "rgba(255,255,255,0.6)",
-                        background: !selectedWs ? "rgba(255,255,255,0.06)" : "transparent",
+                        color: !selectedBrand ? "#ffffff" : "rgba(255,255,255,0.6)",
+                        background: !selectedBrand ? "rgba(255,255,255,0.06)" : "transparent",
                       }}
                     >
-                      All Templates
+                      Todas las marcas
                     </button>
                     <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
-                    {workspaces.map(w => (
-                      editingWsId === w.id ? (
-                        <div key={w.id} style={{ padding: "4px 10px" }}>
-                          <input
-                            ref={editInputRef}
-                            value={editingWsName}
-                            onChange={e => setEditingWsName(e.target.value)}
-                            onKeyDown={e => { if (e.key === "Enter") { commitWsRename(); setWsDropdownOpen(false); } if (e.key === "Escape") setEditingWsId(null); }}
-                            onBlur={() => { commitWsRename(); }}
-                            style={{ ...inputStyle, width: "100%", fontSize: 12, padding: "4px 8px" }}
-                            autoFocus
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          key={w.id}
-                          type="button"
-                          onClick={() => { handleWsChange(w.id); setWsDropdownOpen(false); }}
-                          onDoubleClick={() => startWsRename(w.id, w.name)}
-                          title="Double-click to rename"
-                          style={{
-                            ...dropdownItemStyle,
-                            color: selectedWs === w.id ? "#ffffff" : "rgba(255,255,255,0.6)",
-                            background: selectedWs === w.id ? "rgba(255,255,255,0.06)" : "transparent",
-                          }}
-                        >
-                          {w.name}
-                        </button>
-                      )
-                    ))}
-                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
-                    {creatingWs ? (
-                      <div style={{ padding: "4px 10px" }}>
-                        <input
-                          ref={newWsInputRef}
-                          aria-label="New workspace name"
-                          placeholder="Workspace name…"
-                          value={newWsName}
-                          onChange={e => setNewWsName(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") { handleCreateWorkspace(); setWsDropdownOpen(false); } if (e.key === "Escape") { setCreatingWs(false); setNewWsName(""); } }}
-                          onBlur={() => { if (!newWsName.trim()) { setCreatingWs(false); } }}
-                          style={{ ...inputStyle, width: "100%", fontSize: 12, padding: "4px 8px" }}
-                          autoFocus
-                        />
-                      </div>
-                    ) : (
+                    {brands.map(b => (
                       <button
+                        key={b.id}
                         type="button"
-                        onClick={() => { setCreatingWs(true); setTimeout(() => newWsInputRef.current?.focus(), 50); }}
+                        onClick={() => { handleBrandChange(b.id); setBrandDropdownOpen(false); }}
                         style={{
                           ...dropdownItemStyle,
-                          color: "rgba(255,255,255,0.4)",
+                          color: selectedBrand === b.id ? "#ffffff" : "rgba(255,255,255,0.6)",
+                          background: selectedBrand === b.id ? "rgba(255,255,255,0.06)" : "transparent",
                         }}
                       >
-                        + New Workspace
+                        {b.name}
                       </button>
-                    )}
+                    ))}
                   </div>
                 </>
               )}
@@ -1052,21 +1022,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </button>
               ))}
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
-              {/* Workspace selector in menu */}
+              {/* Brand filter in mobile menu */}
               <div style={{ padding: "0 4px" }}>
-                <label style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "0 12px", marginBottom: 4, display: "block" }}>Workspace</label>
+                <label style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "0 12px", marginBottom: 4, display: "block" }}>Marca</label>
                 <select
-                  value={selectedWs || ""}
-                  onChange={e => { handleWsChange(e.target.value || null); }}
+                  value={selectedBrand || ""}
+                  onChange={e => { handleBrandChange(e.target.value || null); }}
                   style={{
                     width: "100%", padding: "10px 14px", borderRadius: 10,
                     background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
                     color: "#ccc", fontSize: 13, outline: "none", fontFamily: "inherit",
                   }}
                 >
-                  <option value="">All Templates</option>
-                  {workspaces.map(w => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
+                  <option value="">Todas las marcas</option>
+                  {brands.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>
               </div>
@@ -1165,9 +1135,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
-              onClick={() => selectedWs && onCreateHtmlTemplate(selectedWs, "Untitled")}
+              onClick={() => onCreateHtmlTemplate(DEFAULT_WORKSPACE_ID, "Untitled")}
               style={{ ...btnPrimary, marginTop: 16 }}
-              disabled={!selectedWs}
             >
               + New Template
             </button>
@@ -1204,7 +1173,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Texts Tab ── */}
       {activeTab === "texts" && (
-        <TextsTab workspaceId={selectedWs} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+        <TextsTab workspaceId={DEFAULT_WORKSPACE_ID} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* Key Visuals / Recipes Grid */}
@@ -1269,7 +1238,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* ── Storage Tab ── */}
-      {activeTab === "storage" && (selectedWs ? <StorageTab workspaceId={selectedWs} /> : <div className="workspace-console-empty"><h2>Selecciona un workspace</h2><p>Storage está aislado por workspace.</p></div>)}
+      {activeTab === "storage" && <StorageTab workspaceId={DEFAULT_WORKSPACE_ID} />}
 
       {/* ── Settings Tab ── */}
       {activeTab === "settings" && (() => {
@@ -1303,7 +1272,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <div className="dash-metrics-bar" style={{ marginBottom: 32 }}>
             <div className="dash-metric-card">
               <div className="dash-metric-value">{templates.length}</div>
-              <div className="dash-metric-label">Templates</div>
+              <div className="dash-metric-label">Archivos</div>
               <div className="dash-metric-sub">{totalFrames} frames</div>
             </div>
             <div className="dash-metric-card">
@@ -1312,9 +1281,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div className="dash-metric-sub">{recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions</div>
             </div>
             <div className="dash-metric-card">
-              <div className="dash-metric-value">{workspaces.length}</div>
-              <div className="dash-metric-label">Workspaces</div>
-              <div className="dash-metric-sub">{selectedWs ? "1 active" : "all shown"}</div>
+              <div className="dash-metric-value">{brands.length}</div>
+              <div className="dash-metric-label">Marcas</div>
+              <div className="dash-metric-sub">{selectedBrand ? "1 activa" : "todas"}</div>
             </div>
             <div className="dash-metric-card" style={{ justifyContent: "center" }}>
               <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
@@ -1755,7 +1724,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "graph" && (
         <div data-tour="graph-view" style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <GraphTab
-            workspaceId={selectedWs}
+            workspaceId={DEFAULT_WORKSPACE_ID}
             onOpenTemplate={(id) => {
               onSelectTemplate(id);
             }}
@@ -1764,7 +1733,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {activeTab === "workspace" && (
-        <WorkspaceConsole workspaceId={selectedWs} workspaceName={workspaces.find(workspace => workspace.id === selectedWs)?.name} />
+        <WorkspaceConsole workspaceId={DEFAULT_WORKSPACE_ID} workspaceName={workspaces.find(workspace => workspace.id === DEFAULT_WORKSPACE_ID)?.name} />
       )}
 
       {/* ── Delete Confirmation Modal ── */}

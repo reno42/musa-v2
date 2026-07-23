@@ -122,6 +122,7 @@ templateRoutes.get("/", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;
+    const brandId = req.query.brandId as string || undefined;
     const accessibleIds = await listAccessibleWorkspaceIds(req.auth!);
     if (workspaceId && !accessibleIds.includes(workspaceId)) {
       return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
@@ -137,6 +138,22 @@ templateRoutes.get("/", async (req, res) => {
       const all = batches.flatMap(batch => batch.data)
         .sort((a, b) => new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime());
       result = { data: all.slice(offset, offset + limit), total: all.length };
+    }
+
+    // Brand filter: templates don't have brand_id directly; join via design_file_meta
+    if (brandId && result.data.length > 0) {
+      const { getSupabase } = await import("../services/supabase.js");
+      const sb = getSupabase();
+      if (sb) {
+        const templateIds = result.data.map((t: any) => t.id);
+        const { data: metaRows } = await sb.from("design_file_meta")
+          .select("template_id")
+          .eq("brand_id", brandId)
+          .in("template_id", templateIds);
+        const brandedIds = new Set((metaRows || []).map((r: any) => r.template_id));
+        result.data = result.data.filter((t: any) => brandedIds.has(t.id));
+        result.total = result.data.length;
+      }
     }
 
     res.json({
