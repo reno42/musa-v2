@@ -84,7 +84,7 @@ export async function claimLegacyWorkspacesForInitialUser(
     .from("workspace_members")
     .select("workspace_id", { count: "exact", head: true });
   if (membershipError) throw membershipError;
-  if ((membershipCount || 0) > 0) return 0;
+  if (!configuredEmail && (membershipCount || 0) > 0) return 0;
 
   if (!configuredEmail) {
     const { data, error } = await sb.auth.admin.listUsers({ page: 1, perPage: 2 });
