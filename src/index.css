@@ -3093,21 +3093,6 @@ html, body, #root { height: 100%; width: 100%; }
   margin-top: 16px; text-align: right;
 }
 
-/* ── Dashboard hamburger (always visible) ── */
-.dash-hamburger {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: rgba(255,255,255,0.6);
-  padding: 6px;
-  border-radius: 8px;
-  transition: color 0.2s ease;
-}
-.dash-hamburger:hover { color: rgba(255,255,255,0.9); }
-
 /* ── Editor hamburger (hidden on desktop) ── */
 .editor-v2-hamburger {
   display: none;
@@ -3128,9 +3113,8 @@ html, body, #root { height: 100%; width: 100%; }
    RESPONSIVE — Tablet (≤1023px)
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 1023px) {
-  /* ── Dashboard: hamburger visible, tabs hidden ── */
+  /* ── Dashboard: tabs hidden on mobile ── */
   .dash-nav-tabs { display: none !important; }
-  .dash-hamburger { display: flex; align-items: center; justify-content: center; }
   .dash-search-desktop { display: none; }
 
   /* ── Dashboard: template cards single column ── */
