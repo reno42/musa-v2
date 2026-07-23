@@ -3127,11 +3127,10 @@ html, body, #root { height: 100%; width: 100%; }
 /* ═══════════════════════════════════════════════════════════════
    RESPONSIVE — Tablet (≤1023px)
    ═══════════════════════════════════════════════════════════════ */
-/* ── Dashboard: tabs always in hamburger menu ── */
-.dash-nav-tabs { display: none !important; }
-.dash-hamburger { display: flex; align-items: center; justify-content: center; }
-
 @media (max-width: 1023px) {
+  /* ── Dashboard: hamburger visible, tabs hidden ── */
+  .dash-nav-tabs { display: none !important; }
+  .dash-hamburger { display: flex; align-items: center; justify-content: center; }
   .dash-search-desktop { display: none; }
 
   /* ── Dashboard: template cards single column ── */

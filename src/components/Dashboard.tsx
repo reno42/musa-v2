@@ -685,7 +685,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span>Futuraria</span>
           </div>
 
-          {/* Centered: tabs + brand dropdown — now inside hamburger menu */}
+          {/* Centered: fixed nav tabs */}
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Archivos", icon: <IconFile size={14} /> },
@@ -696,25 +696,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <line x1="12" y1="4" x2="12" y2="20" />
                 </svg>
               )},
-              { id: "recipes", label: "Key Visuals", icon: <IconTag size={14} /> },
-              { id: "storage", label: "Storage", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <ellipse cx="12" cy="5" rx="9" ry="3" />
-                  <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-                </svg>
-              )},
-              { id: "settings", label: "Configuración", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              )},
-              { id: "workspace", label: "Workspace", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" />
-                </svg>
-              )},
               { id: "graph", label: "Graph", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="6" cy="6" r="2" />
@@ -723,6 +704,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <line x1="7.5" y1="7.5" x2="11" y2="16" />
                   <line x1="16.5" y1="7.5" x2="13" y2="16" />
                   <line x1="8" y1="6" x2="16" y2="6" />
+                </svg>
+              )},
+              { id: "workspace", label: "CRM", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" />
                 </svg>
               )},
             ] as const).map(tab => (
@@ -872,11 +858,49 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </div>
                       <button
                         type="button"
+                        onClick={() => { setActiveTab("templates"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <IconFile size={14} /> Archivos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("texts"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
+                        Textos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("recipes"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <IconTag size={14} /> Key Visuals
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("storage"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>
+                        Storage
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("graph"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><line x1="7.5" y1="7.5" x2="11" y2="16" /><line x1="16.5" y1="7.5" x2="13" y2="16" /><line x1="8" y1="6" x2="16" y2="6" /></svg>
+                        Graph
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => { setActiveTab("workspace"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" /></svg>
-                        CRM y Equipo
+                        CRM
                       </button>
                       <button
                         type="button"
@@ -993,7 +1017,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                 </svg>
                 )},
-                { id: "workspace", label: "Workspace", icon: (
+                { id: "workspace", label: "CRM", icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" />
                   </svg>
