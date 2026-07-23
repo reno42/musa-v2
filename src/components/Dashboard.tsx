@@ -101,7 +101,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [selectedWs, setSelectedWs] = useState<string | null>(DEFAULT_WORKSPACE_ID);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
-  const [brandDropdownOpen, setBrandDropdownOpen] = useState(false);
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
@@ -721,6 +720,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         }}
       />
 
+      {/* Dark depth overlay — prevents bg video from competing with content */}
+      <div
+        style={{
+          position: "absolute", inset: 0, zIndex: 1,
+          background: "linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 40%, rgba(0,0,0,0.45) 70%, rgba(0,0,0,0.65) 100%)",
+          pointerEvents: "none",
+        }}
+      />
+
       {/* Header — matches landing navbar: brand left, tabs+dropdown centered, search right */}
       <div className="dash-header" style={dashHeaderStyle}>
         <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
@@ -759,6 +767,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2" /><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5" /><path d="M15 15c3 0 5 1.5 5 4" />
                 </svg>
               )},
+              { id: "storage", label: "Storage", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>
+              )},
+              { id: "settings", label: "Config", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+              )},
             ] as const).map(tab => (
               <button
                 key={tab.id}
@@ -775,69 +789,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 {tab.icon} {tab.label}
               </button>
             ))}
-
-            {/* ── Brand Filter Dropdown ── */}
-            <div style={{ position: "relative" }}>
-              <button
-                type="button"
-                className="liquid-glass"
-                onClick={() => setBrandDropdownOpen(!brandDropdownOpen)}
-                style={{
-                  borderRadius: 100, padding: "8px 14px", fontSize: 13, cursor: "pointer",
-                  fontWeight: 500, color: "rgba(255,255,255,0.7)",
-                  display: "flex", alignItems: "center", gap: 6,
-                  transition: "all 0.25s ease",
-                }}
-              >
-                {selectedBrand ? (brands.find(b => b.id === selectedBrand)?.name || "Marca") : "Todas las marcas"}
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M2 3l3 4 3-4" />
-                </svg>
-              </button>
-              {brandDropdownOpen && (
-                <>
-                  <div
-                    style={{ position: "fixed", inset: 0, zIndex: 49 }}
-                    onClick={() => setBrandDropdownOpen(false)}
-                  />
-                  <div
-                    className="liquid-glass"
-                    style={{
-                      position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-                      minWidth: 180, borderRadius: 12, padding: 6, zIndex: 50,
-                      display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => { handleBrandChange(null); setBrandDropdownOpen(false); }}
-                      style={{
-                        ...dropdownItemStyle,
-                        color: !selectedBrand ? "#ffffff" : "rgba(255,255,255,0.6)",
-                        background: !selectedBrand ? "rgba(255,255,255,0.06)" : "transparent",
-                      }}
-                    >
-                      Todas las marcas
-                    </button>
-                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />
-                    {brands.map(b => (
-                      <button
-                        key={b.id}
-                        type="button"
-                        onClick={() => { handleBrandChange(b.id); setBrandDropdownOpen(false); }}
-                        style={{
-                          ...dropdownItemStyle,
-                          color: selectedBrand === b.id ? "#ffffff" : "rgba(255,255,255,0.6)",
-                          background: selectedBrand === b.id ? "rgba(255,255,255,0.06)" : "transparent",
-                        }}
-                      >
-                        {b.name}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
           </div>
 
           {/* Right: Search + User Account Menu */}
@@ -894,10 +845,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <>
                     <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setUserMenuOpen(false)} />
                     <div
-                      className="liquid-glass"
                       style={{
                         position: "absolute", top: "calc(100% + 6px)", right: 0,
                         minWidth: 200, borderRadius: 12, padding: 6, zIndex: 50,
+                        background: "rgba(0, 0, 0, 0.72)",
+                        backdropFilter: "blur(16px)",
+                        WebkitBackdropFilter: "blur(16px)",
+                        border: "1px solid rgba(255, 255, 255, 0.08)",
+                        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
                       }}
                     >
                       <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
