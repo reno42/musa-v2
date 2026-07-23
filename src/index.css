@@ -2145,7 +2145,7 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .landing-menu-panel {
-  position: absolute;
+  position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
@@ -2157,6 +2157,7 @@ html, body, #root { height: 100%; width: 100%; }
   display: flex;
   flex-direction: column;
   padding: 0;
+  z-index: 101;
 }
 
 .landing-menu-header {
@@ -3126,10 +3127,11 @@ html, body, #root { height: 100%; width: 100%; }
 /* ═══════════════════════════════════════════════════════════════
    RESPONSIVE — Tablet (≤1023px)
    ═══════════════════════════════════════════════════════════════ */
+/* ── Dashboard: tabs always in hamburger menu ── */
+.dash-nav-tabs { display: none !important; }
+.dash-hamburger { display: flex; align-items: center; justify-content: center; }
+
 @media (max-width: 1023px) {
-  /* ── Dashboard: hamburger visible, tabs hidden ── */
-  .dash-nav-tabs { display: none !important; }
-  .dash-hamburger { display: flex; align-items: center; justify-content: center; }
   .dash-search-desktop { display: none; }
 
   /* ── Dashboard: template cards single column ── */

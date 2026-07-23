@@ -685,16 +685,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span>Futuraria</span>
           </div>
 
-          {/* Hamburger — visible on mobile/tablet */}
-          <button type="button" className="dash-hamburger" onClick={() => setMobileMenuOpen(true)} aria-label="Open menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-
-          {/* Centered: tabs + workspace dropdown */}
+          {/* Centered: tabs + brand dropdown — now inside hamburger menu */}
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Archivos", icon: <IconFile size={14} /> },
@@ -941,6 +932,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 Auth sin configurar
               </button>
             ) : null}
+
+            {/* ── Hamburger Menu Button — right of user menu ── */}
+            <button type="button" className="dash-hamburger" onClick={() => setMobileMenuOpen(true)} aria-label="Open menu">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
