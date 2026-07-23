@@ -1709,36 +1709,34 @@ const dashHeaderStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  background: "transparent",
-  border: "1px solid rgba(255, 255, 255, 0.12)",
-  color: "#ffffff",
-  borderRadius: 100, padding: "8px 16px", fontSize: 13, outline: "none",
+  background: "var(--color-paper)",
+  border: "1px solid var(--color-vellum)",
+  color: "var(--color-ink)",
+  borderRadius: 28.8, padding: "8px 16px", fontSize: 13, outline: "none",
   transition: "border-color 0.2s ease",
 };
 
 const btnPrimary: React.CSSProperties = {
-  background: "rgba(255, 255, 255, 0.06)",
-  border: "1px solid rgba(255, 255, 255, 0.15)", color: "#ffffff",
-  borderRadius: 100, padding: "8px 20px", fontSize: 13, cursor: "pointer", fontWeight: 500,
+  background: "var(--color-ink)",
+  border: "1px solid var(--color-ink)", color: "var(--color-paper)",
+  borderRadius: 28.8, padding: "9px 17px", fontSize: 12, cursor: "pointer", fontWeight: 400,
   transition: "all 0.2s ease",
 };
 
 const btnSecondary: React.CSSProperties = {
   background: "transparent",
-  border: "1px solid rgba(255, 255, 255, 0.08)", color: "rgba(255, 255, 255, 0.6)",
-  borderRadius: 100, padding: "8px 16px", fontSize: 13, cursor: "pointer",
+  border: "1px solid var(--color-vellum)", color: "var(--color-graphite)",
+  borderRadius: 28.8, padding: "9px 17px", fontSize: 12, cursor: "pointer",
   transition: "all 0.2s ease",
 };
 
 const cardStyle: React.CSSProperties = {
-  position: "relative", height: 200, borderRadius: 14,
+  position: "relative", height: 200, borderRadius: 9,
   overflow: "hidden", cursor: "pointer",
   transition: "all 0.25s ease",
-  background: "rgba(255, 255, 255, 0.01)",
-  backdropFilter: "blur(4px)",
-  WebkitBackdropFilter: "blur(4px)",
-  border: "1px solid rgba(255, 255, 255, 0.06)",
-  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)",
+  background: "var(--color-bone)",
+  border: "1px solid var(--color-vellum)",
+  boxShadow: "none",
 };
 
 const cardOverlay: React.CSSProperties = {
@@ -1759,16 +1757,16 @@ const cardInfoPanel: React.CSSProperties = {
 };
 
 const cardAction: React.CSSProperties = {
-  flex: 1, background: "none", border: "none", borderRight: "1px solid rgba(255, 255, 255, 0.04)",
-  color: "transparent", fontSize: 12, cursor: "pointer", padding: "6px 0",
+  flex: 1, background: "none", border: "none", borderRight: "1px solid var(--color-vellum)",
+  color: "var(--color-graphite)", fontSize: 12, cursor: "pointer", padding: "6px 0",
   transition: "color 0.2s ease",
 };
 
 const dropdownItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8,
-  padding: "8px 12px", borderRadius: 8, fontSize: 13,
+  padding: "8px 12px", borderRadius: 2, fontSize: 13,
   background: "transparent", border: "none",
-  color: "rgba(255,255,255,0.6)",
+  color: "var(--color-graphite)",
   cursor: "pointer", textAlign: "left" as const,
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
@@ -1776,9 +1774,9 @@ const dropdownItemStyle: React.CSSProperties = {
 
 const ddItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 6,
-  padding: "8px 12px", borderRadius: 6, fontSize: 12,
+  padding: "8px 12px", borderRadius: 2, fontSize: 12,
   background: "transparent", border: "none",
-  color: "rgba(255,255,255,0.7)",
+  color: "var(--color-graphite)",
   cursor: "pointer", textAlign: "left" as const,
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
