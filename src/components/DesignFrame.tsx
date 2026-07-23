@@ -2296,44 +2296,110 @@ export function DesignFrame({
   function startResize(el: Element, startEvent: MouseEvent, direction: ResizeDirection, ox: number, oy: number, ow: number, oh: number) {
     const startX = startEvent.clientX;
     const startY = startEvent.clientY;
-    const target = el as HTMLElement;
+    let target = el as HTMLElement;
     const computed = target.ownerDocument.defaultView!.getComputedStyle(target);
     const preservesFlow = computed.position === "static";
-    const baseScale = parseCssScale(computed.scale);
-    const baseLeft = parseFloat(computed.left) || 0;
-    const baseTop = parseFloat(computed.top) || 0;
-    const baseFontSize = parseFloat(computed.fontSize) || 0;
-    const scalesText = target.children.length === 0 && /^(H[1-6]|P|SPAN|A|LI|LABEL|BUTTON|EM|STRONG|SMALL|B|I)$/.test(target.tagName);
+    let baseScale = parseCssScale(computed.scale);
+    let baseLeft = parseFloat(computed.left) || 0;
+    let baseTop = parseFloat(computed.top) || 0;
+    let baseFontSize = parseFloat(computed.fontSize) || 0;
+    let scalesText = target.children.length === 0 && /^(H[1-6]|P|SPAN|A|LI|LABEL|BUTTON|EM|STRONG|SMALL|B|I)$/.test(target.tagName);
 
     const affectsLeft = direction.includes("w");
     const affectsRight = direction.includes("e");
     const affectsTop = direction.includes("n");
     const affectsBottom = direction.includes("s");
     const isCorner = (affectsLeft || affectsRight) && (affectsTop || affectsBottom);
-    const resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
+    let resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
+
+    // ── Alt key: clone the element and resize the clone ──
+    let isAltClone = false;
+    if (startEvent.altKey) {
+      const sourceLayerId = target.getAttribute("data-layer-id");
+      const parent = target.parentNode;
+      if (sourceLayerId && parent) {
+        // Clone element in DOM with new layer-ids
+        const clone = target.cloneNode(true) as HTMLElement;
+        const idMap = new Map<string, string>();
+        for (const clonedEl of [clone, ...clone.querySelectorAll("[data-layer-id]")]) {
+          const oldId = clonedEl.getAttribute("data-layer-id");
+          if (!oldId) continue;
+          const newId = createLayerId();
+          idMap.set(oldId, newId);
+          clonedEl.setAttribute("data-layer-id", newId);
+        }
+        // Clone CSS rules for the new IDs (no position offset — clone starts at same spot)
+        const cssWithClone = cloneLayerCss(cssRef.current, idMap, 0);
+        cssRef.current = cssWithClone;
+        const shadow = shadowRef.current!;
+        const style = shadow.querySelector("style");
+        if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(cssWithClone)}`;
+        // Insert clone after original
+        parent.insertBefore(clone, target.nextSibling);
+        // Recompute style properties for the clone (it matches the original)
+        const cloneComputed = clone.ownerDocument.defaultView!.getComputedStyle(clone);
+        baseScale = parseCssScale(cloneComputed.scale);
+        baseLeft = parseFloat(cloneComputed.left) || 0;
+        baseTop = parseFloat(cloneComputed.top) || 0;
+        baseFontSize = parseFloat(cloneComputed.fontSize) || 0;
+        scalesText = clone.children.length === 0 && /^(H[1-6]|P|SPAN|A|LI|LABEL|BUTTON|EM|STRONG|SMALL|B|I)$/.test(clone.tagName);
+        resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
+        target = clone;
+        isAltClone = true;
+      }
+    }
 
     const onMove = (ev: MouseEvent) => {
       const z = zoomRef.current || 1;
       const dx = (ev.clientX - startX) / z;
       const dy = (ev.clientY - startY) / z;
+      const shift = ev.shiftKey;
 
       let newX = ox, newY = oy, newW = ow, newH = oh;
 
-      if (affectsLeft) {
-        newX = ox + dx;
-        newW = Math.max(10, ow - dx);
-        if (newW === 10) newX = ox + ow - 10;
-      }
-      if (affectsRight) {
-        newW = Math.max(10, ow + dx);
-      }
-      if (affectsTop) {
-        newY = oy + dy;
-        newH = Math.max(10, oh - dy);
-        if (newH === 10) newY = oy + oh - 10;
-      }
-      if (affectsBottom) {
-        newH = Math.max(10, oh + dy);
+      if (shift && isCorner) {
+        // ── Shift+corner: proportional resize maintaining aspect ratio ──
+        const aspectRatio = ow / oh;
+        const maxDim = Math.max(Math.abs(dx), Math.abs(dy));
+        const signX = dx >= 0 ? 1 : -1;
+        const signY = dy >= 0 ? 1 : -1;
+        if (affectsRight) newW = Math.max(10, ow + maxDim * signX);
+        if (affectsBottom) newH = Math.max(10, oh + maxDim * signY);
+        if (affectsLeft) { newW = Math.max(10, ow - maxDim * signX); newX = ox + (ow - newW); }
+        if (affectsTop) { newH = Math.max(10, oh - maxDim * signY); newY = oy + (oh - newH); }
+        // Recalculate to maintain aspect
+        if (affectsLeft || affectsRight) newH = Math.round(newW / aspectRatio);
+        if (affectsTop || affectsBottom) newW = Math.round(newH * aspectRatio);
+      } else if (shift && !isCorner) {
+        // ── Shift+edge: maintain aspect via the controlled dimension ──
+        const aspectRatio = ow / oh;
+        if (affectsLeft || affectsRight) {
+          newW = Math.max(10, ow + dx);
+          newH = Math.round(newW / aspectRatio);
+          if (affectsLeft) newX = ox + ow - newW;
+        } else {
+          newH = Math.max(10, oh + dy);
+          newW = Math.round(newH * aspectRatio);
+          if (affectsTop) newY = oy + oh - newH;
+        }
+      } else {
+        // ── Unconstrained resize (original behavior) ──
+        if (affectsLeft) {
+          newX = ox + dx;
+          newW = Math.max(10, ow - dx);
+          if (newW === 10) newX = ox + ow - 10;
+        }
+        if (affectsRight) {
+          newW = Math.max(10, ow + dx);
+        }
+        if (affectsTop) {
+          newY = oy + dy;
+          newH = Math.max(10, oh - dy);
+          if (newH === 10) newY = oy + oh - 10;
+        }
+        if (affectsBottom) {
+          newH = Math.max(10, oh + dy);
+        }
       }
 
       if (resizesFlowText) {
@@ -2358,7 +2424,7 @@ export function DesignFrame({
           if (affectsTop) target.style.top = `${Math.round(baseTop + newY - oy)}px`;
         }
       }
-      refreshOverlay(el);
+      refreshOverlay(target);
     };
 
     const onUp = () => {
@@ -2381,7 +2447,15 @@ export function DesignFrame({
         }
       }
       const updated = updateCssRule(cssRef.current, sel, importantProperties(props));
-      emitFrameChange(updated);
+      if (isAltClone) {
+        // Persist the clone: save combined CSS + HTML so the new element survives
+        const content = shadowRef.current!.getElementById("__df_content")!;
+        emitFrameChange(updated, content.innerHTML);
+        // Select the clone so the user can interact with it immediately
+        selectElement(target);
+      } else {
+        emitFrameChange(updated);
+      }
     };
 
     document.addEventListener("mousemove", onMove);
