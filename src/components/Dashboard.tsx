@@ -71,13 +71,33 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
   return res.json();
 }
 
+/* ── Stale-while-revalidate cache ──
+   Shows cached templates instantly on dashboard return,
+   then silently refreshes from the server in background. */
+const TEMPLATE_CACHE_KEY = "futuraria-tpl-cache-v1";
+
+function readTemplateCache(): Template[] {
+  try {
+    const raw = localStorage.getItem(TEMPLATE_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.data) ? parsed.data : [];
+  } catch { return []; }
+}
+
+function writeTemplateCache(data: Template[]) {
+  try {
+    localStorage.setItem(TEMPLATE_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* quota exceeded — cache is best-effort */ }
+}
+
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
   const { user, configured: authConfigured, authRequired, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [authConfigChecked, setAuthConfigChecked] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
+  const [templates, setTemplates] = useState<Template[]>(() => readTemplateCache());
   const [selectedWs, setSelectedWs] = useState<string | null>(DEFAULT_WORKSPACE_ID);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
@@ -147,7 +167,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
   const searchRef = useRef("");
-  const loadingRef = useRef(true);
+  const loadingRef = useRef(readTemplateCache().length === 0);
   const loadTemplatesRef = useRef<(wsId?: string, brandId?: string) => void>(() => {});
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
@@ -238,7 +258,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, []);
 
   const loadTemplates = useCallback(async (wsId?: string, brandId?: string) => {
-    setLoading(true);
+    // Stale-while-revalidate: skip the loading spinner when we already have
+    // data to show. The user sees their files instantly; the fetch updates
+    // silently in the background.
+    const hasStaleData = loadingRef.current === false;
+    if (!hasStaleData) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
@@ -252,9 +276,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         new Date(b.metadata?.updatedAt || 0).getTime() - new Date(a.metadata?.updatedAt || 0).getTime()
       );
       setTemplates(data);
+      writeTemplateCache(data);
       loadMetaCovers(wsId);
     } catch {
-      setTemplates([]);
+      // Keep stale data visible on network error — don't blank the screen
+      if (!hasStaleData) setTemplates([]);
       addToast("Error al cargar las plantillas.", "error");
     }
     setLoading(false);
@@ -311,21 +337,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     if (window.location.hash !== "#workspace") {
       window.history.replaceState(null, "", "/#workspace");
     }
-    // Load brands for filtering (single-workspace architecture)
+    // Fire all requests in PARALLEL — no sequential chaining.
+    // Templates load independently of workspaces (workspaceId is already known).
+    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
     apiFetch<{ success: boolean; data: Brand[] }>(`/saas/workspaces/${DEFAULT_WORKSPACE_ID}/brands`)
       .then(r => setBrands(r.data || []))
       .catch(() => {});
-    // Load workspaces for legacy reference
     apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
       .then(r => {
-        const wsList = r.data || [];
-        setWorkspaces(wsList);
+        setWorkspaces(r.data || []);
         setSelectedWs(DEFAULT_WORKSPACE_ID);
-        loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
       })
       .catch(() => {
         addToast("Error al cargar los workspaces.", "error");
-        loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
       });
   }, [addToast]);
 
