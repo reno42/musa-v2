@@ -393,7 +393,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
     try {
       // Use REST endpoint instead of MCP — avoids 10s timeout on heavy list_all_texts
       const result = await apiFetch<{ success: boolean; texts: TextEntry[]; frames: FramePreview[]; autoTagged: number; templatesUpdated: number }>(
-        `/workspaces/${workspaceId || "ws_user_8e9f031817184e0ab205"}/texts`,
+        `/api/workspaces/${workspaceId || "ws_user_8e9f031817184e0ab205"}/texts`,
       );
       const texts: TextEntry[] = result.texts || [];
       const frames: FramePreview[] = result.frames || [];
