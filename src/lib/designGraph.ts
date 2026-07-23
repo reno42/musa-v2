@@ -326,9 +326,9 @@ function normalizeDisplayName(value: string | null | undefined): string {
 }
 
 function normalizeKey(value: string): string {
-  return value.trim().toLocaleLowerCase("es");
+  return (value ?? "").trim().toLocaleLowerCase("es");
 }
 
 function compareNames(first: string, second: string): number {
-  return first.localeCompare(second, "es", { sensitivity: "base", numeric: true });
+  return (first ?? "").localeCompare((second ?? ""), "es", { sensitivity: "base", numeric: true });
 }

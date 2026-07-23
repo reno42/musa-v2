@@ -184,16 +184,16 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       id: r.template_id,
       name: r.templates?.name || r.template_id,
       brand_id: r.brand_id || null,
-      brand: r.brand,
+      brand: r.brand || "",
       campaign_id: r.campaign_id || null,
       campaign: r.campaign || null,
       asset_type: r.asset_type || null,
       tags: r.tags || [],
-      theme: r.theme,
-      format: r.format,
-      file_type: r.file_type,
+      theme: r.theme || "",
+      format: r.format || "",
+      file_type: r.file_type || "",
       cover: r.cover_image_url || r.templates?.thumbnail || null,
-      obsidian_link: r.obsidian_link,
+      obsidian_link: r.obsidian_link || "",
     }));
 
     const edges = buildDesignGraphEdges(nodes);
