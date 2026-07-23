@@ -45,7 +45,7 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 designMetaRoutes.put("/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;
-    const { brand_id, brand, campaign_id, campaign, asset_type, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
+    const { brand_id, brand, campaign_id, campaign, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
 
     const patch: Record<string, any> = {};
     if (brand_id !== undefined) patch.brand_id = brand_id || null;
@@ -53,6 +53,9 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     if (campaign_id !== undefined) patch.campaign_id = campaign_id || null;
     if (campaign !== undefined) patch.campaign = campaign;
     if (asset_type !== undefined) patch.asset_type = asset_type || "other";
+    if (designer_type !== undefined) patch.designer_type = designer_type || "other";
+    if (is_permanent !== undefined) patch.is_permanent = Boolean(is_permanent);
+    if (production_data !== undefined) patch.production_data = production_data;
     if (tags !== undefined) patch.tags = tags;
     if (theme !== undefined) patch.theme = theme;
     if (format !== undefined) patch.format = format;
@@ -132,7 +135,7 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
 /** GET /api/graph?workspaceId=...&brand=...&tag=... */
 export async function getDesignGraph(req: Request, res: Response): Promise<void> {
   try {
-    const { workspaceId, brand, tag, format } = req.query;
+    const { workspaceId, brand, tag, format, designer_type } = req.query;
     const sb = getSupabase();
     if (!sb) {
       res.json({ success: true, data: { nodes: [], edges: [] } });
@@ -165,6 +168,7 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     if (brand) query = query.ilike("brand", brand as string);
     if (tag) query = query.contains("tags", [tag as string]);
     if (format) query = query.eq("format", format as string);
+    if (designer_type) query = query.eq("designer_type", designer_type as string);
 
     const [designResult, workspaceResult, brandResult, contactResult] = await Promise.all([
       query,
@@ -188,6 +192,8 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       campaign_id: r.campaign_id || null,
       campaign: r.campaign || null,
       asset_type: r.asset_type || null,
+      designer_type: r.designer_type || "other",
+      is_permanent: Boolean(r.is_permanent),
       tags: r.tags || [],
       theme: r.theme || "",
       format: r.format || "",
@@ -314,6 +320,9 @@ function rowToMeta(row: any) {
     campaign: row.campaign || "",
     campaign_id: row.campaign_id || null,
     asset_type: row.asset_type || "other",
+    designer_type: row.designer_type || "other",
+    is_permanent: Boolean(row.is_permanent),
+    production_data: row.production_data || {},
     tags: row.tags || [],
     theme: row.theme || "",
     format: row.format || "",

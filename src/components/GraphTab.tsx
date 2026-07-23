@@ -3,6 +3,7 @@ import { apiFetch } from "../lib/supabase";
 import {
   buildDesignHierarchy,
   buildKnowledgeGraph,
+  DESIGNER_TYPE_OPTIONS,
   type AccountStatus,
   type DesignBrandGroup,
   type DesignGraphBrand,
@@ -97,6 +98,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const [filterBrand, setFilterBrand] = useState("");
   const [filterTag, setFilterTag] = useState("");
   const [filterFormat, setFilterFormat] = useState("");
+  const [filterDesignerType, setFilterDesignerType] = useState("");
   const [viewMode, setViewMode] = useState<"tree" | "canvas">("tree");
   const [accountView, setAccountView] = useState<"all" | AccountStatus>("all");
   const [showPeople, setShowPeople] = useState(true);
@@ -125,6 +127,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       if (filterBrand) params.set("brand", filterBrand);
       if (filterTag) params.set("tag", filterTag);
       if (filterFormat) params.set("format", filterFormat);
+      if (filterDesignerType) params.set("designer_type", filterDesignerType);
       const response = await apiFetch<{
         success: boolean;
         data?: {
@@ -150,7 +153,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, filterBrand, filterTag, filterFormat]);
+  }, [workspaceId, filterBrand, filterTag, filterFormat, filterDesignerType]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
 
@@ -599,6 +602,12 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           <option value="social">Social</option>
           <option value="print">Print</option>
           <option value="email">Email</option>
+          <option value="packaging">Packaging</option>
+          <option value="large_format">Gran formato</option>
+        </select>
+        <select aria-label="Filtrar por perfil de diseño" style={filterSelectStyle} value={filterDesignerType} onChange={e => setFilterDesignerType(e.target.value)}>
+          <option value="">Todos los perfiles</option>
+          {DESIGNER_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         <span style={{ fontSize: 11, color: "#8b93a7" }}>
           {hierarchy.length} marcas · {visibleDesignCount} archivos{showPeople ? ` · ${visiblePeopleCount} personas` : ""}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiHeaders } from "../lib/apiKey";
+import { ASSET_TYPE_OPTIONS, DESIGNER_TYPE_OPTIONS, type DesignerType } from "../lib/designGraph";
 
 interface FileMeta {
   brand_id: string | null;
@@ -7,12 +8,15 @@ interface FileMeta {
   campaign_id: string | null;
   campaign: string;
   asset_type: string;
+  designer_type: string;
+  is_permanent: boolean;
   tags: string[];
   theme: string;
   format: string;
   file_type: string;
   cover_image_url: string;
   obsidian_link: string;
+  production_data: Record<string, string>;
 }
 
 interface BrandOption { id: string; name: string; relationship_status: "lead" | "client" }
@@ -24,20 +28,29 @@ interface Props {
   onCoverCapture?: () => Promise<string | null>;  // returns base64 data URL
 }
 
-const FORMATS = ["", "web", "mobile", "social", "print", "email"];
+const FORMATS = ["", "web", "mobile", "social", "print", "email", "packaging", "large_format", "signage", "textile"];
 const FILE_TYPES = ["", "frame", "deck", "template", "export"];
-const ASSET_TYPES = [
-  ["key_visual", "Key visual"],
-  ["social_media", "Social media"],
-  ["web", "Web"],
-  ["mailing", "Mailing"],
-  ["other", "Otro"],
+const PRODUCTION_FIELDS = [
+  ["supplier", "Proveedor / imprenta"],
+  ["print_run", "Tiraje (cantidad)"],
+  ["substrate", "Sustrato (papel, vinilo, tela...)"],
+  ["finish", "Acabados (laminado, UV, hot-stamp)"],
+  ["technique", "Técnica (offset, flexo, serigrafía, digital)"],
+  ["color_mode", "Color (CMYK, Pantone)"],
+  ["unit_cost", "Costo unitario"],
+  ["turnaround", "Tiempo de producción"],
+  ["approved_version", "Versión aprobada"],
 ] as const;
+
+// Group ASSET_TYPE_OPTIONS by group for <optgroup> rendering
+const ASSET_TYPE_GROUPS = [...new Set(ASSET_TYPE_OPTIONS.map((o) => o.group))];
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
     brand_id: null, brand: "", campaign_id: null, campaign: "", asset_type: "other",
+    designer_type: "other", is_permanent: false,
     tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
+    production_data: {},
   });
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
@@ -62,12 +75,15 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
             campaign_id: d.data.campaign_id || null,
             campaign: d.data.campaign || "",
             asset_type: d.data.asset_type || "other",
+            designer_type: d.data.designer_type || "other",
+            is_permanent: Boolean(d.data.is_permanent),
             tags: d.data.tags || [],
             theme: d.data.theme || "",
             format: d.data.format || "",
             file_type: d.data.file_type || "",
             cover_image_url: d.data.cover_image_url || "",
             obsidian_link: d.data.obsidian_link || "",
+            production_data: d.data.production_data || {},
           };
           setMeta(m);
           metaRef.current = m;
@@ -229,9 +245,56 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       <label style={sectionStyle}>
         <span style={labelStyle}>Tipo de asset</span>
         <select style={selectStyle} value={meta.asset_type} onChange={event => scheduleSave({ asset_type: event.target.value })}>
-          {ASSET_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {ASSET_TYPE_GROUPS.map(group => (
+            <optgroup key={group} label={group}>
+              {ASSET_TYPE_OPTIONS.filter(o => o.group === group).map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </optgroup>
+          ))}
         </select>
       </label>
+
+      {/* Designer Type */}
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Perfil de diseño</span>
+        <select style={selectStyle} value={meta.designer_type} onChange={event => scheduleSave({ designer_type: event.target.value })}>
+          {DESIGNER_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </label>
+
+      {/* Is Permanent */}
+      <div style={sectionStyle}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={meta.is_permanent}
+            onChange={e => scheduleSave({ is_permanent: e.target.checked })}
+            style={{ width: 14, height: 14, cursor: "pointer" }}
+          />
+          <span style={{ fontSize: 11, color: "#ccc" }}>Activo permanente (lineamientos de marca)</span>
+        </label>
+      </div>
+
+      {/* Production Data (only for print-type assets) */}
+      {(meta.designer_type === "print" || ["packaging", "label", "dieline", "pop_display", "large_format", "signage", "textile", "merch", "stand"].includes(meta.asset_type)) && (
+        <div style={sectionStyle}>
+          <label style={labelStyle}>Datos de producción</label>
+          {PRODUCTION_FIELDS.map(([key, label]) => (
+            <input
+              key={key}
+              style={{ ...inputStyle, marginBottom: 4 }}
+              value={meta.production_data[key] || ""}
+              onChange={e => {
+                const next = { ...meta.production_data, [key]: e.target.value };
+                if (!e.target.value) delete next[key];
+                scheduleSave({ production_data: next });
+              }}
+              placeholder={label}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Tags */}
       <div style={sectionStyle}>

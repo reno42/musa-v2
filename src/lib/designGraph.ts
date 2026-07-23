@@ -1,10 +1,63 @@
 export type AccountStatus = "lead" | "client";
 
 export type DesignAssetType =
+  // Core
   | "key_visual"
   | "social_media"
   | "web"
   | "mailing"
+  | "other"
+  // Digital / performance
+  | "landing"
+  | "ecommerce"
+  | "display_ads"
+  | "motion"
+  | "app_store"
+  | "whatsapp_template"
+  | "deck"
+  // Print / production
+  | "packaging"
+  | "label"
+  | "dieline"
+  | "pop_display"
+  | "large_format"
+  | "signage"
+  | "textile"
+  | "merch"
+  | "stand"
+  // UX / UI
+  | "design_system"
+  | "component"
+  | "prototype"
+  | "dashboard"
+  // Brand
+  | "brand_identity"
+  | "brand_book"
+  | "naming"
+  | "iconography"
+  | "illustration"
+  | "art_direction"
+  | "papeleria"
+  // Spatial
+  | "wayfinding"
+  | "retail"
+  | "activation"
+  | "scenography"
+  // Editorial
+  | "catalog"
+  | "report"
+  | "infographic"
+  | "whitepaper"
+  // Permanent assets
+  | "permanent_asset";
+
+export type DesignerType =
+  | "digital"
+  | "print"
+  | "ux_ui"
+  | "brander"
+  | "spatial"
+  | "editorial"
   | "other";
 
 export interface DesignGraphNode {
@@ -86,12 +139,66 @@ export interface KnowledgeGraphEdge {
   kind: "contains" | "person";
 }
 
-export const ASSET_TYPE_OPTIONS: Array<{ value: DesignAssetType; label: string }> = [
-  { value: "key_visual", label: "Key visuals" },
-  { value: "social_media", label: "Social media" },
-  { value: "web", label: "Web" },
-  { value: "mailing", label: "Mailing" },
-  { value: "other", label: "Otros" },
+export const ASSET_TYPE_OPTIONS: Array<{ value: DesignAssetType; label: string; group: string }> = [
+  // Core
+  { value: "key_visual", label: "Key visual", group: "Core" },
+  { value: "social_media", label: "Social media", group: "Core" },
+  { value: "web", label: "Web", group: "Core" },
+  { value: "mailing", label: "Mailing", group: "Core" },
+  { value: "other", label: "Otro", group: "Core" },
+  // Digital / performance
+  { value: "landing", label: "Landing page", group: "Digital" },
+  { value: "ecommerce", label: "E-commerce (PDP/PLP)", group: "Digital" },
+  { value: "display_ads", label: "Display ads", group: "Digital" },
+  { value: "motion", label: "Motion / video", group: "Digital" },
+  { value: "app_store", label: "App store assets", group: "Digital" },
+  { value: "whatsapp_template", label: "Plantilla WhatsApp", group: "Digital" },
+  { value: "deck", label: "Deck / presentación", group: "Digital" },
+  // Print / producción
+  { value: "packaging", label: "Empaque", group: "Producción" },
+  { value: "label", label: "Etiqueta", group: "Producción" },
+  { value: "dieline", label: "Dieline", group: "Producción" },
+  { value: "pop_display", label: "POP / exhibidor", group: "Producción" },
+  { value: "large_format", label: "Gran formato", group: "Producción" },
+  { value: "signage", label: "Señalética", group: "Producción" },
+  { value: "textile", label: "Textil", group: "Producción" },
+  { value: "merch", label: "Merchandising", group: "Producción" },
+  { value: "stand", label: "Stand", group: "Producción" },
+  // UX / UI
+  { value: "design_system", label: "Design system", group: "UX-UI" },
+  { value: "component", label: "Componente", group: "UX-UI" },
+  { value: "prototype", label: "Prototipo", group: "UX-UI" },
+  { value: "dashboard", label: "Dashboard", group: "UX-UI" },
+  // Brand
+  { value: "brand_identity", label: "Identidad de marca", group: "Brand" },
+  { value: "brand_book", label: "Brand book / manual", group: "Brand" },
+  { value: "naming", label: "Naming", group: "Brand" },
+  { value: "iconography", label: "Iconografía", group: "Brand" },
+  { value: "illustration", label: "Ilustración", group: "Brand" },
+  { value: "art_direction", label: "Dirección de arte", group: "Brand" },
+  { value: "papeleria", label: "Papelería", group: "Brand" },
+  // Espacial
+  { value: "wayfinding", label: "Wayfinding", group: "Espacial" },
+  { value: "retail", label: "Retail", group: "Espacial" },
+  { value: "activation", label: "Activación", group: "Espacial" },
+  { value: "scenography", label: "Escenografía", group: "Espacial" },
+  // Editorial
+  { value: "catalog", label: "Catálogo", group: "Editorial" },
+  { value: "report", label: "Memoria / reporte", group: "Editorial" },
+  { value: "infographic", label: "Infografía", group: "Editorial" },
+  { value: "whitepaper", label: "Whitepaper", group: "Editorial" },
+  // Permanentes
+  { value: "permanent_asset", label: "Activo permanente", group: "Permanentes" },
+];
+
+export const DESIGNER_TYPE_OPTIONS: Array<{ value: DesignerType; label: string }> = [
+  { value: "digital", label: "Digital / Performance" },
+  { value: "print", label: "Impresión / Producción" },
+  { value: "ux_ui", label: "Producto / UX-UI" },
+  { value: "brander", label: "Brander" },
+  { value: "spatial", label: "Espacial / Experiencial" },
+  { value: "editorial", label: "Editorial" },
+  { value: "other", label: "Otro" },
 ];
 
 const ASSET_TYPE_LABELS = new Map(ASSET_TYPE_OPTIONS.map((option) => [option.value, option.label]));

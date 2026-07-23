@@ -3092,9 +3092,11 @@ html, body, #root { height: 100%; width: 100%; }
   margin-top: 16px; text-align: right;
 }
 
-/* ── Dashboard hamburger (hidden on desktop) ── */
+/* ── Dashboard hamburger (always visible) ── */
 .dash-hamburger {
-  display: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
