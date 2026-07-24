@@ -1626,7 +1626,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {activeTab === "workspace" && (
-        <WorkspaceConsole workspaceId={DEFAULT_WORKSPACE_ID} workspaceName={workspaces.find(workspace => workspace.id === DEFAULT_WORKSPACE_ID)?.name} />
+        <WorkspaceConsole
+          workspaceId={DEFAULT_WORKSPACE_ID}
+          workspaceName={workspaces.find(workspace => workspace.id === DEFAULT_WORKSPACE_ID)?.name}
+          onOpenTemplate={(id) => onSelectTemplate(id)}
+        />
       )}
 
       {/* ── Delete Confirmation Modal ── */}

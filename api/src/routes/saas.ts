@@ -7,6 +7,7 @@ import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations
 import { requireWorkspaceRole } from "../services/tenancy.js";
 import { claimLegacyWorkspacesForInitialUser, ensurePersonalWorkspace } from "../services/legacyOwnership.js";
 import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../services/workspaceInvitations.js";
+import { buildDealProgress, buildOfferSuggestions } from "../services/crmInsights.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -535,6 +536,11 @@ const contactSchema = z.object({
 const brandAccountSchema = z.object({
   name: z.string().trim().min(1).max(120),
   relationshipStatus: z.enum(["lead", "client"]).default("lead"),
+  accountHealth: z.enum(["active", "at_risk", "churned"]).default("active"),
+  priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+  crmNotes: z.string().max(10000).optional(),
+  lastContactedAt: z.string().datetime().nullable().optional(),
+  nextFollowUpAt: z.string().datetime().nullable().optional(),
 });
 
 workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (req, res) => {
@@ -547,6 +553,11 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
       id: brand.id,
       name: brand.name,
       relationship_status: brand.relationship_status || "lead",
+      account_health: brand.account_health || "active",
+      crm_priority: brand.crm_priority || "medium",
+      crm_notes: brand.crm_notes || "",
+      last_contacted_at: brand.last_contacted_at || null,
+      next_follow_up_at: brand.next_follow_up_at || null,
       created_at: brand.created_at,
       updated_at: brand.updated_at,
     })) });
@@ -563,7 +574,14 @@ workspaceSaasRoutes.post("/:id/brands", requireWorkspaceRole("editor"), async (r
       .eq("workspace_id", req.params.id).ilike("name", parsed.name).limit(1).maybeSingle();
     if (existing) {
       const { data, error } = await sb.from("brands")
-        .update({ relationship_status: parsed.relationshipStatus, updated_at: new Date().toISOString() })
+        .update({
+          relationship_status: parsed.relationshipStatus,
+          account_health: parsed.accountHealth,
+          crm_priority: parsed.priority,
+          crm_notes: parsed.crmNotes || null,
+          next_follow_up_at: parsed.nextFollowUpAt || null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("workspace_id", req.params.id).eq("id", existing.id).select("*").single();
       if (error) throw error;
       res.json({ success: true, data });
@@ -574,6 +592,11 @@ workspaceSaasRoutes.post("/:id/brands", requireWorkspaceRole("editor"), async (r
       workspace_id: req.params.id,
       name: parsed.name,
       relationship_status: parsed.relationshipStatus,
+      account_health: parsed.accountHealth,
+      crm_priority: parsed.priority,
+      crm_notes: parsed.crmNotes || null,
+      last_contacted_at: parsed.lastContactedAt || null,
+      next_follow_up_at: parsed.nextFollowUpAt || null,
     }).select("*").single();
     if (error) throw error;
     res.status(201).json({ success: true, data });
@@ -588,6 +611,11 @@ workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor")
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (parsed.name !== undefined) patch.name = parsed.name;
     if (parsed.relationshipStatus !== undefined) patch.relationship_status = parsed.relationshipStatus;
+    if (parsed.accountHealth !== undefined) patch.account_health = parsed.accountHealth;
+    if (parsed.priority !== undefined) patch.crm_priority = parsed.priority;
+    if (parsed.crmNotes !== undefined) patch.crm_notes = parsed.crmNotes || null;
+    if (parsed.lastContactedAt !== undefined) patch.last_contacted_at = parsed.lastContactedAt;
+    if (parsed.nextFollowUpAt !== undefined) patch.next_follow_up_at = parsed.nextFollowUpAt;
     const sb = dbOrThrow();
     const { data, error } = await sb.from("brands").update(patch)
       .eq("workspace_id", req.params.id).eq("id", req.params.brandId).select("*").single();
@@ -704,5 +732,475 @@ workspaceSaasRoutes.delete("/:id/contacts/:contactId", requireWorkspaceRole("edi
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const crmDealStageSchema = z.enum([
+  "discovery",
+  "proposal",
+  "negotiation",
+  "approved",
+  "in_production",
+  "review",
+  "ready",
+  "delivered",
+  "lost",
+]);
+
+const crmDeliverableInputSchema = z.object({
+  assetType: z.string().trim().min(1).max(80).regex(/^[a-z0-9_]+$/),
+  label: z.string().trim().min(1).max(160),
+  quantity: z.coerce.number().int().min(1).max(10000),
+  notes: z.string().max(5000).optional(),
+});
+
+const crmDealCreateSchema = z.object({
+  brandId: z.string().min(1),
+  campaignId: z.string().nullable().optional(),
+  campaignName: z.string().trim().max(160).optional(),
+  primaryContactId: z.string().uuid().nullable().optional(),
+  title: z.string().trim().min(1).max(180),
+  description: z.string().max(10000).optional(),
+  stage: crmDealStageSchema.default("discovery"),
+  value: z.coerce.number().min(0).max(9999999999).nullable().optional(),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).default("USD"),
+  probability: z.coerce.number().int().min(0).max(100).default(10),
+  expectedCloseDate: z.string().date().nullable().optional(),
+  dueDate: z.string().date().nullable().optional(),
+  notes: z.string().max(10000).optional(),
+  deliverables: z.array(crmDeliverableInputSchema).min(1).max(100),
+});
+
+const crmDealPatchSchema = z.object({
+  campaignId: z.string().nullable().optional(),
+  primaryContactId: z.string().uuid().nullable().optional(),
+  title: z.string().trim().min(1).max(180).optional(),
+  description: z.string().max(10000).nullable().optional(),
+  stage: crmDealStageSchema.optional(),
+  value: z.coerce.number().min(0).max(9999999999).nullable().optional(),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
+  probability: z.coerce.number().int().min(0).max(100).optional(),
+  expectedCloseDate: z.string().date().nullable().optional(),
+  dueDate: z.string().date().nullable().optional(),
+  notes: z.string().max(10000).nullable().optional(),
+});
+
+function isMissingCrmSchema(error: any) {
+  return error?.code === "42P01" || error?.code === "42703" || /crm_deals|account_health|crm_priority/i.test(error?.message || "");
+}
+
+function sendCrmError(res: any, error: any) {
+  if (isMissingCrmSchema(error)) {
+    res.status(503).json({
+      success: false,
+      error: "El CRM necesita la migración supabase_migrations_v14.sql.",
+    });
+    return;
+  }
+  res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
+}
+
+async function resolveDealCampaign(
+  sb: ReturnType<typeof dbOrThrow>,
+  workspaceId: string,
+  brandId: string,
+  campaignId?: string | null,
+  campaignName?: string,
+) {
+  if (campaignId) {
+    const { data } = await sb.from("campaigns").select("id, name")
+      .eq("workspace_id", workspaceId).eq("brand_id", brandId).eq("id", campaignId).maybeSingle();
+    if (!data) throw new Error("Campaign does not belong to this brand and workspace");
+    return data;
+  }
+  const normalizedName = campaignName?.trim();
+  if (!normalizedName) return null;
+  const { data: existing } = await sb.from("campaigns").select("id, name")
+    .eq("workspace_id", workspaceId).eq("brand_id", brandId).ilike("name", normalizedName).maybeSingle();
+  if (existing) return existing;
+  const { data, error } = await sb.from("campaigns").insert({
+    workspace_id: workspaceId,
+    brand_id: brandId,
+    name: normalizedName,
+  }).select("id, name").single();
+  if (error) throw error;
+  return data;
+}
+
+workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const [brandResult, contactResult, campaignResult, dealResult, deliverableResult, linkResult, designResult] = await Promise.all([
+      sb.from("brands").select("*").eq("workspace_id", workspaceId).order("name"),
+      sb.from("crm_contacts").select("*").eq("workspace_id", workspaceId).order("first_name"),
+      sb.from("campaigns").select("id, brand_id, name, status").eq("workspace_id", workspaceId).order("name"),
+      sb.from("crm_deals").select("*").eq("workspace_id", workspaceId).order("updated_at", { ascending: false }),
+      sb.from("crm_deal_deliverables").select("*").eq("workspace_id", workspaceId).order("sort_order"),
+      sb.from("crm_deliverable_files").select("deliverable_id, template_id, linked_at").eq("workspace_id", workspaceId),
+      sb.from("design_file_meta")
+        .select("template_id, brand_id, campaign_id, asset_type, updated_at, templates(id, name, thumbnail)")
+        .eq("workspace_id", workspaceId),
+    ]);
+    const firstError = [
+      brandResult.error,
+      contactResult.error,
+      campaignResult.error,
+      dealResult.error,
+      deliverableResult.error,
+      linkResult.error,
+      designResult.error,
+    ].find(Boolean);
+    if (firstError) throw firstError;
+
+    const designs = (designResult.data || []).map((row: any) => {
+      const template = Array.isArray(row.templates) ? row.templates[0] : row.templates;
+      return {
+        template_id: row.template_id,
+        brand_id: row.brand_id || null,
+        campaign_id: row.campaign_id || null,
+        asset_type: row.asset_type || "other",
+        updated_at: row.updated_at || null,
+        name: template?.name || row.template_id,
+        thumbnail: template?.thumbnail || null,
+      };
+    });
+    const rawDeals = dealResult.data || [];
+    const deliverables = deliverableResult.data || [];
+    const links = linkResult.data || [];
+    const deals = rawDeals.map((deal: any) => ({
+      ...deal,
+      progress: buildDealProgress(deal, deliverables, links, designs),
+    }));
+    const brands = (brandResult.data || []).map((brand: any) => ({
+      ...brand,
+      relationship_status: brand.relationship_status || "lead",
+      account_health: brand.account_health || "active",
+      crm_priority: brand.crm_priority || "medium",
+      crm_notes: brand.crm_notes || "",
+      contact_count: (contactResult.data || []).filter((contact: any) => contact.brand_id === brand.id).length,
+      design_count: designs.filter((design) => design.brand_id === brand.id).length,
+      deal_count: rawDeals.filter((deal: any) => deal.brand_id === brand.id).length,
+      suggestions: buildOfferSuggestions(
+        brand,
+        designs,
+        deliverables
+          .filter((deliverable: any) => rawDeals.some((deal: any) => deal.id === deliverable.deal_id && deal.brand_id === brand.id && deal.stage !== "lost"))
+          .map((deliverable: any) => deliverable.asset_type),
+      ),
+    }));
+    const openDeals = deals.filter((deal: any) => !["delivered", "lost"].includes(deal.stage));
+    const pipelineValue = openDeals.reduce((total: number, deal: any) => total + Number(deal.value || 0), 0);
+    const weightedValue = openDeals.reduce(
+      (total: number, deal: any) => total + (Number(deal.value || 0) * Number(deal.probability || 0) / 100),
+      0,
+    );
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      data: {
+        brands,
+        contacts: contactResult.data || [],
+        campaigns: campaignResult.data || [],
+        deals,
+        designs,
+        summary: {
+          pipelineValue,
+          weightedValue,
+          openDeals: openDeals.length,
+          pendingDeliverables: deals.reduce(
+            (total: number, deal: any) => total + Math.max(0, deal.progress.requested - deal.progress.completed),
+            0,
+          ),
+        },
+      },
+    });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.post("/:id/deals", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = crmDealCreateSchema.parse(req.body);
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: brand } = await sb.from("brands").select("id")
+      .eq("workspace_id", workspaceId).eq("id", parsed.brandId).maybeSingle();
+    if (!brand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
+    if (parsed.primaryContactId) {
+      const { data: contact } = await sb.from("crm_contacts").select("id")
+        .eq("workspace_id", workspaceId).eq("brand_id", parsed.brandId)
+        .eq("id", parsed.primaryContactId).maybeSingle();
+      if (!contact) return res.status(400).json({ success: false, error: "Contact does not belong to this brand" });
+    }
+    const campaign = await resolveDealCampaign(sb, workspaceId, parsed.brandId, parsed.campaignId, parsed.campaignName);
+    const { data: deal, error: dealError } = await sb.from("crm_deals").insert({
+      workspace_id: workspaceId,
+      brand_id: parsed.brandId,
+      campaign_id: campaign?.id || null,
+      primary_contact_id: parsed.primaryContactId || null,
+      title: parsed.title,
+      description: parsed.description || null,
+      stage: parsed.stage,
+      value: parsed.value ?? null,
+      currency: parsed.currency,
+      probability: parsed.probability,
+      expected_close_date: parsed.expectedCloseDate || null,
+      due_date: parsed.dueDate || null,
+      notes: parsed.notes || null,
+      created_by: req.auth!.userId,
+    }).select("*").single();
+    if (dealError) throw dealError;
+    const rows = parsed.deliverables.map((deliverable, index) => ({
+      workspace_id: workspaceId,
+      deal_id: deal.id,
+      asset_type: deliverable.assetType,
+      label: deliverable.label,
+      quantity: deliverable.quantity,
+      sort_order: index,
+      notes: deliverable.notes || null,
+      created_by: req.auth!.userId,
+    }));
+    const { error: deliverableError } = await sb.from("crm_deal_deliverables").insert(rows);
+    if (deliverableError) {
+      await sb.from("crm_deals").delete().eq("workspace_id", workspaceId).eq("id", deal.id);
+      throw deliverableError;
+    }
+    res.status(201).json({ success: true, data: { ...deal, campaign, deliverables: rows } });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.patch("/:id/deals/:dealId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = crmDealPatchSchema.parse(req.body);
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: current } = await sb.from("crm_deals").select("*")
+      .eq("workspace_id", workspaceId).eq("id", req.params.dealId).maybeSingle();
+    if (!current) return res.status(404).json({ success: false, error: "Deal not found" });
+    if (parsed.primaryContactId) {
+      const { data: contact } = await sb.from("crm_contacts").select("id")
+        .eq("workspace_id", workspaceId).eq("brand_id", current.brand_id)
+        .eq("id", parsed.primaryContactId).maybeSingle();
+      if (!contact) return res.status(400).json({ success: false, error: "Contact does not belong to this brand" });
+    }
+    if (parsed.campaignId) {
+      await resolveDealCampaign(sb, workspaceId, current.brand_id, parsed.campaignId);
+    }
+    const fields: Record<string, string> = {
+      campaignId: "campaign_id",
+      primaryContactId: "primary_contact_id",
+      title: "title",
+      description: "description",
+      stage: "stage",
+      value: "value",
+      currency: "currency",
+      probability: "probability",
+      expectedCloseDate: "expected_close_date",
+      dueDate: "due_date",
+      notes: "notes",
+    };
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const [clientKey, dbKey] of Object.entries(fields)) {
+      if (clientKey in parsed) patch[dbKey] = (parsed as any)[clientKey];
+    }
+    const { data, error } = await sb.from("crm_deals").update(patch)
+      .eq("workspace_id", workspaceId).eq("id", req.params.dealId).select("*").single();
+    if (error) throw error;
+    if (parsed.stage && ["approved", "in_production", "review", "ready", "delivered"].includes(parsed.stage)) {
+      await sb.from("brands").update({
+        relationship_status: "client",
+        account_health: "active",
+        updated_at: new Date().toISOString(),
+      }).eq("workspace_id", workspaceId).eq("id", current.brand_id);
+    }
+    res.json({ success: true, data });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.delete("/:id/deals/:dealId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { error } = await sb.from("crm_deals").delete()
+      .eq("workspace_id", req.params.id).eq("id", req.params.dealId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.post("/:id/deals/:dealId/deliverables", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = crmDeliverableInputSchema.parse(req.body);
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: deal } = await sb.from("crm_deals").select("id")
+      .eq("workspace_id", workspaceId).eq("id", req.params.dealId).maybeSingle();
+    if (!deal) return res.status(404).json({ success: false, error: "Deal not found" });
+    const { count } = await sb.from("crm_deal_deliverables").select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId).eq("deal_id", deal.id);
+    const { data, error } = await sb.from("crm_deal_deliverables").insert({
+      workspace_id: workspaceId,
+      deal_id: deal.id,
+      asset_type: parsed.assetType,
+      label: parsed.label,
+      quantity: parsed.quantity,
+      sort_order: count || 0,
+      notes: parsed.notes || null,
+      created_by: req.auth!.userId,
+    }).select("*").single();
+    if (error) throw error;
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.patch("/:id/deals/:dealId/deliverables/:deliverableId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = crmDeliverableInputSchema.partial().parse(req.body);
+    const fields: Record<string, string> = {
+      assetType: "asset_type",
+      label: "label",
+      quantity: "quantity",
+      notes: "notes",
+    };
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const [clientKey, dbKey] of Object.entries(fields)) {
+      if (clientKey in parsed) patch[dbKey] = (parsed as any)[clientKey];
+    }
+    const sb = dbOrThrow();
+    const { data, error } = await sb.from("crm_deal_deliverables").update(patch)
+      .eq("workspace_id", req.params.id).eq("deal_id", req.params.dealId)
+      .eq("id", req.params.deliverableId).select("*").single();
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.delete("/:id/deals/:dealId/deliverables/:deliverableId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { error } = await sb.from("crm_deal_deliverables").delete()
+      .eq("workspace_id", req.params.id).eq("deal_id", req.params.dealId)
+      .eq("id", req.params.deliverableId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.post("/:id/deals/:dealId/reconcile", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: deal } = await sb.from("crm_deals").select("id, brand_id, campaign_id")
+      .eq("workspace_id", workspaceId).eq("id", req.params.dealId).maybeSingle();
+    if (!deal) return res.status(404).json({ success: false, error: "Deal not found" });
+    if (!deal.campaign_id) {
+      return res.status(400).json({
+        success: false,
+        error: "Asigna una campaña al deal antes de cruzar archivos automáticamente.",
+      });
+    }
+    const [{ data: deliverables, error: deliverableError }, { data: designs, error: designError }, { data: links, error: linkError }] = await Promise.all([
+      sb.from("crm_deal_deliverables").select("*").eq("workspace_id", workspaceId).eq("deal_id", deal.id).order("sort_order"),
+      sb.from("design_file_meta").select("template_id, asset_type")
+        .eq("workspace_id", workspaceId).eq("brand_id", deal.brand_id).eq("campaign_id", deal.campaign_id),
+      sb.from("crm_deliverable_files").select("deliverable_id, template_id").eq("workspace_id", workspaceId),
+    ]);
+    if (deliverableError || designError || linkError) throw deliverableError || designError || linkError;
+    const usedTemplateIds = new Set((links || []).map((link: any) => link.template_id));
+    const existingPerDeliverable = new Map<string, number>();
+    for (const link of links || []) {
+      existingPerDeliverable.set(link.deliverable_id, (existingPerDeliverable.get(link.deliverable_id) || 0) + 1);
+    }
+    const assignments: Array<Record<string, unknown>> = [];
+    for (const deliverable of deliverables || []) {
+      const remaining = Math.max(0, deliverable.quantity - (existingPerDeliverable.get(deliverable.id) || 0));
+      const matches = (designs || []).filter(
+        (design: any) => design.asset_type === deliverable.asset_type && !usedTemplateIds.has(design.template_id),
+      ).slice(0, remaining);
+      for (const design of matches) {
+        usedTemplateIds.add(design.template_id);
+        assignments.push({
+          workspace_id: workspaceId,
+          deliverable_id: deliverable.id,
+          template_id: design.template_id,
+          linked_by: req.auth!.userId,
+        });
+      }
+    }
+    if (assignments.length) {
+      const { error } = await sb.from("crm_deliverable_files").insert(assignments);
+      if (error) throw error;
+    }
+    res.json({ success: true, data: { linked: assignments.length } });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.post("/:id/deals/:dealId/deliverables/:deliverableId/files", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const parsed = z.object({ templateId: z.string().min(1) }).parse(req.body);
+    const sb = dbOrThrow();
+    const workspaceId = req.params.id;
+    const { data: deliverable } = await sb.from("crm_deal_deliverables")
+      .select("id, asset_type, crm_deals!inner(id, brand_id, campaign_id)")
+      .eq("workspace_id", workspaceId).eq("deal_id", req.params.dealId)
+      .eq("id", req.params.deliverableId).maybeSingle();
+    if (!deliverable) return res.status(404).json({ success: false, error: "Deliverable not found" });
+    const joinedDeal = Array.isArray((deliverable as any).crm_deals)
+      ? (deliverable as any).crm_deals[0]
+      : (deliverable as any).crm_deals;
+    const { data: design } = await sb.from("design_file_meta")
+      .select("template_id, brand_id, campaign_id, asset_type")
+      .eq("workspace_id", workspaceId).eq("template_id", parsed.templateId).maybeSingle();
+    if (
+      !design
+      || design.brand_id !== joinedDeal.brand_id
+      || design.asset_type !== deliverable.asset_type
+      || (joinedDeal.campaign_id && design.campaign_id !== joinedDeal.campaign_id)
+    ) {
+      return res.status(400).json({ success: false, error: "El archivo no coincide con la marca, campaña y tipo del entregable." });
+    }
+    const { data, error } = await sb.from("crm_deliverable_files").insert({
+      workspace_id: workspaceId,
+      deliverable_id: deliverable.id,
+      template_id: parsed.templateId,
+      linked_by: req.auth!.userId,
+    }).select("*").single();
+    if (error?.code === "23505") {
+      return res.status(409).json({ success: false, error: "Este archivo ya está vinculado a otro entregable." });
+    }
+    if (error) throw error;
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    sendCrmError(res, error);
+  }
+});
+
+workspaceSaasRoutes.delete("/:id/deals/:dealId/deliverables/:deliverableId/files/:templateId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const { error } = await sb.from("crm_deliverable_files").delete()
+      .eq("workspace_id", req.params.id)
+      .eq("deliverable_id", req.params.deliverableId)
+      .eq("template_id", req.params.templateId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    sendCrmError(res, error);
   }
 });

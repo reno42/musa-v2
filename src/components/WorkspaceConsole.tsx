@@ -2,14 +2,13 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type R
 import { getApiHeaders } from "../lib/apiKey";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
+import { CrmWorkspace } from "./CrmWorkspace";
 
 type Section = "team" | "agents" | "crm" | "account";
 type Member = { id: string; email?: string; display_name?: string; role: "owner" | "admin" | "editor" | "viewer" };
 type Invitation = { id: string; email: string; role: "admin" | "editor" | "viewer"; status: "pending" | "accepted" | "declined" | "revoked" | "expired"; expiresAt: string; createdAt: string; lastSentAt?: string; deliveryMethod: string; workspaceName?: string; invitedBy?: string };
 type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
 type Connection = { id: string; name: string; kind: string; provider: string; endpointUrl: string; enabled: boolean; hasCredentials: boolean };
-type Contact = { id: string; brand_id?: string; first_name: string; last_name?: string; email?: string; job_title?: string; company?: string; brand_name?: string; status: string; tags?: string[] };
-type BrandAccount = { id: string; name: string; relationship_status: "lead" | "client"; created_at?: string; updated_at?: string };
 
 async function workspaceFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(getApiHeaders());
@@ -38,15 +37,13 @@ function ConfirmDialog({ title, body, confirmLabel, onConfirm, onClose }: { titl
   );
 }
 
-export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: string | null; workspaceName?: string }) {
+export function WorkspaceConsole({ workspaceId, workspaceName, onOpenTemplate }: { workspaceId: string | null; workspaceName?: string; onOpenTemplate?: (templateId: string) => void }) {
   const { user, signOut } = useAuth();
   const [section, setSection] = useState<Section>("team");
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [brands, setBrands] = useState<BrandAccount[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -74,13 +71,6 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
           workspaceFetch<{ data: Connection[] }>(`/api/workspaces/${workspaceId}/connections`),
         ]);
         setKeys(keyResult.data || []); setConnections(connectionResult.data || []);
-      } else if (section === "crm") {
-        const [contactResult, brandResult] = await Promise.all([
-          workspaceFetch<{ data: Contact[] }>(`/api/workspaces/${workspaceId}/contacts`),
-          workspaceFetch<{ data: BrandAccount[] }>(`/api/workspaces/${workspaceId}/brands`),
-        ]);
-        setContacts(contactResult.data || []);
-        setBrands(brandResult.data || []);
       }
     } catch (cause: any) { setError(cause.message); }
     setLoading(false);
@@ -106,7 +96,14 @@ export function WorkspaceConsole({ workspaceId, workspaceName }: { workspaceId: 
       {(error || notice) && <p id={statusId} className={error ? "workspace-status error" : "workspace-status success"} role={error ? "alert" : "status"}>{error || notice}</p>}
       {section === "team" && <TeamSection workspaceId={workspaceId} members={members} invitations={invitations} currentUserId={user?.id} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
       {section === "agents" && <AgentsSection workspaceId={workspaceId} keys={keys} connections={connections} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
-      {section === "crm" && <CrmSection workspaceId={workspaceId} contacts={contacts} brands={brands} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+      {section === "crm" && (
+        <CrmWorkspace
+          workspaceId={workspaceId}
+          onOpenTemplate={onOpenTemplate}
+          setError={(message) => { setNotice(""); setError(message); }}
+          setNotice={(message) => { setError(""); setNotice(message); }}
+        />
+      )}
       {section === "account" && <AccountSection setError={setError} setNotice={setNotice} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} body={confirmAction.body} confirmLabel={confirmAction.label} onConfirm={confirmAction.run} onClose={() => setConfirmAction(null)} />}
     </section>
@@ -369,140 +366,4 @@ function AgentsSection({ workspaceId, keys, connections, reload, setError, setNo
   const revoke = (key: ApiKey) => setConfirmAction({ title: "Revocar clave", body: `La clave ${key.label} dejará de funcionar inmediatamente.`, label: "Revocar", run: async () => { try { await workspaceFetch(`/api/workspaces/${workspaceId}/api-keys/${key.id}`, { method: "DELETE" }); await reload(); } catch (cause: any) { setError(cause.message); } } });
   const toggle = async (connection: Connection) => { try { await workspaceFetch(`/api/workspaces/${workspaceId}/connections/${connection.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !connection.enabled }) }); await reload(); } catch (cause: any) { setError(cause.message); } };
   return <div className="workspace-grid"><article className="workspace-panel"><h3>Nueva clave para agentes</h3><form className="workspace-form" onSubmit={createKey}><Field label="Nombre"><input value={keyLabel} onChange={e => setKeyLabel(e.target.value)} placeholder="Claude del equipo" required /></Field><Field label="Permiso"><select value={keyRole} onChange={e => setKeyRole(e.target.value)}><option value="editor">Puede diseñar</option><option value="viewer">Solo lectura</option></select></Field><button className="workspace-button">Crear clave</button></form>{rawKey && <div className="workspace-secret" role="status"><strong>Cópiala ahora; no volverá a mostrarse.</strong><code>{rawKey}</code><button type="button" className="workspace-link" onClick={() => void navigator.clipboard.writeText(rawKey)}>Copiar</button></div>}</article><article className="workspace-panel"><h3>Conectar MCP BYOK</h3><form className="workspace-form" onSubmit={addConnection}><Field label="Nombre"><input value={name} onChange={e => setName(e.target.value)} required /></Field><Field label="Proveedor"><input value={provider} onChange={e => setProvider(e.target.value)} placeholder="Notion, Slack, MCP propio…" required /></Field><Field label="Endpoint HTTPS"><input type="url" value={endpointUrl} onChange={e => setEndpointUrl(e.target.value)} required /></Field><Field label="Credenciales JSON"><textarea value={credentialJson} onChange={e => setCredentialJson(e.target.value)} rows={3} spellCheck={false} /></Field><button className="workspace-button">Conectar y cifrar</button></form></article><article className="workspace-panel span"><h3>Accesos de agentes</h3><div className="workspace-list">{keys.map((key: ApiKey) => <div className="workspace-row" key={key.id}><div><strong>{key.label}</strong><span>{key.key_prefix} · {key.role}</span></div><button type="button" className="workspace-link danger" onClick={() => revoke(key)}>Revocar</button></div>)}</div></article><article className="workspace-panel span"><h3>MCPs disponibles para el equipo</h3><div className="workspace-list">{connections.map((connection: Connection) => <div className="workspace-row" key={connection.id}><div><strong>{connection.name}</strong><span>{connection.provider} · {connection.endpointUrl} · secretos {connection.hasCredentials ? "cifrados" : "no configurados"}</span></div><button type="button" className="workspace-link" aria-pressed={connection.enabled} onClick={() => void toggle(connection)}>{connection.enabled ? "Desactivar" : "Activar"}</button></div>)}</div></article></div>;
-}
-
-function CrmSection({ workspaceId, contacts, brands, reload, setError, setNotice, setConfirmAction }: {
-  workspaceId: string;
-  contacts: Contact[];
-  brands: BrandAccount[];
-  reload: () => Promise<void>;
-  setError: (message: string) => void;
-  setNotice: (message: string) => void;
-  setConfirmAction: (action: { title: string; body: string; label: string; run: () => void }) => void;
-}) {
-  const [brandName, setBrandName] = useState("");
-  const [relationshipStatus, setRelationshipStatus] = useState<"lead" | "client">("lead");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [brandId, setBrandId] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const addBrand = async (event: FormEvent) => {
-    event.preventDefault(); setError("");
-    try {
-      await workspaceFetch(`/api/workspaces/${workspaceId}/brands`, {
-        method: "POST",
-        body: JSON.stringify({ name: brandName, relationshipStatus }),
-      });
-      setBrandName("");
-      setNotice("Marca agregada al mapa comercial.");
-      await reload();
-    } catch (cause: any) { setError(cause.message); }
-  };
-
-  const updateBrandStatus = async (brand: BrandAccount, status: "lead" | "client") => {
-    try {
-      await workspaceFetch(`/api/workspaces/${workspaceId}/brands/${brand.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ relationshipStatus: status }),
-      });
-      setNotice(`${brand.name} ahora figura como ${status === "client" ? "cliente" : "lead"}.`);
-      await reload();
-    } catch (cause: any) { setError(cause.message); }
-  };
-
-  const addContact = async (event: FormEvent) => {
-    event.preventDefault(); setError("");
-    try {
-      await workspaceFetch(`/api/workspaces/${workspaceId}/contacts`, {
-        method: "POST",
-        body: JSON.stringify({ firstName, lastName, email, brandId, jobTitle, notes, status: "active", tags: [] }),
-      });
-      setFirstName(""); setLastName(""); setEmail(""); setJobTitle(""); setNotes("");
-      setNotice("Stakeholder agregado a la marca.");
-      await reload();
-    } catch (cause: any) { setError(cause.message); }
-  };
-
-  const remove = (contact: Contact) => setConfirmAction({
-    title: "Eliminar contacto",
-    body: `${contact.first_name} ${contact.last_name || ""} se eliminará del CRM.`,
-    label: "Eliminar",
-    run: async () => {
-      try { await workspaceFetch(`/api/workspaces/${workspaceId}/contacts/${contact.id}`, { method: "DELETE" }); await reload(); }
-      catch (cause: any) { setError(cause.message); }
-    },
-  });
-
-  return (
-    <div className="workspace-grid">
-      <article className="workspace-panel">
-        <h3>Nueva marca</h3>
-        <p className="workspace-muted">La marca es la cuenta comercial. Sus contactos son stakeholders, no marcas separadas.</p>
-        <form className="workspace-form" onSubmit={addBrand}>
-          <Field label="Nombre de la marca"><input value={brandName} onChange={event => setBrandName(event.target.value)} required /></Field>
-          <Field label="Relación comercial">
-            <select value={relationshipStatus} onChange={event => setRelationshipStatus(event.target.value as "lead" | "client")}>
-              <option value="lead">Lead</option><option value="client">Cliente</option>
-            </select>
-          </Field>
-          <button className="workspace-button">Agregar marca</button>
-        </form>
-      </article>
-
-      <article className="workspace-panel">
-        <h3>Nuevo stakeholder</h3>
-        <form className="workspace-form" onSubmit={addContact}>
-          <div className="workspace-form-row">
-            <Field label="Nombre"><input value={firstName} onChange={event => setFirstName(event.target.value)} required /></Field>
-            <Field label="Apellido"><input value={lastName} onChange={event => setLastName(event.target.value)} /></Field>
-          </div>
-          <Field label="Marca">
-            <select value={brandId} onChange={event => setBrandId(event.target.value)} required>
-              <option value="">Selecciona una marca</option>
-              {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Cargo"><input value={jobTitle} onChange={event => setJobTitle(event.target.value)} /></Field>
-          <Field label="Correo"><input type="email" value={email} onChange={event => setEmail(event.target.value)} /></Field>
-          <Field label="Notas"><textarea value={notes} onChange={event => setNotes(event.target.value)} rows={3} /></Field>
-          <button className="workspace-button" disabled={brands.length === 0}>Agregar stakeholder</button>
-          {brands.length === 0 && <p className="workspace-muted">Primero agrega una marca.</p>}
-        </form>
-      </article>
-
-      <article className="workspace-panel span">
-        <h3>Marcas y relación comercial</h3>
-        <div className="workspace-list">
-          {brands.length === 0 && <p className="workspace-muted">Agrega tu primer lead o cliente para comenzar el mapa.</p>}
-          {brands.map(brand => {
-            const stakeholderCount = contacts.filter(contact => contact.brand_id === brand.id).length;
-            return (
-              <div className="workspace-row" key={brand.id}>
-                <div><strong>{brand.name}</strong><span>{stakeholderCount} stakeholder{stakeholderCount === 1 ? "" : "s"}</span></div>
-                <select aria-label={`Relación comercial de ${brand.name}`} value={brand.relationship_status} onChange={event => void updateBrandStatus(brand, event.target.value as "lead" | "client")}>
-                  <option value="lead">Lead</option><option value="client">Cliente</option>
-                </select>
-              </div>
-            );
-          })}
-        </div>
-      </article>
-
-      <article className="workspace-panel span">
-        <h3>Contactos humanos</h3>
-        <div className="workspace-list">
-          {contacts.length === 0 && <p className="workspace-muted">Aún no hay stakeholders. Agrégalos dentro de una marca.</p>}
-          {contacts.map(contact => (
-            <div className="workspace-row" key={contact.id}>
-              <div><strong>{contact.first_name} {contact.last_name}</strong><span>{[contact.job_title, contact.brand_name || contact.company, contact.email].filter(Boolean).join(" · ")}</span></div>
-              <button type="button" className="workspace-link danger" onClick={() => remove(contact)}>Eliminar</button>
-            </div>
-          ))}
-        </div>
-      </article>
-    </div>
-  );
 }
