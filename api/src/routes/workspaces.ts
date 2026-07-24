@@ -271,7 +271,7 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
     if (tplIds.length > 0) {
       const { data: metaData } = await sb
         .from("design_file_meta")
-        .select("template_id, brand, campaign, format, file_type, cover_image_url")
+        .select("template_id, brand, campaign, format, file_type, cover_image_url, obsidian_link")
         .in("template_id", tplIds);
       if (metaData) {
         for (const row of metaData) metaMap.set(row.template_id, row);
@@ -280,7 +280,7 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
 
     const TEXT_TAGS = "h1, h2, h3, h4, h5, h6, p, span, a, button, li, label, div, td, th, strong, em, blockquote, figcaption, caption, small, mark";
     const allTexts: any[] = [];
-    const framePreviews = new Map<string, any>();
+    const templateMetaMap = new Map<string, any>();
 
     // Import once outside the loop
     const { load: cheerioLoad } = await import("cheerio");
@@ -290,29 +290,25 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
       if (frames.length === 0) continue;
       const meta = metaMap.get(row.id) || {};
 
+      // Build template-level metadata (once per template)
+      if (!templateMetaMap.has(row.id)) {
+        templateMetaMap.set(row.id, {
+          templateId: row.id,
+          templateName: row.name,
+          brand: meta.brand || "",
+          campaign: meta.campaign || "",
+          format: meta.format || "",
+          fileType: meta.file_type || "",
+          obsidianLink: meta.obsidian_link || "",
+          coverImage: meta.cover_image_url || row.thumbnail || null,
+          frameCount: 0,
+        });
+      }
+      templateMetaMap.get(row.id).frameCount += frames.length;
+
       for (const frame of frames) {
         const f: any = frame;
         if (!f.html) continue;
-
-        // Build frame preview
-        if (!framePreviews.has(f.id)) {
-          framePreviews.set(f.id, {
-            frameId: f.id,
-            frameName: f.name || f.id,
-            templateId: row.id,
-            templateName: row.name,
-            frameWidth: f.width || 1080,
-            frameHeight: f.height || 1080,
-            frameHtml: f.html || "",
-            frameCss: f.css || "",
-            frameBackground: f.background || null,
-            brand: meta.brand || "",
-            campaign: meta.campaign || "",
-            format: meta.format || "",
-            fileType: meta.file_type || "",
-            coverImage: meta.cover_image_url || row.thumbnail || null,
-          });
-        }
 
         const $ = cheerioLoad(f.html);
         $(TEXT_TAGS).each((_, el) => {
@@ -350,7 +346,7 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
     res.json({
       success: true,
       texts: allTexts,
-      frames: [...framePreviews.values()],
+      templateMeta: [...templateMetaMap.values()],
       autoTagged: 0,
       templatesScanned: (rows || []).length,
       templatesUpdated: 0,

@@ -23,21 +23,16 @@ interface TextEntry {
   fileType: string;
 }
 
-interface FramePreview {
-  frameId: string;
-  frameName: string;
+interface TemplateMeta {
   templateId: string;
   templateName: string;
-  frameWidth: number;
-  frameHeight: number;
-  frameHtml: string;
-  frameCss: string;
-  frameBackground: string | null;
   brand: string;
   campaign: string;
   format: string;
   fileType: string;
+  obsidianLink: string;
   coverImage: string | null;
+  frameCount: number;
 }
 
 interface TextsTabProps {
@@ -189,57 +184,6 @@ function ConfirmModal({
   );
 }
 
-// ── Frame Preview Thumbnail ──
-
-function FramePreviewThumb({ preview, onClick }: { preview: FramePreview; onClick?: () => void }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const THUMB_W = 56;
-  const THUMB_H = 56;
-  const scale = Math.min(THUMB_W / preview.frameWidth, THUMB_H / preview.frameHeight);
-
-  const srcDoc = useMemo(() => {
-    const css = preview.frameCss || "";
-    const html = preview.frameHtml || "";
-    const bg = preview.frameBackground || "";
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-* { margin:0; padding:0; box-sizing:border-box; }
-html, body { width:${preview.frameWidth}px; height:${preview.frameHeight}px; overflow:hidden; }
-body { ${bg ? `background:${bg};` : ""} }
-${css}
-</style></head><body>${html}</body></html>`;
-  }, [preview.frameHtml, preview.frameCss, preview.frameBackground, preview.frameWidth, preview.frameHeight]);
-
-  return (
-    <div
-      onClick={onClick}
-      title={`Abrir "${preview.templateName}" en nueva pesta\u00f1a`}
-      style={{
-        width: THUMB_W, height: THUMB_H, borderRadius: 6, overflow: "hidden",
-        border: "1px solid rgba(255,255,255,0.08)", cursor: onClick ? "pointer" : "default",
-        position: "relative", flexShrink: 0,
-        transition: "border-color 0.15s",
-      }}
-      onMouseEnter={e => { if (onClick) e.currentTarget.style.borderColor = "rgba(139,92,246,0.4)"; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
-    >
-      <iframe
-        ref={iframeRef}
-        srcDoc={srcDoc}
-        sandbox=""
-        scrolling="no"
-        style={{
-          position: "absolute",
-          width: preview.frameWidth, height: preview.frameHeight,
-          transform: `scale(${scale})`,
-          transformOrigin: "top left",
-          border: "none", pointerEvents: "none",
-          opacity: 0.9,
-        }}
-      />
-    </div>
-  );
-}
-
 // ── Bulk Edit Modal ──
 
 function BulkEditModal({
@@ -349,14 +293,6 @@ function BulkEditModal({
 
 // ── Main Component ──
 
-const thStyle: React.CSSProperties = {
-  padding: "10px 10px", textAlign: "left",
-  background: "rgba(10,10,20,0.95)", backdropFilter: "blur(8px)",
-  borderBottom: "1px solid rgba(255,255,255,0.06)",
-  color: "rgba(255,255,255,0.4)", fontSize: 11,
-  textTransform: "uppercase", letterSpacing: 0.5,
-};
-
 const selectStyle: React.CSSProperties = {
   padding: "8px 12px", borderRadius: 100, fontSize: 13,
   border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.2)",
@@ -371,16 +307,15 @@ const actionBtnStyle: React.CSSProperties = {
 export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   const { addToast } = useToast();
   const [allTexts, setAllTexts] = useState<TextEntry[]>([]);
-  const [framePreviews, setFramePreviews] = useState<Map<string, FramePreview>>(new Map());
+  const [templateMetaMap, setTemplateMetaMap] = useState<Map<string, TemplateMeta>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterTpl, setFilterTpl] = useState<string>("");
-  const [filterFrame, setFilterFrame] = useState<string>("");
   const [filterBrand, setFilterBrand] = useState<string>("");
   const [filterCampaign, setFilterCampaign] = useState<string>("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(new Set());
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [autoTagInfo, setAutoTagInfo] = useState<string | null>(null);
@@ -391,16 +326,16 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   const loadTexts = useCallback(async () => {
     setLoading(true);
     try {
-      // Use REST endpoint instead of MCP — avoids 10s timeout on heavy list_all_texts
-      const result = await apiFetch<{ success: boolean; texts: TextEntry[]; frames: FramePreview[]; autoTagged: number; templatesUpdated: number }>(
+      // Lightweight REST endpoint: no iframe HTML/CSS, just text + template metadata
+      const result = await apiFetch<{ success: boolean; texts: TextEntry[]; templateMeta: TemplateMeta[]; autoTagged: number; templatesUpdated: number }>(
         `/api/workspaces/${workspaceId || "ws_user_8e9f031817184e0ab205"}/texts`,
       );
       const texts: TextEntry[] = result.texts || [];
-      const frames: FramePreview[] = result.frames || [];
-      const previewMap = new Map<string, FramePreview>();
-      for (const f of frames) previewMap.set(f.frameId, f);
+      const metaArr: TemplateMeta[] = result.templateMeta || [];
+      const metaMap = new Map<string, TemplateMeta>();
+      for (const m of metaArr) metaMap.set(m.templateId, m);
       setAllTexts(texts);
-      setFramePreviews(previewMap);
+      setTemplateMetaMap(metaMap);
       if (result.autoTagged > 0) {
         setAutoTagInfo(`${result.autoTagged} textos auto-etiquetados en ${result.templatesUpdated} diseño(s)`);
         setTimeout(() => setAutoTagInfo(null), 5000);
@@ -416,12 +351,6 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
   useEffect(() => { loadTexts(); }, [loadTexts]);
 
   // ── Derived filter options ──
-  const templates = useMemo(() => {
-    const map = new Map<string, string>();
-    allTexts.forEach(t => map.set(t.templateId, t.templateName));
-    return [...map.entries()].map(([id, name]) => ({ id, name }));
-  }, [allTexts]);
-
   const brands = useMemo(() => {
     const set = new Set<string>();
     allTexts.forEach(t => { if (t.brand) set.add(t.brand); });
@@ -434,19 +363,9 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
     return [...set].sort();
   }, [allTexts]);
 
-  const frames = useMemo(() => {
-    const map = new Map<string, string>();
-    allTexts
-      .filter(t => !filterTpl || t.templateId === filterTpl)
-      .forEach(t => map.set(t.frameId || "__canvas__", t.frameName));
-    return [...map.entries()].map(([id, name]) => ({ id, name }));
-  }, [allTexts, filterTpl]);
-
   // ── Filtered + searched ──
   const filteredTexts = useMemo(() => {
     let result = allTexts;
-    if (filterTpl) result = result.filter(t => t.templateId === filterTpl);
-    if (filterFrame) result = result.filter(t => (t.frameId || "__canvas__") === filterFrame);
     if (filterBrand) result = result.filter(t => t.brand === filterBrand);
     if (filterCampaign) result = result.filter(t => t.campaign === filterCampaign);
     if (searchQuery.trim()) {
@@ -461,7 +380,39 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
       );
     }
     return result;
-  }, [allTexts, filterTpl, filterFrame, filterBrand, filterCampaign, searchQuery]);
+  }, [allTexts, filterBrand, filterCampaign, searchQuery]);
+
+  // ── Group filtered texts by template (one row per file) ──
+  const grouped = useMemo(() => {
+    const map = new Map<string, TextEntry[]>();
+    for (const t of filteredTexts) {
+      if (!map.has(t.templateId)) map.set(t.templateId, []);
+      map.get(t.templateId)!.push(t);
+    }
+    return [...map.entries()].map(([templateId, texts]) => ({
+      templateId,
+      meta: templateMetaMap.get(templateId),
+      texts,
+    }));
+  }, [filteredTexts, templateMetaMap]);
+
+  // ── Accordion toggle ──
+  const toggleExpand = (templateId: string) => {
+    setExpandedTemplates(prev => {
+      const next = new Set(prev);
+      if (next.has(templateId)) next.delete(templateId);
+      else next.add(templateId);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    if (expandedTemplates.size === grouped.length) {
+      setExpandedTemplates(new Set());
+    } else {
+      setExpandedTemplates(new Set(grouped.map(g => g.templateId)));
+    }
+  };
 
   // ── Debounced search ──
   const handleSearch = useCallback((val: string) => {
@@ -494,6 +445,19 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
       const next = new Set(prev);
       if (next.has(layerId)) next.delete(layerId);
       else next.add(layerId);
+      return next;
+    });
+  };
+
+  const toggleSelectTemplate = (templateId: string, textLayerIds: string[]) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = textLayerIds.every(id => next.has(id));
+      if (allSelected) {
+        textLayerIds.forEach(id => next.delete(id));
+      } else {
+        textLayerIds.forEach(id => next.add(id));
+      }
       return next;
     });
   };
@@ -616,7 +580,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
           onChange={e => setFilterBrand(e.target.value)}
           style={selectStyle}
         >
-          <option value="">All Brands ({brands.length})</option>
+          <option value="">Marcas ({brands.length})</option>
           {brands.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
 
@@ -626,30 +590,23 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
           onChange={e => setFilterCampaign(e.target.value)}
           style={selectStyle}
         >
-          <option value="">All Campaigns ({campaigns.length})</option>
+          <option value="">Campañas ({campaigns.length})</option>
           {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
 
-        {/* Template filter */}
-        <select
-          value={filterTpl}
-          onChange={e => { setFilterTpl(e.target.value); setFilterFrame(""); }}
-          style={selectStyle}
-        >
-          <option value="">All Templates ({templates.length})</option>
-          {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-
-        {/* Frame filter */}
-        <select
-          value={filterFrame}
-          onChange={e => setFilterFrame(e.target.value)}
-          disabled={!filterTpl && frames.length === 0}
-          style={{ ...selectStyle, opacity: (!filterTpl && frames.length === 0) ? 0.4 : 1 }}
-        >
-          <option value="">All Frames ({frames.length})</option>
-          {frames.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
+        {/* Expand / Collapse all */}
+        {grouped.length > 0 && (
+          <button
+            type="button"
+            onClick={expandAll}
+            style={{
+              ...selectStyle, lineHeight: "32px",
+              background: "rgba(255,255,255,0.03)",
+            }}
+          >
+            {expandedTemplates.size === grouped.length ? "Contraer todo" : "Expandir todo"}
+          </button>
+        )}
 
         {/* Search */}
         <input
@@ -708,175 +665,236 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
         )}
       </AnimatePresence>
 
-      {/* Table */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
+      {/* Content grid: one row per template, expandable accordion */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 20px 20px" }}>
         {loading && allTexts.length === 0 ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 80, fontSize: 14 }}>
             Cargando textos…
           </div>
-        ) : filteredTexts.length === 0 ? (
+        ) : grouped.length === 0 ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.2)", padding: 80, fontSize: 14 }}>
             {allTexts.length === 0 ? "No hay textos en los diseños todavía." : "Sin resultados para los filtros."}
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ position: "sticky", top: 0, zIndex: 2 }}>
-                <th style={thStyle}>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.size === filteredTexts.length && filteredTexts.length > 0}
-                    onChange={toggleSelectAll}
-                    style={{ cursor: "pointer", accentColor: "#8b5cf6" }}
-                  />
-                </th>
-                <th style={thStyle}>Preview</th>
-                <th style={{ ...thStyle, minWidth: 180 }}>Texto</th>
-                <th style={{ ...thStyle, minWidth: 100 }}>Brand</th>
-                <th style={{ ...thStyle, minWidth: 100 }}>Campaign</th>
-                <th style={{ ...thStyle, minWidth: 80 }}>Type</th>
-                <th style={{ ...thStyle, minWidth: 100 }}>Frame</th>
-                <th style={{ ...thStyle, minWidth: 100 }}>Archivo</th>
-                <th style={{ ...thStyle, width: 60 }}>Tag</th>
-                <th style={{ ...thStyle, width: 80 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTexts.map((entry, i) => {
-                const isSelected = selectedIds.has(entry.layerId);
-                const isEditing = editingId === entry.layerId;
-                const preview = entry.frameId ? framePreviews.get(entry.frameId) : undefined;
-                const handleOpen = onOpenTemplate ? () => onOpenTemplate(entry.templateId) : undefined;
-                return (
-                  <tr
-                    key={entry.layerId}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* Select-all bar */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "4px 0 8px",
+              fontSize: 12, color: "rgba(255,255,255,0.4)",
+            }}>
+              <input
+                type="checkbox"
+                checked={selectedIds.size === filteredTexts.length && filteredTexts.length > 0}
+                onChange={toggleSelectAll}
+                style={{ cursor: "pointer", accentColor: "#8b5cf6" }}
+              />
+              <span>Seleccionar todo ({filteredTexts.length} textos en {grouped.length} archivos)</span>
+            </div>
+
+            {grouped.map(({ templateId, meta, texts }) => {
+              const isExpanded = expandedTemplates.has(templateId);
+              const layerIds = texts.map(t => t.layerId);
+              const allSelected = layerIds.every(id => selectedIds.has(id));
+              const someSelected = layerIds.some(id => selectedIds.has(id));
+              const handleOpen = onOpenTemplate ? () => onOpenTemplate(templateId) : undefined;
+
+              return (
+                <div
+                  key={templateId}
+                  style={{
+                    borderRadius: 12, overflow: "hidden",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    background: "rgba(255,255,255,0.015)",
+                  }}
+                >
+                  {/* ── Template header row ── */}
+                  <div
                     style={{
-                      borderBottom: "1px solid rgba(255,255,255,0.03)",
-                      background: isSelected ? "rgba(139,92,246,0.05)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "10px 14px", cursor: "pointer",
                       transition: "background 0.15s",
                     }}
+                    onClick={() => toggleExpand(templateId)}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                   >
-                    {/* Checkbox */}
-                    <td style={{ padding: "8px", textAlign: "center" }}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(entry.layerId)}
-                        style={{ cursor: "pointer", accentColor: "#8b5cf6" }}
-                      />
-                    </td>
+                    {/* Expand chevron */}
+                    <span style={{
+                      fontSize: 12, color: "rgba(255,255,255,0.4)",
+                      transition: "transform 0.2s",
+                      transform: isExpanded ? "rotate(90deg)" : "none",
+                      flexShrink: 0, width: 16, textAlign: "center",
+                    }}>▸</span>
 
-                    {/* Frame Preview */}
-                    <td style={{ padding: "6px 8px" }}>
-                      {preview ? (
-                        <FramePreviewThumb preview={preview} onClick={handleOpen} />
-                      ) : (
-                        <div style={{ width: 56, height: 56, borderRadius: 6, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, color: "rgba(255,255,255,0.1)" }}>?</div>
-                      )}
-                    </td>
+                    {/* Select-all-in-template checkbox */}
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={el => { if (el) el.indeterminate = !allSelected && someSelected; }}
+                      onChange={() => toggleSelectTemplate(templateId, layerIds)}
+                      onClick={e => e.stopPropagation()}
+                      style={{ cursor: "pointer", accentColor: "#8b5cf6", flexShrink: 0 }}
+                    />
 
-                    {/* Text (editable) */}
-                    <td style={{ padding: "8px 12px", maxWidth: 350 }}>
-                      {isEditing ? (
-                        <input
-                          ref={editInputRef}
-                          type="text"
-                          value={editValue}
-                          onChange={e => setEditValue(e.target.value)}
-                          onBlur={() => commitInlineEdit(entry)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") commitInlineEdit(entry);
-                            if (e.key === "Escape") setEditingId(null);
-                          }}
-                          style={{
-                            width: "100%", padding: "5px 8px", borderRadius: 6, fontSize: 13,
-                            border: "1px solid rgba(139,92,246,0.4)", background: "rgba(0,0,0,0.3)",
-                            color: "#fff", outline: "none",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          onClick={() => startEdit(entry)}
-                          style={{
-                            cursor: "pointer", color: "rgba(255,255,255,0.8)",
-                            maxWidth: 330, overflow: "hidden", textOverflow: "ellipsis",
-                            whiteSpace: "nowrap", padding: "4px 6px", borderRadius: 4,
-                            border: "1px solid transparent",
-                          }}
-                          title="Click para editar"
-                          onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(139,92,246,0.2)"; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "transparent"; }}
-                        >
-                          {entry.text || <span style={{ color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>(vacío)</span>}
+                    {/* Template name (link) */}
+                    <span
+                      onClick={(e) => { e.stopPropagation(); if (handleOpen) handleOpen(); }}
+                      style={{
+                        fontSize: 13, fontWeight: 500, color: "rgba(139,92,246,0.8)",
+                        cursor: handleOpen ? "pointer" : "default",
+                        maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        textDecoration: handleOpen ? "underline" : "none",
+                        textDecorationStyle: "dotted",
+                      }}
+                      title={handleOpen ? `Abrir "${texts[0].templateName}"` : texts[0].templateName}
+                    >
+                      {texts[0].templateName}
+                    </span>
+
+                    {/* Badges: brand, campaign, format */}
+                    {(meta?.brand || texts[0].brand) && (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 100, background: "rgba(91,156,246,0.1)", color: "rgba(91,156,246,0.7)", whiteSpace: "nowrap" }}>
+                        {meta?.brand || texts[0].brand}
+                      </span>
+                    )}
+                    {(meta?.campaign || texts[0].campaign) && (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 100, background: "rgba(52,211,153,0.1)", color: "rgba(52,211,153,0.7)", whiteSpace: "nowrap" }}>
+                        {meta?.campaign || texts[0].campaign}
+                      </span>
+                    )}
+                    {(meta?.format || texts[0].format) && (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 100, background: "rgba(139,92,246,0.08)", color: "rgba(139,92,246,0.6)", whiteSpace: "nowrap", textTransform: "capitalize" }}>
+                        {meta?.format || texts[0].format}
+                      </span>
+                    )}
+
+                    {/* Spacer */}
+                    <div style={{ flex: 1 }} />
+
+                    {/* Obsidian link */}
+                    {meta?.obsidianLink && (
+                      <a
+                        href={meta.obsidianLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        title="Abrir en Obsidian"
+                        style={{
+                          fontSize: 14, color: "rgba(255,200,100,0.5)", textDecoration: "none",
+                          flexShrink: 0, padding: "0 4px",
+                        }}
+                      >🔗</a>
+                    )}
+
+                    {/* Text count */}
+                    <span style={{
+                      fontSize: 11, color: "rgba(255,255,255,0.3)", whiteSpace: "nowrap",
+                      padding: "2px 8px", borderRadius: 100, background: "rgba(255,255,255,0.04)",
+                    }}>
+                      {texts.length} texto{texts.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+
+                  {/* ── Accordion: text lines ── */}
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        style={{ overflow: "hidden" }}
+                      >
+                        <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", padding: "4px 0" }}>
+                          {texts.map((entry, j) => {
+                            const isSelected = selectedIds.has(entry.layerId);
+                            const isEditing = editingId === entry.layerId;
+                            return (
+                              <div
+                                key={entry.layerId || j}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 10,
+                                  padding: "6px 14px 6px 44px",
+                                  background: isSelected ? "rgba(139,92,246,0.04)" : "transparent",
+                                  borderBottom: j < texts.length - 1 ? "1px solid rgba(255,255,255,0.02)" : "none",
+                                  transition: "background 0.15s",
+                                }}
+                              >
+                                {/* Checkbox */}
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelect(entry.layerId)}
+                                  style={{ cursor: "pointer", accentColor: "#8b5cf6", flexShrink: 0 }}
+                                />
+
+                                {/* Tag badge */}
+                                <span style={{
+                                  fontSize: 9, padding: "1px 6px", borderRadius: 100,
+                                  background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.3)",
+                                  fontFamily: "monospace", flexShrink: 0, minWidth: 32, textAlign: "center",
+                                }}>{entry.tag}</span>
+
+                                {/* Text (editable) */}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  {isEditing ? (
+                                    <input
+                                      ref={editInputRef}
+                                      type="text"
+                                      value={editValue}
+                                      onChange={e => setEditValue(e.target.value)}
+                                      onBlur={() => commitInlineEdit(entry)}
+                                      onKeyDown={e => {
+                                        if (e.key === "Enter") commitInlineEdit(entry);
+                                        if (e.key === "Escape") setEditingId(null);
+                                      }}
+                                      style={{
+                                        width: "100%", padding: "5px 8px", borderRadius: 6, fontSize: 13,
+                                        border: "1px solid rgba(139,92,246,0.4)", background: "rgba(0,0,0,0.3)",
+                                        color: "#fff", outline: "none",
+                                      }}
+                                    />
+                                  ) : (
+                                    <div
+                                      onClick={() => startEdit(entry)}
+                                      style={{
+                                        cursor: "pointer", color: "rgba(255,255,255,0.8)",
+                                        overflow: "hidden", textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap", padding: "4px 6px", borderRadius: 4,
+                                        border: "1px solid transparent",
+                                      }}
+                                      title="Click para editar"
+                                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(139,92,246,0.2)"; }}
+                                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "transparent"; }}
+                                    >
+                                      {entry.text || <span style={{ color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>(vacío)</span>}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Frame name */}
+                                <span style={{
+                                  fontSize: 10, color: "rgba(255,255,255,0.25)",
+                                  maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                  flexShrink: 0,
+                                }}>{entry.frameName}</span>
+
+                                {/* Actions */}
+                                <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                                  <button type="button" onClick={() => startEdit(entry)} style={actionBtnStyle} title="Editar">✏️</button>
+                                  <button type="button" onClick={() => handleDelete(entry)} style={{ ...actionBtnStyle, color: "rgba(248,113,113,0.4)" }} title="Eliminar">🗑️</button>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      )}
-                    </td>
-
-                    {/* Brand */}
-                    <td style={{ padding: "8px 10px", fontSize: 12, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {entry.brand ? <span style={{ color: "#5B9CF6" }}>{entry.brand}</span> : <span style={{ color: "rgba(255,255,255,0.15)" }}>—</span>}
-                    </td>
-
-                    {/* Campaign */}
-                    <td style={{ padding: "8px 10px", fontSize: 12, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {entry.campaign ? <span style={{ color: "#34D399" }}>{entry.campaign}</span> : <span style={{ color: "rgba(255,255,255,0.15)" }}>—</span>}
-                    </td>
-
-                    {/* Type (format) */}
-                    <td style={{ padding: "8px 10px", fontSize: 11 }}>
-                      <span style={{
-                        fontSize: 10, padding: "2px 8px", borderRadius: 100,
-                        background: entry.format ? "rgba(91,156,246,0.1)" : "transparent",
-                        color: entry.format ? "rgba(91,156,246,0.7)" : "rgba(255,255,255,0.15)",
-                        textTransform: "capitalize",
-                      }}>
-                        {entry.format || "—"}
-                      </span>
-                    </td>
-
-                    {/* Frame */}
-                    <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.35)", fontSize: 11, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {entry.frameName}
-                    </td>
-
-                    {/* Template */}
-                    <td style={{ padding: "8px 10px", color: "rgba(139,92,246,0.4)", fontSize: 11, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {entry.templateName}
-                    </td>
-
-                    {/* Tag */}
-                    <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                      <span style={{
-                        fontSize: 10, padding: "2px 6px", borderRadius: 100,
-                        background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.3)",
-                        fontFamily: "monospace",
-                      }}>
-                        {entry.tag}
-                      </span>
-                    </td>
-
-                    {/* Actions */}
-                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
-                      <div style={{ display: "flex", gap: 2, justifyContent: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => startEdit(entry)}
-                          style={actionBtnStyle}
-                          title="Editar"
-                        >✏️</button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(entry)}
-                          style={{ ...actionBtnStyle, color: "rgba(248,113,113,0.4)" }}
-                          title="Eliminar"
-                        >🗑️</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
         )}
 
         {/* Summary */}
@@ -886,7 +904,7 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
             display: "flex", justifyContent: "space-between",
           }}>
             <span>{filteredTexts.length} texto{filteredTexts.length !== 1 ? "s" : ""}</span>
-            <span>{templates.length} diseño{templates.length !== 1 ? "s" : ""} · {frames.length} frame{frames.length !== 1 ? "s" : ""}</span>
+            <span>{grouped.length} archivo{grouped.length !== 1 ? "s" : ""}</span>
           </div>
         )}
       </div>
