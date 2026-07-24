@@ -41,6 +41,15 @@ import {
 export type FrameHitTestFn = (clientX: number, clientY: number) => string | null;
 export const frameHitTestRegistry = new Map<string, FrameHitTestFn>();
 
+/**
+ * Per-frame marquee selection. The canvas passes a client-space rectangle
+ * (from an arrow-tool drag over the frame body); the frame multi-selects
+ * every top-level object/group intersecting it — same result as
+ * shift+clicking each one. Returns how many layers were selected.
+ */
+export type FrameMarqueeFn = (rect: { left: number; top: number; right: number; bottom: number }) => number;
+export const frameMarqueeRegistry = new Map<string, FrameMarqueeFn>();
+
 export interface FrameData {
   id: string;
   name: string;
@@ -396,11 +405,43 @@ export function DesignFrame({
       frameHitTestRegistry.set(frame.id, (clientX, clientY) =>
         findTopmostLayerAtPoint(content, clientX, clientY)?.getAttribute("data-layer-id") || null,
       );
+      frameMarqueeRegistry.set(frame.id, (rect) => {
+        const hits = [...content.children].filter(child => {
+          const lid = child.getAttribute("data-layer-id");
+          if (!lid || lid.startsWith("auto_")) return false;
+          const r = getVisualRect(child);
+          return (r.width > 0 || r.height > 0)
+            && r.left < rect.right && r.right > rect.left
+            && r.top < rect.bottom && r.bottom > rect.top;
+        });
+        multiSelectedElsRef.current = hits;
+        if (hits.length === 0) {
+          selectedRef.current = null;
+          clearOverlay();
+          onElementSelect?.(null);
+        } else {
+          const last = hits[hits.length - 1];
+          selectedRef.current = last;
+          selectedSourceRef.current = last;
+          refreshOverlay(last);
+          drawAdditionalSelectionOutlines(hits.filter(element => element !== last));
+          emitElementSelection(last, last);
+        }
+        onLayerSelectionChangeRef.current?.(
+          frame.id,
+          hits.flatMap(element => element.getAttribute("data-layer-id") || []),
+        );
+        return hits.length;
+      });
       return true;
     };
     let raf = 0;
     if (!register()) raf = requestAnimationFrame(() => register());
-    return () => { if (raf) cancelAnimationFrame(raf); frameHitTestRegistry.delete(frame.id); };
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      frameHitTestRegistry.delete(frame.id);
+      frameMarqueeRegistry.delete(frame.id);
+    };
   }, [frame.id]);
 
   // ── Code → DOM: CSS update ──
@@ -675,9 +716,37 @@ export function DesignFrame({
     emitElementSelection(element, source);
   }
 
+  /**
+   * Object-first hit testing: a plain click picks the deepest OBJECT under
+   * the cursor, not its container — plain containers are transparent to
+   * selection ("nothing is grouped by default"). Only an explicit group
+   * (data-layer-kind="group", created via Ctrl+G) captures the click for
+   * the whole group. Auto-generated text-wrapper spans (auto_*) are never
+   * selection targets — their parent element is the object.
+   */
   function findTopmostLayerAtPoint(content: Element, clientX: number, clientY: number): Element | null {
-    const topLevel = [...content.children].filter(child => child.hasAttribute("data-layer-id"));
-    return pickTopmostByBounds(topLevel, { x: clientX, y: clientY }, getVisualRect);
+    const point = { x: clientX, y: clientY };
+    const selectableKids = (parent: Element) =>
+      [...parent.children].filter(child => {
+        const lid = child.getAttribute("data-layer-id");
+        return lid && !lid.startsWith("auto_");
+      });
+
+    // Descend from the top-level hit to the deepest child under the point.
+    let hit: Element | null = pickTopmostByBounds(selectableKids(content), point, getVisualRect);
+    if (!hit) return null;
+    for (;;) {
+      const deeper: Element | null = pickTopmostByBounds(selectableKids(hit), point, getVisualRect);
+      if (!deeper) break;
+      hit = deeper;
+    }
+
+    // Group capture: the OUTERMOST explicit group ancestor wins.
+    let group: Element | null = null;
+    for (let el: Element | null = hit; el && el !== content; el = el.parentElement) {
+      if (el.getAttribute("data-layer-kind") === "group") group = el;
+    }
+    return group || hit;
   }
 
   function drawAdditionalSelectionOutlines(elements: Element[]): void {
@@ -2310,7 +2379,10 @@ export function DesignFrame({
     const affectsTop = direction.includes("n");
     const affectsBottom = direction.includes("s");
     const isCorner = (affectsLeft || affectsRight) && (affectsTop || affectsBottom);
-    let resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
+    // Text is NOT an image: resizing its box must never scale the glyphs.
+    // Font size is edited in the text panel — or scaled explicitly by holding
+    // Ctrl/Cmd during a corner resize (Figma's scale-tool behavior, opt-in).
+    let fontWasScaled = false;
 
     // ── Alt key: clone the element and resize the clone ──
     let isAltClone = false;
@@ -2343,7 +2415,6 @@ export function DesignFrame({
         baseTop = parseFloat(cloneComputed.top) || 0;
         baseFontSize = parseFloat(cloneComputed.fontSize) || 0;
         scalesText = clone.children.length === 0 && /^(H[1-6]|P|SPAN|A|LI|LABEL|BUTTON|EM|STRONG|SMALL|B|I)$/.test(clone.tagName);
-        resizesFlowText = preservesFlow && scalesText && isCorner && baseFontSize > 0;
         target = clone;
         isAltClone = true;
       }
@@ -2402,23 +2473,29 @@ export function DesignFrame({
         }
       }
 
-      if (resizesFlowText) {
+      // Opt-in font scaling: Ctrl/Cmd + corner handle scales the glyphs too.
+      const wantsFontScale = (ev.ctrlKey || ev.metaKey) && scalesText && isCorner && baseFontSize > 0;
+      if (wantsFontScale) {
         const scale = Math.sqrt((newW / Math.max(ow, 1)) * (newH / Math.max(oh, 1)));
         target.style.fontSize = `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`;
-      } else if (preservesFlow) {
+        fontWasScaled = true;
+      }
+
+      if (preservesFlow && !scalesText) {
+        // Flow (static) non-text elements can't reposition — resize via transform scale.
         const scaleX = baseScale.x * (newW / Math.max(ow, 1));
         const scaleY = baseScale.y * (newH / Math.max(oh, 1));
         const originX = affectsLeft ? "right" : affectsRight ? "left" : "center";
         const originY = affectsTop ? "bottom" : affectsBottom ? "top" : "center";
         target.style.scale = `${Math.max(0.01, scaleX)} ${Math.max(0.01, scaleY)}`;
         target.style.transformOrigin = `${originX} ${originY}`;
+      } else if (preservesFlow) {
+        // Flow TEXT: resize the box only — the text reflows inside it.
+        target.style.width = `${Math.round(newW)}px`;
+        target.style.height = `${Math.round(newH)}px`;
       } else {
         target.style.width = `${Math.round(newW)}px`;
         target.style.height = `${Math.round(newH)}px`;
-        if (scalesText && isCorner && baseFontSize > 0) {
-          const scale = Math.sqrt((newW / Math.max(ow, 1)) * (newH / Math.max(oh, 1)));
-          target.style.fontSize = `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`;
-        }
         if (affectsLeft || affectsTop) {
           if (affectsLeft) target.style.left = `${Math.round(baseLeft + newX - ox)}px`;
           if (affectsTop) target.style.top = `${Math.round(baseTop + newY - oy)}px`;
@@ -2431,20 +2508,18 @@ export function DesignFrame({
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       const sel = getSelector(target);
-      let props: Record<string, string>;
-      if (resizesFlowText) {
-        props = { "font-size": target.style.fontSize };
-      } else if (preservesFlow) {
-        props = { scale: target.style.scale, "transform-origin": target.style.transformOrigin };
+      const props: Record<string, string> = {};
+      if (preservesFlow && !scalesText) {
+        if (target.style.scale) props.scale = target.style.scale;
+        if (target.style.transformOrigin) props["transform-origin"] = target.style.transformOrigin;
       } else {
-        props = { width: target.style.width, height: target.style.height };
+        if (target.style.width) props.width = target.style.width;
+        if (target.style.height) props.height = target.style.height;
       }
+      if (fontWasScaled && target.style.fontSize) props["font-size"] = target.style.fontSize;
       if (!preservesFlow) {
-        if (scalesText && isCorner && target.style.fontSize) props["font-size"] = target.style.fontSize;
-        if (affectsLeft || affectsTop) {
-          if (affectsLeft) props.left = target.style.left;
-          if (affectsTop) props.top = target.style.top;
-        }
+        if (affectsLeft && target.style.left) props.left = target.style.left;
+        if (affectsTop && target.style.top) props.top = target.style.top;
       }
       const updated = updateCssRule(cssRef.current, sel, importantProperties(props));
       if (isAltClone) {

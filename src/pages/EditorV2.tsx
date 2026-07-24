@@ -14,6 +14,7 @@ import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
+import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
@@ -810,7 +811,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
     setSelectedOrphanIds(new Set([orphanId]));
     setActiveTool("select");
+    // Text starts in edit mode so the user can type immediately
+    if (type === "text") setAutoEditOrphanId(orphanId);
   }, [frames.length, commitCanvasObjects]);
+
+  const [autoEditOrphanId, setAutoEditOrphanId] = useState<string | null>(null);
+
+  /** Commit inline-edited orphan HTML (text typed on the canvas). */
+  const handleOrphanHtmlChange = useCallback((id: string, html: string) => {
+    const updated = canvasObjectsRef.current.map(o => o.id === id ? { ...o, html } : o);
+    commitCanvasObjects(updated);
+  }, [commitCanvasObjects]);
 
   /** Orphan CSS change (from inline editing or context panel) */
   const handleOrphanCssChange = useCallback((orphanId: string, newCss: string, newHtml?: string) => {
@@ -2004,6 +2015,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && e.key.toLowerCase() === "g" && !e.shiftKey && !e.altKey) { e.preventDefault(); handleGroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") { e.preventDefault(); handleUngroup(); return; }
       if (mod && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); if (selectedElement) handleDuplicateElement(selectedElement.layerId); return; }
+      // Select all objects in the active frame
+      if (mod && e.key.toLowerCase() === "a" && !e.shiftKey) {
+        const fid = contentFrameId || selectedElement?.frameId || selectedFrameId || frames[0]?.id;
+        if (fid) {
+          e.preventDefault();
+          frameMarqueeRegistry.get(fid)?.({ left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 });
+        }
+        return;
+      }
+      // Zoom: Ctrl+= / Ctrl+- / Ctrl+0 (fit)
+      if (mod && (e.key === "=" || e.key === "+")) { e.preventDefault(); handleZoomIn(); return; }
+      if (mod && e.key === "-") { e.preventDefault(); handleZoomOut(); return; }
+      if (mod && e.key === "0") { e.preventDefault(); handleZoomToFit(); return; }
+      // Reorder: Ctrl+] forward, Ctrl+[ backward (Shift = front/back)
+      if (mod && e.key === "]") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "top" : "up"); return; }
+      if (mod && e.key === "[") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "bottom" : "down"); return; }
       if (!mod) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
@@ -2099,7 +2126,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -3196,7 +3223,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     { id: "format", icon: <IconFile size={14} />, title: "Format" },
     { id: "history", icon: <IconHistory size={14} />, title: "History" },
     { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
-    { id: "meta", icon: <IconTag size={14} />, title: "Meta" },
+    {
+      id: "meta",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="6" cy="6" r="2.4" />
+          <circle cx="18" cy="7" r="2.4" />
+          <circle cx="12" cy="18" r="2.4" />
+          <line x1="7.8" y1="7.4" x2="10.8" y2="16.2" />
+          <line x1="16.6" y1="8.6" x2="13.3" y2="16.3" />
+          <line x1="8.4" y1="6.2" x2="15.6" y2="6.9" />
+        </svg>
+      ),
+      title: "Obsidian — marca, campaña, tags y conexiones del grafo",
+    },
   ];
 
   return (
@@ -3891,6 +3931,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onOrphanShiftClick={handleOrphanShiftClick}
             onOrphanMove={handleOrphanMove}
             onDeleteOrphan={handleDeleteOrphan}
+            onOrphanHtmlChange={handleOrphanHtmlChange}
+            autoEditOrphanId={autoEditOrphanId}
+            onAutoEditOrphanHandled={() => setAutoEditOrphanId(null)}
             autoEditLayerId={autoEditLayerId}
             onAutoEditHandled={() => setAutoEditLayerId(null)}
           />

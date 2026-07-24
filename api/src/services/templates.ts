@@ -389,7 +389,10 @@ export async function updateTemplate(
     // Auto-generate thumbnail from first frame if missing (pipeline)
     ensureThumbnail(tpl);
     const persisted = await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
-    if (!persisted) {
+    // Only treat a failed upsert as fatal when Supabase IS configured — local
+    // dev runs memory-only by design, and failing here made every PUT answer
+    // 404 "Template not found" for a template that exists.
+    if (!persisted && getSupabase()) {
       console.error("[templates] Supabase upsert failed for template", id, "— data only in ephemeral memory, will vanish on cold start");
       return null;
     }

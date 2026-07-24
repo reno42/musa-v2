@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, frameHitTestRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -70,6 +70,10 @@ interface InfiniteHtmlCanvasProps {
   onOrphanShiftClick?: (id: string) => void;
   onOrphanMove?: (id: string, x: number, y: number) => void;
   onDeleteOrphan?: (id: string) => void;
+  /** Inline text editing of orphan objects (double-click, or auto after create). */
+  onOrphanHtmlChange?: (id: string, html: string) => void;
+  autoEditOrphanId?: string | null;
+  onAutoEditOrphanHandled?: () => void;
   // Sprint 3.5: auto-edit newly created text layers
   autoEditLayerId?: string | null;
   onAutoEditHandled?: () => void;
@@ -88,6 +92,7 @@ export function InfiniteHtmlCanvas({
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans,
+  onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -109,6 +114,8 @@ export function InfiniteHtmlCanvas({
   // Marquee selection state (Phase 3)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // When set, the active marquee selects ELEMENTS inside this frame instead of frames.
+  const elementMarqueeFrameRef = useRef<string | null>(null);
 
   // Alt-drag duplicate: dashed outline(s) marking where the originals stay
   // while the moved copy follows the cursor (real-time duplicate preview).
@@ -392,6 +399,28 @@ export function InfiniteHtmlCanvas({
       }
       return;
     }
+    // Element-marquee commit: rubber-band over a frame body selects the
+    // objects it touches (canvas coords → client coords → frame registry).
+    if (elementMarqueeFrameRef.current) {
+      const targetFrame = elementMarqueeFrameRef.current;
+      elementMarqueeFrameRef.current = null;
+      if (marqueeRect && (marqueeRect.w > 3 || marqueeRect.h > 3)) {
+        const vp = viewportRef.current?.getBoundingClientRect();
+        if (vp) {
+          const p = panRef.current;
+          const clientRect = {
+            left: vp.left + p.x + marqueeRect.x * zoom,
+            top: vp.top + p.y + marqueeRect.y * zoom,
+            right: vp.left + p.x + (marqueeRect.x + marqueeRect.w) * zoom,
+            bottom: vp.top + p.y + (marqueeRect.y + marqueeRect.h) * zoom,
+          };
+          frameMarqueeRegistry.get(targetFrame)?.(clientRect);
+        }
+      }
+      marqueeStartRef.current = null;
+      setMarqueeRect(null);
+      return;
+    }
     // Marquee selection commit (Phase 3) — AABB intersection
     if (marqueeStartRef.current && marqueeRect) {
       const frameIds = new Set<string>();
@@ -449,6 +478,71 @@ export function InfiniteHtmlCanvas({
     return () => el.removeEventListener("wheel", handler);
   }, [zoom, onZoomChange]);
 
+  // ── Orphan inline text editing ──
+  // The orphan's html root becomes contenteditable in place; blur commits the
+  // new markup back through onOrphanHtmlChange. Escape cancels, Enter+blur save.
+  const editingOrphanRef = useRef<string | null>(null);
+  const startOrphanTextEdit = useCallback((orphanId: string) => {
+    const container = document.querySelector(`[data-canvas-object-id="${orphanId}"]`);
+    const editable = container?.querySelector("[data-layer-id]") as HTMLElement | null;
+    if (!editable || editingOrphanRef.current === orphanId) return;
+    editingOrphanRef.current = orphanId;
+    const originalText = editable.textContent || "";
+    editable.setAttribute("contenteditable", "true");
+    editable.style.outline = "2px solid #3B82F6";
+    editable.style.outlineOffset = "2px";
+    editable.style.cursor = "text";
+    editable.style.minWidth = "20px";
+    editable.style.minHeight = "1em";
+    editable.focus();
+    // Select all so typing replaces the placeholder immediately
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    let cancelled = false;
+    const cleanup = () => {
+      editable.removeEventListener("blur", onBlur);
+      editable.removeEventListener("keydown", onKey);
+      editable.removeAttribute("contenteditable");
+      editable.style.outline = "";
+      editable.style.outlineOffset = "";
+      editable.style.cursor = "";
+      editingOrphanRef.current = null;
+    };
+    const onBlur = () => {
+      if (cancelled) { editable.textContent = originalText; cleanup(); return; }
+      cleanup();
+      const wrapper = editable.closest("[data-canvas-object-id]");
+      const htmlRoot = wrapper?.querySelector("[data-layer-id]");
+      if (htmlRoot) onOrphanHtmlChange?.(orphanId, htmlRoot.outerHTML);
+    };
+    const onKey = (ke: KeyboardEvent) => {
+      if (ke.key === "Escape") { cancelled = true; editable.blur(); }
+      ke.stopPropagation(); // keep editor shortcuts out while typing
+    };
+    editable.addEventListener("blur", onBlur);
+    editable.addEventListener("keydown", onKey);
+  }, [onOrphanHtmlChange]);
+
+  // Auto-edit a freshly created text orphan (the text tool flow).
+  // The orphan node appears on a later render — retry briefly until it exists.
+  useEffect(() => {
+    if (!autoEditOrphanId) return;
+    let tries = 0;
+    const iv = window.setInterval(() => {
+      const node = document.querySelector(`[data-canvas-object-id="${autoEditOrphanId}"] [data-layer-id]`);
+      if (node || ++tries > 20) {
+        window.clearInterval(iv);
+        if (node) startOrphanTextEdit(autoEditOrphanId);
+        onAutoEditOrphanHandled?.();
+      }
+    }, 50);
+    return () => window.clearInterval(iv);
+  }, [autoEditOrphanId, startOrphanTextEdit, onAutoEditOrphanHandled]);
+
   // ── Orphan mouse handlers ──
   const startOrphanDrag = useCallback((orphanId: string, e: React.MouseEvent) => {
     const obj = canvasObjects.find(o => o.id === orphanId);
@@ -459,6 +553,8 @@ export function InfiniteHtmlCanvas({
 
   const handleOrphanMouseDown = useCallback((orphanId: string, e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    // While editing text inside this orphan, let the caret work normally.
+    if (editingOrphanRef.current === orphanId || (e.target as HTMLElement).isContentEditable) return;
     e.stopPropagation();
     if (activeTool !== "select" && activeTool !== "hand") return;
     // Shift+click: toggle in/out of selection
@@ -487,12 +583,15 @@ export function InfiniteHtmlCanvas({
       return;
     }
 
-    // The frame interior is not a frame-selection target. Frames are selected
-    // and moved only from their visible edge or label.
+    // Empty frame area: deselect and arm an ELEMENT marquee — dragging the
+    // arrow tool over the frame body rubber-band-selects multiple objects.
     onSelectFrame(null);
     onElementSelect?.(null);
+    elementMarqueeFrameRef.current = frameId;
+    marqueeStartRef.current = screenToCanvas(e.clientX, e.clientY);
+    setMarqueeRect(null);
     e.stopPropagation();
-  }, [activeTool, contentFrameId, onRequestLayerSelect, onSelectFrame, onElementSelect]);
+  }, [activeTool, contentFrameId, onRequestLayerSelect, onSelectFrame, onElementSelect, screenToCanvas]);
 
   // Label mousedown — starts drag from label (Phase 1)
   const handleLabelMouseDown = useCallback((frameId: string, e: React.MouseEvent) => {
@@ -625,6 +724,9 @@ export function InfiniteHtmlCanvas({
               key={obj.id}
               data-canvas-object-id={obj.id}
               onMouseDown={(e) => handleOrphanMouseDown(obj.id, e)}
+              onDoubleClick={(e) => {
+                if (obj.kind === "text") { e.stopPropagation(); startOrphanTextEdit(obj.id); }
+              }}
               style={{
                 position: "absolute",
                 left: obj.x, top: obj.y,
