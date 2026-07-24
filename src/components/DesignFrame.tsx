@@ -1979,9 +1979,13 @@ export function DesignFrame({
         };
       };
 
-      const dragItems: DragItem[] = isInMultiSelect
-        ? multiSelectedElsRef.current.map(buildDragItem)
-        : [buildDragItem(dragTarget)];
+      // Expand each target through collectMovableElements: a display:contents
+      // GROUP has no box of its own — translating the wrapper does nothing.
+      // Its children are the movable units and each commits its own position.
+      const dragTargets = isInMultiSelect ? multiSelectedElsRef.current : [dragTarget];
+      const dragItems: DragItem[] = dragTargets
+        .flatMap(el => collectMovableElements(el))
+        .map(buildDragItem);
 
       let duplicatedForDrag = false;
       let moved = false;
@@ -2177,10 +2181,13 @@ export function DesignFrame({
           const deltaX = snapX - item.origVisualX;
           const deltaY = snapY - item.origVisualY;
           const targetStyle = (item.el as HTMLElement).style;
+          // "important" beats a previously committed `translate: … !important`
+          // stylesheet rule — without it, once an element has been moved and
+          // saved, the NEXT drag wouldn't move it live at all.
           if (item.preservesFlow) {
-            targetStyle.translate = `${Math.round(item.baseTranslate.x + deltaX)}px ${Math.round(item.baseTranslate.y + deltaY)}px`;
+            targetStyle.setProperty("translate", `${Math.round(item.baseTranslate.x + deltaX)}px ${Math.round(item.baseTranslate.y + deltaY)}px`, "important");
           } else {
-            targetStyle.translate = `${Math.round(deltaX)}px ${Math.round(deltaY)}px`;
+            targetStyle.setProperty("translate", `${Math.round(deltaX)}px ${Math.round(deltaY)}px`, "important");
           }
         }
 
@@ -2227,8 +2234,12 @@ export function DesignFrame({
         if (duplicatedForDrag) updatedHtml = content.innerHTML;
         emitFrameChange(updatedCss, updatedHtml);
 
-        // Restore full overlay with text bar / point edit after commit
-        if (dragItems.length > 0) {
+        // Restore full overlay with text bar / point edit after commit.
+        // Refresh on the SELECTED element (may be a group wrapper whose
+        // children were the actual drag items), not the last drag item.
+        if (selectedRef.current) {
+          refreshOverlay(selectedRef.current);
+        } else if (dragItems.length > 0) {
           refreshOverlay(dragItems[dragItems.length - 1].el);
         }
       };
@@ -2420,6 +2431,22 @@ export function DesignFrame({
       }
     }
 
+    // Drag-time inline styles carry "important" (the persisted stylesheet uses
+    // !important, so plain inline values lose and nothing moves live). Every
+    // touched property remembers its pre-drag inline value so the commit can
+    // restore it — blanket removal would destroy inline styles the element
+    // already had (position, font-size) before the drag.
+    const priorInline = new Map<string, { value: string; priority: string }>();
+    const setImp = (prop: string, val: string) => {
+      if (!priorInline.has(prop)) {
+        priorInline.set(prop, {
+          value: target.style.getPropertyValue(prop),
+          priority: target.style.getPropertyPriority(prop),
+        });
+      }
+      target.style.setProperty(prop, val, "important");
+    };
+
     const onMove = (ev: MouseEvent) => {
       const z = zoomRef.current || 1;
       const dx = (ev.clientX - startX) / z;
@@ -2477,7 +2504,7 @@ export function DesignFrame({
       const wantsFontScale = (ev.ctrlKey || ev.metaKey) && scalesText && isCorner && baseFontSize > 0;
       if (wantsFontScale) {
         const scale = Math.sqrt((newW / Math.max(ow, 1)) * (newH / Math.max(oh, 1)));
-        target.style.fontSize = `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`;
+        setImp("font-size", `${Math.max(1, Math.round(baseFontSize * scale * 100) / 100)}px`);
         fontWasScaled = true;
       }
 
@@ -2487,18 +2514,18 @@ export function DesignFrame({
         const scaleY = baseScale.y * (newH / Math.max(oh, 1));
         const originX = affectsLeft ? "right" : affectsRight ? "left" : "center";
         const originY = affectsTop ? "bottom" : affectsBottom ? "top" : "center";
-        target.style.scale = `${Math.max(0.01, scaleX)} ${Math.max(0.01, scaleY)}`;
-        target.style.transformOrigin = `${originX} ${originY}`;
+        setImp("scale", `${Math.max(0.01, scaleX)} ${Math.max(0.01, scaleY)}`);
+        setImp("transform-origin", `${originX} ${originY}`);
       } else if (preservesFlow) {
-        // Flow TEXT: resize the box only — the text reflows inside it.
-        target.style.width = `${Math.round(newW)}px`;
-        target.style.height = `${Math.round(newH)}px`;
+        // Flow TEXT: resize the box only — the text reflows live inside it.
+        setImp("width", `${Math.round(newW)}px`);
+        setImp("height", `${Math.round(newH)}px`);
       } else {
-        target.style.width = `${Math.round(newW)}px`;
-        target.style.height = `${Math.round(newH)}px`;
+        setImp("width", `${Math.round(newW)}px`);
+        setImp("height", `${Math.round(newH)}px`);
         if (affectsLeft || affectsTop) {
-          if (affectsLeft) target.style.left = `${Math.round(baseLeft + newX - ox)}px`;
-          if (affectsTop) target.style.top = `${Math.round(baseTop + newY - oy)}px`;
+          if (affectsLeft) setImp("left", `${Math.round(baseLeft + newX - ox)}px`);
+          if (affectsTop) setImp("top", `${Math.round(baseTop + newY - oy)}px`);
         }
       }
       refreshOverlay(target);
@@ -2521,6 +2548,15 @@ export function DesignFrame({
         if (affectsLeft && target.style.left) props.left = target.style.left;
         if (affectsTop && target.style.top) props.top = target.style.top;
       }
+      // Restore pre-drag inline values BEFORE committing: the stylesheet must
+      // govern from here on (a lingering inline !important would silently
+      // override every future panel/CSS edit), and the alt-clone path
+      // serializes innerHTML — it must not bake drag artifacts into the file.
+      // emitFrameChange syncs the <style> tag synchronously, so no flicker.
+      for (const [prop, prev] of priorInline) {
+        if (prev.value) target.style.setProperty(prop, prev.value, prev.priority);
+        else target.style.removeProperty(prop);
+      }
       const updated = updateCssRule(cssRef.current, sel, importantProperties(props));
       if (isAltClone) {
         // Persist the clone: save combined CSS + HTML so the new element survives
@@ -2531,6 +2567,7 @@ export function DesignFrame({
       } else {
         emitFrameChange(updated);
       }
+      refreshOverlay(target);
     };
 
     document.addEventListener("mousemove", onMove);
