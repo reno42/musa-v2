@@ -1,3 +1,5 @@
+import { cloneLayerCss } from "./cssMutations";
+
 function parseFragment(html: string): Document {
   return new DOMParser().parseFromString(html, "text/html");
 }
@@ -55,6 +57,54 @@ function cloneLayerTree(element: Element, createId: () => string): { clone: Elem
     idMap.set(oldId, newId);
   }
   return { clone, idMap };
+}
+
+/**
+ * Give every layer a UNIQUE data-layer-id, cloning the CSS of any duplicate
+ * so it keeps its exact look under the fresh id.
+ *
+ * Designs produced by earlier versions (batch/AI generation) frequently ship
+ * the SAME data-layer-id on several elements — three circles all called
+ * "circ", three labels all called "lbl". Every part of the editor addresses
+ * layers by id (selection, CSS rules, the DOM reconciler, group baking), so a
+ * repeated id means an operation aimed at one element silently hits another:
+ * objects duplicate on screen or vanish when a group is dissolved.
+ *
+ * Normalizing once at load is the only durable fix — downstream code can then
+ * trust that an id identifies exactly one element.
+ */
+export function dedupeLayerIds(
+  html: string,
+  css: string,
+  createId: () => string,
+): { html: string; css: string; changed: boolean } {
+  if (!html.trim()) return { html, css, changed: false };
+  const document = parseFragment(html);
+  const seen = new Set<string>();
+  /** [originalId, freshId] per duplicate occurrence (an id may repeat N times). */
+  const remapped: Array<[string, string]> = [];
+
+  for (const element of document.body.querySelectorAll("[data-layer-id]")) {
+    const id = element.getAttribute("data-layer-id");
+    if (!id) continue;
+    if (!seen.has(id)) { seen.add(id); continue; }
+    let freshId = createId();
+    while (seen.has(freshId)) freshId = createId();
+    element.setAttribute("data-layer-id", freshId);
+    seen.add(freshId);
+    remapped.push([id, freshId]);
+  }
+
+  if (remapped.length === 0) return { html, css, changed: false };
+
+  // Clone rule-by-rule: cloneLayerCss takes a Map, which can only express one
+  // target per source id, so an id repeated three times needs one pass each.
+  let updatedCss = css;
+  for (const [oldId, freshId] of remapped) {
+    updatedCss = cloneLayerCss(updatedCss, new Map([[oldId, freshId]]));
+  }
+
+  return { html: serializeFragment(document), css: updatedCss, changed: true };
 }
 
 export function ensureLayerIds(html: string, createId: () => string): string {

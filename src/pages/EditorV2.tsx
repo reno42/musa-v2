@@ -15,6 +15,7 @@ import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameMarqueeRegistry } from "../components/DesignFrame";
+import { toHexColor } from "../lib/colorUtils";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { ImageUploadModal } from "../components/ImageUploadModal";
@@ -49,6 +50,7 @@ import {
 import {
   changeLayerTag,
   createLayerId,
+  dedupeLayerIds,
   deleteLayerFromHtml,
   duplicateLayerInHtml,
   ensureLayerIds,
@@ -401,17 +403,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         // Multi-frame support: if template has frames[], use them
         if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
-          const loaded: FrameData[] = t.frames.map((f: any, i: number) => ({
-            id: f.id || `frame_${i}`,
-            name: f.name || `Frame ${i + 1}`,
-            x: f.x ?? (i * ((f.width || 1080) + FRAME_GAP)),
-            y: f.y ?? 0,
-            width: f.width || t.width || 1080,
-            height: f.height || t.height || 1080,
-            html: ensureLayerIds(f.html || "", createLayerId),
-            css: f.css || "",
-            background: f.background || "#ffffff",
-          }));
+          const loaded: FrameData[] = t.frames.map((f: any, i: number) => {
+            // Legacy designs repeat data-layer-id across elements; normalize
+            // before anything addresses a layer by id (see dedupeLayerIds).
+            const unique = dedupeLayerIds(f.html || "", f.css || "", createLayerId);
+            return {
+              id: f.id || `frame_${i}`,
+              name: f.name || `Frame ${i + 1}`,
+              x: f.x ?? (i * ((f.width || 1080) + FRAME_GAP)),
+              y: f.y ?? 0,
+              width: f.width || t.width || 1080,
+              height: f.height || t.height || 1080,
+              html: ensureLayerIds(unique.html, createLayerId),
+              css: unique.css,
+              background: f.background || "#ffffff",
+            };
+          });
           store.replaceAll(loaded);
           setSelectedFrameId(loaded[0]?.id ?? null);
           // Loaded data is the baseline, not an undoable user action.
@@ -420,14 +427,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           setCanRedo(false);
         } else {
           // Legacy: single template → one frame
+          const unique = dedupeLayerIds(t.html || DEFAULT_HTML, t.css || DEFAULT_CSS, createLayerId);
           const single: FrameData = {
             id: "frame_0",
             name: t.name || "Frame 1",
             x: 0, y: 0,
             width: t.width || 1080,
             height: t.height || 1080,
-            html: ensureLayerIds(t.html || DEFAULT_HTML, createLayerId),
-            css: t.css || DEFAULT_CSS,
+            html: ensureLayerIds(unique.html, createLayerId),
+            css: unique.css,
             background: "#ffffff",
           };
           store.replaceAll([single]);
@@ -2669,9 +2677,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const currentFrames = framesRef.current;
       // Merge: preserve local frame data (x, y, w, h, etc), update html/css from server
       const updated = t.frames.map((f: any) => {
+        // Server/MCP payloads can reintroduce duplicate layer ids — normalize
+        // here too, not only on first load.
+        const unique = dedupeLayerIds(f.html ?? "", f.css ?? "", createLayerId);
         const local = currentFrames.find(lf => lf.id === f.id);
         if (local) {
-          return { ...local, html: f.html ?? "", css: f.css ?? "" };
+          return { ...local, html: unique.html, css: unique.css };
         }
         // New frame from server (e.g., created by MCP tool)
         return {
@@ -2679,7 +2690,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           name: f.name || "Frame",
           x: f.x ?? 0, y: f.y ?? 0,
           width: f.width ?? 1080, height: f.height ?? 1080,
-          html: f.html ?? "", css: f.css ?? "",
+          html: unique.html, css: unique.css,
           background: f.background ?? "#ffffff",
         };
       });
@@ -4033,7 +4044,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
                     <input
                       type="color"
-                      value={(selectedFrame.background && selectedFrame.background.match(/^#[0-9a-fA-F]{3,8}$/)) ? selectedFrame.background : "#000000"}
+                      value={toHexColor(selectedFrame.background)}
                       onChange={(e) => handleFrameBackgroundChange(e.target.value)}
                       style={{ width: 28, height: 24, border: "1px solid rgba(255,255,255,0.06)", borderRadius: 4, cursor: "pointer", padding: 0, flexShrink: 0, background: "none" }}
                     />

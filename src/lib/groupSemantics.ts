@@ -33,6 +33,13 @@ export interface ChildBakeEntry {
   top: number;
   width: number;
   height: number;
+  /**
+   * True when the child is a text run that should stay free to grow taller.
+   * Decided from the LIVE element (computed style available) — a `<div>` that
+   * merely holds a label is text, but the same `<div>` painted as a circle
+   * with a background is a shape whose box must be preserved exactly.
+   */
+  isTextBox: boolean;
   /** Computed inheritable text styles at measure time. */
   inherited: Record<string, string>;
 }
@@ -78,6 +85,16 @@ export function measureContainerForBake(frameId: string, containerId: string): C
     const cs = getComputedStyle(el);
     const inherited: Record<string, string> = {};
     for (const prop of BAKED_TEXT_PROPS) inherited[prop] = cs.getPropertyValue(prop);
+    // A shape paints something of its own (fill, border, rounding); a text run
+    // just carries glyphs. Circles built as a <div> with a number inside are
+    // shapes — treating them as text drops their box and they collapse to the
+    // size of the digits, which reads as the object vanishing.
+    const isTextTag = /^(h[1-6]|p|span|a|li|label|em|strong|small|b|i)$/i.test(el.tagName);
+    const isLeafWithText = el.children.length === 0 && (el.textContent || "").trim().length > 0;
+    const paintsShape = cs.backgroundColor !== "rgba(0, 0, 0, 0)"
+      || cs.backgroundImage !== "none"
+      || parseFloat(cs.borderTopWidth) > 0
+      || parseFloat(cs.borderTopLeftRadius) > 0;
     return {
       layerId: el.getAttribute("data-layer-id") || "",
       index,
@@ -85,13 +102,18 @@ export function measureContainerForBake(frameId: string, containerId: string): C
       top: Math.round((rect.top - originY) / zoom),
       width: Math.round(rect.width / zoom),
       height: Math.round(rect.height / zoom),
+      isTextBox: (isTextTag || isLeafWithText) && !paintsShape,
       inherited,
     };
   };
 
+  // Index refers to container.children so the HTML pass can pair by position
+  // even when ids repeat — it must be the REAL index, not the filtered one.
   const children = [...container.children]
-    .filter((el): el is HTMLElement => el instanceof HTMLElement || el instanceof SVGElement as any)
-    .map((el, index) => measure(el as HTMLElement, index));
+    .map((el, index) => ({ el, index }))
+    .filter((item): item is { el: HTMLElement; index: number } =>
+      item.el instanceof HTMLElement || item.el instanceof SVGElement)
+    .map(item => measure(item.el, item.index));
 
   const ccs = getComputedStyle(container);
   const cRect = container.getBoundingClientRect();
@@ -140,15 +162,17 @@ function pairChild(wrapper: HTMLElement, doc: Document, entry: ChildBakeEntry): 
 }
 
 /** Pin one child at its measured rect and bake inherited text styles it lacks. */
-function bakeChild(el: HTMLElement, entry: ChildBakeEntry, pinSize: boolean): void {
+function bakeChild(el: HTMLElement, entry: ChildBakeEntry): void {
   el.style.position = "absolute";
   el.style.left = `${entry.left}px`;
   el.style.top = `${entry.top}px`;
   el.style.margin = "0";
-  if (pinSize) {
-    el.style.width = `${entry.width}px`;
-    el.style.height = `${entry.height}px`;
-  }
+  // Width is always pinned: an absolutely positioned box shrink-wraps its
+  // content, so leaving it free re-flows text onto different lines.
+  el.style.width = `${entry.width}px`;
+  // Height is pinned only for shapes — text must stay free to grow when edited.
+  if (entry.isTextBox) el.style.removeProperty("height");
+  else el.style.height = `${entry.height}px`;
   for (const prop of BAKED_TEXT_PROPS) {
     if (!el.style.getPropertyValue(prop) && entry.inherited[prop]) {
       el.style.setProperty(prop, entry.inherited[prop]);
@@ -169,9 +193,7 @@ export function convertContainerToGroup(html: string, bake: ContainerBake): stri
   for (const entry of bake.children) {
     const child = pairChild(wrapper, doc, entry);
     if (!child) continue;
-    const isText = /^(h[1-6]|p|span|a|li|label|button|em|strong|small|b|i)$/i.test(child.tagName)
-      || (child.children.length === 0 && (child.textContent || "").trim().length > 0);
-    bakeChild(child, entry, !isText);
+    bakeChild(child, entry);
   }
 
   if (bake.backdrop) {
@@ -245,9 +267,7 @@ export function ungroupPreservingLayout(html: string, bake: ContainerBake): stri
   for (const entry of bake.children) {
     const child = pairChild(wrapper, doc, entry);
     if (!child) continue;
-    const isText = /^(h[1-6]|p|span|a|li|label|button|em|strong|small|b|i)$/i.test(child.tagName)
-      || (child.children.length === 0 && (child.textContent || "").trim().length > 0);
-    bakeChild(child, entry, !isText);
+    bakeChild(child, entry);
   }
 
   // Bare text nodes have no layer identity but must not vanish silently:

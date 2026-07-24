@@ -4,6 +4,7 @@ import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { getApiHeaders } from "../lib/apiKey";
+import { toHexColor } from "../lib/colorUtils";
 
 /**
  * HtmlContextualPanel — Full design properties panel.
@@ -316,26 +317,7 @@ function normalizeCssValue(value: string): string {
 }
 
 function toHex(color?: string): string {
-  if (!color) return "#000000";
-  if (/^#[0-9a-f]{3}$/i.test(color)) {
-    return "#" + color.slice(1).split("").map(char => char + char).join("");
-  }
-  if (/^#[0-9a-f]{6,8}$/i.test(color)) return color.slice(0, 7);
-
-  const context = document.createElement("canvas").getContext("2d");
-  if (context) {
-    context.fillStyle = "#000000";
-    context.fillStyle = color;
-    color = context.fillStyle;
-    if (color.startsWith("#")) return color.slice(0, 7);
-  }
-  const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (m) {
-    return "#" + [m[1], m[2], m[3]].map(c =>
-      Math.max(0, Math.min(255, parseInt(c))).toString(16).padStart(2, "0")
-    ).join("");
-  }
-  return "#000000";
+  return toHexColor(color);
 }
 
 function parseAlpha(color?: string): number {
