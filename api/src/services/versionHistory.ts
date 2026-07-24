@@ -3,6 +3,7 @@ import { getSupabase } from "./supabase.js";
 import { getTemplate, updateTemplate } from "./templates.js";
 import type { DesignTemplate } from "../types.js";
 import { compareFrameSets, hashFrameContent, type FrameDiff, type VersionFrame } from "./versionDiff.js";
+import { legacyVersionDataToPayload } from "./versionPayload.js";
 
 // Re-exported so callers have one import site for the whole feature.
 export { compareFrameSets, hashFrameContent };
@@ -48,8 +49,8 @@ function rowToMeta(row: any): VersionMeta {
   return {
     id: row.id,
     templateId: row.template_id,
-    kind: row.kind,
-    label: row.label ?? null,
+    kind: row.kind === "auto" ? "auto" : "marked",
+    label: row.label ?? row.message ?? null,
     author: row.author ?? "unknown",
     frameHashes: row.frame_hashes ?? {},
     frameCount: row.frame_count ?? 0,
@@ -187,20 +188,22 @@ export async function getVersionPayload(versionId: string): Promise<VersionPaylo
   const sb = getSupabase();
   if (!sb) return null;
   const { data: row } = await sb.from("template_versions")
-    .select("storage_path").eq("id", versionId).maybeSingle();
-  if (!row?.storage_path) return null;
-  const { data: file, error } = await sb.storage.from(BUCKET).download(row.storage_path);
-  if (error || !file) {
-    console.warn("[versions] download failed:", error?.message);
-    return null;
+    .select("storage_path, data").eq("id", versionId).maybeSingle();
+  if (!row) return null;
+  if (row.storage_path) {
+    const { data: file, error } = await sb.storage.from(BUCKET).download(row.storage_path);
+    if (!error && file) {
+      try {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        return JSON.parse(gunzipSync(buffer).toString("utf8")) as VersionPayload;
+      } catch (e) {
+        console.warn("[versions] inflate failed:", (e as Error).message);
+      }
+    } else {
+      console.warn("[versions] download failed:", error?.message);
+    }
   }
-  try {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    return JSON.parse(gunzipSync(buffer).toString("utf8")) as VersionPayload;
-  } catch (e) {
-    console.warn("[versions] inflate failed:", (e as Error).message);
-    return null;
-  }
+  return legacyVersionDataToPayload(row.data);
 }
 
 /**

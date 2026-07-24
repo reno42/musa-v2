@@ -10,13 +10,16 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = resolve(fileURLToPath(import.meta.url), "..");
 const modPath = "file://" + resolve(__dirname, "..", "api", "src", "services", "versionDiff.ts");
+const payloadPath = "file://" + resolve(__dirname, "..", "api", "src", "services", "versionPayload.ts");
 
 const { hashFrameContent, compareFrameSets } = await import(modPath);
+const { legacyVersionDataToPayload } = await import(payloadPath);
 
 const frame = (id, html, css = "", name = undefined) => ({ id, html, css, name });
 
@@ -88,4 +91,41 @@ describe("compareFrameSets", () => {
     assert.equal(diffs[0].status, "modified");
     assert.equal(diffs[0].before.html, "");
   });
+});
+
+describe("legacyVersionDataToPayload", () => {
+  it("preserves frame payloads from the original JSONB version table", () => {
+    const payload = legacyVersionDataToPayload({
+      name: "Invitación",
+      frames: [{ id: "hero", html: "<h1>Antes</h1>", css: "h1{color:red}" }],
+      canvasObjects: [{ id: "outside-frame" }],
+    });
+    assert.equal(payload.templateName, "Invitación");
+    assert.equal(payload.frames[0].id, "hero");
+    assert.equal(payload.frames[0].html, "<h1>Antes</h1>");
+    assert.deepEqual(payload.canvasObjects, [{ id: "outside-frame" }]);
+  });
+
+  it("recovers nested and single-frame legacy snapshots", () => {
+    const nested = legacyVersionDataToPayload({
+      data: { html: "<p>Texto</p>", css: "p{color:blue}", frameId: "legacy" },
+    });
+    assert.equal(nested.frames[0].id, "legacy");
+    assert.equal(nested.frames[0].css, "p{color:blue}");
+    assert.equal(legacyVersionDataToPayload({ canvas: { objects: [] } }), null);
+  });
+});
+
+it("v13 evolves the legacy table before creating hybrid indexes", () => {
+  const sql = readFileSync(resolve(__dirname, "..", "supabase_migrations_v13.sql"), "utf8");
+  const addKind = sql.indexOf("ADD COLUMN IF NOT EXISTS kind TEXT");
+  const kindIndex = sql.indexOf("template_versions_template_kind_idx");
+  assert.ok(addKind >= 0);
+  assert.ok(kindIndex > addKind);
+  assert.match(sql, /ALTER COLUMN id SET DEFAULT gen_random_uuid\(\)::text/i);
+  assert.match(sql, /SET kind = CASE WHEN storage_path IS NULL THEN 'marked'/i);
+  assert.match(sql, /DROP POLICY IF EXISTS "Users can view versions"/i);
+  assert.match(sql, /CREATE POLICY "template_versions_workspace_read"[\s\S]*has_workspace_role\(template\.workspace_id, 'viewer'\)/i);
+  assert.match(sql, /CREATE POLICY "template_versions_workspace_insert"[\s\S]*has_workspace_role\(template\.workspace_id, 'editor'\)/i);
+  assert.match(sql, /split_part\(storage\.objects\.name, '\/', 1\)/i);
 });
