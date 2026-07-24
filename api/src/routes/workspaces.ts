@@ -257,7 +257,7 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
     // Single query: only frames + thumbnail, NOT the full data column
     const { data: rows, error } = await sb
       .from("templates")
-      .select("id, name, data->frames, data->>thumbnail")
+      .select("id, name, updated_at, data->frames, data->>thumbnail")
       .eq("workspace_id", req.params.id)
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
@@ -295,6 +295,7 @@ workspaceRoutes.get("/:id/texts", requireWorkspaceRole("viewer"), async (req, re
         templateMetaMap.set(row.id, {
           templateId: row.id,
           templateName: row.name,
+          updatedAt: row.updated_at || "",
           brand: meta.brand || "",
           campaign: meta.campaign || "",
           format: meta.format || "",
