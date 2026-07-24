@@ -3,7 +3,7 @@ import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
 import * as versionHistory from "../../api/src/services/versionHistory.js";
 import { store } from "../../api/src/services/store.js";
-import { getSupabase, getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { getSupabase, getSupabaseAdmin, removeStalePreviewFiles } from "../../api/src/services/supabase.js";
 import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../api/src/services/tenancy.js";
 import { withRequestAuth } from "../../api/src/services/requestContext.js";
 import { callWorkspaceMcp } from "../../api/src/services/workspaceIntegrations.js";
@@ -9680,6 +9680,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             const { error: thErr } = await sbT.storage.from("design-covers")
               .upload(path, buf, { contentType: mime, upsert: true });
             if (!thErr) {
+              // Drop the previous capture when this one landed under a
+              // different extension — otherwise every format switch leaves a
+              // stale file behind for good.
+              await removeStalePreviewFiles(
+                "design-covers", `${params.workspaceId}/thumbnails`, params.templateId, path);
               const { data: thUrl } = await sbT.storage.from("design-covers").createSignedUrl(path, 31536000);
               if (thUrl?.signedUrl) thumb = thUrl.signedUrl;
             }
@@ -10004,6 +10009,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const path = `${params.workspaceId}/covers/${params.templateId}.${ext}`;
       const { error: upErr } = await sbUp.storage.from("design-covers").upload(path, buf, { contentType: mimeType, upsert: true });
       if (upErr) throw upErr;
+      await removeStalePreviewFiles(
+        "design-covers", `${params.workspaceId}/covers`, params.templateId, path);
       const { data: urlData } = await sbUp.storage.from("design-covers").createSignedUrl(path, 31536000);
       const coverUrl = urlData?.signedUrl || "";
       await sbUp.from("design_file_meta").upsert({ template_id: params.templateId, cover_image_url: coverUrl, updated_at: new Date().toISOString() }, { onConflict: "template_id" });

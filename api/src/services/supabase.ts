@@ -140,6 +140,60 @@ export function sanitizeAssetFileName(fileName: string) {
   return baseName;
 }
 
+/** Image extensions a preview capture can end up with, depending on the mime
+ *  type the browser produced for that particular snapshot. */
+const PREVIEW_EXTENSIONS = ["png", "jpg", "jpeg", "webp"] as const;
+
+/**
+ * Delete older preview files for the same design.
+ *
+ * Preview captures upsert to `{dir}/{templateId}.{ext}`, so re-capturing in the
+ * SAME format overwrites cleanly. But the extension follows the capture's mime
+ * type: a design first captured as PNG and later as JPEG left the PNG behind
+ * forever, and nothing ever removed it. One stale file per design per format
+ * silently eats the storage budget.
+ *
+ * `keepPath` is the file just written — everything else for that design goes.
+ * Supabase ignores paths that do not exist, so this is a single cheap call.
+ */
+export function stalePreviewPaths(dir: string, templateId: string, keepPath: string): string[] {
+  return PREVIEW_EXTENSIONS
+    .map(ext => `${dir}/${templateId}.${ext}`)
+    .filter(path => path !== keepPath);
+}
+
+export async function removeStalePreviewFiles(
+  bucket: string, dir: string, templateId: string, keepPath: string,
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const stale = stalePreviewPaths(dir, templateId, keepPath);
+  if (stale.length === 0) return;
+  try {
+    await sb.storage.from(bucket).remove(stale);
+  } catch { /* best effort: a failed cleanup must never fail the upload */ }
+}
+
+/**
+ * Remove every preview image belonging to a design (thumbnail + curated
+ * cover, in any format). Used when a design is permanently deleted, so its
+ * pictures do not outlive it in the bucket.
+ */
+export function allPreviewPaths(templateId: string, workspaceId: string): string[] {
+  return ["thumbnails", "covers"].flatMap(dir =>
+    PREVIEW_EXTENSIONS.map(ext => `${workspaceId}/${dir}/${templateId}.${ext}`));
+}
+
+export async function removeAllPreviewFiles(templateId: string, workspaceId?: string | null): Promise<number> {
+  const sb = getSupabase();
+  if (!sb || !workspaceId) return 0;
+  const paths = allPreviewPaths(templateId, workspaceId);
+  try {
+    const { data } = await sb.storage.from("design-covers").remove(paths);
+    return data?.length || 0;
+  } catch { return 0; }
+}
+
 /** Upload a file buffer to Supabase Storage. Falls back to local disk. */
 export async function uploadAsset(
   fileName: string, buffer: Buffer, contentType: string, workspaceId = "default"

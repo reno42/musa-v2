@@ -13,7 +13,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { getSupabase } from "../services/supabase.js";
+import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
 import { store } from "../services/store.js";
 import { buildDesignGraphEdges } from "../services/designGraph.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
@@ -290,6 +290,8 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
       .upload(path, buf, { contentType: mimeType, upsert: true });
 
     if (uploadErr) throw uploadErr;
+    // A cover saved earlier in another format would otherwise linger forever.
+    await removeStalePreviewFiles("design-covers", `${template.workspace_id}/covers`, templateId, path);
 
     const { data: urlData } = await sb.storage.from("design-covers").createSignedUrl(path, 31_536_000);
     const coverUrl = urlData?.signedUrl || "";

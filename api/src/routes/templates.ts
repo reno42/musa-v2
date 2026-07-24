@@ -31,6 +31,7 @@ import {
 } from "../middleware/index.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 import { createVersion, deleteAllVersions } from "../services/versionHistory.js";
+import { removeAllPreviewFiles } from "../services/supabase.js";
 
 export const templateRoutes = Router();
 
@@ -369,11 +370,15 @@ templateRoutes.put("/:id/restore", async (req, res) => {
  */
 templateRoutes.delete("/:id/permanent", async (req, res) => {
   try {
+    // Read the workspace before the row disappears — the preview files are
+    // stored under it and become unreachable orphans otherwise.
+    const doomed = await templates.getTemplate(req.params.id);
     const ok = await templates.purgeTemplate(req.params.id);
     if (!ok) return res.status(404).json({ success: false, error: "Template not found" });
-    // Purging the design must take its history with it, or the version files
-    // stay in the bucket forever with nothing pointing at them.
+    // Purging the design must take its history and its pictures with it, or
+    // both stay in the bucket forever with nothing pointing at them.
     await deleteAllVersions(req.params.id).catch(() => {});
+    await removeAllPreviewFiles(req.params.id, (doomed as any)?.workspaceId).catch(() => {});
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
