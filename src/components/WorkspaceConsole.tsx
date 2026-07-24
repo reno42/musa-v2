@@ -4,7 +4,14 @@ import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
 import { CrmWorkspace } from "./CrmWorkspace";
 
-type Section = "team" | "agents" | "crm" | "account";
+type Section = "general" | "team" | "agents" | "account";
+type ConsoleMode = "crm" | "settings";
+const SETTINGS_SECTIONS = [
+  ["general", "General"],
+  ["team", "Equipo"],
+  ["agents", "API MCP"],
+  ["account", "Cuenta"],
+] as const satisfies ReadonlyArray<readonly [Section, string]>;
 type Member = { id: string; email?: string; display_name?: string; role: "owner" | "admin" | "editor" | "viewer" };
 type Invitation = { id: string; email: string; role: "admin" | "editor" | "viewer"; status: "pending" | "accepted" | "declined" | "revoked" | "expired"; expiresAt: string; createdAt: string; lastSentAt?: string; deliveryMethod: string; workspaceName?: string; invitedBy?: string };
 type ApiKey = { id: string; label: string; key_prefix: string; role: string; last_used_at?: string; created_at: string };
@@ -37,9 +44,23 @@ function ConfirmDialog({ title, body, confirmLabel, onConfirm, onClose }: { titl
   );
 }
 
-export function WorkspaceConsole({ workspaceId, workspaceName, onOpenTemplate }: { workspaceId: string | null; workspaceName?: string; onOpenTemplate?: (templateId: string) => void }) {
+type WorkspaceConsoleProps = {
+  workspaceId: string | null;
+  workspaceName?: string;
+  mode: ConsoleMode;
+  onOpenTemplate?: (templateId: string) => void;
+  children?: ReactNode;
+};
+
+export function WorkspaceConsole({
+  workspaceId,
+  workspaceName,
+  mode,
+  onOpenTemplate,
+  children,
+}: WorkspaceConsoleProps): JSX.Element {
   const { user, signOut } = useAuth();
-  const [section, setSection] = useState<Section>("team");
+  const [section, setSection] = useState<Section>("general");
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -51,7 +72,7 @@ export function WorkspaceConsole({ workspaceId, workspaceName, onOpenTemplate }:
   const statusId = useId();
 
   const load = useCallback(async () => {
-    if (!workspaceId) return;
+    if (!workspaceId || mode === "crm" || section === "general" || section === "account") return;
     setLoading(true); setError("");
     try {
       if (section === "team") {
@@ -74,29 +95,27 @@ export function WorkspaceConsole({ workspaceId, workspaceName, onOpenTemplate }:
       }
     } catch (cause: any) { setError(cause.message); }
     setLoading(false);
-  }, [workspaceId, section, user?.id]);
+  }, [mode, workspaceId, section, user?.id]);
 
   useEffect(() => { void load(); }, [load]);
 
   if (!workspaceId) {
-    return <div className="workspace-console-empty"><h2>Selecciona un workspace</h2><p>El equipo, los MCPs y el CRM siempre pertenecen a un workspace concreto.</p></div>;
+    return <div className="workspace-console-empty"><h2>Selecciona un workspace</h2><p>El CRM y la configuración siempre pertenecen a un workspace concreto.</p></div>;
   }
 
   return (
     <section className="workspace-console" aria-labelledby="workspace-console-title" aria-busy={loading}>
       <header className="workspace-console-header">
-        <div><p className="workspace-eyebrow">Administración SaaS</p><h2 id="workspace-console-title">{workspaceName || "Workspace"}</h2></div>
-        <div className="workspace-account"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>
+        <div><p className="workspace-eyebrow">{mode === "crm" ? "CRM" : "Configuración del workspace"}</p><h2 id="workspace-console-title">{workspaceName || "Workspace"}</h2></div>
+        {mode === "settings" && <div className="workspace-account"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>}
       </header>
-      <nav className="workspace-subnav" aria-label="Administración del workspace">
-        {([['team', 'Equipo'], ['agents', 'APIs y MCPs'], ['crm', 'CRM'], ['account', 'Cuenta']] as const).map(([id, label]) => (
+      {mode === "settings" && <nav className="workspace-subnav" aria-label="Configuración del workspace">
+        {SETTINGS_SECTIONS.map(([id, label]) => (
           <button key={id} type="button" aria-current={section === id ? "page" : undefined} className={section === id ? "active" : ""} onClick={() => { setSection(id); setError(""); setNotice(""); }}>{label}</button>
         ))}
-      </nav>
+      </nav>}
       {(error || notice) && <p id={statusId} className={error ? "workspace-status error" : "workspace-status success"} role={error ? "alert" : "status"}>{error || notice}</p>}
-      {section === "team" && <TeamSection workspaceId={workspaceId} members={members} invitations={invitations} currentUserId={user?.id} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
-      {section === "agents" && <AgentsSection workspaceId={workspaceId} keys={keys} connections={connections} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
-      {section === "crm" && (
+      {mode === "crm" && (
         <CrmWorkspace
           workspaceId={workspaceId}
           onOpenTemplate={onOpenTemplate}
@@ -104,7 +123,10 @@ export function WorkspaceConsole({ workspaceId, workspaceName, onOpenTemplate }:
           setNotice={(message) => { setError(""); setNotice(message); }}
         />
       )}
-      {section === "account" && <AccountSection setError={setError} setNotice={setNotice} />}
+      {mode === "settings" && section === "general" && children}
+      {mode === "settings" && section === "team" && <TeamSection workspaceId={workspaceId} members={members} invitations={invitations} currentUserId={user?.id} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+      {mode === "settings" && section === "agents" && <AgentsSection workspaceId={workspaceId} keys={keys} connections={connections} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
+      {mode === "settings" && section === "account" && <AccountSection setError={setError} setNotice={setNotice} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} body={confirmAction.body} confirmLabel={confirmAction.label} onConfirm={confirmAction.run} onClose={() => setConfirmAction(null)} />}
     </section>
   );

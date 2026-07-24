@@ -68,3 +68,16 @@ test("v14 migration isolates deals, deliverables and file confirmation by worksp
   assert.match(sql, /has_workspace_role\(workspace_id, 'editor'\)/i);
   assert.match(sql, /account_health IN \('active', 'at_risk', 'churned'\)/i);
 });
+
+test("CRM stays focused while workspace administration lives in settings", () => {
+  const dashboard = readFileSync(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8");
+  const workspaceConsole = readFileSync(new URL("../src/components/WorkspaceConsole.tsx", import.meta.url), "utf8");
+  const crmWorkspace = readFileSync(new URL("../src/components/CrmWorkspace.tsx", import.meta.url), "utf8");
+
+  assert.match(dashboard, /<WorkspaceConsole[\s\S]*mode="settings"/);
+  assert.match(dashboard, /activeTab === "workspace"[\s\S]*<WorkspaceConsole[\s\S]*mode="crm"/);
+  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*\["general", "General"\][\s\S]*\["team", "Equipo"\][\s\S]*\["agents", "API MCP"\][\s\S]*\["account", "Cuenta"\]/);
+  assert.doesNotMatch(workspaceConsole, /\['crm', 'CRM'\]/);
+  assert.match(crmWorkspace, />Pipeline<\/button>/);
+  assert.match(crmWorkspace, />Marcas y Personas<\/button>/);
+});
