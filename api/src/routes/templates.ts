@@ -30,6 +30,7 @@ import {
   duplicateTemplateSchema,
 } from "../middleware/index.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
+import { createVersion, deleteAllVersions } from "../services/versionHistory.js";
 
 export const templateRoutes = Router();
 
@@ -276,30 +277,29 @@ templateRoutes.put("/:id", validate(updateTemplateSchema), async (req, res) => {
         });
       } catch { /* keep original if sanitization fails */ }
     }
-    // Build version snapshot and merge into updates BEFORE writing (single-write pattern)
-    // Previous code did a SECOND updateTemplate call just for versions — that caused
-    // 2 reads + 2 writes per auto-save on an ever-growing JSONB row → 502 timeouts.
-    if (engine === "html" && existing && (updates.html !== undefined || updates.css !== undefined)) {
-      const MAX_VERSIONS = 10;
-      const payloadSize = (updates.html || "").length + (updates.css || "").length;
-      // Skip version snapshot for payloads > 200KB to avoid JSONB bloat
-      if (payloadSize < 200000) {
-        const versions = [...(existing.versions || [])].slice(-(MAX_VERSIONS - 1));
-        versions.push({
-          id: `ver_${uuid().slice(0, 12)}`,
-          templateId: req.params.id,
-          label: `HTML save ${new Date().toLocaleString()}`,
-          canvas: null as any,
-          html: updates.html ?? (existing as any).html,
-          css: updates.css ?? (existing as any).css,
-          createdAt: new Date().toISOString(),
+    // Snapshot the state BEFORE this write into the version history, so every
+    // entry is a restorable earlier state. History lives in template_versions +
+    // the design-versions bucket (see services/versionHistory.ts) — it used to
+    // be appended to the data JSONB, which made every design open download its
+    // whole history and was the original 502 source.
+    //
+    // Throttled: auto-save fires every couple of seconds while the user works,
+    // and one stored version per keystroke burst is worthless and expensive.
+    // Explicit saves (Ctrl/Cmd+S, Save button) bypass this via POST /versions.
+    if (engine === "html" && existing && (updates.frames || updates.html !== undefined || updates.css !== undefined)) {
+      const AUTO_VERSION_INTERVAL_MS = 5 * 60 * 1000;
+      try {
+        await createVersion(req.params.id, {
+          kind: "auto",
+          label: "Guardado automático",
+          author: req.auth?.authType === "user" && req.auth.userId
+            ? `human:${req.auth.userId}`
+            : (req.headers["x-agent-name"] as string) || "human:local",
+          minIntervalMs: AUTO_VERSION_INTERVAL_MS,
         });
-        updates.versions = versions;
-      } else {
-        // Still cap existing versions on this write even if we skip the snapshot
-        if (existing.versions && existing.versions.length > MAX_VERSIONS) {
-          updates.versions = existing.versions.slice(-MAX_VERSIONS);
-        }
+      } catch (versionErr: any) {
+        // History must never block a save.
+        console.warn("[templates] auto version failed:", versionErr?.message);
       }
     }
 
@@ -371,6 +371,9 @@ templateRoutes.delete("/:id/permanent", async (req, res) => {
   try {
     const ok = await templates.purgeTemplate(req.params.id);
     if (!ok) return res.status(404).json({ success: false, error: "Template not found" });
+    // Purging the design must take its history with it, or the version files
+    // stay in the bucket forever with nothing pointing at them.
+    await deleteAllVersions(req.params.id).catch(() => {});
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

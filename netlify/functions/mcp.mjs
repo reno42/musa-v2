@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
+import * as versionHistory from "../../api/src/services/versionHistory.js";
 import { store } from "../../api/src/services/store.js";
 import { getSupabase, getSupabaseAdmin } from "../../api/src/services/supabase.js";
 import { canAccessWorkspace, getTemplateWorkspaceId, listAccessibleWorkspaceIds } from "../../api/src/services/tenancy.js";
@@ -752,14 +753,43 @@ const MCP_TOOLS = [
   },
   {
     name: "restore_version",
-    description: "Restore a template to a previously saved version",
+    description: "Restore a template to a previously saved version. The current state is snapshotted first, so a restore can itself be undone.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Template ID" },
         versionId: { type: "string", description: "Version ID to restore (from list_versions)" },
+        author: { type: "string", description: "Who is restoring, e.g. 'agent:lara' or 'agent:claude-opus-5'" },
       },
       required: ["id", "versionId"],
+    },
+  },
+  {
+    name: "save_version",
+    description: "Save the design's current state as a permanent version in the history. Call this BEFORE making a batch of edits so the previous state can be restored and diffed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        label: { type: "string", description: "Short description, e.g. 'antes de aplicar la nueva paleta'" },
+        author: { type: "string", description: "Who is saving, e.g. 'agent:lara' or 'agent:claude-opus-5'. Defaults to agent:mcp." },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "diff_versions",
+    description: "Show WHAT changed between two versions of a design, frame by frame, returning the before and after HTML/CSS. Use after get_frame_changes tells you a frame changed and you need to understand the human's edit. Omit 'toVersionId' to compare a stored version against the design as it is right now.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        fromVersionId: { type: "string", description: "Baseline version ID (from list_versions)" },
+        toVersionId: { type: "string", description: "Version to compare against. Omit to compare with the CURRENT live design." },
+        frameId: { type: "string", description: "Limit the diff to one frame" },
+        includeUnchanged: { type: "boolean", description: "Include frames whose content is identical (default false)" },
+      },
+      required: ["templateId", "fromVersionId"],
     },
   },
   {
@@ -3583,33 +3613,23 @@ async function handleMethod(method, params, userId, auth) {
       const tpl = await templates.getTemplate(tplId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
 
-      // Read from snapshot store (autoSnapshot creates these)
-      const snapshots = store.listSnapshots(tplId) || [];
-      const snapshotVersions = snapshots.map((s, i) => ({
-        id: s.id || `v${i}`,
-        version: i + 1,
-        timestamp: s.timestamp || s.createdAt,
-        label: `${s.type} · ${s.trigger}`,
-        type: s.type,
-        trigger: s.trigger,
-        objectCount: s.objectCount,
-        frameCount: s.frameCount,
-      }));
-
-      // Merge with legacy tpl.versions if any exist
-      const legacyVersions = (tpl.versions || []).map((v, i) => ({
-        id: v.id || `v${i}`,
-        version: snapshotVersions.length + i + 1,
-        timestamp: v.timestamp || v.createdAt,
-        label: v.label || `Version ${i + 1}`,
-        canvasHash: v.canvasHash || "",
-      }));
-
-      const allVersions = [...snapshotVersions, ...legacyVersions];
+      // Version history lives in template_versions + the design-versions bucket.
+      const stored = await versionHistory.listVersions(tplId, params.limit || 50);
       return {
         templateId: tplId,
-        versions: allVersions,
-        total: allVersions.length,
+        versions: stored.map((v, i) => ({
+          id: v.id,
+          version: stored.length - i,      // 1 = oldest listed, newest has the highest number
+          timestamp: v.createdAt,
+          label: v.label || (v.kind === "marked" ? "Versión marcada" : "Guardado automático"),
+          kind: v.kind,
+          author: v.author,                // "human:<id>" | "agent:<name>"
+          frameCount: v.frameCount,
+          frameHashes: v.frameHashes,      // compare against get_frame_changes without downloading
+          sizeBytes: v.sizeBytes,
+        })),
+        total: stored.length,
+        note: "Use diff_versions to see WHAT changed between two versions (or against the live design).",
       };
     }
     case "restore_version": {
@@ -3618,7 +3638,16 @@ async function handleMethod(method, params, userId, auth) {
       const tpl = await templates.getTemplate(tplId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
 
-      // 1. Try in-memory snapshot store (same invocation)
+      // 1. Version history (template_versions + design-versions bucket).
+      // Restoring snapshots the current state first, so it is itself undoable.
+      const fromHistory = await versionHistory.restoreVersion(
+        tplId, params.versionId, params.author || "agent:mcp",
+      );
+      if (fromHistory) {
+        return { restored: true, templateId: tplId, versionId: params.versionId, template: fromHistory, source: "history" };
+      }
+
+      // 2. Legacy in-memory snapshot store (same invocation)
       const snapshot = store.getSnapshot(tplId, params.versionId);
       if (snapshot && snapshot.data) {
         const updates = {};
@@ -3630,7 +3659,7 @@ async function handleMethod(method, params, userId, auth) {
         return { restored: true, templateId: tplId, versionId: params.versionId, template: restored, source: "memory" };
       }
 
-      // 2. Try Supabase-persisted snapshots (cross-invocation)
+      // 3. Legacy Supabase-persisted snapshots (cross-invocation)
       const tplData = tpl.data || {};
       const persistedSnaps = tplData._snapshots || [];
       if (persistedSnaps.length > 0) {
@@ -3664,6 +3693,39 @@ async function handleMethod(method, params, userId, auth) {
       };
     }
 
+
+    case "save_version": {
+      const tplId = params.templateId || params.id;
+      if (!tplId) throw { code: -32602, message: "templateId required" };
+      const saved = await versionHistory.createVersion(tplId, {
+        kind: "marked",
+        label: params.label || "Guardado por agente",
+        author: params.author || "agent:mcp",
+      });
+      if (!saved) throw { code: -32000, message: "Could not save version (Supabase not configured or template not found)" };
+      return { saved: true, templateId: tplId, version: saved };
+    }
+
+    case "diff_versions": {
+      const tplId = params.templateId || params.id;
+      if (!tplId) throw { code: -32602, message: "templateId required" };
+      if (!params.fromVersionId) throw { code: -32602, message: "fromVersionId required" };
+      const diff = await versionHistory.diffVersions(
+        tplId, params.fromVersionId, params.toVersionId, params.frameId,
+      );
+      if (!diff) throw { code: -32000, message: `Version not found: ${params.fromVersionId}` };
+      const frames = params.includeUnchanged
+        ? diff.frames
+        : diff.frames.filter(f => f.status !== "unchanged");
+      return {
+        templateId: tplId,
+        from: diff.from,
+        to: diff.to,
+        changedFrames: frames.length,
+        frames,
+        note: "'before' is the baseline version, 'after' is the comparison target. Compare the HTML/CSS to infer what the human changed, then apply the same intent to other designs.",
+      };
+    }
 
     case "list_fonts": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -7963,7 +8025,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       // Compute hash for the clone (same content as source initially)
       clone.contentHash = computeFrameHash(clone.html || "", clone.css || "");
-      clone.lastModifiedBy = "agent:duplicate_frame";
+      clone.lastModifiedBy = params.author || "agent:duplicate_frame";
       clone.lastModifiedAt = new Date().toISOString();
 
       if (!tpl.frames) tpl.frames = [];
@@ -8085,7 +8147,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // Update frame
       frame.html = newHtml;
       frame.contentHash = computeFrameHash(frame.html || "", frame.css || "");
-      frame.lastModifiedBy = "agent:update_frame_content";
+      frame.lastModifiedBy = params.author || "agent:update_frame_content";
       frame.lastModifiedAt = new Date().toISOString();
 
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
@@ -8110,6 +8172,25 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       var changes = [];
       var frameHashes = params.frameHashes || {};
 
+      // sinceTimestamp: compare against the newest version stored at or before
+      // that moment, so an agent can ask "what changed since I last looked?"
+      // without having kept any hashes. This was documented in SKILL.md but
+      // never implemented — callers following the docs silently got "all
+      // frames changed".
+      var baselineVersionId = params.baselineVersionId || null;
+      if (!Object.keys(frameHashes).length && (params.sinceTimestamp || baselineVersionId)) {
+        var history = await versionHistory.listVersions(params.templateId, 50);
+        var baseline = baselineVersionId
+          ? history.find(function (v) { return v.id === baselineVersionId; })
+          : history.find(function (v) {
+              return new Date(v.createdAt).getTime() <= new Date(params.sinceTimestamp).getTime();
+            });
+        if (baseline) {
+          frameHashes = baseline.frameHashes || {};
+          baselineVersionId = baseline.id;
+        }
+      }
+
       (tpl.frames || []).forEach(function (f) {
         var currentHash = computeFrameHash(f.html || "", f.css || "");
         var knownHash = frameHashes[f.id] || null;
@@ -8123,6 +8204,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           knownHash: knownHash,
           lastModifiedBy: f.lastModifiedBy || "unknown",
           lastModifiedAt: f.lastModifiedAt || null,
+          // The exact call that answers "what did they change?" for this frame.
+          inspectWith: baselineVersionId && changed
+            ? "diff_versions({ templateId, fromVersionId: '" + baselineVersionId + "', frameId: '" + f.id + "' })"
+            : undefined,
         });
       });
 
@@ -8493,7 +8578,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         newFrame.name = frameName;
 
         newFrame.order = outputTpl.frames.length;
-        newFrame.lastModifiedBy = "agent:apply_csv_to_frames";
+        newFrame.lastModifiedBy = params.author || "agent:apply_csv_to_frames";
         newFrame.lastModifiedAt = new Date().toISOString();
 
         // ── Apply CSV values to the frame HTML ──

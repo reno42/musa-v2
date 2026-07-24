@@ -212,7 +212,7 @@ Agent (Claude / Cursor / Custom)
 | Style Library | `get_active_styles`, `set_style_lock`, `find_duplicate_styles`, `merge_brand_guidelines`, `download_style_template` | 5 |
 | Batch | `batch_update`, `render_batch`, `batch_create_variants`, `batch_render_html` | 7 |
 | Variables | `create_variable`, `create_collection`, `link_variable`, `apply_variables` | 6 |
-| Version | `list_versions`, `restore_version` | 2 |
+| Version | `list_versions`, `save_version`, `restore_version`, `diff_versions` | 4 |
 | Collaboration | `share_template`, `claim_section`, `get_active_agents`, `broadcast_section_change` | 8 |
 | Teams | `create_team`, `list_teams`, `get_team`, `invite_to_team`, `list_team_members`, `remove_team_member`, `update_team_member_role`, `share_workspace_with_team` | 8 |
 | Export | `export_batch`, `copy_as`, `export_pdf` | 3 |
@@ -462,12 +462,49 @@ tools/call: update_frame_content({
 })
 ```
 
-**Pattern 7: Detect frame changes since last AI edit**
+**Pattern 7: Learn from a human's edit and apply it elsewhere**
+
+This is the loop to run whenever you return to a design a person may have
+touched. Detection alone is not enough — step 3 is what tells you *what* they
+changed, and it only works if a version existed before their edit, so always
+do step 0 before a batch of your own edits.
+
 ```
+// Step 0 — BEFORE you edit anything: leave a baseline you can diff against.
+tools/call: save_version({ templateId: tplId, label: "antes de mi cambio", author: "agent:lara" })
+  → { saved: true, version: { id: "…", createdAt: "…" } }
+
+// Step 1 — Who touched what since then?
 tools/call: get_frame_changes({ templateId: tplId, sinceTimestamp: "2026-06-25T00:00:00Z" })
-  → { changedFrames: ["f1"], unchangedFrames: ["f2"], currentHashes: {...} }
-// Use to know if human edited after AI's last change
+  → frames: [{ frameId: "f1", changed: true,
+               lastModifiedBy: "human:…" | "agent:lara" | "agent:claude-opus-5",
+               inspectWith: "diff_versions({ … })" }]
+// `sinceTimestamp` resolves the newest version at or before that moment.
+// You can also pass `baselineVersionId` directly, or your own `frameHashes`.
+// `lastModifiedBy` is how you tell a person's edit from another agent's.
+
+// Step 2 — What exactly did they change? (before vs after code)
+tools/call: diff_versions({ templateId: tplId, fromVersionId: "<baseline>", frameId: "f1" })
+  → frames: [{ frameId: "f1", status: "modified",
+               before: { html, css }, after: { html, css } }]
+// Omit toVersionId to compare the baseline against the design as it is now.
+// Read both sides, infer the INTENT (new palette, tighter spacing, different
+// type scale), then apply that intent to the other designs you were asked to
+// update — and record it in your skill/notes so it sticks.
+
+// Step 3 — Undo safely if you got it wrong.
+tools/call: list_versions({ id: tplId })      // newest first, with author + kind
+tools/call: restore_version({ id: tplId, versionId: "…", author: "agent:lara" })
+// Restoring snapshots the current state first, so a restore is itself undoable.
 ```
+
+**Always pass `author`** (`agent:lara`, `agent:claude-opus-5`, …) on
+`save_version`, `restore_version`, `update_frame_content`, `duplicate_frame`
+and `apply_csv_to_frames`. Without it the history just says "agent" and nobody
+— human or model — can tell which of you made a change.
+
+Retention: the last 10 automatic saves rotate; versions created with
+`save_version` (and the human's Ctrl/⌘+S) are permanent.
 
 **Pattern 8: Batch content generation — CSV-driven frame automation**
 ```

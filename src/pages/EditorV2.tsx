@@ -528,6 +528,50 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // Keep autoSaveRef in sync so undo/redo can call the latest version
   autoSaveRef.current = autoSave;
 
+  /**
+   * Explicit save (Ctrl/⌘+S or the Save button): flush whatever the debounce
+   * is holding, then mark a permanent version. Marked versions are never
+   * rotated away, unlike the automatic ones.
+   */
+  const [savingVersion, setSavingVersion] = useState(false);
+  const handleSaveVersion = useCallback(async () => {
+    if (savingVersion) return;
+    setSavingVersion(true);
+    try {
+      // Push the on-screen state first so the version captures what the user sees.
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+      const currentFrames = framesRef.current;
+      const active = currentFrames.find(f => f.id === selectedFrameId) || currentFrames[0];
+      await apiFetch(`/api/templates/${templateId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          frames: currentFrames.map(f => ({
+            ...f,
+            contentHash: simpleHash((f.html || "") + "||" + (f.css || "")),
+            lastModifiedBy: "human",
+            lastModifiedAt: new Date().toISOString(),
+          })),
+          canvasObjects: canvasObjectsRef.current,
+          html: active?.html || "",
+          css: active?.css || "",
+          name: templateName,
+        }),
+      });
+      isDirtyRef.current = false;
+
+      const res = await apiFetch<any>(`/api/templates/${templateId}/versions`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "marked", label: "Guardado manual" }),
+      });
+      if (res?.success === false) throw new Error(res.error || "No se pudo guardar la versión");
+      addToast("Versión guardada en el historial.", "success");
+      window.dispatchEvent(new Event("futuraria-version-saved"));
+    } catch (err: any) {
+      addToast(`No se pudo guardar la versión: ${err?.message || "error desconocido"}`, "error");
+    }
+    setSavingVersion(false);
+  }, [savingVersion, templateId, selectedFrameId, templateName, addToast]);
+
   const commitCanvasObjects = useCallback((next: HtmlCanvasObject[], updatedFrames = framesRef.current) => {
     canvasObjectsRef.current = next;
     setCanvasObjects(next);
@@ -2014,6 +2058,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
       if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); e.stopImmediatePropagation(); handleUndo(); return; }
       if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); e.stopImmediatePropagation(); handleRedo(); return; }
+      // Ctrl+S (Windows) / ⌘+S (Mac): save a permanent version instead of
+      // letting the browser open its "save page" dialog.
+      if (mod && e.key.toLowerCase() === "s" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        handleSaveVersion();
+        return;
+      }
       if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
       if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); setShowBatch(v => !v); return; }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
@@ -2134,7 +2185,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -3343,6 +3394,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           </span>
         )}
         <div style={{ flex: 1 }} />
+
+        {/* Explicit save → permanent version in the history */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleSaveVersion}
+          disabled={savingVersion}
+          title="Guardar versión (Ctrl/⌘+S) — queda permanente en el historial"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+            <polyline points="17 21 17 13 7 13 7 21" />
+            <polyline points="7 3 7 8 15 8" />
+          </svg>
+          <span style={{ fontSize: 9, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
+        </button>
 
         {/* Right panel tab icons */}
         {RIGHT_PANEL_TABS.map(tab => (
