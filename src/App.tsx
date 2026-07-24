@@ -1,14 +1,20 @@
-import { useReducer, useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
+import { type AppRoute, readAppRoute, routeRequiresAccount } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
-import { AuthConfigurationScreen, AuthScreen, InvitationGate, PasswordUpdateScreen } from "./components/AuthScreen";
+import {
+  AuthConfigurationScreen,
+  AuthScreen,
+  InvitationGate,
+  PasswordUpdateScreen,
+} from "./components/AuthScreen";
 
-type ViewMode = "landing" | "dashboard" | "editor-v2";
+type ViewMode = "booting" | "landing" | "dashboard" | "editor-v2";
 
 type AppState = {
   view: ViewMode;
@@ -18,25 +24,66 @@ type AppState = {
 type AppAction =
   | { type: "SET_VIEW"; view: ViewMode }
   | { type: "OPEN_TEMPLATE_V2"; id: string }
-  | { type: "BACK_TO_DASHBOARD" }
   | { type: "ENTER_WORKSPACE" };
+
+type ResolvedSlug = {
+  templateId?: string;
+};
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case "SET_VIEW": return { ...state, view: action.view };
-    case "OPEN_TEMPLATE_V2": return { ...state, view: "editor-v2", templateId: action.id };
-    case "BACK_TO_DASHBOARD": return { ...state, view: "dashboard", templateId: null };
-    case "ENTER_WORKSPACE": return { ...state, view: "dashboard" };
-    default: return state;
+    case "SET_VIEW":
+      return { ...state, view: action.view };
+    case "OPEN_TEMPLATE_V2":
+      return { ...state, view: "editor-v2", templateId: action.id };
+    case "ENTER_WORKSPACE":
+      return { ...state, view: "dashboard", templateId: null };
+    default:
+      return state;
   }
 }
 
-const initialAppState: AppState = {
-  view: "landing",
-  templateId: null,
-};
+function stateForRoute(route: AppRoute): AppState {
+  if (route.kind === "template") {
+    return { view: "editor-v2", templateId: route.templateId };
+  }
+  if (route.kind === "workspace") {
+    return { view: "dashboard", templateId: null };
+  }
+  return { view: "booting", templateId: null };
+}
 
-function App() {
+async function resolveWorkspaceSlug(
+  route: Extract<AppRoute, { kind: "workspace-slug" }>,
+): Promise<ResolvedSlug | null> {
+  const workspaceSlug = encodeURIComponent(route.workspaceSlug);
+  const url = route.templateSlug
+    ? `/api/resolve/workspace/${workspaceSlug}/${encodeURIComponent(route.templateSlug)}`
+    : `/api/resolve/workspace/${workspaceSlug}`;
+
+  try {
+    const response = await fetch(url, { headers: getApiHeaders() });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload.success ? payload.data as ResolvedSlug : null;
+  } catch {
+    return null;
+  }
+}
+
+function AppStartupScreen(): JSX.Element {
+  return (
+    <main className="app-startup" aria-busy="true">
+      <div className="app-startup-brand" aria-hidden="true">
+        <span className="app-startup-mark">F</span>
+        <span>Futuraria</span>
+      </div>
+      <p className="app-startup-status" role="status">Abriendo tu espacio de trabajo…</p>
+    </main>
+  );
+}
+
+function App(): JSX.Element {
   const {
     configured: authConfigured,
     authRequired,
@@ -47,39 +94,74 @@ function App() {
     needsPasswordSetup,
     completePasswordRecovery,
   } = useAuth();
-  const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const [route, setRoute] = useState<AppRoute>(() => readAppRoute(window.location));
+  const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
   const { addToast } = useToast();
-  const [resolving, setResolving] = useState(false);
-
   const { view, templateId } = state;
 
-  // ── Slug → UUID resolution ──────────────────────────────
-  // Resolves only inside the authenticated tenant boundary.
-  const resolveSlug = async (wsSlug: string, tplSlug?: string) => {
-    const url = tplSlug
-      ? `/api/resolve/workspace/${wsSlug}/${tplSlug}`
-      : `/api/resolve/workspace/${wsSlug}`;
-    try {
-      const res = await fetch(url, { headers: getApiHeaders() });
-      const json = await res.json();
-      return json.success ? json.data : null;
-    } catch { return null; }
+  const showLanding = () => {
+    window.history.replaceState(null, "", "/");
+    setRoute({ kind: "root" });
+    dispatch({ type: "SET_VIEW", view: "landing" });
   };
 
-  // Create HTML template and open in EditorV2
+  const enterWorkspace = () => {
+    window.history.replaceState(null, "", "/#workspace");
+    setRoute({ kind: "workspace" });
+    dispatch({ type: "ENTER_WORKSPACE" });
+  };
+
+  const openTemplate = (id: string, url: string) => {
+    window.history.replaceState(null, "", url);
+    setRoute({ kind: "template", templateId: id });
+    dispatch({ type: "OPEN_TEMPLATE_V2", id });
+  };
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (route.kind === "root") {
+      if (user) {
+        window.history.replaceState(null, "", "/#workspace");
+        setRoute({ kind: "workspace" });
+        dispatch({ type: "ENTER_WORKSPACE" });
+      } else {
+        dispatch({ type: "SET_VIEW", view: "landing" });
+      }
+      return;
+    }
+
+    if (route.kind !== "workspace-slug") return;
+    if (authRequired && !authConfigured) return;
+    if (authConfigured && !user) return;
+
+    let active = true;
+    void resolveWorkspaceSlug(route).then((resolved) => {
+      if (!active) return;
+      if (resolved?.templateId) {
+        setRoute({ kind: "template", templateId: resolved.templateId });
+        dispatch({ type: "OPEN_TEMPLATE_V2", id: resolved.templateId });
+      } else {
+        setRoute({ kind: "workspace" });
+        dispatch({ type: "ENTER_WORKSPACE" });
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [authConfigured, authLoading, authRequired, route, user]);
+
   const handleCreateHtmlTemplate = async (workspaceId: string, name: string) => {
     try {
-      const res = await fetch("/api/templates", {
+      const response = await fetch("/api/templates", {
         method: "POST",
         headers: getApiHeaders(),
         body: JSON.stringify({ workspaceId, name, width: 1080, height: 1080, engine: "html" }),
       });
-      const json = await res.json();
-      if (json.success && json.data) {
-        const id = json.data.id;
-        dispatch({ type: "OPEN_TEMPLATE_V2", id });
-        // Fall back to query-param URL until slug is available
-        window.history.replaceState(null, '', `/?template=${id}&v=2`);
+      const payload = await response.json();
+      if (payload.success && payload.data) {
+        openTemplate(payload.data.id, `/?template=${payload.data.id}&v=2`);
       } else {
         addToast("No se pudo crear la plantilla. Intenta de nuevo.", "error");
       }
@@ -88,90 +170,52 @@ function App() {
     }
   };
 
-  // Open template — uses clean URL when slug info is available
-  const handleSelectTemplate = (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => {
-    dispatch({ type: "OPEN_TEMPLATE_V2", id });
-    if (slugInfo?.wsSlug && slugInfo?.tplSlug) {
-      window.history.replaceState(null, '', `/w/${slugInfo.wsSlug}/${slugInfo.tplSlug}`);
-    } else {
-      // Backward compat: query-param URL
-      window.history.replaceState(null, '', `/?template=${id}&v=2`);
-    }
+  const handleSelectTemplate = (
+    id: string,
+    slugInfo?: { wsSlug?: string; tplSlug?: string },
+  ) => {
+    const url = slugInfo?.wsSlug && slugInfo.tplSlug
+      ? `/w/${encodeURIComponent(slugInfo.wsSlug)}/${encodeURIComponent(slugInfo.tplSlug)}`
+      : `/?template=${id}&v=2`;
+    openTemplate(id, url);
   };
 
-  // Check URL params for direct template/slug loading
-  useEffect(() => {
-    // Runtime auth configuration must finish before any protected view mounts;
-    // otherwise Dashboard fires unauthenticated requests during the first paint.
-    if (authLoading) return;
-    const params = new URLSearchParams(window.location.search);
-    const tplId = params.get("template");
-    const inviteToken = params.get("invite");
-    const resetPassword = params.get("reset") === "1";
-    const hash = window.location.hash.replace("#", "");
+  if (authLoading) return <AppStartupScreen />;
 
-    if (inviteToken || resetPassword) {
-      dispatch({ type: "ENTER_WORKSPACE" });
-      return;
-    }
+  const inviteToken = route.kind === "invitation" ? route.token : null;
+  const authFlowRequiresConfiguration = Boolean(inviteToken) || passwordRecovery;
+  const protectedRoute = routeRequiresAccount(route);
 
-    // ── Clean URL routing (/w/:wsSlug[/:tplSlug]) ──
-    const path = window.location.pathname;
-    const slugMatch = path.match(/^\/w\/([^/]+)(?:\/([^/]+))?$/);
-
-    if (slugMatch) {
-      const [, wsSlug, tplSlug] = slugMatch;
-      setResolving(true);
-      resolveSlug(wsSlug, tplSlug || undefined).then((data) => {
-        if (!data) {
-          // Slug not found — show dashboard
-          dispatch({ type: "ENTER_WORKSPACE" });
-          return;
-        }
-        if (data.templateId) {
-          // Full resolve: workspace + template
-          dispatch({ type: "OPEN_TEMPLATE_V2", id: data.templateId });
-        } else {
-          // Workspace-only resolve — go to dashboard
-          dispatch({ type: "ENTER_WORKSPACE" });
-        }
-      }).catch(() => {
-        dispatch({ type: "ENTER_WORKSPACE" });
-      }).finally(() => {
-        setResolving(false);
-      });
-      return;
-    }
-
-    // ── Backward compat: ?template=UUID&v=2 ──
-    if (tplId) {
-      dispatch({ type: "OPEN_TEMPLATE_V2", id: tplId });
-    } else if (hash === "workspace") {
-      dispatch({ type: "ENTER_WORKSPACE" });
-    } else if (path === "/") {
-      // Root URL with no params: go to dashboard (not landing) if user has been here before
-      const hasVisited = localStorage.getItem("futuraria-api-key") !== null;
-      if (hasVisited) {
-        dispatch({ type: "ENTER_WORKSPACE" });
-        window.history.replaceState(null, "", "/#workspace");
-      }
-      // else: first visit — stays on landing (default)
-    }
-    // else stays on landing (default)
-  }, [authConfigured, authLoading]);
-
-  const inviteToken = new URLSearchParams(window.location.search).get("invite");
-
-  if (authLoading && (Boolean(inviteToken) || passwordRecovery)) {
-    return <main className="auth-shell"><p className="auth-copy" role="status">Cargando sesión…</p></main>;
-  }
-
-  if (authRequired && !authConfigured && !authLoading && (Boolean(inviteToken) || passwordRecovery)) {
-    return <AuthConfigurationScreen error={configurationError || "No se pudo configurar Supabase Auth."} onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
+  if (
+    authRequired
+    && !authConfigured
+    && (authFlowRequiresConfiguration || protectedRoute)
+  ) {
+    return (
+      <AuthConfigurationScreen
+        error={configurationError || "No se pudo configurar Supabase Auth."}
+        onBack={showLanding}
+      />
+    );
   }
 
   if (passwordRecovery) {
-    return <PasswordUpdateScreen kind="recovery" onComplete={() => { completePasswordRecovery(); dispatch({ type: "ENTER_WORKSPACE" }); }} />;
+    return (
+      <PasswordUpdateScreen
+        kind="recovery"
+        onComplete={() => {
+          completePasswordRecovery();
+          const nextRoute = readAppRoute(window.location);
+          setRoute(nextRoute);
+          const nextState = stateForRoute(nextRoute);
+          if (nextState.view === "editor-v2" && nextState.templateId) {
+            dispatch({ type: "OPEN_TEMPLATE_V2", id: nextState.templateId });
+          } else {
+            dispatch({ type: "ENTER_WORKSPACE" });
+          }
+        }}
+      />
+    );
   }
 
   if (needsPasswordSetup) {
@@ -179,67 +223,41 @@ function App() {
   }
 
   if (inviteToken && authConfigured) {
-    return <InvitationGate token={inviteToken} onBack={() => { window.history.replaceState(null, "", "/"); dispatch({ type: "SET_VIEW", view: "landing" }); }} />;
+    return <InvitationGate token={inviteToken} onBack={showLanding} />;
   }
 
-  if (authLoading && view !== "landing") {
-    return <main className="auth-shell"><p className="auth-copy" role="status">Cargando sesión…</p></main>;
+  if (authConfigured && !user && protectedRoute) {
+    return <AuthScreen onBack={showLanding} />;
   }
 
-  if (authConfigured && !user && view !== "landing") {
-    return <AuthScreen onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
-  }
+  if (view === "booting") return <AppStartupScreen />;
 
-  if (authRequired && !authConfigured && !authLoading && view !== "landing") {
-    return <AuthConfigurationScreen error={configurationError || "No se pudo configurar Supabase Auth."} onBack={() => dispatch({ type: "SET_VIEW", view: "landing" })} />;
-  }
-
-  // Landing view
   if (view === "landing") {
-    if (resolving) {
-      return (
-        <ErrorBoundary>
-        <Landing
-          onEnter={() => {
-            dispatch({ type: "ENTER_WORKSPACE" });
-            window.history.replaceState(null, "", "/#workspace");
-          }}
-        />
-        </ErrorBoundary>
-      );
-    }
     return (
       <ErrorBoundary>
-      <Landing
-        onEnter={() => {
-          dispatch({ type: "ENTER_WORKSPACE" });
-          window.history.replaceState(null, "", "/#workspace");
-        }}
-      />
+        <Landing onEnter={enterWorkspace} />
       </ErrorBoundary>
     );
   }
 
-  // Dashboard view
   if (view === "dashboard") {
     return (
       <ErrorBoundary>
-      <Dashboard
-        onSelectTemplate={handleSelectTemplate}
-        onCreateHtmlTemplate={handleCreateHtmlTemplate}
-      />
+        <Dashboard
+          onSelectTemplate={handleSelectTemplate}
+          onCreateHtmlTemplate={handleCreateHtmlTemplate}
+        />
       </ErrorBoundary>
     );
   }
 
-  // Editor V2 view (HTML/CSS)
   return (
     <ErrorBoundary>
-    <EditorV2
-      templateId={templateId!}
-      onBack={() => { dispatch({ type: "BACK_TO_DASHBOARD" }); window.history.replaceState(null, '', '/#workspace'); }}
-      onOpenTemplate={(id) => { dispatch({ type: "OPEN_TEMPLATE_V2", id }); window.history.replaceState(null, '', `/?template=${id}&v=2`); }}
-    />
+      <EditorV2
+        templateId={templateId!}
+        onBack={enterWorkspace}
+        onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
+      />
     </ErrorBoundary>
   );
 }
