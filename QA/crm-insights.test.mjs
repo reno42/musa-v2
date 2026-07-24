@@ -81,3 +81,15 @@ test("CRM stays focused while workspace administration lives in settings", () =>
   assert.match(crmWorkspace, />Pipeline<\/button>/);
   assert.match(crmWorkspace, />Marcas y Personas<\/button>/);
 });
+
+test("the optional API key notice can be dismissed and CRM omits the workspace title", () => {
+  const dashboard = readFileSync(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8");
+  const workspaceConsole = readFileSync(new URL("../src/components/WorkspaceConsole.tsx", import.meta.url), "utf8");
+
+  assert.match(dashboard, /API_KEY_BANNER_DISMISSED_KEY/);
+  assert.match(dashboard, /!hasApiKey\(\) && !apiKeyBannerDismissed/);
+  assert.match(dashboard, /aria-label="Ocultar aviso de API key"/);
+  assert.match(dashboard, /localStorage\.setItem\(API_KEY_BANNER_DISMISSED_KEY, "true"\)/);
+  assert.match(workspaceConsole, /\{mode === "settings" && <header className="workspace-console-header">/);
+  assert.match(workspaceConsole, /aria-label=\{mode === "crm" \? "CRM" : undefined\}/);
+});

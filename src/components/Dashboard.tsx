@@ -75,6 +75,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
    Shows cached templates instantly on dashboard return,
    then silently refreshes from the server in background. */
 const TEMPLATE_CACHE_KEY = "futuraria-tpl-cache-v1";
+const API_KEY_BANNER_DISMISSED_KEY = "futuraria-api-key-banner-dismissed";
 
 function readTemplateCache(): Template[] {
   try {
@@ -182,6 +183,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
   const [apiKeyRotating, setApiKeyRotating] = useState(false);
+  const [apiKeyBannerDismissed, setApiKeyBannerDismissed] = useState(() => {
+    try { return localStorage.getItem(API_KEY_BANNER_DISMISSED_KEY) === "true"; } catch { return false; }
+  });
   const [sessions, setSessions] = useState<Array<{ key_label: string; client_info: string; user_agent: string; ip: string; first_seen: string; last_seen: string; request_count: number }>>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
@@ -197,6 +201,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     clearApiKey();
     setApiKeyValue("");
     addToast("API key removed.", "info");
+  };
+
+  const dismissApiKeyBanner = () => {
+    setApiKeyBannerDismissed(true);
+    try { localStorage.setItem(API_KEY_BANNER_DISMISSED_KEY, "true"); } catch {}
   };
 
   const handleGenerateKey = async () => {
@@ -974,8 +983,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       </div>
 
       {/* ── API Key Banner (shown when no key configured) ── */}
-      {!hasApiKey() && (
-        <div style={{
+      {!hasApiKey() && !apiKeyBannerDismissed && (
+        <aside aria-label="Aviso sobre la API key" style={{
           margin: "0 20px", padding: "12px 18px", borderRadius: 12,
           background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)",
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
@@ -983,23 +992,36 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 16 }}>🔑</span>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>Configure your API key</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Required for MCP tools, AI generation, and data persistence. Set it in Settings → Security.</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>¿Usarás IA o MCP?</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Esta API key es opcional para navegar el CRM. Solo la necesitas para herramientas MCP, generación con IA y acciones que usen tu clave.</div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab("settings")}
-            style={{
-              borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500,
-              border: "none", cursor: "pointer", whiteSpace: "nowrap",
-              background: "rgba(234,179,8,0.15)", color: "#facc15",
-              transition: "all 0.2s ease",
-            }}
-          >
-            Open Settings
-          </button>
-        </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab("settings")}
+              style={{
+                borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500,
+                border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                background: "rgba(234,179,8,0.15)", color: "#facc15",
+              }}
+            >
+              Configurar
+            </button>
+            <button
+              type="button"
+              aria-label="Ocultar aviso de API key"
+              title="Ocultar aviso"
+              onClick={dismissApiKeyBanner}
+              style={{
+                width: 32, height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)",
+                background: "transparent", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 18, lineHeight: 1,
+              }}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+        </aside>
       )}
 
       {/* Template Grid */}

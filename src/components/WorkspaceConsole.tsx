@@ -104,11 +104,11 @@ export function WorkspaceConsole({
   }
 
   return (
-    <section className="workspace-console" aria-labelledby="workspace-console-title" aria-busy={loading}>
-      <header className="workspace-console-header">
-        <div><p className="workspace-eyebrow">{mode === "crm" ? "CRM" : "Configuración del workspace"}</p><h2 id="workspace-console-title">{workspaceName || "Workspace"}</h2></div>
-        {mode === "settings" && <div className="workspace-account"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>}
-      </header>
+    <section className="workspace-console" aria-label={mode === "crm" ? "CRM" : undefined} aria-labelledby={mode === "settings" ? "workspace-console-title" : undefined} aria-busy={loading}>
+      {mode === "settings" && <header className="workspace-console-header">
+        <div><p className="workspace-eyebrow">Configuración del workspace</p><h2 id="workspace-console-title">{workspaceName || "Workspace"}</h2></div>
+        <div className="workspace-account"><span>{user?.email}</span><button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div>
+      </header>}
       {mode === "settings" && <nav className="workspace-subnav" aria-label="Configuración del workspace">
         {SETTINGS_SECTIONS.map(([id, label]) => (
           <button key={id} type="button" aria-current={section === id ? "page" : undefined} className={section === id ? "active" : ""} onClick={() => { setSection(id); setError(""); setNotice(""); }}>{label}</button>
