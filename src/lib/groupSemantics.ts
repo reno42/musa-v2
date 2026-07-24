@@ -22,6 +22,12 @@ export const BAKED_TEXT_PROPS = [
 
 export interface ChildBakeEntry {
   layerId: string;
+  /**
+   * Position of this child within container.children at measure time. Legacy
+   * batch-generated designs often carry DUPLICATE data-layer-id values, so id
+   * lookups can hit the wrong element — the index is the reliable pairing.
+   */
+  index: number;
   /** Rect relative to the containing block the child will have AFTER conversion. */
   left: number;
   top: number;
@@ -67,13 +73,14 @@ export function measureContainerForBake(frameId: string, containerId: string): C
   const originX = anchorRect.left + anchor.clientLeft * zoom;
   const originY = anchorRect.top + anchor.clientTop * zoom;
 
-  const measure = (el: HTMLElement): ChildBakeEntry => {
+  const measure = (el: HTMLElement, index: number): ChildBakeEntry => {
     const rect = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
     const inherited: Record<string, string> = {};
     for (const prop of BAKED_TEXT_PROPS) inherited[prop] = cs.getPropertyValue(prop);
     return {
       layerId: el.getAttribute("data-layer-id") || "",
+      index,
       left: Math.round((rect.left - originX) / zoom),
       top: Math.round((rect.top - originY) / zoom),
       width: Math.round(rect.width / zoom),
@@ -84,7 +91,7 @@ export function measureContainerForBake(frameId: string, containerId: string): C
 
   const children = [...container.children]
     .filter((el): el is HTMLElement => el instanceof HTMLElement || el instanceof SVGElement as any)
-    .map(el => measure(el as HTMLElement));
+    .map((el, index) => measure(el as HTMLElement, index));
 
   const ccs = getComputedStyle(container);
   const cRect = container.getBoundingClientRect();
@@ -116,6 +123,22 @@ function findLayer(doc: Document, layerId: string): HTMLElement | null {
   return doc.querySelector(`[data-layer-id="${layerId}"]`);
 }
 
+/**
+ * Pair each bake entry with the wrapper's ACTUAL child at the same index.
+ * A document-wide id lookup breaks on legacy designs with duplicate
+ * data-layer-id values (it bakes the wrong element and leaves the real child
+ * untouched → objects "jump" or vanish on ungroup). Index pairing is exact:
+ * both lists come from the same container.children in the same order. Falls
+ * back to the id lookup only when the index doesn't line up.
+ */
+function pairChild(wrapper: HTMLElement, doc: Document, entry: ChildBakeEntry): HTMLElement | null {
+  const byIndex = wrapper.children[entry.index] as HTMLElement | undefined;
+  if (byIndex && (!entry.layerId || byIndex.getAttribute("data-layer-id") === entry.layerId)) {
+    return byIndex;
+  }
+  return entry.layerId ? findLayer(doc, entry.layerId) : byIndex || null;
+}
+
 /** Pin one child at its measured rect and bake inherited text styles it lacks. */
 function bakeChild(el: HTMLElement, entry: ChildBakeEntry, pinSize: boolean): void {
   el.style.position = "absolute";
@@ -144,8 +167,7 @@ export function convertContainerToGroup(html: string, bake: ContainerBake): stri
   if (!wrapper) return null;
 
   for (const entry of bake.children) {
-    if (!entry.layerId) continue;
-    const child = findLayer(doc, entry.layerId);
+    const child = pairChild(wrapper, doc, entry);
     if (!child) continue;
     const isText = /^(h[1-6]|p|span|a|li|label|button|em|strong|small|b|i)$/i.test(child.tagName)
       || (child.children.length === 0 && (child.textContent || "").trim().length > 0);
@@ -189,10 +211,12 @@ export function convertGroupToContainer(html: string, bake: ContainerBake): stri
   }
   const gap = gaps.length ? Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length) : 12;
 
+  // Pair children BEFORE re-ordering mutates wrapper.children indices.
+  const pairs = sorted
+    .map(entry => ({ entry, child: pairChild(wrapper, doc, entry) }))
+    .filter((p): p is { entry: ChildBakeEntry; child: HTMLElement } => !!p.child);
   // Re-order DOM children by visual top so the flow matches what was seen.
-  for (const entry of sorted) {
-    const child = entry.layerId ? findLayer(doc, entry.layerId) : null;
-    if (!child) continue;
+  for (const { child } of pairs) {
     child.style.position = "";
     child.style.left = "";
     child.style.top = "";
@@ -219,15 +243,24 @@ export function ungroupPreservingLayout(html: string, bake: ContainerBake): stri
   if (!wrapper || !wrapper.parentElement) return null;
 
   for (const entry of bake.children) {
-    if (!entry.layerId) continue;
-    const child = findLayer(doc, entry.layerId);
+    const child = pairChild(wrapper, doc, entry);
     if (!child) continue;
     const isText = /^(h[1-6]|p|span|a|li|label|button|em|strong|small|b|i)$/i.test(child.tagName)
       || (child.children.length === 0 && (child.textContent || "").trim().length > 0);
     bakeChild(child, entry, !isText);
   }
 
-  // Only element children survive (bare text nodes have no layer identity).
+  // Bare text nodes have no layer identity but must not vanish silently:
+  // wrap them in spans so they survive the wrapper's dissolution.
+  for (const node of [...wrapper.childNodes]) {
+    if (node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()) {
+      const span = doc.createElement("span");
+      span.setAttribute("data-layer-name", "Texto");
+      span.textContent = node.textContent;
+      node.parentNode?.replaceChild(span, node);
+    }
+  }
+
   const survivors = [...wrapper.children];
   wrapper.replaceWith(...survivors);
   return doc.body.innerHTML;

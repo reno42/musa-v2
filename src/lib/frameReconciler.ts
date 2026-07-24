@@ -41,18 +41,22 @@ function hashString(s: string): string {
 
 /**
  * Collect all elements with [data-layer-id] from a parent, recursively.
- * Returns a Map<layerId, { element, hash }>.
+ * Returns a Map<layerId, { element, hash }> plus how many layer elements were
+ * seen in total — when total > map.size, the tree carries DUPLICATE ids.
  */
-function collectLayers(root: ParentNode): Map<string, { el: Element; hash: string }> {
-  const map = new Map<string, { el: Element; hash: string }>();
+function collectLayers(root: ParentNode): Map<string, { el: Element; hash: string }> & { totalSeen?: number } {
+  const map: Map<string, { el: Element; hash: string }> & { totalSeen?: number } = new Map();
+  let total = 0;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   let node: Element | null;
   while ((node = walker.nextNode() as Element | null)) {
     const lid = node.getAttribute("data-layer-id");
     if (lid) {
+      total++;
       map.set(lid, { el: node, hash: hashString(node.outerHTML) });
     }
   }
+  map.totalSeen = total;
   return map;
 }
 
@@ -105,6 +109,25 @@ export function reconcileFrameHtml(
 
   // Current live DOM
   const currentLayers = collectLayers(content);
+
+  // DUPLICATE data-layer-id bailout (legacy batch-generated designs): the
+  // id-keyed diff below assumes ids are unique — with duplicates the map
+  // drops siblings and the sync pass fights over shared nodes, DUPLICATING
+  // or DELETING elements (worst on ungroup). A full rebuild renders the
+  // target verbatim: slower, but never corrupts.
+  const hasDuplicates =
+    (targetLayers.totalSeen || 0) > targetLayers.size ||
+    (currentLayers.totalSeen || 0) > currentLayers.size;
+  if (hasDuplicates) {
+    content.innerHTML = targetHtml;
+    return {
+      patched: 0,
+      inserted: targetLayers.size,
+      removed: currentLayers.size,
+      skipped: 0,
+      durationMs: performance.now() - t0,
+    };
+  }
 
   let patched = 0;
   let inserted = 0;
