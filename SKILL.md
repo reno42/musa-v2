@@ -2,7 +2,7 @@
 
 **Skill Name:** `futuraria-editor`
 **Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Netlify with serverless functions.
-**Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
+**Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, React best-practice refactors, or Graph Playbook workflows (replicate, create from scratch, CSV batch, design system extraction, multi-agent collaboration).
 
 ---
 
@@ -10,7 +10,7 @@
 
 You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application providing a WYSIWYG HTML/CSS design experience. The editor is deployed on **Netlify** with serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write model: Supabase when configured, in-memory fallback when not).
 
-**Production URL:** `https://futuraria.netlify.app`
+**Production URL:** `https://design.futuraria.com`
 **Dev URL:** `http://localhost:5173` (Vite dev server)
 **API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
 **MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
@@ -79,7 +79,7 @@ design-main/
 Browser / AI Agent
   │
   ▼
-Netlify CDN (futuraria.netlify.app)
+Netlify CDN (design.futuraria.com)
   ├── /*               → dist/index.html (SPA)
   ├── /api/*           → /.netlify/functions/api  (Express → JSON)
   └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
@@ -177,7 +177,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -783,6 +783,49 @@ tools/call: rename_template({
 | `-32602` | Invalid params | Missing required parameter, bad format |
 | `-32000` | Server error | Template/workspace not found |
 
+## 🧭 Graph Playbooks — Intent-Driven Agent Workflows
+
+When a user gives you a high-level task, **don't guess the tool sequence**. Instead, match the intent to a playbook below and follow its DAG (Directed Acyclic Graph). Each playbook is a battle-tested, graph-engineered path with branching logic, validation gates, and error recovery.
+
+**Playbook files** in `docs/` — each is a self-contained guide an agent can follow without reading source code:
+
+| # | Playbook | Intent | File |
+|---|----------|--------|------|
+| 1 | **Replicate HTML+CSS** | "Copy this HTML/CSS into a frame, adapt to formats" | [`docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md`](docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md) |
+| 2 | **Create from Scratch** | "Build a new design from a description — no template" | [`docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md`](docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md) |
+| 3 | **CSV Batch → N Variants** | "Generate 100+ variants from a CSV data source" | [`docs/GRAPH_PLAYBOOK_CSV_BATCH.md`](docs/GRAPH_PLAYBOOK_CSV_BATCH.md) |
+| 4 | **Design System → Brand Manual** | "Extract design tokens and generate a brand identity guide" | [`docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md`](docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md) |
+| 5 | **Multi-Agent Collaboration** | "Multiple AI agents edit the same template simultaneously" | [`docs/GRAPH_PLAYBOOK_MULTI_AGENT.md`](docs/GRAPH_PLAYBOOK_MULTI_AGENT.md) |
+
+### How to Use a Playbook (Agent Quick-Start)
+
+```
+1. Identify intent from user request → match to playbook above
+2. Read the Mermaid DAG diagram → understand the flow
+3. Follow the "Phase-by-Phase Node Guide" tables → exact tool + params per step
+4. Check the "Agent Quick-Start" section → copy-paste MCP calls
+5. At each validation gate (V1-V4) → run the contract check before proceeding
+6. If a gate fails → follow the "Error Recovery Paths" for that error
+7. Complete all phases → return the "Terminal Report" shape to the user
+```
+
+### Playbook Structure (What's Inside Each)
+
+Every playbook follows the same graph-engineering schema:
+
+- **Schema**: Entity types (Objective, Plan, Artifact, Run, Evaluation, Claim, Source) + Relation types
+- **Node Contract**: TypeScript interface with `tool`, `params`, `expected`, `on_success`, `on_failure`, `max_retries`, `timeout_ms`
+- **Mermaid DAG**: Visual graph of all nodes and branching logic
+- **Phase-by-Phase Guide**: Each node with exact MCP tool, params, and expected output
+- **Validation Contracts**: V1-V4 gates with YAML checks and fail handlers
+- **Error Recovery Paths**: ER1-ER5 for common failure modes
+- **Ratchet Loop**: Per-frame or per-variant lint-improvement loop
+- **Terminal Report**: TypeScript interface for the final agent output
+- **Agent Quick-Start**: 7-step copy-paste MCP call sequence
+- **Principles Cross-Reference**: How each Graph Engineering principle maps to implementation
+
+---
+
 ## Components Reference
 
 ### EditorV2
@@ -897,7 +940,7 @@ npm run preview
 You are an AI agent working on the Futuraria Design Editor — a React 18 + TypeScript + Vite application that uses a **Shadow DOM HTML rendering engine** for full WYSIWYG design. Each frame is real HTML+CSS rendered inside a Shadow DOM (no Fabric.js, no canvas 2D API) — pure browser CSS engine. The editor is deployed on **Netlify** with a serverless API via Netlify Functions and **Supabase** for cloud persistence (dual-write freemium model: Supabase when configured, in-memory fallback when not).
 
 **React-Doctor Score:** 100/100 (clean bill of health)
-**Production URL:** `https://futuraria.netlify.app`
+**Production URL:** `https://design.futuraria.com`
 **Dev URL:** `http://localhost:5173` (Vite dev server)
 **API Base (cloud):** `/api` (relative — routed via Netlify redirect to `/.netlify/functions/api`)
 **MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
@@ -967,7 +1010,7 @@ design-main/
 Browser / AI Agent
   │
   ▼
-Netlify CDN (futuraria.netlify.app)
+Netlify CDN (design.futuraria.com)
   ├── /*               → dist/index.html (SPA)
   ├── /api/*           → /.netlify/functions/api  (Express → JSON)
   └── /mcp             → /.netlify/functions/mcp   (JSON-RPC + SSE)
@@ -1051,7 +1094,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://futuraria.netlify.app/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -1074,7 +1117,7 @@ Agent (Claude / Cursor / Custom)
   "mcpServers": {
     "futuraria": {
       "type": "sse",
-      "url": "https://futuraria.netlify.app/mcp",
+      "url": "https://design.futuraria.com/mcp",
       "headers": { "x-api-key": "your-api-key" }
     }
   }
@@ -1087,7 +1130,7 @@ Agent (Claude / Cursor / Custom)
   "mcpServers": {
     "futuraria": {
       "transport": "sse",
-      "url": "https://futuraria.netlify.app/mcp",
+      "url": "https://design.futuraria.com/mcp",
       "headers": { "x-api-key": "your-api-key" }
     }
   }
@@ -1097,21 +1140,21 @@ Agent (Claude / Cursor / Custom)
 **Custom HTTP Client** (any language):
 ```bash
 # 1. Initialize
-curl -X POST https://futuraria.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}'
 # → {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"futuraria-mcp","version":"1.0.0"}}}
 
 # 2. Discover tools
-curl -X POST https://futuraria.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 # → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...10 tools...}]}}
 
 # 3. Call a tool
-curl -X POST https://futuraria.netlify.app/mcp \
+curl -X POST https://design.futuraria.com/mcp \
   -H "Content-Type: application/json" \
   -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_template","arguments":{"name":"Hero","workspaceId":"ws_abc","width":1440,"height":900}}}'
