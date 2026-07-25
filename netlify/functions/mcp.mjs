@@ -3401,13 +3401,17 @@ async function handleMethod(method, params, userId, auth) {
       return { deleted: true, id: params.id };
     }
     case "duplicate_template": {
-      const tpl = await templates.duplicateTemplate(params.id, params.name, userId);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      const templateId = params.templateId || params.id;
+      if (!templateId) throw { code: -32602, message: "templateId (or id) required" };
+      const tpl = await templates.duplicateTemplate(templateId, params.name, userId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${templateId}` };
       return tpl;
     }
     case "export_template": {
-      const tpl = await templates.getTemplate(params.id);
-      if (!tpl) throw { code: -32000, message: `Template not found: ${params.id}` };
+      const templateId = params.templateId || params.id;
+      if (!templateId) throw { code: -32602, message: "templateId (or id) required" };
+      const tpl = await templates.getTemplate(templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${templateId}` };
       return {
         format: "futuraria/v1",
         exportedAt: new Date().toISOString(),
@@ -3454,7 +3458,7 @@ async function handleMethod(method, params, userId, auth) {
 
     // ── SVG Import ──
     case "import_svg": {
-      let svgContent = params.svg;
+      let svgContent = params.svgContent || params.svg;
       if (!svgContent && params.url) {
         try {
           const svgRes = await fetch(params.url);
@@ -3727,11 +3731,20 @@ async function handleMethod(method, params, userId, auth) {
     case "diff_versions": {
       const tplId = params.templateId || params.id;
       if (!tplId) throw { code: -32602, message: "templateId required" };
-      if (!params.fromVersionId) throw { code: -32602, message: "fromVersionId required" };
+      let fromVersionId = params.fromVersionId;
+      // If no fromVersionId, auto-select the latest stored version
+      if (!fromVersionId) {
+        const versions = await versionHistory.listVersions(tplId, params.frameId || null);
+        if (versions && versions.length > 0) {
+          fromVersionId = versions[0].id;
+        } else {
+          throw { code: -32602, message: "fromVersionId required — no stored versions found for this template. Save a version first with save_version." };
+        }
+      }
       const diff = await versionHistory.diffVersions(
-        tplId, params.fromVersionId, params.toVersionId, params.frameId,
+        tplId, fromVersionId, params.toVersionId, params.frameId,
       );
-      if (!diff) throw { code: -32000, message: `Version not found: ${params.fromVersionId}` };
+      if (!diff) throw { code: -32000, message: `Version not found: ${fromVersionId}` };
       const frames = params.includeUnchanged
         ? diff.frames
         : diff.frames.filter(f => f.status !== "unchanged");
@@ -4380,9 +4393,11 @@ async function handleMethod(method, params, userId, auth) {
     case "copy_as": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const targetLayerName = params.targetLayerName || params.layerId || params.layerName;
+      if (!targetLayerName) throw { code: -32602, message: "targetLayerName (or layerId) required — the name of the layer to export" };
       const objects = (tpl.frames?.find(f => f.id === params.frameId)?.objects || []);
-      const obj = objects.find(o => (o.layerName || o.name) === params.targetLayerName);
-      if (!obj) throw { code: -32000, message: `Layer not found: ${params.targetLayerName}` };
+      const obj = objects.find(o => (o.layerName || o.name) === targetLayerName);
+      if (!obj) throw { code: -32000, message: `Layer not found: ${targetLayerName}` };
       const fmt = params.format || "json";
       if (fmt === "svg") {
         let svg = "";
@@ -4398,7 +4413,7 @@ async function handleMethod(method, params, userId, auth) {
         } else {
           svg = `<!-- ${obj.type}: use JSON format for full data -->`;
         }
-        return { format: "svg", layerName: params.targetLayerName, type: obj.type, svg };
+        return { format: "svg", layerName: targetLayerName, type: obj.type, svg };
       } else if (fmt === "css") {
         const props = [];
         if (obj.left !== undefined) props.push(`  left: ${obj.left}px;`);
@@ -4411,10 +4426,10 @@ async function handleMethod(method, params, userId, auth) {
         if (obj.fontSize) props.push(`  font-size: ${obj.fontSize}px;`);
         if (obj.fontFamily) props.push(`  font-family: ${obj.fontFamily};`);
         if (obj.shadow) props.push(`  box-shadow: ${obj.shadow.offsetX || 0}px ${obj.shadow.offsetY || 0}px ${obj.shadow.blur || 4}px ${obj.shadow.color || "#000"};`);
-        const css = `.${params.targetLayerName.replace(/\s+/g, "-").toLowerCase()} {\n${props.join("\n")}\n}`;
-        return { format: "css", layerName: params.targetLayerName, type: obj.type, css };
+        const css = `.${targetLayerName.replace(/\s+/g, "-").toLowerCase()} {\n${props.join("\n")}\n}`;
+        return { format: "css", layerName: targetLayerName, type: obj.type, css };
       } else {
-        return { format: "json", layerName: params.targetLayerName, type: obj.type, data: obj };
+        return { format: "json", layerName: targetLayerName, type: obj.type, data: obj };
       }
     }
 
@@ -4452,7 +4467,7 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "color_picker": {
-      const raw = (params.color || "#000000").trim();
+      const raw = (params.color || params.hex || "#000000").trim();
       const action = params.action || "parse";
       const steps = Math.max(2, Math.min(20, params.steps || 5));
       // Parse hex/rgb/rgba to {r,g,b,a}
@@ -4758,9 +4773,9 @@ async function handleMethod(method, params, userId, auth) {
 
     // ── remix_template ──
     case "suggest_color_palette": {
-      const baseColor = params.baseColor;
+      const baseColor = params.baseColor || params.base;
       if (!baseColor || !baseColor.startsWith("#") || baseColor.length < 7) {
-        throw { code: -32602, message: "baseColor must be a hex color (e.g. '#3b82f6')" };
+        throw { code: -32602, message: "baseColor (or base) must be a hex color (e.g. '#3b82f6')" };
       }
 
       const hex = baseColor.slice(1);
@@ -4846,8 +4861,20 @@ async function handleMethod(method, params, userId, auth) {
     case "get_template_structure": {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
-      const html = tpl.html || "";
-      const css = tpl.css || "";
+      // Collect HTML/CSS from template root AND all frames
+      let html = tpl.html || "";
+      let css = tpl.css || "";
+      const frames = tpl.frames || [];
+      const frameResults = [];
+      for (const frame of frames) {
+        const fHtml = frame.html || "";
+        const fCss = frame.css || "";
+        if (fHtml) {
+          html += "\n" + fHtml;
+          css += "\n" + fCss;
+          frameResults.push({ frameId: frame.id, frameName: frame.name, htmlLength: fHtml.length, cssLength: fCss.length });
+        }
+      }
       // Parse elements: extract tags, classes, data-layer-id, and bounding hints
       const elements = [];
       const tagRe = /<(\w+)([^>]*)>/g;
@@ -4870,7 +4897,14 @@ async function handleMethod(method, params, userId, auth) {
       while ((cm = cssRe.exec(css)) !== null) {
         cssRules.push({ selector: cm[1].trim(), properties: cm[2].trim().split(";").filter(Boolean).map(s => s.trim()) });
       }
-      return { elements, cssRules, elementCount: elements.length, cssRuleCount: cssRules.length };
+      return {
+        elements,
+        cssRules,
+        elementCount: elements.length,
+        cssRuleCount: cssRules.length,
+        scannedFrames: frameResults,
+        note: "Scans template-level AND frame-level HTML/CSS. Use frameId param to filter by frame (not yet implemented).",
+      };
     }
 
     // ── select_element ──
@@ -6421,7 +6455,9 @@ async function handleMethod(method, params, userId, auth) {
         thin: "ph-thin", light: "ph-light", regular: "ph", bold: "ph-bold", fill: "ph-fill", duotone: "ph-duotone",
       };
       const cls = STYLE_MAP[params.style] || "ph";
-      const iconName = params.icon.replace(/^(ph[-\w]*\s+)?ph-/, "");
+      const rawIcon = params.iconName || params.icon;
+      if (!rawIcon) throw { code: -32602, message: "icon (or iconName) is required" };
+      const iconName = rawIcon.replace(/^(ph[-\w]*\s+)?ph-/, "");
       const x = params.x ?? 50;
       const y = params.y ?? 50;
       const size = params.size ?? 48;
@@ -6438,6 +6474,7 @@ async function handleMethod(method, params, userId, auth) {
       // Insert icon element
       const iconHtml = `<i class="${cls} ph-${iconName}" data-layer-id="${layerId}" style="position: absolute; left: ${x}px; top: ${y}px; font-size: ${size}px; color: ${color}; line-height: 1;"></i>`;
       frame.html = (frame.html || "") + iconHtml;
+      if (!tpl.metadata) tpl.metadata = {};
       tpl.metadata.updatedAt = new Date().toISOString();
 
       const persisted = await templates.updateTemplate(params.templateId, {
@@ -8095,8 +8132,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "duplicate_frame": {
       var tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
-      var sourceFrame = (tpl.frames || []).find(function (f) { return f.id === params.sourceFrameId; });
-      if (!sourceFrame) throw { code: -32000, message: "Frame not found: " + params.sourceFrameId };
+      var sourceFrameId = params.frameId || params.sourceFrameId;
+      var sourceFrame = (tpl.frames || []).find(function (f) { return f.id === sourceFrameId; });
+      if (!sourceFrame) throw { code: -32000, message: "Frame not found: " + (sourceFrameId || "undefined — pass frameId or sourceFrameId") };
 
       var newFrameId = "frame_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
 
@@ -8120,7 +8158,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       return {
         frameId: newFrameId,
-        sourceFrameId: params.sourceFrameId,
+        sourceFrameId: sourceFrameId,
         name: clone.name,
         x: clone.x, y: clone.y,
         width: clone.width, height: clone.height,
