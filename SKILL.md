@@ -16,6 +16,76 @@ You are an AI agent working on the Futuraria Design Editor — a React 18 + Type
 **MCP Endpoint:** `/mcp` (Model Context Protocol — SSE + JSON-RPC for AI agents)
 **Start command:** `npm run dev` (from project root)
 
+## 🚀 Agent Onboarding — Start Here
+
+> **You are an AI agent connecting to Futuraria MCP for the first time.** Follow these 3 steps before doing anything else.
+
+### Step 1: Connect & Initialize
+
+```json
+POST https://design.futuraria.com/mcp
+{ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": { "name": "your-agent", "version": "1.0" } } }
+```
+
+The `initialize` response includes `_agentGuide` with the playbook index. **Read it.**
+
+### Step 2: Get the Onboarding Guide
+
+```json
+{ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "get_agent_guide" } }
+```
+
+This returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode summary, and memory instructions.
+
+### Step 3: Match Intent → Playbook
+
+When a user gives you a task, identify the intent and load the playbook:
+
+| User says | Intent | Action |
+|-----------|--------|--------|
+| "Replicate this HTML/CSS into a frame" | `replicate-html` | `get_playbook({ name: "replicate-html" })` |
+| "Create a new design — I have an idea" | `create-from-scratch` | `get_playbook({ name: "create-from-scratch" })` |
+| "Generate 100 variants from this CSV" | `csv-batch` | `get_playbook({ name: "csv-batch" })` |
+| "Extract the design system and make a brand manual" | `design-system` | `get_playbook({ name: "design-system" })` |
+| "Multiple agents edit the same template" | `multi-agent` | `get_playbook({ name: "multi-agent" })` |
+
+Each playbook is a 300-500 line graph-engineered guide with: Mermaid DAG → Node contracts → Tool sequences → Validation gates → Error recovery → Copy-paste MCP calls.
+
+### 🧠 What to Store in Your Memory
+
+After your first session, persist these in your agent memory so you don't re-discover them every time:
+
+```
+1. Workspace IDs:     list_workspaces → store [{ id, name }]
+2. Template IDs:      list_templates → store key templates
+3. Playbook index:    from initialize._agentGuide.playbooks
+4. User's API key:    never store raw key — just note which key label is active
+5. Brand info:        if user has a brand → store brandId + styleFingerprint
+6. Mode preference:   creative (set_html/set_css) vs editable (set_frame_layers)
+```
+
+### 📡 Where to Find Documentation
+
+| Resource | URL | How to access |
+|----------|-----|---------------|
+| **SKILL.md** (this file) | `https://design.futuraria.com/SKILL.md` | HTTP GET or `web_fetch` |
+| **Playbooks** | `https://design.futuraria.com/docs/GRAPH_PLAYBOOK_*.md` | HTTP GET or `get_playbook` MCP tool |
+| **MCP Tool Catalog** | `https://design.futuraria.com/docs/MCP_TOOL_CATALOG.md` | HTTP GET |
+| **Agent Guide** | Built into MCP | `get_agent_guide` MCP tool |
+| **Full tool list** | Built into MCP | `tools/list` MCP method |
+
+### ⚡ Quick Sanity Check
+
+Before executing any design task, verify:
+- [ ] I have the user's `workspaceId`
+- [ ] The template exists and has `engine: "html"`
+- [ ] I know whether to use creative mode (`set_html`) or editable mode (`set_frame_layers`)
+- [ ] Frame positions are auto-calculated (never overlap manually)
+- [ ] I run `lint_design` before declaring a design complete
+- [ ] I document what I created (templateId, frameIds) in my terminal report
+
+---
+
 ## Project Structure
 
 ```

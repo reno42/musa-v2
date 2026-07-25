@@ -2719,6 +2719,26 @@ const MCP_TOOLS = [
       required: ["templateId", "imageBase64"],
     },
   },
+  {
+    name: "get_playbook",
+    description: "Retrieve a full graph-playbook by name. Call this after seeing the playbook index in the initialize response or get_agent_guide. Returns the complete markdown content of the playbook with DAG diagrams, node contracts, phase-by-phase tool guides, validation gates, error recovery paths, and copy-paste MCP call sequences.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", enum: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "multi-agent"], description: "Playbook name from the index (e.g. 'replicate-html', 'csv-batch')" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "get_agent_guide",
+    description: "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -7785,6 +7805,73 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
+    // ── Agent Onboarding: playbook & guide retrieval ──
+    case "get_playbook": {
+      const PLAYBOOKS = {
+        "replicate-html":   "GRAPH_PLAYBOOK_REPLICATE_HTML.md",
+        "create-from-scratch": "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md",
+        "csv-batch":        "GRAPH_PLAYBOOK_CSV_BATCH.md",
+        "design-system":    "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",
+        "multi-agent":      "GRAPH_PLAYBOOK_MULTI_AGENT.md",
+      };
+      const file = PLAYBOOKS[params.name];
+      if (!file) throw { code: -32602, message: `Unknown playbook: ${params.name}. Valid: ${Object.keys(PLAYBOOKS).join(", ")}` };
+      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      const url = `${siteUrl}/docs/${file}`;
+      let content;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        content = await res.text();
+      } catch (e) {
+        throw { code: -32000, message: `Failed to fetch playbook: ${e.message}. Ensure the site is deployed and docs/ are published.` };
+      }
+      return { name: params.name, file, url, content };
+    }
+    case "get_agent_guide": {
+      const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
+      return {
+        welcome: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools for HTML/CSS design, frame management, batch generation, brand extraction, and multi-agent collaboration.",
+        connection: {
+          endpoint: `${siteUrl}/mcp`,
+          protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
+          auth: "Pass x-api-key header on every POST request. Create API keys at https://design.futuraria.com → Settings → API Keys.",
+        },
+        first_steps: [
+          "1. Call tools/list to see all 145+ available tools.",
+          "2. Call list_workspaces to find where your user's designs live.",
+          "3. Match the user's intent to a playbook (see playbooks below), then call get_playbook({ name }) to read the full guide.",
+        ],
+        playbooks: {
+          "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md` },
+          "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md` },
+          "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CSV_BATCH.md` },
+          "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: `${siteUrl}/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md` },
+          "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: `${siteUrl}/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md` },
+        },
+        key_tools_quick_ref: {
+          create_template:     "create_template({ name, workspaceId, engine: 'html' }) → templateId + auto-created Frame 1",
+          create_html_frame:   "create_html_frame({ templateId, name, width?, height? }) → frameId (auto-placed, never overlaps)",
+          set_frame_layers:    "set_frame_layers({ templateId, frameId, layers, fontImports? }) → structured editable design with per-element layers",
+          set_html:            "set_html({ templateId, frameId?, html }) → raw HTML (creative mode, no editability enforcement)",
+          set_css:             "set_css({ templateId, frameId?, css }) → raw CSS (creative mode)",
+          lint_design:         "lint_design({ templateId, frameId? }) → { score, issues[] } — run this before declaring a design complete",
+          get_design_system:   "get_design_system({ templateId }) → design tokens, components, brand info, CSS root block",
+        },
+        memory_instructions: [
+          "Persist the user's workspace IDs and template IDs in your memory so you don't re-discover them each session.",
+          "Cache the playbook index so you can match user intents to playbooks without calling get_agent_guide every time.",
+          "After creating a template, store its templateId for future reference.",
+          "Remember which mode the user prefers: creative (set_html/set_css) vs editable (set_frame_layers).",
+        ],
+        docs: {
+          skillUrl: `${siteUrl}/SKILL.md`,
+          docsBaseUrl: `${siteUrl}/docs/`,
+          toolsCatalog: `${siteUrl}/docs/MCP_TOOL_CATALOG.md`,
+        },
+      };
+    }
+
     // ── Phase J: generate_ui_components ──
     case "generate_ui_components": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -10079,12 +10166,30 @@ export const handler = async (event) => {
 
   // MCP lifecycle methods
   if (method === "initialize") {
+    const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
     return {
       statusCode: 200, headers,
       body: JSON.stringify(jsonRpcResult(id, {
         protocolVersion: "2024-11-05",
         capabilities: { tools: { listChanged: true } },
         serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
+        // ── Agent Onboarding: playbook index + guide ──
+        _agentGuide: {
+          message: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools. Before you start, follow the 3-step onboarding below.",
+          step1_discover: "Call tools/list to see all available tools.",
+          step2_learn: `Call get_agent_guide to receive the onboarding summary. Or read the full manual: ${siteUrl}/SKILL.md`,
+          step3_choose_playbook: "Match the user's intent to a playbook below, then call get_playbook({ name }) to read the full guide.",
+          playbooks: {
+            "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md` },
+            "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md` },
+            "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CSV_BATCH.md` },
+            "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: `${siteUrl}/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md` },
+            "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: `${siteUrl}/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md` },
+          },
+          memory_instructions: "Store the playbook index and the user's workspace IDs + template IDs in your persistent memory. This avoids re-discovering them on every session.",
+          docsBaseUrl: `${siteUrl}/docs/`,
+          skillUrl: `${siteUrl}/SKILL.md`,
+        },
       })),
     };
   }
