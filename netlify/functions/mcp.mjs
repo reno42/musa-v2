@@ -10176,19 +10176,26 @@ export const handler = async (event) => {
         // ── Agent Onboarding: playbook index + guide ──
         _agentGuide: {
           message: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools. Before you start, follow the 3-step onboarding below.",
+          auth: {
+            required: "tools/call requires x-api-key header on every POST request. initialize + tools/list are public (no auth).",
+            how_to_send: "Include header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If using an MCP client (Cursor, Claude, etc.), configure it in the MCP server settings under 'headers': { 'x-api-key': 'YOUR_KEY' }.",
+            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys.",
+            troubleshooting: "If tools/call returns 401 but initialize works: your MCP client is likely sending the SSE handshake without the x-api-key header. The key must be on EVERY POST, not just the initial connection. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. For custom clients: add x-api-key header to every fetch() call.",
+            public_tools_no_auth: "get_agent_guide and get_playbook are public (no auth required). Call them even without an API key configured.",
+          },
           step1_discover: "Call tools/list to see all available tools.",
-          step2_learn: `Call get_agent_guide to receive the onboarding summary. Or read the full manual: ${siteUrl}/SKILL.md`,
-          step3_choose_playbook: "Match the user's intent to a playbook below, then call get_playbook({ name }) to read the full guide.",
+          step2_learn: "Call get_agent_guide (no auth required) to receive the onboarding summary. Or read the full manual: " + siteUrl + "/SKILL.md",
+          step3_choose_playbook: "Match the user's intent to a playbook below, then call get_playbook({ name }) (no auth required) to read the full guide.",
           playbooks: {
-            "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md` },
-            "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md` },
-            "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CSV_BATCH.md` },
-            "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: `${siteUrl}/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md` },
-            "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: `${siteUrl}/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md` },
+            "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: siteUrl + "/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md" },
+            "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: siteUrl + "/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md" },
+            "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: siteUrl + "/docs/GRAPH_PLAYBOOK_CSV_BATCH.md" },
+            "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: siteUrl + "/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md" },
+            "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: siteUrl + "/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md" },
           },
           memory_instructions: "Store the playbook index and the user's workspace IDs + template IDs in your persistent memory. This avoids re-discovering them on every session.",
-          docsBaseUrl: `${siteUrl}/docs/`,
-          skillUrl: `${siteUrl}/SKILL.md`,
+          docsBaseUrl: siteUrl + "/docs/",
+          skillUrl: siteUrl + "/SKILL.md",
         },
       })),
     };
@@ -10206,16 +10213,47 @@ export const handler = async (event) => {
   }
 
   if (method === "tools/call") {
-    // ── Auth enforcement ──
-    const auth = await checkAuth(event);
-    if (!auth.valid) {
-      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
-    }
-    trackSession(auth.keyLabel, event);
+    // ── Public tools (no auth required) ──
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook"]);
 
+    if (!PUBLIC_TOOLS.has(params.name)) {
+      // ── Auth enforcement ──
+      const auth = await checkAuth(event);
+      if (!auth.valid) {
+        return {
+          statusCode: 401, headers,
+          body: JSON.stringify(jsonRpcError(id, -32001,
+            "Unauthorized: valid x-api-key header required. " +
+            "Send 'x-api-key: YOUR_KEY' header on every POST request. " +
+            "Create API keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Public tools (no auth): get_agent_guide, get_playbook. " +
+            "Tip: if your MCP client sends initialize + tools/list but tools/call fails with 401, " +
+            "check that your client includes the x-api-key header on POST requests, not just the SSE handshake."
+          )),
+        };
+      }
+      trackSession(auth.keyLabel, event);
+
+      try {
+        const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
+        const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
+        const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
+        };
+      } catch (e) {
+        const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
+        };
+      }
+    }
+
+    // ── Public tool: no auth ──
     try {
-      const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
-      const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
+      const result = await handleMethod(params.name, params.arguments || {}, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
@@ -10232,15 +10270,43 @@ export const handler = async (event) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
-    const auth = await checkAuth(event);
-    if (!auth.valid) {
-      return { statusCode: 401, headers, body: JSON.stringify(jsonRpcError(id, -32001, "Unauthorized: valid x-api-key required")) };
-    }
-    trackSession(auth.keyLabel, event);
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook"]);
 
+    if (!PUBLIC_TOOLS.has(method)) {
+      const auth = await checkAuth(event);
+      if (!auth.valid) {
+        return {
+          statusCode: 401, headers,
+          body: JSON.stringify(jsonRpcError(id, -32001,
+            "Unauthorized: valid x-api-key header required. " +
+            "Send 'x-api-key: YOUR_KEY' header on every POST request. " +
+            "Create API keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Public tools (no auth): get_agent_guide, get_playbook."
+          )),
+        };
+      }
+      trackSession(auth.keyLabel, event);
+
+      try {
+        const scopedParams = await authorizeMcpCall(method, params || {}, auth);
+        const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
+        const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify(jsonRpcResult(id, { content: [{ type: "text", text }] })),
+        };
+      } catch (e) {
+        const err = e?.code ? e : { code: -32000, message: e?.message || "Internal error" };
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify(jsonRpcError(id, err.code, err.message)),
+        };
+      }
+    }
+
+    // ── Public tool: no auth ──
     try {
-      const scopedParams = await authorizeMcpCall(method, params || {}, auth);
-      const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
+      const result = await handleMethod(method, params || {}, null, {});
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return {
         statusCode: 200, headers,
