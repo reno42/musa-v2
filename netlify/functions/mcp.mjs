@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
 import * as versionHistory from "../../api/src/services/versionHistory.js";
@@ -2765,9 +2765,7 @@ function getUserId(event) {
  */
 function keyHash(rawKey) {
   // SHA-256 hex — keys are stored hashed, never in plain text
-  const hash = crypto.createHash("sha256");
-  hash.update(rawKey);
-  return hash.digest("hex");
+  return createHash("sha256").update(rawKey).digest("hex");
 }
 
 /**
@@ -2887,7 +2885,7 @@ async function authorizeMcpCall(method, inputParams, auth) {
  * Raw key format: fdr_<random24> — prefixed for easy identification.
  */
 async function createApiKey(userId, workspaceId, label, role = "editor") {
-  const rawKey = "fdr_ws_" + crypto.randomBytes(24).toString("base64url");
+  const rawKey = "fdr_ws_" + randomBytes(24).toString("base64url");
   const now = new Date().toISOString();
 
   const sb = getSupabaseAdmin();
