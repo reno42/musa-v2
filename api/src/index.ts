@@ -25,6 +25,7 @@ import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { storageRoutes } from "./routes/storage.js";
+import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
@@ -125,6 +126,9 @@ app.use("/api/design-system", designSystemRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/templates", sectionRoutes);
 app.use("/api/metrics", metricsRoutes);
+// ── Bug Reports (public, no auth) ──
+app.use("/api/bug-reports", bugReportRoutes);
+
 // ── Design Knowledge Graph ──
 // GET /api/graph?workspaceId=&brand=&tag=&format=
 app.get("/api/graph", getDesignGraph);
