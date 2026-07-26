@@ -113,6 +113,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [templates, setTemplates] = useState<Template[]>(() => readTemplateCache());
   const [selectedWs, setSelectedWs] = useState<string | null>(DEFAULT_WORKSPACE_ID);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [brandCounts, setBrandCounts] = useState<Map<string, number>>(new Map());
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
@@ -306,18 +307,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setLoading(false);
   }, [setLoading, addToast]);
 
-  // Fetch cover metadata after template load (prefer cover_image_url over thumbnail)
+  // Fetch cover metadata AND brand template counts after template load (prefer cover_image_url over thumbnail)
   const loadMetaCovers = useCallback(async (wsId?: string) => {
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
-      const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null }> } }>(`/graph?${params.toString()}`);
+      const res = await apiFetch<{ success: boolean; data: { nodes: Array<{ id: string; cover: string | null; brand_id: string | null; brand: string }> } }>(`/graph?${params.toString()}`);
       if (res.success) {
-        const map = new Map<string, string>();
+        const coverMap = new Map<string, string>();
+        const counts = new Map<string, number>();
         for (const n of res.data.nodes) {
-          if (n.cover) map.set(n.id, n.cover);
+          if (n.cover) coverMap.set(n.id, n.cover);
+          if (n.brand_id) counts.set(n.brand_id, (counts.get(n.brand_id) || 0) + 1);
         }
-        setMetaCovers(map);
+        setMetaCovers(coverMap);
+        setBrandCounts(counts);
       }
     } catch { /* covers are optional; fail silently */ }
   }, []);
@@ -1043,10 +1047,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         {brands.length > 0 && (
           <div style={{
             display: "flex", alignItems: "center", gap: 8, marginBottom: 20,
-            flexWrap: "wrap", padding: "0 0 4px 0",
+            flexWrap: "wrap", padding: "0 0 8px 0",
           }}>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: 4 }}>
-              Marcas:
+            <span style={{
+              fontSize: 11, color: "rgba(255,255,255,0.3)", textTransform: "uppercase",
+              letterSpacing: "0.05em", marginRight: 4, whiteSpace: "nowrap",
+            }}>
+              Marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} con diseños):
             </span>
             <button
               type="button"
@@ -1062,27 +1069,48 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             >
               Todas
             </button>
-            {brands.map(b => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => handleBrandChange(b.id)}
-                className="liquid-glass"
-                style={{
-                  borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
-                  cursor: "pointer", border: "none",
-                  background: selectedBrand === b.id ? "rgba(108,92,231,0.25)" : "rgba(255,255,255,0.03)",
-                  color: selectedBrand === b.id ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                <span style={{
-                  display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                  background: brandAccent(b.id), marginRight: 5, verticalAlign: "middle",
-                }} />
-                {b.name}
-              </button>
-            ))}
+            {brands.map(b => {
+              const count = brandCounts.get(b.id) || 0;
+              const hasDesigns = count > 0;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => { if (hasDesigns) handleBrandChange(b.id); }}
+                  className="liquid-glass"
+                  title={hasDesigns ? `${count} template${count > 1 ? "s" : ""}` : "Sin diseños aún"}
+                  style={{
+                    borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
+                    cursor: hasDesigns ? "pointer" : "default",
+                    border: "none",
+                    background: selectedBrand === b.id
+                      ? "rgba(108,92,231,0.25)"
+                      : hasDesigns ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.015)",
+                    color: selectedBrand === b.id
+                      ? "rgba(255,255,255,0.95)"
+                      : hasDesigns ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.25)",
+                    opacity: hasDesigns ? 1 : 0.5,
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <span style={{
+                    display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                    background: brandAccent(b.id), marginRight: 4, verticalAlign: "middle",
+                    opacity: hasDesigns ? 1 : 0.4,
+                  }} />
+                  {b.name}
+                  {hasDesigns && (
+                    <span style={{
+                      marginLeft: 4, fontSize: 10, fontWeight: 600,
+                      color: "rgba(255,255,255,0.35)", background: "rgba(255,255,255,0.05)",
+                      borderRadius: 100, padding: "1px 7px",
+                    }}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
         {loading ? (
