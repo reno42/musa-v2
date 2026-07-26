@@ -534,7 +534,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const visibleDesignCount = hierarchy.reduce((sum, brand) => sum + brand.totalDesigns, 0);
 
   return (
-    <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
+    <div ref={wrapRef} style={{ height: "100%", position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
       {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
       {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
       {!loading && !error && hierarchy.length === 0 && (
