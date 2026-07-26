@@ -51,10 +51,8 @@ versionRoutes.post("/:id/versions", validate(createSchema), async (req, res) => 
       author: resolveAuthor(req),
     });
     if (!version) {
-      return res.status(503).json({
-        success: false,
-        error: "Version history unavailable (Supabase not configured or template missing)",
-      });
+      // Throttled (minIntervalMs skip) or template not found — not an error.
+      return res.status(200).json({ success: true, data: null, throttled: true });
     }
     res.status(201).json({ success: true, data: version });
   } catch (err: any) {

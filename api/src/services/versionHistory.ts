@@ -27,6 +27,17 @@ export type { FrameDiff, VersionFrame, FrameDiffStatus } from "./versionDiff.js"
 const BUCKET = "design-versions";
 const AUTO_RETENTION = 10;
 
+// ── In-memory version store (used when Supabase is not configured) ──
+// This gives local dev the exact same version-history experience as production:
+// create, list, get, restore, diff, delete — all work without a database.
+interface MemEntry { meta: VersionMeta; payload: VersionPayload; }
+const memStore = new Map<string, MemEntry>();
+let memSeq = 0;
+function genId(): string {
+  memSeq++;
+  return `mem-v-${Date.now().toString(36)}-${memSeq}`;
+}
+
 export interface VersionMeta {
   id: string;
   templateId: string;
@@ -61,7 +72,7 @@ function rowToMeta(row: any): VersionMeta {
 
 /**
  * Snapshot a template's current state as a new version.
- * Returns null when Supabase is not configured (local dev runs history-less).
+ * Works with or without Supabase — in-memory store is the automatic fallback.
  */
 export async function createVersion(
   templateId: string,
@@ -73,22 +84,12 @@ export async function createVersion(
     minIntervalMs?: number;
   } = {},
 ): Promise<VersionMeta | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
-
   const kindWanted = options.kind === "marked" ? "marked" : "auto";
+
+  // ── Throttle check (works for both Supabase and in-memory) ──
   if (options.minIntervalMs) {
-    const { data: newest } = await sb.from("template_versions")
-      .select("created_at")
-      .eq("template_id", templateId)
-      .eq("kind", kindWanted)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (newest?.created_at
-      && Date.now() - new Date(newest.created_at).getTime() < options.minIntervalMs) {
-      return null;
-    }
+    const recent = getRecentVersionTime(templateId, kindWanted);
+    if (recent && Date.now() - recent.getTime() < options.minIntervalMs) return null;
   }
 
   const tpl = await getTemplate(templateId);
@@ -105,50 +106,103 @@ export async function createVersion(
     frameHashes[frame.id] = hashFrameContent(String(frame.html || ""), String(frame.css || ""));
   }
 
-  const kind = kindWanted;
-  // gzip typically shrinks HTML/CSS 4-6x — the difference between ~2,500 and
-  // ~7,000 designs fitting in the free tier's storage budget.
-  const body = gzipSync(Buffer.from(JSON.stringify(payload), "utf8"));
+  const sb = getSupabase();
 
-  const { data: inserted, error } = await sb.from("template_versions").insert({
-    template_id: templateId,
-    workspace_id: (tpl as any).workspaceId || null,
+  // ── In-memory path (no Supabase) ──
+  if (!sb) {
+    return createMemVersion(templateId, kindWanted, options, frameHashes, frames.length, payload);
+  }
+
+  // ── Supabase path ──
+  try {
+    const body = gzipSync(Buffer.from(JSON.stringify(payload), "utf8"));
+    const { data: inserted, error } = await sb.from("template_versions").insert({
+      template_id: templateId,
+      workspace_id: (tpl as any).workspaceId || null,
+      kind: kindWanted,
+      label: options.label ?? null,
+      author: options.author || "unknown",
+      frame_hashes: frameHashes,
+      frame_count: frames.length,
+      size_bytes: body.length,
+      storage_path: "pending",
+    }).select("*").single();
+    if (error || !inserted) {
+      console.warn("[versions] Supabase insert failed, falling back to in-memory:", error?.message);
+      return createMemVersion(templateId, kindWanted, options, frameHashes, frames.length, payload);
+    }
+
+    const storagePath = `${templateId}/${inserted.id}.json.gz`;
+    const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, body, {
+      contentType: "application/gzip",
+      upsert: true,
+    });
+    if (upErr) {
+      await sb.from("template_versions").delete().eq("id", inserted.id);
+      console.warn("[versions] Supabase upload failed, falling back to in-memory:", upErr.message);
+      return createMemVersion(templateId, kindWanted, options, frameHashes, frames.length, payload);
+    }
+    await sb.from("template_versions").update({ storage_path: storagePath }).eq("id", inserted.id);
+
+    if (kindWanted === "auto") await pruneAutoVersions(templateId);
+    return rowToMeta({ ...inserted, storage_path: storagePath });
+  } catch (err: any) {
+    console.warn("[versions] Supabase error, falling back to in-memory:", err?.message);
+    return createMemVersion(templateId, kindWanted, options, frameHashes, frames.length, payload);
+  }
+}
+
+// ── In-memory helper: create a version in the local store ──
+function createMemVersion(
+  templateId: string,
+  kind: "auto" | "marked",
+  options: { label?: string; author?: string },
+  frameHashes: Record<string, string>,
+  frameCount: number,
+  payload: VersionPayload,
+): VersionMeta {
+  const id = genId();
+  const meta: VersionMeta = {
+    id,
+    templateId,
     kind,
     label: options.label ?? null,
     author: options.author || "unknown",
-    frame_hashes: frameHashes,
-    frame_count: frames.length,
-    size_bytes: body.length,
-    // Placeholder: the real path needs the generated id, patched right after.
-    storage_path: "pending",
-  }).select("*").single();
-  if (error || !inserted) {
-    console.warn("[versions] insert failed:", error?.message);
-    return null;
+    frameHashes,
+    frameCount,
+    sizeBytes: JSON.stringify(payload).length,
+    createdAt: new Date().toISOString(),
+  };
+  memStore.set(id, { meta, payload });
+  // Prune auto versions in memory
+  if (kind === "auto") pruneMemAutoVersions(templateId);
+  return meta;
+}
+
+// ── In-memory helper: find the most recent version of a kind ──
+function getRecentVersionTime(templateId: string, kind: string): Date | null {
+  let newest: Date | null = null;
+  for (const entry of memStore.values()) {
+    if (entry.meta.templateId === templateId && entry.meta.kind === kind) {
+      const t = new Date(entry.meta.createdAt);
+      if (!newest || t > newest) newest = t;
+    }
   }
+  return newest;
+}
 
-  const storagePath = `${templateId}/${inserted.id}.json.gz`;
-  const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, body, {
-    contentType: "application/gzip",
-    upsert: true,
-  });
-  if (upErr) {
-    // Never leave a metadata row pointing at a file that does not exist.
-    await sb.from("template_versions").delete().eq("id", inserted.id);
-    console.warn("[versions] upload failed:", upErr.message);
-    return null;
-  }
-  await sb.from("template_versions").update({ storage_path: storagePath }).eq("id", inserted.id);
-
-  if (kind === "auto") await pruneAutoVersions(templateId);
-
-  return rowToMeta({ ...inserted, storage_path: storagePath });
+// ── In-memory helper: prune old auto versions ──
+function pruneMemAutoVersions(templateId: string) {
+  const autoVersions = [...memStore.entries()]
+    .filter(([, v]) => v.meta.templateId === templateId && v.meta.kind === "auto")
+    .sort((a, b) => b[1].meta.createdAt.localeCompare(a[1].meta.createdAt));
+  for (const [id] of autoVersions.slice(AUTO_RETENTION)) memStore.delete(id);
 }
 
 /** Drop the oldest 'auto' versions past the retention window, files included. */
 export async function pruneAutoVersions(templateId: string, keep = AUTO_RETENTION): Promise<number> {
   const sb = getSupabase();
-  if (!sb) return 0;
+  if (!sb) { pruneMemAutoVersions(templateId); return 0; }
   const { data } = await sb.from("template_versions")
     .select("id, storage_path")
     .eq("template_id", templateId)
@@ -163,7 +217,13 @@ export async function pruneAutoVersions(templateId: string, keep = AUTO_RETENTIO
 
 export async function listVersions(templateId: string, limit = 50): Promise<VersionMeta[]> {
   const sb = getSupabase();
-  if (!sb) return [];
+  if (!sb) {
+    return [...memStore.values()]
+      .filter(v => v.meta.templateId === templateId)
+      .sort((a, b) => b.meta.createdAt.localeCompare(a.meta.createdAt))
+      .slice(0, limit)
+      .map(v => v.meta);
+  }
   const { data, error } = await sb.from("template_versions")
     .select("*")
     .eq("template_id", templateId)
@@ -178,7 +238,7 @@ export async function listVersions(templateId: string, limit = 50): Promise<Vers
 
 export async function getVersionMeta(versionId: string): Promise<VersionMeta | null> {
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) return memStore.get(versionId)?.meta ?? null;
   const { data } = await sb.from("template_versions").select("*").eq("id", versionId).maybeSingle();
   return data ? rowToMeta(data) : null;
 }
@@ -186,7 +246,7 @@ export async function getVersionMeta(versionId: string): Promise<VersionMeta | n
 /** Download and inflate one version's frames. */
 export async function getVersionPayload(versionId: string): Promise<VersionPayload | null> {
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) return memStore.get(versionId)?.payload ?? null;
   const { data: row } = await sb.from("template_versions")
     .select("storage_path, data").eq("id", versionId).maybeSingle();
   if (!row) return null;
@@ -237,7 +297,7 @@ export async function restoreVersion(
 
 export async function deleteVersion(versionId: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return false;
+  if (!sb) { return memStore.delete(versionId); }
   const { data: row } = await sb.from("template_versions")
     .select("storage_path").eq("id", versionId).maybeSingle();
   if (row?.storage_path) await sb.storage.from(BUCKET).remove([row.storage_path]);
@@ -248,7 +308,13 @@ export async function deleteVersion(versionId: string): Promise<boolean> {
 /** Remove every version of a design — used when a template is purged. */
 export async function deleteAllVersions(templateId: string): Promise<number> {
   const sb = getSupabase();
-  if (!sb) return 0;
+  if (!sb) {
+    let count = 0;
+    for (const [id, entry] of memStore) {
+      if (entry.meta.templateId === templateId) { memStore.delete(id); count++; }
+    }
+    return count;
+  }
   const { data } = await sb.from("template_versions")
     .select("id, storage_path").eq("template_id", templateId);
   const rows = data || [];

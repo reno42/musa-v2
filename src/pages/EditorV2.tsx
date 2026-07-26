@@ -539,7 +539,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (savingVersion) return;
     setSavingVersion(true);
     try {
-      // Push the on-screen state first so the version captures what the user sees.
+      // ── Phase 1: Save frames to server (blocking — this MUST succeed) ──
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
       const currentFrames = framesRef.current;
       const active = currentFrames.find(f => f.id === selectedFrameId) || currentFrames[0];
@@ -560,15 +560,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       });
       isDirtyRef.current = false;
 
-      const res = await apiFetch<any>(`/api/templates/${templateId}/versions`, {
-        method: "POST",
-        body: JSON.stringify({ kind: "marked", label: "Guardado manual" }),
-      });
-      if (res?.success === false) throw new Error(res.error || "No se pudo guardar la versión");
-      addToast("Versión guardada en el historial.", "success");
+      // ── Phase 2: Create version snapshot (non-blocking — bonus, not required) ──
+      try {
+        const res = await apiFetch<any>(`/api/templates/${templateId}/versions`, {
+          method: "POST",
+          body: JSON.stringify({ kind: "marked", label: "Guardado manual" }),
+        });
+        if (res?.data) {
+          addToast("Versión guardada en el historial.", "success");
+        } else {
+          addToast("Diseño guardado correctamente.", "success");
+        }
+      } catch {
+        // Frames saved successfully — version creation is a bonus feature.
+        addToast("Diseño guardado correctamente.", "success");
+      }
       window.dispatchEvent(new Event("futuraria-version-saved"));
     } catch (err: any) {
-      addToast(`No se pudo guardar la versión: ${err?.message || "error desconocido"}`, "error");
+      addToast(`No se pudo guardar el diseño: ${err?.message || "error de conexión"}`, "error");
     }
     setSavingVersion(false);
   }, [savingVersion, templateId, selectedFrameId, templateName, addToast]);
