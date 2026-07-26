@@ -27,6 +27,11 @@ export type { FrameDiff, VersionFrame, FrameDiffStatus } from "./versionDiff.js"
 const BUCKET = "design-versions";
 const AUTO_RETENTION = 10;
 
+// ── In-memory fallback for local dev without Supabase ──
+const memVersions = new Map<string, { meta: VersionMeta; payload: VersionPayload }>();
+let memVersionSeq = 0;
+function memVersionId(): string { memVersionSeq++; return `local-${Date.now().toString(36)}-${memVersionSeq}`; }
+
 export interface VersionMeta {
   id: string;
   templateId: string;
@@ -74,22 +79,8 @@ export async function createVersion(
   } = {},
 ): Promise<VersionMeta | null> {
   const sb = getSupabase();
-  if (!sb) return null;
 
   const kindWanted = options.kind === "marked" ? "marked" : "auto";
-  if (options.minIntervalMs) {
-    const { data: newest } = await sb.from("template_versions")
-      .select("created_at")
-      .eq("template_id", templateId)
-      .eq("kind", kindWanted)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (newest?.created_at
-      && Date.now() - new Date(newest.created_at).getTime() < options.minIntervalMs) {
-      return null;
-    }
-  }
 
   const tpl = await getTemplate(templateId);
   if (!tpl) return null;
@@ -103,6 +94,46 @@ export async function createVersion(
   const frameHashes: Record<string, string> = {};
   for (const frame of frames) {
     frameHashes[frame.id] = hashFrameContent(String(frame.html || ""), String(frame.css || ""));
+  }
+
+  // ── In-memory fallback when Supabase isn't configured ──
+  if (!sb) {
+    const kind = kindWanted;
+    const id = memVersionId();
+    const meta: VersionMeta = {
+      id,
+      templateId,
+      kind,
+      label: options.label ?? null,
+      author: options.author || "unknown",
+      frameHashes,
+      frameCount: frames.length,
+      sizeBytes: JSON.stringify(payload).length,
+      createdAt: new Date().toISOString(),
+    };
+    memVersions.set(id, { meta, payload });
+    // Prune auto versions in memory
+    if (kind === "auto") {
+      const autoVersions = [...memVersions.entries()]
+        .filter(([, v]) => v.meta.templateId === templateId && v.meta.kind === "auto")
+        .sort((a, b) => b[1].meta.createdAt.localeCompare(a[1].meta.createdAt));
+      for (const [vid] of autoVersions.slice(AUTO_RETENTION)) memVersions.delete(vid);
+    }
+    return meta;
+  }
+
+  if (options.minIntervalMs) {
+    const { data: newest } = await sb.from("template_versions")
+      .select("created_at")
+      .eq("template_id", templateId)
+      .eq("kind", kindWanted)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (newest?.created_at
+      && Date.now() - new Date(newest.created_at).getTime() < options.minIntervalMs) {
+      return null;
+    }
   }
 
   const kind = kindWanted;
@@ -163,7 +194,13 @@ export async function pruneAutoVersions(templateId: string, keep = AUTO_RETENTIO
 
 export async function listVersions(templateId: string, limit = 50): Promise<VersionMeta[]> {
   const sb = getSupabase();
-  if (!sb) return [];
+  if (!sb) {
+    return [...memVersions.values()]
+      .filter(v => v.meta.templateId === templateId)
+      .sort((a, b) => b.meta.createdAt.localeCompare(a.meta.createdAt))
+      .slice(0, limit)
+      .map(v => v.meta);
+  }
   const { data, error } = await sb.from("template_versions")
     .select("*")
     .eq("template_id", templateId)
@@ -178,7 +215,7 @@ export async function listVersions(templateId: string, limit = 50): Promise<Vers
 
 export async function getVersionMeta(versionId: string): Promise<VersionMeta | null> {
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) return memVersions.get(versionId)?.meta ?? null;
   const { data } = await sb.from("template_versions").select("*").eq("id", versionId).maybeSingle();
   return data ? rowToMeta(data) : null;
 }
@@ -186,7 +223,7 @@ export async function getVersionMeta(versionId: string): Promise<VersionMeta | n
 /** Download and inflate one version's frames. */
 export async function getVersionPayload(versionId: string): Promise<VersionPayload | null> {
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) return memVersions.get(versionId)?.payload ?? null;
   const { data: row } = await sb.from("template_versions")
     .select("storage_path, data").eq("id", versionId).maybeSingle();
   if (!row) return null;
@@ -237,7 +274,7 @@ export async function restoreVersion(
 
 export async function deleteVersion(versionId: string): Promise<boolean> {
   const sb = getSupabase();
-  if (!sb) return false;
+  if (!sb) { memVersions.delete(versionId); return true; }
   const { data: row } = await sb.from("template_versions")
     .select("storage_path").eq("id", versionId).maybeSingle();
   if (row?.storage_path) await sb.storage.from(BUCKET).remove([row.storage_path]);
