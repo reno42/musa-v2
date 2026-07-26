@@ -53,10 +53,10 @@ interface SimNode {
 }
 
 // ── Simulation tuning ──
-const REPULSION = 2500;
-const SPRING = 0.07;
-const SPRING_REST = 40;
-const GRAVITY = 0.2;
+const REPULSION = 1200;
+const SPRING = 0.08;
+const SPRING_REST = 28;
+const GRAVITY = 0.45;
 const DAMPING = 0.88;
 const ALPHA_DECAY = 0.03;
 const ALPHA_FLOOR = 0.02;
