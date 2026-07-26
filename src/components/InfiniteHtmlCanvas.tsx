@@ -1,5 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
+import { CanvasGuides, type Guide, type ColumnConfig, type SmartGuide } from "./CanvasGuides";
+import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type ElementBounds } from "../lib/smartGuides";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -77,6 +79,14 @@ interface InfiniteHtmlCanvasProps {
   // Sprint 3.5: auto-edit newly created text layers
   autoEditLayerId?: string | null;
   onAutoEditHandled?: () => void;
+  // ── Canvas Guides (rulers, guides, grid, columns, smart guides) ──
+  guides?: Guide[];
+  onGuidesChange?: (guides: Guide[]) => void;
+  showGrid?: boolean;
+  gridSize?: number;
+  showRulers?: boolean;
+  columnConfig?: ColumnConfig | null;
+  smartGuides?: SmartGuide[];
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -94,6 +104,7 @@ export function InfiniteHtmlCanvas({
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
+  guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -102,7 +113,7 @@ export function InfiniteHtmlCanvas({
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const [isDraggingFrame, setIsDraggingFrame] = useState(false);
-  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; duplicate: boolean; moved: boolean; ghostEl?: HTMLElement | null } | null>(null);
+  const dragFrameRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; duplicate: boolean; moved: boolean; ghostEl?: HTMLElement | null; snapDx: number; snapDy: number } | null>(null);
 
   // Multi-frame drag state (Phase 4)
   const multiDragRef = useRef<{ startX: number; startY: number; frames: { id: string; origX: number; origY: number }[]; duplicate: boolean; moved: boolean; ghostEls?: HTMLElement[] } | null>(null);
@@ -131,6 +142,9 @@ export function InfiniteHtmlCanvas({
   // Label rename state (Phase 1)
   const [renamingFrameId, setRenamingFrameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Smart guides during drag
+  const [liveSmartGuides, setLiveSmartGuides] = useState<SmartGuide[]>([]);
 
   // Auto-center all frames on first mount
   useEffect(() => {
@@ -184,6 +198,8 @@ export function InfiniteHtmlCanvas({
         origY: f.y,
         duplicate: e.altKey,
         moved: false,
+        snapDx: 0,
+        snapDy: 0,
       };
     }
     setIsDraggingFrame(true);
@@ -260,8 +276,66 @@ export function InfiniteHtmlCanvas({
       }
       const dx = dxPx / zoom;
       const dy = dyPx / zoom;
+
+      // ── Snap to guides + other frames' edges ──
+      const dragFrame = frames.find(fr => fr.id === df.id);
+      let snapDx = dx, snapDy = dy;
+      if (dragFrame) {
+        const liveX = df.origX + dx;
+        const liveY = df.origY + dy;
+        // Collect snap positions from user guides + other frame edges
+        const xGuidePositions: number[] = [
+          ...guides.filter(g => g.orientation === "v").map(g => g.position),
+          ...frames.filter(fr => fr.id !== df.id).flatMap(fr => [fr.x, fr.x + fr.width, fr.x + fr.width / 2]),
+        ];
+        const yGuidePositions: number[] = [
+          ...guides.filter(g => g.orientation === "h").map(g => g.position),
+          ...frames.filter(fr => fr.id !== df.id).flatMap(fr => [fr.y, fr.y + fr.height, fr.y + fr.height / 2]),
+        ];
+        // Snap left edge, center, right edge
+        const snappedLeft = snapToGuides(liveX, xGuidePositions);
+        const snappedCenter = snapToGuides(liveX + dragFrame.width / 2, xGuidePositions);
+        const snappedRight = snapToGuides(liveX + dragFrame.width, xGuidePositions);
+        const snappedTop = snapToGuides(liveY, yGuidePositions);
+        const snappedCenterY = snapToGuides(liveY + dragFrame.height / 2, yGuidePositions);
+        const snappedBottom = snapToGuides(liveY + dragFrame.height, yGuidePositions);
+        // Pick the best snap (whichever actually snapped)
+        const snapCandidates = [
+          { dx: snappedLeft - liveX, priority: 0 },
+          { dx: snappedCenter - (liveX + dragFrame.width / 2), priority: 0 },
+          { dx: snappedRight - (liveX + dragFrame.width), priority: 0 },
+        ].filter(s => Math.abs(s.dx) > 0.1);
+        if (snapCandidates.length > 0) {
+          snapDx = dx + snapCandidates.sort((a, b) => Math.abs(a.dx) - Math.abs(b.dx))[0].dx;
+        }
+        const snapCandidatesY = [
+          { dy: snappedTop - liveY },
+          { dy: snappedCenterY - (liveY + dragFrame.height / 2) },
+          { dy: snappedBottom - (liveY + dragFrame.height) },
+        ].filter(s => Math.abs(s.dy) > 0.1);
+        if (snapCandidatesY.length > 0) {
+          snapDy = dy + snapCandidatesY.sort((a, b) => Math.abs(a.dy) - Math.abs(b.dy))[0].dy;
+        }
+      }
+
       const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement;
-      if (frameEl) frameEl.style.transform = `translate(${dx}px, ${dy}px)`;
+      if (frameEl) frameEl.style.transform = `translate(${snapDx}px, ${snapDy}px)`;
+      // Persist snap for mouseup commit
+      df.snapDx = snapDx;
+      df.snapDy = snapDy;
+
+      // ── Compute smart guides (alignment + spacing) ──
+      const liveX = df.origX + snapDx;
+      const liveY = df.origY + snapDy;
+      if (dragFrame) {
+        const dragBounds: ElementBounds = { x: liveX, y: liveY, width: dragFrame.width, height: dragFrame.height };
+        const others: ElementBounds[] = frames
+          .filter(fr => fr.id !== df.id)
+          .map(fr => ({ x: fr.x, y: fr.y, width: fr.width, height: fr.height }));
+        const alignGuides = computeAlignmentGuides(dragBounds, others);
+        const spacingGuides = computeSpacingGuides(dragBounds, others);
+        setLiveSmartGuides([...alignGuides, ...spacingGuides]);
+      }
       return;
     }
     // Multi-frame dragging (Phase 4)
@@ -330,7 +404,7 @@ export function InfiniteHtmlCanvas({
         h: Math.abs(pt.y - start.y),
       });
     }
-  }, [zoom, screenToCanvas, frames, onSelectFrame]);
+  }, [zoom, screenToCanvas, frames, onSelectFrame, guides]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     isPanning.current = false;
@@ -338,16 +412,18 @@ export function InfiniteHtmlCanvas({
     // Single frame drag commit
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
-      const dx = (e.clientX - df.startX) / zoom;
-      const dy = (e.clientY - df.startY) / zoom;
       const frameEl = document.querySelector(`[data-frame-id="${df.id}"]`) as HTMLElement | null;
       if (frameEl) frameEl.style.transform = "";
       if (df.moved) {
-        if (df.duplicate) onDuplicateFrames?.([{ sourceId: df.id, x: df.origX + dx, y: df.origY + dy }]);
-        else onFrameMove?.(df.id, Math.round(df.origX + dx), Math.round(df.origY + dy));
+        // Use snapped offsets if available (snap-to-guide), else raw
+        const finalDx = df.snapDx;
+        const finalDy = df.snapDy;
+        if (df.duplicate) onDuplicateFrames?.([{ sourceId: df.id, x: Math.round(df.origX + finalDx), y: Math.round(df.origY + finalDy) }]);
+        else onFrameMove?.(df.id, Math.round(df.origX + finalDx), Math.round(df.origY + finalDy));
       }
       dragFrameRef.current = null;
       setIsDraggingFrame(false);
+      setLiveSmartGuides([]);
     }
     // Multi-frame drag commit (Phase 4)
     if (multiDragRef.current) {
@@ -792,6 +868,24 @@ export function InfiniteHtmlCanvas({
           }} />
         )}
       </div>
+
+      {/* ═══ Canvas Guides: rulers, guides, grid, smart guides ═══ */}
+      <CanvasGuides
+        pan={pan}
+        zoom={zoom}
+        guides={guides}
+        onGuidesChange={onGuidesChange || (() => {})}
+        showGrid={showGrid}
+        gridSize={gridSize}
+        showRulers={showRulers}
+        columnConfig={columnConfig}
+        columnFrameBounds={(() => {
+          if (!columnConfig || selectedFrameIds.size !== 1) return null;
+          const sf = frames.find(fr => selectedFrameIds.has(fr.id));
+          return sf ? { x: sf.x, y: sf.y, width: sf.width, height: sf.height } : null;
+        })()}
+        smartGuides={[...smartGuides, ...liveSmartGuides]}
+      />
 
       {/* Zoom + selection badge */}
       <div style={{

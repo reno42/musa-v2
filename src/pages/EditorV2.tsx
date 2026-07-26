@@ -13,6 +13,7 @@ import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
+import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
@@ -22,7 +23,7 @@ import { ImageUploadModal } from "../components/ImageUploadModal";
 import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
-import { PasteHtmlModal } from "../components/PasteHtmlModal";
+import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
 import { ImageToDesignModal } from "../components/ImageToDesignModal";
 import { IconPicker } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
@@ -2090,6 +2091,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // Reorder: Ctrl+] forward, Ctrl+[ backward (Shift = front/back)
       if (mod && e.key === "]") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "top" : "up"); return; }
       if (mod && e.key === "[") { e.preventDefault(); if (selectedElement) handleReorder(e.shiftKey ? "bottom" : "down"); return; }
+      // Canvas guides: Ctrl+R = toggle rulers, Ctrl+' = toggle pixel grid, Ctrl+; = toggle column panel
+      if (mod && e.key.toLowerCase() === "r" && !e.altKey && !e.shiftKey) { e.preventDefault(); setShowRulers(v => !v); return; }
+      if (mod && e.key === "'") { e.preventDefault(); setShowGrid(v => !v); return; }
+      if (mod && e.key === ";") { e.preventDefault(); setShowColumnPanel(v => !v); return; }
       if (!mod) {
         switch (e.key.toLowerCase()) {
           case "v": setActiveTool("select"); break;
@@ -2530,6 +2535,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showImageUpload, setShowImageUpload] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
+
+  // ── Canvas Guides state ──
+  const [guides, setGuides] = useState<Guide[]>([]);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showRulers, setShowRulers] = useState(true);
+  const [gridSize] = useState(8);
+  const [showColumnPanel, setShowColumnPanel] = useState(false);
+  const [columnConfig, setColumnConfig] = useState<ColumnConfig | null>(null);
   const [showImageToDesign, setShowImageToDesign] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
@@ -3667,7 +3680,134 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <IconGrid size={14} />
           <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
         </button>
+
+        {/* ═══ Canvas Guides toggles ═══ */}
+        <div className="editor-v2-topbar-sep" />
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
+          onClick={() => setShowRulers(v => !v)}
+          title="Toggle Rulers (Ctrl+R)"
+        >
+          <i className="ph ph-ruler" style={{ fontSize: 14 }}></i>
+        </button>
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${showGrid ? "active" : ""}`}
+          onClick={() => setShowGrid(v => !v)}
+          title="Toggle Pixel Grid (Ctrl+')"
+        >
+          <i className="ph ph-grid-nine" style={{ fontSize: 14 }}></i>
+        </button>
+        <button
+          type="button"
+          className={`editor-v2-topbar-icon-btn ${showColumnPanel ? "active" : ""}`}
+          onClick={() => setShowColumnPanel(v => !v)}
+          title="Column Guides — configure layout columns"
+        >
+          <i className="ph ph-rows" style={{ fontSize: 14 }}></i>
+          <span style={{ fontSize: 9, marginLeft: 1 }}>C</span>
+        </button>
+        {guides.length > 0 && (
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setGuides([])}
+            title="Clear all guides"
+          >
+            <i className="ph ph-eraser" style={{ fontSize: 14 }}></i>
+          </button>
+        )}
       </div>
+
+      {/* ═══ Column Config Panel ═══ */}
+      {showColumnPanel && (
+        <div style={{
+          position: "absolute", top: 56, right: 16, zIndex: 6000,
+          background: "rgba(28,28,30,0.97)", backdropFilter: "blur(16px)",
+          border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+          padding: "16px 18px", width: 240, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+          fontFamily: "Inter, system-ui, sans-serif",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>Column Guides</span>
+            <button
+              type="button"
+              onClick={() => setShowColumnPanel(false)}
+              style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: 2 }}
+            >
+              <i className="ph ph-x" style={{ fontSize: 14 }}></i>
+            </button>
+          </div>
+
+          {/* Enable/disable */}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={columnConfig !== null}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setColumnConfig({ count: 6, gutter: 24, margin: 48 });
+                } else {
+                  setColumnConfig(null);
+                }
+              }}
+              style={{ accentColor: "#3B82F6" }}
+            />
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Enable columns on selected frame</span>
+          </label>
+
+          {columnConfig && (
+            <>
+              {/* Count */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Columns</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="range" min={1} max={24} step={1}
+                    value={columnConfig.count}
+                    onChange={(e) => setColumnConfig({ ...columnConfig, count: parseInt(e.target.value) })}
+                    style={{ flex: 1, accentColor: "#3B82F6" }}
+                  />
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.count}</span>
+                </div>
+              </div>
+
+              {/* Gutter */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Gutter (px)</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="range" min={0} max={100} step={1}
+                    value={columnConfig.gutter}
+                    onChange={(e) => setColumnConfig({ ...columnConfig, gutter: parseInt(e.target.value) })}
+                    style={{ flex: 1, accentColor: "#3B82F6" }}
+                  />
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.gutter}</span>
+                </div>
+              </div>
+
+              {/* Margin */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Margin (px)</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="range" min={0} max={200} step={1}
+                    value={columnConfig.margin}
+                    onChange={(e) => setColumnConfig({ ...columnConfig, margin: parseInt(e.target.value) })}
+                    style={{ flex: 1, accentColor: "#3B82F6" }}
+                  />
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", width: 28, textAlign: "right", fontFamily: "monospace" }}>{columnConfig.margin}</span>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
+                {selectedFrameId ? "Showing on selected frame" : "Select a frame to see columns"}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ═══ Hamburger Slide-out Menu (mobile/tablet) ═══ */}
       {mobileMenuOpen && (
@@ -4014,6 +4154,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onAutoEditOrphanHandled={() => setAutoEditOrphanId(null)}
             autoEditLayerId={autoEditLayerId}
             onAutoEditHandled={() => setAutoEditLayerId(null)}
+            guides={guides}
+            onGuidesChange={setGuides}
+            showGrid={showGrid}
+            gridSize={gridSize}
+            showRulers={showRulers}
+            columnConfig={columnConfig}
+            smartGuides={[]}
           />
         </div>
       </div>
@@ -4240,12 +4387,43 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Paste HTML/CSS Modal ═══ */}
       {showPasteHtml && (
         <PasteHtmlModal
-          templateId={templateId}
-          frameId={selectedFrameId}
           onClose={() => setShowPasteHtml(false)}
-          onApplied={() => {
-            addToast("✓ HTML/CSS applied. Reload frame to see changes.", "success");
-            reloadFromServer();
+          onApply={(result: PasteResult) => {
+            const w = result.width || 1080;
+            const h = result.height || 1080;
+            if (selectedFrameId) {
+              // Apply to existing frame
+              const updated = frames.map(f =>
+                f.id === selectedFrameId ? { ...f, html: result.html, css: result.css } : f
+              );
+              store.replaceAllWithUndo(updated, "edit");
+              autoSave(updated);
+              setShowCodePanel(true);
+            } else {
+              // Auto-create a new frame
+              const pos = (() => {
+                if (frames.length === 0) return { x: 100, y: 100 };
+                const last = frames[frames.length - 1];
+                return { x: last.x + last.width + FRAME_GAP, y: last.y };
+              })();
+              const newFrame: FrameData = {
+                id: createFrameId(),
+                name: `Frame ${nextFrameNumber(frames)}`,
+                x: pos.x, y: pos.y,
+                width: w, height: h,
+                html: result.html,
+                css: result.css,
+                background: "#ffffff",
+              };
+              const updated = [...frames, newFrame];
+              store.replaceAllWithUndo(updated, "edit");
+              setSelectedFrameId(newFrame.id);
+              setSelectedFrameIds(new Set([newFrame.id]));
+              autoSave(updated);
+              setShowCodePanel(true);
+            }
+            addToast("✓ HTML/CSS applied", "success");
+            setShowPasteHtml(false);
           }}
         />
       )}

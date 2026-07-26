@@ -537,7 +537,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_workspace",
-    description: "Create a new workspace",
+    description: "DISABLED — Agents must not create their own workspaces. Use list_workspaces to find the user's existing workspace. This tool always returns an error directing agents to use the user's workspace.",
     inputSchema: {
       type: "object",
       properties: {
@@ -574,7 +574,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. For editable designs, create the empty template and then call set_frame_layers: it requires one independent sibling layer per text, image, button, SVG, or shape with explicit coordinates. Raw html/css is accepted only when it satisfies the flat editability contract. Returns template with .id and .frames[0].id.",
+    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead — it auto-parses the document and handles everything in one call. For editable component designs, create the empty template and call set_frame_layers. Returns template with .id and .frames[0].id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -636,7 +636,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_template",
-    description: "Update template metadata or raw HTML/CSS. Prefer set_frame_layers for design generation: it creates flat, independently editable layers with explicit positions. Raw html/frames are rejected when they contain accidental groups, nested objects, missing layer semantics, or missing coordinates. Set allowGroupedLayers=true only for intentional groups/components.",
+    description: "Update template metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead. For editable component designs, use set_frame_layers. Raw html/frames require flat editability contract. Set allowGroupedLayers=true only for intentional groups/components.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1159,7 +1159,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_html",
-    description: "Replace the HTML content of a frame (or template if no frames). Defaults to the first frame. Server-side sanitized with DOMPurify.",
+    description: "Replace the HTML content of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_html only when you need to update HTML independently from CSS. Server-side sanitized with DOMPurify.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1172,7 +1172,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_css",
-    description: "Replace the CSS stylesheet of a frame (or template if no frames). Defaults to the first frame.",
+    description: "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1788,7 +1788,7 @@ const MCP_TOOLS = [
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
-    description: "Create an HTML frame. For AI design production, create it empty and then call set_frame_layers so every visible object is independently editable and explicitly positioned. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
+    description: "Create an HTML frame. For importing designs from Gemini/ChatGPT/Claude (complete HTML+CSS document), use import_design — it's the single-tool entry point that auto-parses documents and handles everything. For editable component designs, create the frame empty and call set_frame_layers. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1807,7 +1807,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_html_frame",
-    description: "Update an HTML frame's metadata or raw HTML/CSS. Prefer set_frame_layers for generated design content. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
+    description: "Update an HTML frame's metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead — it handles both new frames and existing frame updates in one call. For editable component designs, use set_frame_layers. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2731,6 +2731,26 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "import_design",
+    description: "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID (must be engine='html')" },
+        frameId: { type: "string", description: "Optional. Existing frame ID to update. If omitted, a new frame is auto-created." },
+        document: { type: "string", description: "Complete HTML document (with <style> tags, <body> content, font @import links). Auto-parsed: <style> → CSS, <body> → HTML, <link> fonts → @import." },
+        html: { type: "string", description: "HTML body content (use when you have html and css separately). Ignored if 'document' is provided." },
+        css: { type: "string", description: "CSS stylesheet (use when you have html and css separately). Ignored if 'document' is provided." },
+        name: { type: "string", description: "Frame name (only used when creating a new frame). Default: 'Imported Design'." },
+        width: { type: "number", description: "Frame width in px. Auto-detected from CSS body { width } if omitted. Default 1080." },
+        height: { type: "number", description: "Frame height in px. Auto-detected from CSS body { height } if omitted. Default 1080." },
+        background: { type: "string", description: "Background color (default '#ffffff')" },
+        frameStrategy: { type: "string", enum: ["multi", "single-web"], description: "'multi' = one design per frame. 'single-web' = one long frame for a web page." },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
     name: "get_agent_guide",
     description: "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
     inputSchema: {
@@ -3215,26 +3235,10 @@ async function handleMethod(method, params, userId, auth) {
       return { data, total: data.length };
     }
     case "create_workspace": {
-      const ws = store.createWorkspace({ name: params.name, description: params.description, ownerId: userId });
-      const sb = getSupabase();
-      if (sb) {
-        const row = {
-          id: ws.id, name: ws.name,
-          data: ws, updated_at: new Date().toISOString(),
-        };
-        if (UUID_RE.test(userId)) {
-          row.user_id = userId;
-          row.owner_id = userId;
-        }
-        const { error: workspaceError } = await sb.from("workspaces").upsert(row);
-        if (workspaceError) throw workspaceError;
-        if (UUID_RE.test(userId)) {
-          const { error: membershipError } = await sb.from("workspace_members")
-            .upsert({ workspace_id: ws.id, user_id: userId, role: "owner" });
-          if (membershipError) throw membershipError;
-        }
-      }
-      return ws;
+      throw {
+        code: -32602,
+        message: "Agents must NOT create their own workspaces. Use list_workspaces({}) to find the user's existing workspace and use its ID for all operations. If list_workspaces returns 0 workspaces, ask the user to create one from the dashboard first.",
+      };
     }
 
     // ── Templates ──
@@ -7887,11 +7891,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: `${siteUrl}/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md` },
         },
         key_tools_quick_ref: {
+          import_design:      "import_design({ templateId, document }) → THE single tool for importing HTML+CSS from Gemini/ChatGPT/Claude. Auto-parses <style>, <body>, font imports. Accepts 'document' (complete HTML) OR 'html' + 'css' (separate). Auto-creates frame if no frameId.",
           create_template:     "create_template({ name, workspaceId, engine: 'html' }) → templateId + auto-created Frame 1",
           create_html_frame:   "create_html_frame({ templateId, name, width?, height? }) → frameId (auto-placed, never overlaps)",
-          set_frame_layers:    "set_frame_layers({ templateId, frameId, layers, fontImports? }) → structured editable design with per-element layers",
-          set_html:            "set_html({ templateId, frameId?, html }) → raw HTML (creative mode, no editability enforcement)",
-          set_css:             "set_css({ templateId, frameId?, css }) → raw CSS (creative mode)",
+          set_frame_layers:    "set_frame_layers({ templateId, frameId, layers, fontImports? }) → structured editable design with per-element layers — use when building element-by-element",
+          set_html:            "set_html({ templateId, frameId?, html }) → raw HTML update only — prefer import_design for full imports",
+          set_css:             "set_css({ templateId, frameId?, css }) → raw CSS update only — prefer import_design for full imports",
           lint_design:         "lint_design({ templateId, frameId? }) → { score, issues[] } — run this before declaring a design complete",
           get_design_system:   "get_design_system({ templateId }) → design tokens, components, brand info, CSS root block",
         },
@@ -10138,6 +10143,136 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const coverUrl = urlData?.signedUrl || "";
       await sbUp.from("design_file_meta").upsert({ template_id: params.templateId, cover_image_url: coverUrl, updated_at: new Date().toISOString() }, { onConflict: "template_id" });
       return { success: true, cover_image_url: coverUrl, templateId: params.templateId };
+    }
+
+    // ── import_design: single entry point for all HTML+CSS imports ──
+    case "import_design": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") {
+        throw { code: -32602, message: "Template is not an HTML engine template. Use create_template with engine='html' first." };
+      }
+
+      let finalHtml, finalCss;
+      let detectedWidth = null, detectedHeight = null;
+
+      // ── Parse document if provided (complete HTML with <style> tags) ──
+      if (params.document) {
+        const $ = cheerio.load(params.document);
+
+        // Extract CSS: all <style> contents + convert <link> font imports to @import
+        const styleParts = [];
+        $("style").each((_, s) => {
+          const text = $(s).text() || "";
+          if (text.trim()) styleParts.push(text);
+        });
+        $('link[rel="stylesheet"][href]').each((_, link) => {
+          const href = $(link).attr("href") || "";
+          if (href.includes("fonts.googleapis.com")) {
+            styleParts.unshift(`@import url('${href}');`);
+          }
+        });
+        finalCss = styleParts.join("\n");
+
+        // Extract body HTML (strip script tags for safety)
+        $("script").remove();
+        finalHtml = ($("body").html() || $("html").html() || params.document).trim();
+
+        // Detect dimensions from CSS body { width/height }
+        const bodyMatch = finalCss.match(/body\s*\{[^}]*\}/s);
+        if (bodyMatch) {
+          const bodyBlock = bodyMatch[0];
+          const wm = bodyBlock.match(/width\s*:\s*(\d+(?:\.\d+)?)px/);
+          const hm = bodyBlock.match(/height\s*:\s*(\d+(?:\.\d+)?)px/);
+          if (wm) detectedWidth = parseFloat(wm[1]);
+          if (hm) detectedHeight = parseFloat(hm[1]);
+        }
+      } else {
+        // ── Use separate html + css fields ──
+        finalHtml = (params.html || "").trim();
+        finalCss = (params.css || "").trim();
+      }
+
+      if (!finalHtml && !finalCss) {
+        throw { code: -32602, message: "Provide either 'document' (complete HTML) or 'html' + 'css' (separate fields)." };
+      }
+
+      const frameWidth = params.width || detectedWidth || 1080;
+      const frameHeight = params.height || detectedHeight || 1080;
+
+      // ── Update existing frame, or create new one ──
+      if (params.frameId) {
+        const existingFrames = tpl.frames || [];
+        const frame = existingFrames.find(f => f.id === params.frameId);
+        if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+        frame.html = finalHtml;
+        frame.css = finalCss;
+        if (params.width) frame.width = frameWidth;
+        if (params.height) frame.height = frameHeight;
+        if (params.background) frame.background = params.background;
+        validateFrameSizes([frame], "import_design");
+        tpl.metadata = tpl.metadata || {};
+        tpl.metadata.updatedAt = new Date().toISOString();
+        await templates.updateTemplate(params.templateId, { frames: existingFrames });
+        autoSnapshot(params.templateId, "import_design");
+        return {
+          templateId: params.templateId,
+          frameId: frame.id,
+          htmlLength: finalHtml.length,
+          cssLength: finalCss.length,
+          detectedWidth: detectedWidth,
+          detectedHeight: detectedHeight,
+          width: frame.width,
+          height: frame.height,
+          mode: "updated",
+        };
+      } else {
+        // ── Auto-create new frame ──
+        if (!tpl.engine) {
+          await templates.updateTemplate(params.templateId, { engine: "html", frames: tpl.frames || [] });
+          tpl.engine = "html";
+        }
+        const existingFrames = tpl.frames || [];
+        const pos = computeFramePosition(existingFrames, frameWidth, frameHeight);
+        const frame = {
+          id: `frame_${uuid().slice(0, 12)}`,
+          name: params.name || "Imported Design",
+          x: pos.x, y: pos.y,
+          width: frameWidth, height: frameHeight,
+          html: finalHtml,
+          css: finalCss,
+          background: params.background || "#ffffff",
+        };
+        if (!tpl.frames) tpl.frames = [];
+        tpl.frames.push(frame);
+        if (params.frameStrategy) {
+          tpl.metadata = tpl.metadata || {};
+          tpl.metadata.frameStrategy = params.frameStrategy;
+        }
+        tpl.metadata = tpl.metadata || {};
+        tpl.metadata.updatedAt = new Date().toISOString();
+        await templates.updateTemplate(params.templateId, {
+          frames: tpl.frames,
+          html: tpl.html,
+          css: tpl.css,
+        });
+        autoSnapshot(params.templateId, "import_design");
+        const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
+        return {
+          templateId: params.templateId,
+          frameId: frame.id,
+          htmlLength: finalHtml.length,
+          cssLength: finalCss.length,
+          detectedWidth: detectedWidth,
+          detectedHeight: detectedHeight,
+          width: frame.width,
+          height: frame.height,
+          x: frame.x,
+          y: frame.y,
+          frameStrategy: strategy,
+          mode: "created",
+        };
+      }
     }
 
     default:

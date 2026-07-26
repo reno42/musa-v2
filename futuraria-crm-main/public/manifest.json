@@ -1,0 +1,22 @@
+{
+  "name": "Futuraria CRM",
+  "short_name": "Futuraria",
+  "description": "CRM para gestión de leads, pipeline de ventas y automatización de procesos",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#faf9fc",
+  "theme_color": "#2e0069",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

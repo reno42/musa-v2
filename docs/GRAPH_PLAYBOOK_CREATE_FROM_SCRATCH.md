@@ -59,8 +59,13 @@ interface ScratchNode {
 graph TB
     E1["E1: Objective<br/>user prompt + constraints"] --> P1["P1: Plan<br/>which creation path?"]
 
-    P1 -->|has reference| D1["D1: list_workspaces<br/>find workspace"]
-    P1 -->|blank slate| D1
+    P1 -->|"has complete HTML+CSS<br/>(Gemini/ChatGPT/Claude)"| D0["D0: import_design<br/>ONE call, auto-parses document"]
+    P1 -->|"has reference/description"| D1["D1: list_workspaces<br/>find workspace"]
+    P1 -->|"blank slate"| D1
+
+    D0 --> V0{"V0: Frame created?"}
+    V0 -->|"yes"| T1["T1: Terminal<br/>report + URLs"]
+    V0 -->|"no"| D1
 
     D1 --> A2["A2: list_templates<br/>check for brand match"]
     A2 --> V1{"V1: Brand exists?"}
@@ -123,6 +128,7 @@ graph TB
 | A4 | `create_workspace` | `{ name }` | `{ workspaceId }` |
 
 **Branch logic**:
+- If user provides **complete HTML+CSS document** (from Gemini, ChatGPT, Claude, etc.) → `import_design({ templateId, document })` — ONE call, auto-parses, returns frameId. Skip to Terminal.
 - If `brandName` provided AND matching template exists → branch A3 (inherit design system)
 - If `brandName` provided AND no match → branch A4 (create fresh, register brand later)
 - If no `brandName` → branch A4 (blank canvas)
@@ -131,6 +137,7 @@ graph TB
 
 | Node | Tool | Params | Expected Output |
 |------|------|--------|-----------------|
+| D0 | `import_design` | `{ templateId, document: "<complete HTML from Gemini>" }` — OR `{ templateId, html: "...", css: "..." }` | `{ templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight, mode: "created" }` |
 | A5/A6 | `create_html_frame` | `{ templateId, name, width: 1080, height: 1080 }` | `{ frameId, x, y }` |
 | A7 | `set_frame_layers` | `{ templateId, frameId, layers, fontImports? }` | `{ success, layerIds[] }` |
 
@@ -330,6 +337,14 @@ while frame.lintScore < 70:
 ---
 
 ## Agent Quick-Start (Copy-Paste)
+
+### If you have complete HTML+CSS from Gemini/ChatGPT/Claude:
+```json
+{ "method": "tools/call", "params": { "name": "import_design", "arguments": { "templateId": "tpl_...", "document": "<!DOCTYPE html>..." } } }
+```
+→ Single call. Auto-parses <style>, <body>, font imports. Returns frameId. Done.
+
+### If you're building from a description (no existing HTML):
 
 ### Step 1: Discovery
 ```json

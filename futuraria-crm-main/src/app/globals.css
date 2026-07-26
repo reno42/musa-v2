@@ -1,0 +1,356 @@
+/* ========================================
+   Dark Mode
+   ======================================== */
+html.dark {
+  --gray-1: #0D0D0D;
+  --gray-2: #111111;
+  --gray-3: #1A1A1A;
+  --gray-4: #222222;
+  --gray-5: #2A2A2A;
+  --gray-6: #3A3A3A;
+  --gray-7: #4A4A4A;
+  --gray-8: #6A6A6A;
+  --gray-9: #8A8A8A;
+  --gray-10: #9A9A9A;
+  --gray-11: #BABABA;
+  --gray-12: #E8E8E8;
+
+  --bg-page: var(--gray-2);
+  --bg-card: var(--gray-1);
+  --bg-hover: var(--gray-3);
+  --text-primary: var(--gray-12);
+  --text-secondary: var(--gray-11);
+  --text-tertiary: var(--gray-9);
+}
+
+html.dark body {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+
+html.dark .skeleton {
+  background: linear-gradient(90deg, var(--gray-3) 25%, var(--gray-4) 50%, var(--gray-3) 75%);
+  background-size: 200% 100%;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: var(--gray-6);
+}
+
+/* Fix dark mode inputs */
+html.dark input,
+html.dark textarea,
+html.dark select {
+  background-color: var(--gray-2);
+  color: var(--gray-12);
+  border-color: var(--gray-5);
+}
+
+html.dark input:focus,
+html.dark textarea:focus,
+html.dark select:focus {
+  border-color: var(--gray-7);
+}
+
+/* Fix dark mode badges */
+html.dark .bg-gray-12 {
+  background-color: var(--gray-12);
+}
+
+html.dark .text-white {
+  color: var(--gray-1);
+}
+
+/* Avatar in dark mode */
+html.dark .avatar-circle {
+  background-color: var(--gray-4);
+  color: var(--gray-9);
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Twenty-inspired neutral palette */
+  --gray-1: #FFFFFF;
+  --gray-2: #FBFBFB;
+  --gray-3: #F9F9F9;
+  --gray-4: #F4F4F4;
+  --gray-5: #EFEFEF;
+  --gray-6: #D9D9D9;
+  --gray-7: #CCCCCC;
+  --gray-8: #B3B3B3;
+  --gray-9: #999999;
+  --gray-10: #828282;
+  --gray-11: #666666;
+  --gray-12: #333333;
+
+  --border-strong: var(--gray-6);
+  --border-medium: var(--gray-5);
+  --border-light: var(--gray-4);
+
+  --text-primary: var(--gray-12);
+  --text-secondary: var(--gray-11);
+  --text-tertiary: var(--gray-9);
+
+  --accent-blue: #5B5FC7;
+  --accent-purple: #7C5CFC;
+
+  --bg-page: var(--gray-2);
+  --bg-card: var(--gray-1);
+  --bg-hover: var(--gray-3);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gray-6);
+  border-radius: 3px;
+}
+
+/* Skeleton loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--gray-3) 25%, var(--gray-4) 50%, var(--gray-3) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* Subtle fade-in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+/* Stagger children */
+.stagger > * {
+  opacity: 0;
+  animation: fadeIn 0.2s ease-out forwards;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.09s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.15s; }
+.stagger > *:nth-child(6) { animation-delay: 0.18s; }
+.stagger > *:nth-child(7) { animation-delay: 0.21s; }
+.stagger > *:nth-child(8) { animation-delay: 0.24s; }
+
+/* Pipeline horizontal scroll */
+.pipeline-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.pipeline-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* URL chips */
+.url-chip {
+  background: #f1f1f1;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: #555;
+}
+
+/* Status pills */
+.status-pill {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #f5f5f5;
+  color: #555;
+  display: inline-block;
+}
+
+/* Kanban styles */
+.kanban-container {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  overflow-x: auto;
+}
+.kanban-column {
+  min-width: 260px;
+  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kanban-card {
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.15s ease;
+}
+.kanban-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+.k-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.badge-pink {
+  background-color: #fce4ec;
+  color: #d81b60;
+}
+.badge-purple {
+  background-color: #f3e5f5;
+  color: #8e24aa;
+}
+.badge-blue {
+  background-color: #e3f2fd;
+  color: #1e88e5;
+}
+.badge-green {
+  background-color: #e8f5e9;
+  color: #43a047;
+}
+.badge-gold {
+  background-color: #fff8e1;
+  color: #f9a825;
+}
+
+/* Dashboard styles */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+}
+.dash-row {
+  display: flex;
+  gap: 20px;
+  min-height: 280px;
+}
+.dash-kpi-col {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  min-width: 240px;
+}
+.dash-card {
+  background: #fff;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.kpi-title {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+.kpi-value {
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Star rating */
+.star-rating {
+  display: flex;
+  gap: 1px;
+  color: #fbbf24;
+}
+
+/* Avatar circle */
+.avatar-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* Dark mode — Dashboard */
+html.dark .dash-card {
+  background: var(--gray-1);
+  border-color: var(--gray-5);
+}
+html.dark .kpi-title {
+  color: var(--gray-9);
+}
+html.dark .kpi-value {
+  color: var(--gray-12);
+}
+
+/* Dark mode — Kanban */
+html.dark .kanban-card {
+  background: var(--gray-1);
+  border-color: var(--gray-5);
+}
+html.dark .kanban-card:hover {
+  border-color: var(--gray-7);
+}
+html.dark .k-badge {
+  opacity: 0.9;
+}
+
+/* Dark mode — Status pills */
+html.dark .status-pill {
+  background: var(--gray-4);
+  color: var(--gray-11);
+}
+
+/* Dark mode — URL chips */
+html.dark .url-chip {
+  background: var(--gray-4);
+  color: var(--gray-11);
+}
+
+/* Dark mode — Badge overrides */
+html.dark .badge-pink { background-color: #3b1f2e; color: #f472b6; }
+html.dark .badge-purple { background-color: #2d1f3e; color: #c084fc; }
+html.dark .badge-blue { background-color: #1e2a3e; color: #60a5fa; }
+html.dark .badge-green { background-color: #1a2e1a; color: #4ade80; }
+html.dark .badge-gold { background-color: #2e2a1a; color: #fbbf24; }
+
+/* Dark mode — Star rating */
+html.dark .star-rating { opacity: 0.9; }

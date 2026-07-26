@@ -88,17 +88,10 @@ graph TB
     D2 -->|"exact match"| A8
 
     %% ═══════════════ PHASE 2: FRAME CREATION ═══════════════
-    A8 --> A9["action: list_frames<br/>tool: list_frames{templateId}"]
-    A9 --> V2{"validate: existing frames?"}
-    V2 -->|"0 frames"| A10["action: set_html + set_css<br/>directly on frame 1<br/>tool: set_html + set_css{frameId: frame1.id}"]
-    V2 -->|"1+ frames"| A11["action: create_html_frame<br/>tool: create_html_frame{templateId, name, html, css}"]
-    A11 --> A12["action: set_html<br/>tool: set_html{templateId, frameId}"]
-    A12 --> A13["action: set_css<br/>tool: set_css{templateId, frameId}"]
+    A8 --> A9["action: import_design<br/>tool: import_design{templateId, document}"]
 
-    A10 --> V3{"validate: frame has html + css?"}
-    A13 --> V3
-
-    V3 -->|"no"| A14["loop: retry set_html/set_css<br/>max_retries=3"]
+    A9 --> V3{"validate: frame has html + css?"}
+    V3 -->|"no"| A14["loop: retry import_design<br/>max_retries=2"]
     A14 --> V3
 
     V3 -->|"yes"| A15["action: get_template<br/>verify frame position non-overlapping"]
@@ -133,8 +126,8 @@ graph TB
 
     class E1 entry
     class D1,D2,D3 decision
-    class A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11,A12,A13,A14,A15,A16,F1,F2,F3,F4,F5 action
-    class V1,V2,V3,V4 validate
+    class A1,A2,A3,A4,A5,A6,A7,A8,A9,A14,A15,A16,F1,F2,F3,F4,F5 action
+    class V1,V3,V4 validate
     class T1 terminal
     class P3 phase
 ```
@@ -165,13 +158,10 @@ graph TB
 
 | Node | Tool | Params | Expected | On Failure |
 |------|------|--------|----------|------------|
-| `A9` | `list_frames` | `{ templateId }` | `{ frames: [{ id, name, x, y, width, height }], total }` | If 0 → A10 (use frame 1 directly) |
-| `A11` | `create_html_frame` | `{ templateId, name: "<descriptive>", html: "<user HTML>", css: "<user CSS>" }` | `{ id, x, y, width, height, _editability }` | If `width`/`height` mismatch with user content → detect dimensions from CSS and retry with explicit `width`/`height` |
-| `A12` | `set_html` | `{ templateId, frameId: "<from A11>", html: "<user HTML>" }` | `{ success: true, htmlLength }` | Retry up to 3 times. If DOMPurify strips content → log warning, proceed |
-| `A13` | `set_css` | `{ templateId, frameId: "<from A11>", css: "<user CSS>" }` | `{ success: true, cssLength }` | Retry up to 3 times |
-| `A15` | `get_template` | `{ templateId }` | Verify `frame.x, frame.y` are unique (no overlap with other frames) | If overlap detected → delete frame, retry A11 with explicit `width`/`height` |
+| `A9` | `import_design` | `{ templateId, document: "<user's complete HTML>" }` — OR `{ templateId, html: "<body HTML>", css: "<stylesheet>" }` for separate fields | `{ templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight, mode: "created" }` | If htmlLength or cssLength is 0 → retry once. If frameId missing → check template has at least one frame, retry. |
+| `A15` | `get_template` | `{ templateId }` | Verify `frame.x, frame.y` are unique (no overlap with other frames) | If overlap detected → delete frame, retry `import_design` with explicit `width`/`height` |
 
-**Auto-placement guarantee:** `create_html_frame` uses cascade-grid algorithm:
+**Auto-placement guarantee:** `import_design` uses cascade-grid algorithm when creating new frames:
 - Row width max: 4000px
 - Gap between frames: 100px
 - Auto-wraps to new row when row full
@@ -213,32 +203,23 @@ graph TB
 }
 ```
 
-### V2: Existing Frames
-```typescript
-{
-  check: "frames.length > 0",
-  on_pass: "A11 (create_html_frame — auto-positioned, non-overlapping)",
-  on_fail: "A10 (set_html/set_css directly on default frame 1)",
-  evidence: "list_frames response"
-}
-```
-
-### V3: Frame Content Integrity
+### V2: Frame Content Integrity
 ```typescript
 {
   checks: [
     { rule: "html_length > 0", severity: "error" },
     { rule: "css_length > 0", severity: "warning" },
+    { rule: "frame_id_returned", severity: "error", check: "import_design returned a valid frameId" },
     { rule: "frame.position_unique", severity: "error", 
       check: "no two frames share overlapping x/y bounds" }
   ],
-  on_any_fail: "A14 (retry loop, max 3)",
+  on_any_fail: "A14 (retry import_design, max 2)",
   on_pass: "P3 (adapt formats)",
-  evidence: "get_template response after set_html/set_css"
+  evidence: "import_design response + get_template verification"
 }
 ```
 
-### V4: Adaptation Completeness
+### V3: Adaptation Completeness
 ```typescript
 {
   checks: [
@@ -270,7 +251,7 @@ Rationale: if user says "the file already exists" but search fails, create it fr
 
 ### Frame Overlap Detected
 ```
-V3 fail → delete conflicting frame via update_template → A11 (recreate with explicit dimensions)
+V2 fail → delete conflicting frame via update_template → import_design (recreate with explicit dimensions)
 Max cycles: 2
 ```
 
@@ -368,20 +349,23 @@ STEP 1 — Find template
   IF 1 result → use that templateId
   IF 2+ results → ask user to pick, then get_template({ templateId })
 
-STEP 2 — Check existing frames
-  POST /mcp { method: "tools/call", params: { name: "list_frames", arguments: { templateId } } }
-  IF 0 frames → use frame 1 from template creation, go to STEP 3
-  IF 1+ frames → create_html_frame (auto-positioned, never overlaps)
-
-STEP 3 — Create non-overlapping frame
-  POST /mcp { method: "tools/call", params: { name: "create_html_frame", arguments: {
-    templateId, name: "{descriptive name}",
-    html: "{user's HTML}", css: "{user's CSS}"
+STEP 2 — Import the design (ONE call)
+  POST /mcp { method: "tools/call", params: { name: "import_design", arguments: {
+    templateId,
+    document: "{user's complete HTML document from Gemini/ChatGPT/Claude}"
   } } }
-  → Returns { id: frameId, x, y, width, height }
-  → x/y are auto-calculated: cascade grid, 100px gap, max 4000px row width
+  → Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight, mode: "created" }
+  
+  OR if you have HTML and CSS separately:
+  POST /mcp { method: "tools/call", params: { name: "import_design", arguments: {
+    templateId, html: "{body HTML}", css: "{stylesheet}"
+  } } }
 
-STEP 4 — Verify frame
+  import_design auto-parses: <style> → CSS, <body> → HTML, <link> fonts → @import.
+  Auto-detects dimensions from CSS body { width/height }.
+  Auto-creates frame if frameId omitted. No editability enforcement — full CSS support.
+
+STEP 3 — Verify frame
   POST /mcp { method: "tools/call", params: { name: "get_template", arguments: { templateId } } }
   Check: frame.html.length > 0 AND frame position unique among siblings
 
