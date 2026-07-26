@@ -240,6 +240,44 @@ export function buildDesignHierarchy(
     brand.campaigns.set(campaignId, campaign);
   }
 
+  // ── Merge synthetic brands (not in CRM) into "Sin especificar" ──
+  // Any brand created from design metadata only — not from brandAccounts —
+  // is a phantom. Fold its designs into one audit bucket so the graph
+  // shows a single "Sin especificar" instead of fake clients like
+  // "otro", "demo", etc. each with 3–5 isolated nodes.
+  const accountIds = new Set(brandAccounts.map(a => a.id));
+
+  let sinEspecificarId = "";
+  let sinEspecificar: MutableBrandGroup | undefined;
+  for (const [id, brand] of brands) {
+    if ((brand.name === "Sin especificar" || brand.name === "Sin marca") && !accountIds.has(id)) {
+      sinEspecificarId = id;
+      sinEspecificar = brand;
+      break;
+    }
+  }
+  if (!sinEspecificar) {
+    sinEspecificarId = syntheticId("brand", "Sin especificar");
+    sinEspecificar = createMutableBrand(sinEspecificarId, "Sin especificar", "client");
+    brands.set(sinEspecificarId, sinEspecificar);
+    brandIdsByName.set(normalizeKey("Sin especificar"), sinEspecificarId);
+  } else {
+    sinEspecificar.name = "Sin especificar";
+    sinEspecificar.relationshipStatus = "client";
+  }
+
+  const syntheticIds: string[] = [];
+  for (const [id, brand] of brands) {
+    if (id === sinEspecificarId || accountIds.has(id)) continue;
+    sinEspecificar.directDesigns.push(...brand.directDesigns);
+    for (const [, campaign] of brand.campaigns) {
+      sinEspecificar.directDesigns.push(...campaign.designs);
+    }
+    sinEspecificar.people.push(...brand.people);
+    syntheticIds.push(id);
+  }
+  for (const id of syntheticIds) brands.delete(id);
+
   return [...brands.values()]
     .map((brand): DesignBrandGroup => {
       const directDesigns = sortDesigns(brand.directDesigns);
@@ -275,11 +313,11 @@ export function buildKnowledgeGraph(
 
   // ── Only "Clientes" in the obsidian graph — everything else disappears ──
   const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
-  // "Sin marca" is pulled out — treated as "Sin especificar", not as a real client
-  const sinMarca = clientBrands.find(b => b.name === "Sin marca");
-  const realClients = clientBrands.filter(b => b.name !== "Sin marca");
+  // "Sin especificar" is the audit bucket for unassigned / phantom-brand designs
+  const sinEspecificar = clientBrands.find(b => b.name === "Sin especificar");
+  const realClients = clientBrands.filter(b => b.name !== "Sin especificar");
 
-  if (realClients.length > 0 || (sinMarca && sinMarca.totalDesigns > 0)) {
+  if (realClients.length > 0 || (sinEspecificar && sinEspecificar.totalDesigns > 0)) {
     const clientStatusId = `status:client`;
     graphNodes.push({ id: clientStatusId, name: "Clientes", kind: "status", colorKey: "client" });
     edges.push({ source: rootId, target: clientStatusId, kind: "contains" });
@@ -308,12 +346,12 @@ export function buildKnowledgeGraph(
     }
 
     // ── "Sin especificar" — unassigned client files live here for auditing ──
-    if (sinMarca && sinMarca.totalDesigns > 0) {
+    if (sinEspecificar && sinEspecificar.totalDesigns > 0) {
       const sinEspecificarId = `brand:sin-especificar`;
       graphNodes.push({ id: sinEspecificarId, name: "Sin especificar", kind: "brand", colorKey: "unassigned" });
       edges.push({ source: clientStatusId, target: sinEspecificarId, kind: "contains" });
       // No campaigns for unassigned files — just asset types directly
-      addAssetBranches(graphNodes, edges, sinEspecificarId, "unassigned", "sin-especificar", sinMarca.directAssetGroups);
+      addAssetBranches(graphNodes, edges, sinEspecificarId, "unassigned", "sin-especificar", sinEspecificar.directAssetGroups);
     }
   }
 

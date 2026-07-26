@@ -693,9 +693,9 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
       {/* ── Only "Clientes" in the obsidian graph ── */}
       {(() => {
         const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
-        const sinMarca = clientBrands.find(b => b.name === "Sin marca");
-        const realClients = clientBrands.filter(b => b.name !== "Sin marca");
-        if (realClients.length === 0 && (!sinMarca || sinMarca.totalDesigns === 0)) return null;
+        const sinEspecificar = clientBrands.find(b => b.name === "Sin especificar");
+        const realClients = clientBrands.filter(b => b.name !== "Sin especificar");
+        if (realClients.length === 0 && (!sinEspecificar || sinEspecificar.totalDesigns === 0)) return null;
 
         const statusKey = "status:client";
         const statusExpanded = expanded.has(statusKey);
@@ -783,15 +783,15 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
                 })}
 
                 {/* ── "Sin especificar" — unassigned client files ── */}
-                {sinMarca && sinMarca.totalDesigns > 0 && (
+                {sinEspecificar && sinEspecificar.totalDesigns > 0 && (
                   <section style={{ marginBottom: 3 }}>
                     <div style={{ ...treeButtonStyle, padding: "9px 10px", background: "rgba(255,140,50,0.08)", cursor: "default" }}>
                       <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b" }} />
                       <strong style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>Sin especificar</strong>
-                      <span style={{ ...countStyle, color: "#f59e0b" }}>{sinMarca.totalDesigns} sin asignar</span>
+                      <span style={{ ...countStyle, color: "#f59e0b" }}>{sinEspecificar.totalDesigns} sin asignar</span>
                     </div>
                     <div style={{ marginLeft: 18 }}>
-                      {sinMarca.directAssetGroups.map(assetGroup => (
+                      {sinEspecificar.directAssetGroups.map((assetGroup: DesignBrandGroup["directAssetGroups"][number]) => (
                         <AssetGroupRows key={`sin-especificar:${assetGroup.type}`} assetGroup={assetGroup} color="#f59e0b" onOpenTemplate={onOpenTemplate} />
                       ))}
                     </div>
