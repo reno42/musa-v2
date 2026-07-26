@@ -53,10 +53,10 @@ interface SimNode {
 }
 
 // ── Simulation tuning ──
-const REPULSION = 1200;
-const SPRING = 0.08;
-const SPRING_REST = 28;
-const GRAVITY = 0.45;
+const REPULSION = 800;
+const SPRING = 0.09;
+const SPRING_REST = 20;
+const GRAVITY = 0.8;
 const DAMPING = 0.88;
 const ALPHA_DECAY = 0.03;
 const ALPHA_FLOOR = 0.02;
@@ -147,7 +147,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     }
     const sim: SimNode[] = nodes.map((n, i) => {
       const golden = i * 2.39996; // golden-angle spiral: deterministic, no jumps between loads
-      const r = 26 * Math.sqrt(i + 1);
+      const isWorkspace = n.kind === "workspace";
+      const r = isWorkspace ? 0 : 12 * Math.sqrt(i + 1);
       const deg = degree.get(n.id) || 0;
       return {
         id: n.id,
@@ -253,6 +254,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         n.vx += -n.x * GRAVITY * a;
         n.vy += -n.y * GRAVITY * a;
         if (n === dragging) { n.vx = 0; n.vy = 0; continue; }
+        if (n.kind === "workspace") { n.vx = 0; n.vy = 0; continue; }
         n.vx *= DAMPING; n.vy *= DAMPING;
         const vmax = 14;
         if (n.vx > vmax) n.vx = vmax; else if (n.vx < -vmax) n.vx = -vmax;
@@ -297,7 +299,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       // graphs (966 springs) brace the physics rigid, so the "floating" the
       // eye sees is decoupled from layout. The dragged node stays pinned.
       for (const n of sim) {
-        if (n === dragging) { n.wx = n.x; n.wy = n.y; continue; }
+        if (n === dragging || n.kind === "workspace") { n.wx = n.x; n.wy = n.y; continue; }
         n.wx = n.x + (reduceMotion ? 0 : 3.5 * Math.sin(t / 1300 + n.phase));
         n.wy = n.y + (reduceMotion ? 0 : 3.5 * Math.cos(t / 1750 + n.phase * 1.31));
       }
