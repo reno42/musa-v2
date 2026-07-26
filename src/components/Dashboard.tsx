@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
@@ -90,6 +90,18 @@ function writeTemplateCache(data: Template[]) {
   try {
     localStorage.setItem(TEMPLATE_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
   } catch { /* quota exceeded — cache is best-effort */ }
+}
+
+/** Deterministic brand accent color — stable across sessions. */
+const BRAND_PALETTE = [
+  "#6366f1", "#a855f7", "#06b6d4", "#f59e0b", "#10b981",
+  "#ec4899", "#f97316", "#8b5cf6", "#14b8a6", "#e11d48",
+  "#3b82f6", "#d946ef", "#84cc16", "#64748b", "#f43f5e",
+];
+function brandAccent(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash) + id.charCodeAt(i) | 0;
+  return BRAND_PALETTE[Math.abs(hash) % BRAND_PALETTE.length];
 }
 
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
@@ -1026,7 +1038,53 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* Template Grid */}
       {activeTab === "templates" && (
-      <div data-tour="templates-grid" style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+      <div data-tour="templates-grid" style={{ flex: 1, overflowY: "auto", padding: "20px 20px 20px 20px" }}>
+        {/* ── Brand filter chips ── */}
+        {brands.length > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, marginBottom: 20,
+            flexWrap: "wrap", padding: "0 0 4px 0",
+          }}>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: 4 }}>
+              Marcas:
+            </span>
+            <button
+              type="button"
+              onClick={() => handleBrandChange(null)}
+              className="liquid-glass"
+              style={{
+                borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
+                cursor: "pointer", border: "none",
+                background: !selectedBrand ? "rgba(108,92,231,0.25)" : "rgba(255,255,255,0.03)",
+                color: !selectedBrand ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)",
+                transition: "all 0.2s ease",
+              }}
+            >
+              Todas
+            </button>
+            {brands.map(b => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => handleBrandChange(b.id)}
+                className="liquid-glass"
+                style={{
+                  borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
+                  cursor: "pointer", border: "none",
+                  background: selectedBrand === b.id ? "rgba(108,92,231,0.25)" : "rgba(255,255,255,0.03)",
+                  color: selectedBrand === b.id ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                <span style={{
+                  display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                  background: brandAccent(b.id), marginRight: 5, verticalAlign: "middle",
+                }} />
+                {b.name}
+              </button>
+            ))}
+          </div>
+        )}
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (

@@ -224,6 +224,75 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
 
 designMetaRoutes.get("/", getDesignGraph);
 
+/** POST /api/meta/batch — upsert metadata for multiple templates in one call.
+ *  Body: { templates: [{ templateId, brand?, campaign?, tags?, ... }] } */
+designMetaRoutes.post("/batch", async (req, res) => {
+  try {
+    const { templates } = req.body;
+    if (!Array.isArray(templates) || templates.length === 0) {
+      return res.status(400).json({ success: false, error: "templates array required" });
+    }
+    if (templates.length > 100) {
+      return res.status(400).json({ success: false, error: "Max 100 templates per batch" });
+    }
+
+    const sb = getSupabase();
+    const results: { templateId: string; ok: boolean; error?: string }[] = [];
+
+    for (const entry of templates) {
+      const templateId = entry.templateId || entry.template_id;
+      if (!templateId) { results.push({ templateId: "", ok: false, error: "Missing templateId" }); continue; }
+      try {
+        const patch: Record<string, any> = {};
+        if (entry.brand !== undefined) patch.brand = entry.brand;
+        if (entry.brand_id !== undefined) patch.brand_id = entry.brand_id;
+        if (entry.campaign !== undefined) patch.campaign = entry.campaign;
+        if (entry.asset_type !== undefined) patch.asset_type = entry.asset_type;
+        if (entry.tags !== undefined) patch.tags = entry.tags;
+        if (entry.theme !== undefined) patch.theme = entry.theme;
+        if (entry.format !== undefined) patch.format = entry.format;
+        if (entry.file_type !== undefined) patch.file_type = entry.file_type;
+        if (entry.obsidian_link !== undefined) patch.obsidian_link = entry.obsidian_link;
+        if (entry.cover_image_url !== undefined) patch.cover_image_url = entry.cover_image_url;
+        if (entry.is_permanent !== undefined) patch.is_permanent = Boolean(entry.is_permanent);
+        if (entry.designer_type !== undefined) patch.designer_type = entry.designer_type;
+
+        if (Object.keys(patch).length === 0) {
+          results.push({ templateId, ok: true }); // no-op
+          continue;
+        }
+
+        if (!sb) {
+          store.setMeta?.(templateId, patch);
+          results.push({ templateId, ok: true });
+          continue;
+        }
+
+        const { data: tpl } = await sb.from("templates").select("workspace_id").eq("id", templateId).maybeSingle();
+        if (!tpl?.workspace_id) { results.push({ templateId, ok: false, error: "Template not found" }); continue; }
+
+        const { data: existing } = await sb.from("design_file_meta").select("id").eq("template_id", templateId).maybeSingle();
+        if (existing) {
+          patch.updated_at = new Date().toISOString();
+          const { error } = await sb.from("design_file_meta").update(patch).eq("template_id", templateId);
+          results.push({ templateId, ok: !error, error: error?.message });
+        } else {
+          patch.template_id = templateId;
+          patch.workspace_id = tpl.workspace_id;
+          const { error } = await sb.from("design_file_meta").insert(patch);
+          results.push({ templateId, ok: !error, error: error?.message });
+        }
+      } catch (err: any) {
+        results.push({ templateId, ok: false, error: err.message });
+      }
+    }
+    const failed = results.filter(r => !r.ok).length;
+    res.json({ success: true, data: { total: templates.length, succeeded: results.length - failed, failed, results } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /** Workspace brands and campaigns available to this design file. */
 designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
   try {
