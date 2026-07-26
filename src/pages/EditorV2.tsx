@@ -564,17 +564,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         method: "POST",
         body: JSON.stringify({ kind: "marked", label: "Guardado manual" }),
       });
-      if (res?.success === false) {
-        // Frames were already saved above — versioning is a bonus, not a blocker.
-        console.warn("[save] Version creation skipped:", res.error);
-        addToast("Diseño guardado. (Historial de versiones no disponible)", "success");
-      } else {
-        addToast("Versión guardada en el historial.", "success");
-      }
+      if (res?.success === false) throw new Error(res.error || "No se pudo guardar la versión");
+      addToast("Versión guardada en el historial.", "success");
       window.dispatchEvent(new Event("futuraria-version-saved"));
     } catch (err: any) {
-      addToast(`Error al guardar: ${err?.message || "error de conexión"}`, "error");
-      console.error("[save] Error:", err);
+      addToast(`No se pudo guardar la versión: ${err?.message || "error desconocido"}`, "error");
     }
     setSavingVersion(false);
   }, [savingVersion, templateId, selectedFrameId, templateName, addToast]);
