@@ -205,8 +205,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
     const brandColor = new Map<string, string>([
       ["workspace", "#F8FAFC"],
-      ["lead", "#FBBF24"],
       ["client", "#34D399"],
+      ["unassigned", "#f59e0b"],
     ]);
     let ci = 0;
     for (const n of sim) {
@@ -578,7 +578,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         </div>
 
         <div role="group" aria-label="Relación comercial" style={segmentedControlStyle}>
-          {([['all', 'Todos'], ['lead', 'Leads'], ['client', 'Clientes']] as const).map(([value, label]) => (
+          {([['client', 'Clientes'], ['all', 'Todos']] as const).map(([value, label]) => (
             <button key={value} type="button" aria-pressed={accountView === value} onClick={() => setAccountView(value)} style={segmentStyle(accountView === value)}>{label}</button>
           ))}
         </div>
@@ -644,7 +644,7 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
   onOpenTemplate?: (templateId: string) => void;
 }) {
   const treeId = useId().replace(/:/g, "");
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["status:lead", "status:client"]));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["status:client"]));
   const knownBranches = useRef(new Set<string>());
 
   useEffect(() => {
@@ -687,17 +687,21 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
       <div style={{ ...treeButtonStyle, padding: "12px", background: "rgba(255,255,255,0.05)", cursor: "default" }}>
         <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#f8fafc" }} />
         <strong style={{ color: "#f8fafc", fontSize: 14 }}>{workspace?.name || "Tu marca"}</strong>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Centro comercial</span>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Centro de diseño</span>
       </div>
 
-      {(["lead", "client"] as const).map((status) => {
-        const statusBrands = hierarchy.filter((brand) => brand.relationshipStatus === status);
-        if (statusBrands.length === 0) return null;
-        const statusKey = `status:${status}`;
+      {/* ── Only "Clientes" in the obsidian graph ── */}
+      {(() => {
+        const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
+        const sinMarca = clientBrands.find(b => b.name === "Sin marca");
+        const realClients = clientBrands.filter(b => b.name !== "Sin marca");
+        if (realClients.length === 0 && (!sinMarca || sinMarca.totalDesigns === 0)) return null;
+
+        const statusKey = "status:client";
         const statusExpanded = expanded.has(statusKey);
-        const statusPanelId = `${treeId}-${status}`;
+        const statusPanelId = `${treeId}-client`;
         return (
-          <section key={status} style={{ margin: "6px 0 0 18px" }}>
+          <section style={{ margin: "6px 0 0 18px" }}>
             <button
               type="button"
               aria-expanded={statusExpanded}
@@ -706,14 +710,14 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
               style={{ ...treeButtonStyle, padding: "8px 10px" }}
             >
               <span aria-hidden="true" style={{ ...chevronStyle, transform: statusExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: status === "client" ? "#34d399" : "#fbbf24" }} />
-              <strong style={{ fontSize: 13 }}>{status === "client" ? "Clientes" : "Leads"}</strong>
-              <span style={countStyle}>{statusBrands.length}</span>
+              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }} />
+              <strong style={{ fontSize: 13 }}>Clientes</strong>
+              <span style={countStyle}>{realClients.length}</span>
             </button>
 
             {statusExpanded && (
               <div id={statusPanelId} style={{ marginLeft: 18 }}>
-                {statusBrands.map((brand, brandIndex) => {
+                {realClients.map((brand, brandIndex) => {
                   const brandKey = `brand:${brand.id}`;
                   const brandExpanded = expanded.has(brandKey);
                   const brandPanelId = `${statusPanelId}-brand-${brandIndex}`;
@@ -777,11 +781,27 @@ function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, 
                     </section>
                   );
                 })}
+
+                {/* ── "Sin especificar" — unassigned client files ── */}
+                {sinMarca && sinMarca.totalDesigns > 0 && (
+                  <section style={{ marginBottom: 3 }}>
+                    <div style={{ ...treeButtonStyle, padding: "9px 10px", background: "rgba(255,140,50,0.08)", cursor: "default" }}>
+                      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b" }} />
+                      <strong style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>Sin especificar</strong>
+                      <span style={{ ...countStyle, color: "#f59e0b" }}>{sinMarca.totalDesigns} sin asignar</span>
+                    </div>
+                    <div style={{ marginLeft: 18 }}>
+                      {sinMarca.directAssetGroups.map(assetGroup => (
+                        <AssetGroupRows key={`sin-especificar:${assetGroup.type}`} assetGroup={assetGroup} color="#f59e0b" onOpenTemplate={onOpenTemplate} />
+                      ))}
+                    </div>
+                  </section>
+                )}
               </div>
             )}
           </section>
         );
-      })}
+      })()}
     </div>
   );
 }

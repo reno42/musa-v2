@@ -273,17 +273,21 @@ export function buildKnowledgeGraph(
   const rootId = `workspace:${workspace?.id || "current"}`;
   graphNodes.push({ id: rootId, name: workspace?.name || "Tu marca", kind: "workspace", colorKey: "workspace" });
 
-  for (const status of ["lead", "client"] as const) {
-    const statusBrands = hierarchy.filter((brand) => brand.relationshipStatus === status);
-    if (statusBrands.length === 0) continue;
-    const statusId = `status:${status}`;
-    graphNodes.push({ id: statusId, name: status === "lead" ? "Leads" : "Clientes", kind: "status", colorKey: status });
-    edges.push({ source: rootId, target: statusId, kind: "contains" });
+  // ── Only "Clientes" in the obsidian graph — everything else disappears ──
+  const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
+  // "Sin marca" is pulled out — treated as "Sin especificar", not as a real client
+  const sinMarca = clientBrands.find(b => b.name === "Sin marca");
+  const realClients = clientBrands.filter(b => b.name !== "Sin marca");
 
-    for (const brand of statusBrands) {
+  if (realClients.length > 0 || (sinMarca && sinMarca.totalDesigns > 0)) {
+    const clientStatusId = `status:client`;
+    graphNodes.push({ id: clientStatusId, name: "Clientes", kind: "status", colorKey: "client" });
+    edges.push({ source: rootId, target: clientStatusId, kind: "contains" });
+
+    for (const brand of realClients) {
       const brandId = `brand:${brand.id}`;
       graphNodes.push({ id: brandId, name: brand.name, kind: "brand", colorKey: brand.id });
-      edges.push({ source: statusId, target: brandId, kind: "contains" });
+      edges.push({ source: clientStatusId, target: brandId, kind: "contains" });
 
       if (showPeople) {
         for (const person of brand.people) {
@@ -301,6 +305,15 @@ export function buildKnowledgeGraph(
         edges.push({ source: brandId, target: campaignId, kind: "contains" });
         addAssetBranches(graphNodes, edges, campaignId, brand.id, campaign.id, campaign.assetGroups);
       }
+    }
+
+    // ── "Sin especificar" — unassigned client files live here for auditing ──
+    if (sinMarca && sinMarca.totalDesigns > 0) {
+      const sinEspecificarId = `brand:sin-especificar`;
+      graphNodes.push({ id: sinEspecificarId, name: "Sin especificar", kind: "brand", colorKey: "unassigned" });
+      edges.push({ source: clientStatusId, target: sinEspecificarId, kind: "contains" });
+      // No campaigns for unassigned files — just asset types directly
+      addAssetBranches(graphNodes, edges, sinEspecificarId, "unassigned", "sin-especificar", sinMarca.directAssetGroups);
     }
   }
 
