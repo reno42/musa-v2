@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import {
   buildDesignHierarchy,
   buildKnowledgeGraph,
-  DESIGNER_TYPE_OPTIONS,
-  type AccountStatus,
-  type DesignBrandGroup,
   type DesignGraphBrand,
   type DesignGraphContact,
   type DesignGraphNode,
@@ -75,9 +72,6 @@ const NODE_RADIUS: Record<KnowledgeNodeKind, number> = {
   workspace: 15,
   status: 12,
   brand: 10,
-  person: 5,
-  campaign: 8,
-  asset_type: 7,
   design: 6,
 };
 
@@ -95,23 +89,14 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const [workspace, setWorkspace] = useState<DesignGraphWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filterBrand, setFilterBrand] = useState("");
-  const [filterTag, setFilterTag] = useState("");
-  const [filterFormat, setFilterFormat] = useState("");
-  const [filterDesignerType, setFilterDesignerType] = useState("");
-  const [viewMode, setViewMode] = useState<"tree" | "canvas">("tree");
-  const [accountView, setAccountView] = useState<"all" | AccountStatus>("all");
-  const [showPeople, setShowPeople] = useState(true);
 
-  const hierarchy = useMemo(() => {
-    const complete = buildDesignHierarchy(designNodes, brandAccounts, contacts);
-    return accountView === "all"
-      ? complete
-      : complete.filter((brand) => brand.relationshipStatus === accountView);
-  }, [designNodes, brandAccounts, contacts, accountView]);
+  const hierarchy = useMemo(
+    () => buildDesignHierarchy(designNodes, brandAccounts, contacts),
+    [designNodes, brandAccounts, contacts],
+  );
   const { nodes, edges } = useMemo(
-    () => buildKnowledgeGraph(workspace, hierarchy, showPeople),
-    [workspace, hierarchy, showPeople],
+    () => buildKnowledgeGraph(workspace, hierarchy),
+    [workspace, hierarchy],
   );
 
   // Parent may pass an inline lambda — keep it out of the effect deps.
@@ -124,10 +109,6 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     try {
       const params = new URLSearchParams();
       if (workspaceId) params.set("workspaceId", workspaceId);
-      if (filterBrand) params.set("brand", filterBrand);
-      if (filterTag) params.set("tag", filterTag);
-      if (filterFormat) params.set("format", filterFormat);
-      if (filterDesignerType) params.set("designer_type", filterDesignerType);
       const response = await apiFetch<{
         success: boolean;
         data?: {
@@ -152,14 +133,14 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, filterBrand, filterTag, filterFormat, filterDesignerType]);
+  }, [workspaceId]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    if (viewMode !== "canvas" || !canvas || !wrap || nodes.length === 0) return;
+    if (!canvas || !wrap || nodes.length === 0) return;
     const ctx = canvas.getContext("2d")!;
 
     // ── Build simulation state (world coordinates around 0,0) ──
@@ -548,318 +529,28 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       canvas.removeEventListener("dblclick", onDblClick);
       delete (window as any).__graphProbe;
     };
-  }, [nodes, edges, viewMode]);
+  }, [nodes, edges]);
 
-  const brands = [...new Set([
-    ...brandAccounts.map(brand => brand.name),
-    ...designNodes.map(node => node.brand),
-  ].filter(Boolean))].sort((first, second) => first.localeCompare(second, "es", { sensitivity: "base" }));
-  const allTags = [...new Set(designNodes.flatMap(node => node.tags))];
   const visibleDesignCount = hierarchy.reduce((sum, brand) => sum + brand.totalDesigns, 0);
-  const visiblePeopleCount = hierarchy.reduce((sum, brand) => sum + brand.people.length, 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 8 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "4px 0" }}>
-        <div role="group" aria-label="Modo del visor" style={segmentedControlStyle}>
-          <button
-            type="button"
-            aria-pressed={viewMode === "tree"}
-            onClick={() => setViewMode("tree")}
-            style={segmentStyle(viewMode === "tree")}
-          >Jerarquía</button>
-          <button
-            type="button"
-            aria-pressed={viewMode === "canvas"}
-            onClick={() => setViewMode("canvas")}
-            style={segmentStyle(viewMode === "canvas")}
-          >Grafo</button>
-        </div>
-
-        <div role="group" aria-label="Relación comercial" style={segmentedControlStyle}>
-          {([['client', 'Clientes'], ['all', 'Todos']] as const).map(([value, label]) => (
-            <button key={value} type="button" aria-pressed={accountView === value} onClick={() => setAccountView(value)} style={segmentStyle(accountView === value)}>{label}</button>
-          ))}
-        </div>
-
-        <button type="button" aria-pressed={showPeople} onClick={() => setShowPeople(value => !value)} style={segmentStyle(showPeople)}>
-          {showPeople ? "Personas visibles" : "Personas ocultas"}
-        </button>
-
-        <select aria-label="Filtrar por marca" style={filterSelectStyle} value={filterBrand} onChange={e => { setFilterBrand(e.target.value); setFilterTag(""); setFilterFormat(""); }}>
-          <option value="">Todas las marcas</option>
-          {brands.map(b => <option key={b} value={b}>{b}</option>)}
-        </select>
-        <select aria-label="Filtrar por etiqueta" style={filterSelectStyle} value={filterTag} onChange={e => setFilterTag(e.target.value)}>
-          <option value="">Todas las etiquetas</option>
-          {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select aria-label="Filtrar por formato" style={filterSelectStyle} value={filterFormat} onChange={e => setFilterFormat(e.target.value)}>
-          <option value="">Todos los formatos</option>
-          <option value="web">Web</option>
-          <option value="mobile">Mobile</option>
-          <option value="social">Social</option>
-          <option value="print">Print</option>
-          <option value="email">Email</option>
-          <option value="packaging">Packaging</option>
-          <option value="large_format">Gran formato</option>
-        </select>
-        <select aria-label="Filtrar por perfil de diseño" style={filterSelectStyle} value={filterDesignerType} onChange={e => setFilterDesignerType(e.target.value)}>
-          <option value="">Todos los perfiles</option>
-          {DESIGNER_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-        <span style={{ fontSize: 11, color: "#8b93a7" }}>
-          {hierarchy.length} marcas · {visibleDesignCount} archivos{showPeople ? ` · ${visiblePeopleCount} personas` : ""}
-        </span>
-      </div>
-
-      {viewMode === "tree" && (
-        <CommercialTreeView workspace={workspace} hierarchy={hierarchy} showPeople={showPeople} loading={loading} error={error} onRetry={fetchGraph} onOpenTemplate={onOpenTemplate} />
-      )}
-
-      {viewMode === "canvas" && (
-        <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
-          {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
-          {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
-          {!loading && !error && hierarchy.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13 }}>
-            No hay marcas para este filtro. Agrégalas desde Workspace → CRM.
-          </div>}
-          <canvas ref={canvasRef} aria-label="Grafo comercial interactivo de marcas, campañas, assets, archivos y personas" style={{ position: "absolute", inset: 0, display: loading || error || hierarchy.length === 0 ? "none" : "block" }} />
+    <div ref={wrapRef} style={{ flex: 1, position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
+      {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
+      {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
+      {!loading && !error && hierarchy.length === 0 && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13, gap: 8 }}>
+          <span>No hay diseños para mostrar.</span>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Asigna marcas a los archivos desde File Info.</span>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Commercial hierarchy ──
-
-function CommercialTreeView({ workspace, hierarchy, showPeople, loading, error, onRetry, onOpenTemplate }: {
-  workspace: DesignGraphWorkspace | null;
-  hierarchy: DesignBrandGroup[];
-  showPeople: boolean;
-  loading: boolean;
-  error: string;
-  onRetry: () => void;
-  onOpenTemplate?: (templateId: string) => void;
-}) {
-  const treeId = useId().replace(/:/g, "");
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["status:client"]));
-  const knownBranches = useRef(new Set<string>());
-
-  useEffect(() => {
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      for (const brand of hierarchy) {
-        const key = `brand:${brand.id}`;
-        if (!knownBranches.current.has(key)) next.add(key);
-        knownBranches.current.add(key);
-      }
-      return next;
-    });
-  }, [hierarchy]);
-
-  const toggleExpanded = (key: string) => setExpanded((previous) => {
-    const next = new Set(previous);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    return next;
-  });
-
-  if (loading) {
-    return <div role="status" aria-live="polite" style={centeredStateStyle}>Cargando patrones…</div>;
-  }
-  if (error) {
-    return <div style={{ flex: 1, position: "relative" }}><GraphError message={error} onRetry={onRetry} /></div>;
-  }
-  if (hierarchy.length === 0) {
-    return (
-      <div style={{ ...centeredStateStyle, flexDirection: "column", gap: 12 }}>
-        <div style={{ color: "#777", textAlign: "center", maxWidth: 340 }}>
-          No hay marcas para este filtro. Agrégalas desde Workspace → CRM y vincula los archivos desde File Info.
+      {!loading && !error && hierarchy.length > 0 && (
+        <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
+            {hierarchy.filter(b => b.name !== "Sin especificar").length} marcas · {visibleDesignCount} archivos · arrastra para explorar
+          </span>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ flex: 1, overflowY: "auto", borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(10,10,20,0.3)", padding: 8 }}>
-      <div style={{ ...treeButtonStyle, padding: "12px", background: "rgba(255,255,255,0.05)", cursor: "default" }}>
-        <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#f8fafc" }} />
-        <strong style={{ color: "#f8fafc", fontSize: 14 }}>{workspace?.name || "Tu marca"}</strong>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Centro de diseño</span>
-      </div>
-
-      {/* ── Only "Clientes" in the obsidian graph ── */}
-      {(() => {
-        const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
-        const sinEspecificar = clientBrands.find(b => b.name === "Sin especificar");
-        const realClients = clientBrands.filter(b => b.name !== "Sin especificar");
-        if (realClients.length === 0 && (!sinEspecificar || sinEspecificar.totalDesigns === 0)) return null;
-
-        const statusKey = "status:client";
-        const statusExpanded = expanded.has(statusKey);
-        const statusPanelId = `${treeId}-client`;
-        return (
-          <section style={{ margin: "6px 0 0 18px" }}>
-            <button
-              type="button"
-              aria-expanded={statusExpanded}
-              aria-controls={statusPanelId}
-              onClick={() => toggleExpanded(statusKey)}
-              style={{ ...treeButtonStyle, padding: "8px 10px" }}
-            >
-              <span aria-hidden="true" style={{ ...chevronStyle, transform: statusExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }} />
-              <strong style={{ fontSize: 13 }}>Clientes</strong>
-              <span style={countStyle}>{realClients.length}</span>
-            </button>
-
-            {statusExpanded && (
-              <div id={statusPanelId} style={{ marginLeft: 18 }}>
-                {realClients.map((brand, brandIndex) => {
-                  const brandKey = `brand:${brand.id}`;
-                  const brandExpanded = expanded.has(brandKey);
-                  const brandPanelId = `${statusPanelId}-brand-${brandIndex}`;
-                  const color = PALETTE[brandIndex % PALETTE.length];
-                  return (
-                    <section key={brand.id} style={{ marginBottom: 3 }}>
-                      <button
-                        type="button"
-                        aria-expanded={brandExpanded}
-                        aria-controls={brandPanelId}
-                        onClick={() => toggleExpanded(brandKey)}
-                        style={{ ...treeButtonStyle, padding: "9px 10px", background: "rgba(255,255,255,0.025)" }}
-                      >
-                        <span aria-hidden="true" style={{ ...chevronStyle, transform: brandExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-                        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
-                        <strong style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}>{brand.name}</strong>
-                        <span style={countStyle}>{brand.campaigns.length} campañas · {brand.totalDesigns} archivos</span>
-                      </button>
-
-                      {brandExpanded && (
-                        <div id={brandPanelId} style={{ marginLeft: 18 }}>
-                          {showPeople && brand.people.length > 0 && (
-                            <section aria-label={`Personas de ${brand.name}`} style={branchSectionStyle}>
-                              <div style={branchLabelStyle}>Personas <span style={countStyle}>{brand.people.length}</span></div>
-                              {brand.people.map(person => (
-                                <div key={person.id} style={personRowStyle}>
-                                  <span>{person.first_name} {person.last_name}</span>
-                                  <span style={countStyle}>{person.job_title || person.email || "Stakeholder"}</span>
-                                </div>
-                              ))}
-                            </section>
-                          )}
-
-                          {brand.directAssetGroups.map(assetGroup => (
-                            <AssetGroupRows key={`direct:${assetGroup.type}`} assetGroup={assetGroup} color={color} onOpenTemplate={onOpenTemplate} />
-                          ))}
-
-                          {brand.campaigns.map((campaign, campaignIndex) => {
-                            const campaignKey = `campaign:${campaign.id}`;
-                            const campaignExpanded = expanded.has(campaignKey);
-                            const campaignPanelId = `${brandPanelId}-campaign-${campaignIndex}`;
-                            return (
-                              <section key={campaign.id} style={branchSectionStyle}>
-                                <button type="button" aria-expanded={campaignExpanded} aria-controls={campaignPanelId} onClick={() => toggleExpanded(campaignKey)} style={{ ...treeButtonStyle, padding: "7px 9px" }}>
-                                  <span aria-hidden="true" style={{ ...chevronStyle, transform: campaignExpanded ? "rotate(90deg)" : "none" }}>▶</span>
-                                  <span style={{ fontSize: 12, fontWeight: 600 }}>{campaign.name}</span>
-                                  <span style={countStyle}>{campaign.designs.length} archivos</span>
-                                </button>
-                                {campaignExpanded && (
-                                  <div id={campaignPanelId} style={{ marginLeft: 16 }}>
-                                    {campaign.assetGroups.map(assetGroup => (
-                                      <AssetGroupRows key={assetGroup.type} assetGroup={assetGroup} color={color} onOpenTemplate={onOpenTemplate} />
-                                    ))}
-                                  </div>
-                                )}
-                              </section>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
-
-                {/* ── "Sin especificar" — unassigned client files ── */}
-                {sinEspecificar && sinEspecificar.totalDesigns > 0 && (
-                  <section style={{ marginBottom: 3 }}>
-                    <div style={{ ...treeButtonStyle, padding: "9px 10px", background: "rgba(255,140,50,0.08)", cursor: "default" }}>
-                      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b" }} />
-                      <strong style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>Sin especificar</strong>
-                      <span style={{ ...countStyle, color: "#f59e0b" }}>{sinEspecificar.totalDesigns} sin asignar</span>
-                    </div>
-                    <div style={{ marginLeft: 18 }}>
-                      {sinEspecificar.directAssetGroups.map((assetGroup: DesignBrandGroup["directAssetGroups"][number]) => (
-                        <AssetGroupRows key={`sin-especificar:${assetGroup.type}`} assetGroup={assetGroup} color="#f59e0b" onOpenTemplate={onOpenTemplate} />
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </div>
-            )}
-          </section>
-        );
-      })()}
-    </div>
-  );
-}
-
-function AssetGroupRows({ assetGroup, color, onOpenTemplate }: {
-  assetGroup: DesignBrandGroup["directAssetGroups"][number];
-  color: string;
-  onOpenTemplate?: (templateId: string) => void;
-}) {
-  return (
-    <section aria-label={assetGroup.label} style={branchSectionStyle}>
-      <div style={branchLabelStyle}>{assetGroup.label} <span style={countStyle}>{assetGroup.designs.length}</span></div>
-      <div style={{ marginLeft: 10 }}>
-        {assetGroup.designs.map(design => <DesignRow key={design.id} design={design} color={color} onOpenTemplate={onOpenTemplate} />)}
-      </div>
-    </section>
-  );
-}
-
-function DesignRow({ design, color, onOpenTemplate }: {
-  design: DesignGraphNode;
-  color: string;
-  onOpenTemplate?: (templateId: string) => void;
-}) {
-  const setHighlighted = (element: HTMLButtonElement, highlighted: boolean) => {
-    element.style.background = highlighted ? "rgba(255,255,255,0.06)" : "transparent";
-  };
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-      <button
-        type="button"
-        onClick={() => onOpenTemplate?.(design.id)}
-        onMouseEnter={(event) => setHighlighted(event.currentTarget, true)}
-        onMouseLeave={(event) => setHighlighted(event.currentTarget, false)}
-        onFocus={(event) => setHighlighted(event.currentTarget, true)}
-        onBlur={(event) => setHighlighted(event.currentTarget, false)}
-        style={{ ...treeButtonStyle, padding: "6px 10px", flex: 1 }}
-      >
-        {design.cover ? (
-          <img src={design.cover} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", border: `1px solid ${color}40` }} />
-        ) : (
-          <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: 4, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, opacity: 0.35 }}>📄</span>
-        )}
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.74)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{design.name}</span>
-          {(design.format || design.tags.length > 0) && (
-            <span style={{ display: "flex", gap: 4, marginTop: 2 }}>
-              {design.format && <span style={formatBadgeStyle}>{design.format}</span>}
-              {design.tags.slice(0, 2).map((tag) => <span key={tag} style={tagBadgeStyle}>{tag}</span>)}
-            </span>
-          )}
-        </span>
-        <span style={countStyle}>Abrir archivo</span>
-      </button>
-      {design.obsidian_link && (
-        <a href={design.obsidian_link} target="_blank" rel="noreferrer" style={externalLinkStyle} aria-label={`Abrir ${design.name} en Obsidian`}>
-          Obsidian ↗
-        </a>
       )}
+      <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || hierarchy.length === 0 ? "none" : "block" }} />
     </div>
   );
 }
@@ -873,126 +564,3 @@ function GraphError({ message, onRetry }: { message: string; onRetry: () => void
     </div>
   );
 }
-
-const centeredStateStyle: React.CSSProperties = {
-  flex: 1,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#777",
-  fontSize: 13,
-};
-
-const treeButtonStyle: React.CSSProperties = {
-  width: "100%",
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  border: "none",
-  borderRadius: 7,
-  background: "transparent",
-  color: "inherit",
-  cursor: "pointer",
-  fontFamily: "Inter, system-ui, sans-serif",
-  textAlign: "left",
-  transition: "background 0.15s ease",
-};
-
-const chevronStyle: React.CSSProperties = {
-  display: "inline-block",
-  flexShrink: 0,
-  color: "rgba(255,255,255,0.38)",
-  fontSize: 10,
-  transition: "transform 0.15s ease",
-};
-
-const formatBadgeStyle: React.CSSProperties = {
-  fontSize: 9,
-  padding: "1px 6px",
-  borderRadius: 100,
-  background: "rgba(91,156,246,0.1)",
-  color: "rgba(147,197,253,0.8)",
-  textTransform: "capitalize",
-};
-
-const tagBadgeStyle: React.CSSProperties = {
-  fontSize: 9,
-  padding: "1px 6px",
-  borderRadius: 100,
-  background: "rgba(255,255,255,0.05)",
-  color: "rgba(255,255,255,0.5)",
-};
-
-const segmentedControlStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 2,
-  borderRadius: 8,
-  overflow: "hidden",
-  border: "1px solid rgba(255,255,255,0.1)",
-  padding: 2,
-};
-
-function segmentStyle(active: boolean): React.CSSProperties {
-  return {
-    padding: "4px 10px",
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: "pointer",
-    border: "none",
-    borderRadius: 5,
-    color: active ? "#fff" : "rgba(255,255,255,0.55)",
-    background: active ? "rgba(255,255,255,0.12)" : "transparent",
-  };
-}
-
-const countStyle: React.CSSProperties = {
-  color: "rgba(255,255,255,0.4)",
-  fontSize: 10,
-  fontVariantNumeric: "tabular-nums",
-};
-
-const branchSectionStyle: React.CSSProperties = {
-  margin: "3px 0",
-  borderLeft: "1px solid rgba(255,255,255,0.07)",
-  paddingLeft: 8,
-};
-
-const branchLabelStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 7,
-  padding: "6px 9px",
-  color: "rgba(255,255,255,0.58)",
-  fontSize: 11,
-  fontWeight: 600,
-};
-
-const personRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  padding: "5px 9px 5px 18px",
-  color: "rgba(255,255,255,0.68)",
-  fontSize: 11,
-};
-
-const externalLinkStyle: React.CSSProperties = {
-  color: "#93c5fd",
-  fontSize: 10,
-  padding: "5px 7px",
-  borderRadius: 5,
-  textDecoration: "none",
-  whiteSpace: "nowrap",
-};
-
-const filterSelectStyle: React.CSSProperties = {
-  padding: "4px 10px",
-  fontSize: 11,
-  background: "rgba(255,255,255,0.06)",
-  border: "1px solid rgba(255,255,255,0.1)",
-  borderRadius: 6,
-  color: "#ccc",
-  fontFamily: "Inter, system-ui, sans-serif",
-  cursor: "pointer",
-};

@@ -122,7 +122,7 @@ export interface DesignBrandGroup {
   totalDesigns: number;
 }
 
-export type KnowledgeNodeKind = "workspace" | "status" | "brand" | "person" | "campaign" | "asset_type" | "design";
+export type KnowledgeNodeKind = "workspace" | "status" | "brand" | "design";
 
 export interface KnowledgeGraphNode {
   id: string;
@@ -200,8 +200,6 @@ export const DESIGNER_TYPE_OPTIONS: Array<{ value: DesignerType; label: string }
   { value: "editorial", label: "Editorial" },
   { value: "other", label: "Otro" },
 ];
-
-const ASSET_TYPE_LABELS = new Map(ASSET_TYPE_OPTIONS.map((option) => [option.value, option.label]));
 
 export function buildDesignHierarchy(
   nodes: DesignGraphNode[],
@@ -304,54 +302,84 @@ export function buildDesignHierarchy(
 export function buildKnowledgeGraph(
   workspace: DesignGraphWorkspace | null,
   hierarchy: DesignBrandGroup[],
-  showPeople: boolean,
 ): { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] } {
   const graphNodes: KnowledgeGraphNode[] = [];
   const edges: KnowledgeGraphEdge[] = [];
   const rootId = `workspace:${workspace?.id || "current"}`;
   graphNodes.push({ id: rootId, name: workspace?.name || "Tu marca", kind: "workspace", colorKey: "workspace" });
 
-  // ── Only "Clientes" in the obsidian graph — everything else disappears ──
+  // ── Single rule: everything starts from the center ──
+  // Agency → Clientes → [Brands | No especificado] → [Files]
   const clientBrands = hierarchy.filter((brand) => brand.relationshipStatus === "client");
-  // "Sin especificar" is the audit bucket for unassigned / phantom-brand designs
   const sinEspecificar = clientBrands.find(b => b.name === "Sin especificar");
   const realClients = clientBrands.filter(b => b.name !== "Sin especificar");
 
-  if (realClients.length > 0 || (sinEspecificar && sinEspecificar.totalDesigns > 0)) {
-    const clientStatusId = `status:client`;
-    graphNodes.push({ id: clientStatusId, name: "Clientes", kind: "status", colorKey: "client" });
-    edges.push({ source: rootId, target: clientStatusId, kind: "contains" });
+  if (realClients.length === 0 && (!sinEspecificar || sinEspecificar.totalDesigns === 0)) {
+    return { nodes: graphNodes, edges };
+  }
 
-    for (const brand of realClients) {
-      const brandId = `brand:${brand.id}`;
-      graphNodes.push({ id: brandId, name: brand.name, kind: "brand", colorKey: brand.id });
-      edges.push({ source: clientStatusId, target: brandId, kind: "contains" });
+  const clientesId = `status:client`;
+  graphNodes.push({ id: clientesId, name: "Clientes", kind: "status", colorKey: "client" });
+  edges.push({ source: rootId, target: clientesId, kind: "contains" });
 
-      if (showPeople) {
-        for (const person of brand.people) {
-          const personName = [person.first_name, person.last_name].filter(Boolean).join(" ");
-          const personId = `person:${person.id}`;
-          graphNodes.push({ id: personId, name: personName, kind: "person", colorKey: brand.id });
-          edges.push({ source: brandId, target: personId, kind: "person" });
-        }
-      }
+  // Real CRM brands — files connect directly, no intermediate layers
+  for (const brand of realClients) {
+    const brandId = `brand:${brand.id}`;
+    const designCount = brand.totalDesigns;
+    graphNodes.push({
+      id: brandId,
+      name: `${brand.name}${designCount > 0 ? "" : ""}`,
+      kind: "brand",
+      colorKey: brand.id,
+    });
+    edges.push({ source: clientesId, target: brandId, kind: "contains" });
 
-      addAssetBranches(graphNodes, edges, brandId, brand.id, "direct", brand.directAssetGroups);
-      for (const campaign of brand.campaigns) {
-        const campaignId = `campaign:${campaign.id}`;
-        graphNodes.push({ id: campaignId, name: campaign.name, kind: "campaign", colorKey: brand.id });
-        edges.push({ source: brandId, target: campaignId, kind: "contains" });
-        addAssetBranches(graphNodes, edges, campaignId, brand.id, campaign.id, campaign.assetGroups);
-      }
+    // Direct designs (no campaign wrapper)
+    for (const design of brand.directDesigns) {
+      const designId = `design:${design.id}`;
+      graphNodes.push({
+        id: designId, name: design.name, kind: "design", colorKey: brand.id,
+        templateId: design.id, externalLink: design.obsidian_link || undefined,
+      });
+      edges.push({ source: brandId, target: designId, kind: "contains" });
     }
 
-    // ── "Sin especificar" — unassigned client files live here for auditing ──
-    if (sinEspecificar && sinEspecificar.totalDesigns > 0) {
-      const sinEspecificarId = `brand:sin-especificar`;
-      graphNodes.push({ id: sinEspecificarId, name: "Sin especificar", kind: "brand", colorKey: "unassigned" });
-      edges.push({ source: clientStatusId, target: sinEspecificarId, kind: "contains" });
-      // No campaigns for unassigned files — just asset types directly
-      addAssetBranches(graphNodes, edges, sinEspecificarId, "unassigned", "sin-especificar", sinEspecificar.directAssetGroups);
+    // Campaign designs — still connected directly to brand
+    for (const campaign of brand.campaigns) {
+      for (const design of campaign.designs) {
+        const designId = `design:${design.id}`;
+        graphNodes.push({
+          id: designId, name: design.name, kind: "design", colorKey: brand.id,
+          templateId: design.id, externalLink: design.obsidian_link || undefined,
+        });
+        edges.push({ source: brandId, target: designId, kind: "contains" });
+      }
+    }
+  }
+
+  // "No especificado" — all unassigned files
+  if (sinEspecificar && sinEspecificar.totalDesigns > 0) {
+    const noEspId = `brand:no-especificado`;
+    graphNodes.push({ id: noEspId, name: "No especificado", kind: "brand", colorKey: "unassigned" });
+    edges.push({ source: clientesId, target: noEspId, kind: "contains" });
+
+    for (const design of sinEspecificar.directDesigns) {
+      const designId = `design:${design.id}`;
+      graphNodes.push({
+        id: designId, name: design.name, kind: "design", colorKey: "unassigned",
+        templateId: design.id, externalLink: design.obsidian_link || undefined,
+      });
+      edges.push({ source: noEspId, target: designId, kind: "contains" });
+    }
+    for (const campaign of sinEspecificar.campaigns) {
+      for (const design of campaign.designs) {
+        const designId = `design:${design.id}`;
+        graphNodes.push({
+          id: designId, name: design.name, kind: "design", colorKey: "unassigned",
+          templateId: design.id, externalLink: design.obsidian_link || undefined,
+        });
+        edges.push({ source: noEspId, target: designId, kind: "contains" });
+      }
     }
   }
 
@@ -383,33 +411,6 @@ function groupDesignsByAssetType(designs: DesignGraphNode[]): DesignAssetGroup[]
   return ASSET_TYPE_OPTIONS
     .filter((option) => groups.has(option.value))
     .map((option) => ({ type: option.value, label: option.label, designs: groups.get(option.value)! }));
-}
-
-function addAssetBranches(
-  graphNodes: KnowledgeGraphNode[],
-  edges: KnowledgeGraphEdge[],
-  parentId: string,
-  colorKey: string,
-  scopeId: string,
-  assetGroups: DesignAssetGroup[],
-) {
-  for (const assetGroup of assetGroups) {
-    const assetId = `asset-type:${scopeId}:${assetGroup.type}`;
-    graphNodes.push({ id: assetId, name: ASSET_TYPE_LABELS.get(assetGroup.type) || "Otros", kind: "asset_type", colorKey });
-    edges.push({ source: parentId, target: assetId, kind: "contains" });
-    for (const design of assetGroup.designs) {
-      const designId = `design:${design.id}`;
-      graphNodes.push({
-        id: designId,
-        name: design.name,
-        kind: "design",
-        colorKey,
-        templateId: design.id,
-        externalLink: design.obsidian_link || undefined,
-      });
-      edges.push({ source: assetId, target: designId, kind: "contains" });
-    }
-  }
 }
 
 interface MutableBrandGroup {
