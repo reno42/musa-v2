@@ -72,6 +72,8 @@ const NODE_RADIUS: Record<KnowledgeNodeKind, number> = {
   workspace: 15,
   status: 12,
   brand: 10,
+  asset_group: 8,
+  campaign: 7,
   design: 6,
 };
 
@@ -91,8 +93,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const [error, setError] = useState("");
 
   const hierarchy = useMemo(
-    () => buildDesignHierarchy(designNodes, brandAccounts, contacts),
-    [designNodes, brandAccounts, contacts],
+    () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
+    [designNodes, brandAccounts, contacts, workspace],
   );
   const { nodes, edges } = useMemo(
     () => buildKnowledgeGraph(workspace, hierarchy),
@@ -531,26 +533,28 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     };
   }, [nodes, edges]);
 
-  const visibleDesignCount = hierarchy.reduce((sum, brand) => sum + brand.totalDesigns, 0);
+  const clientBrandCount = nodes.filter(n => n.kind === "brand").length;
+  const campaignCount = nodes.filter(n => n.kind === "campaign").length;
+  const designCount = nodes.filter(n => n.kind === "design").length;
 
   return (
     <div ref={wrapRef} style={{ height: "100%", position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
       {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
       {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
-      {!loading && !error && hierarchy.length === 0 && (
+      {!loading && !error && designCount === 0 && (
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13, gap: 8 }}>
           <span>No hay diseños para mostrar.</span>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Asigna marcas a los archivos desde File Info.</span>
         </div>
       )}
-      {!loading && !error && hierarchy.length > 0 && (
+      {!loading && !error && designCount > 0 && (
         <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
-            {hierarchy.filter(b => b.name !== "Sin especificar").length} marcas · {visibleDesignCount} archivos · arrastra para explorar
+            {clientBrandCount} marcas · {campaignCount} campañas · {designCount} archivos · arrastra para explorar
           </span>
         </div>
       )}
-      <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || hierarchy.length === 0 ? "none" : "block" }} />
+      <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || designCount === 0 ? "none" : "block" }} />
     </div>
   );
 }
