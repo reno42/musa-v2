@@ -229,7 +229,7 @@ export function buildDesignHierarchy(
   for (const node of nodes) {
     const brand = resolveBrand(brands, brandIdsByName, node.brand_id, node.brand, "client");
     const campaignName = normalizeDisplayName(node.campaign);
-    if (!campaignName) {
+    if (!campaignName || isNoiseCampaign(campaignName)) {
       brand.directDesigns.push(node);
       continue;
     }
@@ -485,6 +485,17 @@ function normalizeDisplayName(value: string | null | undefined): string {
 
 function normalizeKey(value: string): string {
   return (value ?? "").trim().toLocaleLowerCase("es");
+}
+
+const NOISE_CAMPAIGN_NAMES = new Set([
+  "otro", "otros", "other", "demo", "test", "prueba", "sample",
+  "default", "predeterminado", "ejemplo", "example", "n/a", "na",
+  "none", "ninguno", "vacio", "vacío", "sin nombre", "unnamed",
+  "general", "misc", "miscelaneo", "misceláneo", "varios",
+]);
+
+function isNoiseCampaign(name: string): boolean {
+  return NOISE_CAMPAIGN_NAMES.has(normalizeKey(name));
 }
 
 function compareNames(first: string, second: string): number {

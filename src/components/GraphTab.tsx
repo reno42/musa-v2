@@ -135,7 +135,6 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           brands?: DesignGraphBrand[];
           contacts?: DesignGraphContact[];
           nodes?: DesignGraphNode[];
-          edges?: KnowledgeGraphEdge[];
         };
         error?: string;
       }>(`/api/graph?${params.toString()}`);

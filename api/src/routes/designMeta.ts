@@ -15,7 +15,6 @@
 import { Router, type Request, type Response } from "express";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
 import { store } from "../services/store.js";
-import { buildDesignGraphEdges } from "../services/designGraph.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 
 export const designMetaRoutes = Router();
@@ -138,7 +137,7 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     const { workspaceId, brand, tag, format, designer_type } = req.query;
     const sb = getSupabase();
     if (!sb) {
-      res.json({ success: true, data: { nodes: [], edges: [] } });
+      res.json({ success: true, data: { nodes: [] } });
       return;
     }
 
@@ -156,7 +155,7 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       return;
     }
     if (workspaceIds.length === 0) {
-      res.json({ success: true, data: { workspace: null, brands: [], contacts: [], nodes: [], edges: [] } });
+      res.json({ success: true, data: { workspace: null, brands: [], contacts: [], nodes: [] } });
       return;
     }
 
@@ -202,7 +201,6 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
       obsidian_link: r.obsidian_link || "",
     }));
 
-    const edges = buildDesignGraphEdges(nodes);
     const brands = (brandResult.data || [])
       .filter((item: any) => !brand || item.name?.toLocaleLowerCase() === String(brand).toLocaleLowerCase())
       .map((item: any) => ({
@@ -215,7 +213,7 @@ export async function getDesignGraph(req: Request, res: Response): Promise<void>
     const workspaces = workspaceResult.data || [];
     const workspace = workspaces.length === 1 ? workspaces[0] : { id: "all", name: "Tus marcas" };
 
-    res.json({ success: true, data: { workspace, brands, contacts, nodes, edges } });
+    res.json({ success: true, data: { workspace, brands, contacts, nodes } });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load design graph";
     res.status(500).json({ success: false, error: message });
