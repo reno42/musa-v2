@@ -54,9 +54,9 @@ interface SimNode {
 
 // ── Simulation tuning ──
 const REPULSION = 4200;
-const SPRING = 0.038;
-const SPRING_REST = 120;
-const GRAVITY = 0.035;
+const SPRING = 0.05;
+const SPRING_REST = 75;
+const GRAVITY = 0.055;
 const DAMPING = 0.88;
 const ALPHA_DECAY = 0.03;
 const ALPHA_FLOOR = 0.02;
@@ -66,16 +66,10 @@ const WARMUP_TICKS = 140;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3.5;
 
-const PALETTE = ["#5B9CF6", "#F87171", "#34D399", "#FBBF24", "#A78BFA", "#F472B6", "#22D3EE", "#FB923C"];
-
-const NODE_RADIUS: Record<KnowledgeNodeKind, number> = {
-  workspace: 15,
-  status: 12,
-  brand: 10,
-  asset_group: 8,
-  campaign: 7,
-  design: 6,
-};
+const GRAPH_COLOR = "#5B9CF6";
+const BASE_RADIUS = 5;
+const MAX_DEGREE_BONUS = 12;
+const RADIUS_FACTOR = 1.4;
 
 function hexToRgb(hex: string): [number, number, number] {
   const v = parseInt(hex.slice(1), 16);
@@ -162,7 +156,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         vx: 0, vy: 0,
         wx: r * Math.cos(golden),
         wy: r * Math.sin(golden),
-        radius: NODE_RADIUS[n.kind] + Math.min(6, Math.sqrt(deg) * 0.9),
+        radius: BASE_RADIUS + Math.min(MAX_DEGREE_BONUS, Math.sqrt(deg) * RADIUS_FACTOR),
         degree: deg,
         name: n.name,
         colorKey: n.colorKey,
@@ -185,16 +179,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       neighbors.get(l.b.id)!.add(l.a.id);
     }
 
-    const brandColor = new Map<string, string>([
-      ["workspace", "#F8FAFC"],
-      ["client", "#34D399"],
-      ["unassigned", "#f59e0b"],
-    ]);
-    let ci = 0;
-    for (const n of sim) {
-      if (n.colorKey && !brandColor.has(n.colorKey)) brandColor.set(n.colorKey, PALETTE[ci++ % PALETTE.length]);
-    }
-    const colorOf = (n: SimNode) => brandColor.get(n.colorKey) || "#8B93A7";
+    const colorOf = (_?: SimNode) => GRAPH_COLOR;
 
     // ── Interaction state (refs only — never re-runs this effect) ──
     const view = { x: 0, y: 0, k: 1 };
