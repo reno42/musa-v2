@@ -214,6 +214,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
     const toWorld = (sx: number, sy: number) => ({ x: (sx - view.x) / view.k, y: (sy - view.y) / view.k });
 
+    const wsNode = sim.find(n => n.kind === "workspace");
+
     // ── Physics tick ──
     const tick = (t: number) => {
       const a = Math.max(alpha, ALPHA_FLOOR);
@@ -254,13 +256,14 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         n.vx += -n.x * GRAVITY * a;
         n.vy += -n.y * GRAVITY * a;
         if (n === dragging) { n.vx = 0; n.vy = 0; continue; }
-        if (n.kind === "workspace") { n.vx = 0; n.vy = 0; continue; }
         n.vx *= DAMPING; n.vy *= DAMPING;
         const vmax = 14;
         if (n.vx > vmax) n.vx = vmax; else if (n.vx < -vmax) n.vx = -vmax;
         if (n.vy > vmax) n.vy = vmax; else if (n.vy < -vmax) n.vy = -vmax;
         n.x += n.vx; n.y += n.vy;
       }
+      // Lock workspace root at (0,0) — the anchor of the graph
+      if (wsNode) { wsNode.x = 0; wsNode.y = 0; wsNode.vx = 0; wsNode.vy = 0; }
       alpha += (alphaTarget - alpha) * ALPHA_DECAY;
     };
 
