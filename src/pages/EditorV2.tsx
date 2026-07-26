@@ -12,6 +12,9 @@ import { BrandPanel } from "../components/BrandPanel";
 import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
+import { ExportPanel, type ExportFormat, type ExportScope } from "../components/ExportPanel";
+import { DesignImportModal } from "../components/DesignImportModal";
+import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
@@ -2408,7 +2411,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const handleExportFramePNG = useCallback(async (format: "png" | "jpg" = "png") => {
     if (!selectedFrame) return;
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     const blob = await captureFrameToPng(selectedFrame, format === "jpg" ? 1 : 2, format);
     if (!blob) return;
     const url = URL.createObjectURL(blob);
@@ -2452,7 +2455,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrame, captureFrameToPng]);
 
   const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     for (const frame of frames) {
       const blob = await captureFrameToPng(frame, format === "jpg" ? 1 : 2, format);
       if (!blob) continue;
@@ -2468,7 +2471,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const handleExportFrameSVG = useCallback(async () => {
     if (!selectedFrame) return;
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     const svgString = buildFrameSvg(selectedFrame);
     const blob = new Blob([svgString], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
@@ -2480,7 +2483,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrame]);
 
   const handleExportAllFramesSVG = useCallback(async () => {
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     for (const frame of frames) {
       const svgString = buildFrameSvg(frame);
       const blob = new Blob([svgString], { type: "image/svg+xml" });
@@ -2497,7 +2500,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── PDF export via jsPDF ──
   const handleExportFramePDF = useCallback(async () => {
     if (!selectedFrame) return;
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     const blob = await captureFrameToPng(selectedFrame, 2, "png");
     if (!blob) return;
     const { jsPDF } = await import("jspdf");
@@ -2518,7 +2521,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrame, captureFrameToPng]);
 
   const handleExportAllFramesPDF = useCallback(async () => {
-    setShowExportMenu(false);
+    // Export menu no longer used — ExportPanel handles UI state
     const { jsPDF } = await import("jspdf");
     for (const frame of frames) {
       const blob = await captureFrameToPng(frame, 2, "png");
@@ -2540,10 +2543,49 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [frames, captureFrameToPng]);
 
-  const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImageUpload, setShowImageUpload] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
+  const [showDesignImport, setShowDesignImport] = useState(false);
+
+  // ── Unified export dispatcher (format + scope → existing handlers) ──
+  const handleUnifiedExport = useCallback(async (format: ExportFormat, scope: ExportScope) => {
+    if (scope === "current") {
+      if (format === "png" || format === "jpg") await handleExportFramePNG(format);
+      else if (format === "svg") await handleExportFrameSVG();
+      else if (format === "pdf") await handleExportFramePDF();
+    } else {
+      if (format === "png" || format === "jpg") await handleExportAllFramesPNG(format);
+      else if (format === "svg") await handleExportAllFramesSVG();
+      else if (format === "pdf") await handleExportAllFramesPDF();
+    }
+  }, [handleExportFramePNG, handleExportFrameSVG, handleExportFramePDF,
+      handleExportAllFramesPNG, handleExportAllFramesSVG, handleExportAllFramesPDF]);
+
+  // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
+  const handleDesignImport = useCallback(async (result: ImportResult) => {
+    if (result.warning && !result.html) {
+      addToast(result.warning, "error", true);
+      return;
+    }
+    const newFrame: FrameData = {
+      id: `frame-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: result.name || "Imported Design",
+      x: 100 + frames.length * 40,
+      y: 100 + frames.length * 40,
+      width: result.width || 1080,
+      height: result.height || 1080,
+      html: result.html,
+      css: result.css,
+      background: "#ffffff",
+    };
+    const updated = [...frames, newFrame];
+    store.replaceAllWithUndo(updated, "import design");
+    setSelectedFrameId(newFrame.id);
+    autoSave(updated);
+    if (result.warning) addToast(result.warning, "error");
+    else addToast(`Diseño "${newFrame.name}" importado correctamente.`, "success");
+  }, [frames, store, setSelectedFrameId, autoSave, addToast]);
 
   // ── Canvas Guides state ──
   const [guides, setGuides] = useState<Guide[]>([]);
@@ -3474,48 +3516,36 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         >
           <IconImage size={14} />
         </button>
-        <div style={{ position: "relative" }}>
-          <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowExportMenu(!showExportMenu)} title="Export">
-            <IconDownload size={14} />
-            <IconChevronDown size={8} style={{ marginLeft: 2 }} />
-          </button>
-          {showExportMenu && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 98 }} onClick={() => setShowExportMenu(false)} />
-              <div className="editor-v2-dropdown-menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 99, marginTop: 4 }}>
-                <button type="button" onClick={() => { handleExportFramePNG("png"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export Current Frame as PNG
-                </button>
-                <button type="button" onClick={() => { handleExportFramePNG("jpg"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export Current Frame as JPG
-                </button>
-                <button type="button" onClick={() => { handleExportFrameSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export Current Frame as SVG
-                </button>
-                <button type="button" onClick={() => { handleExportFramePDF(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconDownload size={14} /> Export Current Frame as PDF
-                </button>
-                <div className="editor-v2-dropdown-sep" />
-                <button type="button" onClick={() => { handleExportAllFramesPNG("png"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export All Frames as PNG
-                </button>
-                <button type="button" onClick={() => { handleExportAllFramesPNG("jpg"); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export All Frames as JPG
-                </button>
-                <button type="button" onClick={() => { handleExportAllFramesSVG(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconImage size={14} /> Export All Frames as SVG
-                </button>
-                <button type="button" onClick={() => { handleExportAllFramesPDF(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconDownload size={14} /> Export All Frames as PDF
-                </button>
-                <div className="editor-v2-dropdown-sep" />
-                <button type="button" onClick={() => { handleExportJSON(); setShowExportMenu(false); }} className="editor-v2-dropdown-item">
-                  <IconDownload size={14} /> Export as JSON
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        {/* ── Export: format dropdown + scope toggle + export button ── */}
+        <ExportPanel
+          frames={frames}
+          selectedFrame={selectedFrame}
+          onExport={handleUnifiedExport}
+        />
+
+        {/* JSON export (secondary) */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={handleExportJSON}
+          title="Export as JSON"
+        >
+          <IconDownload size={14} />
+        </button>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ── Import: designs from Illustrator, Photoshop, Figma, SVG ── */}
+        <button
+          type="button"
+          className="editor-v2-topbar-icon-btn"
+          onClick={() => setShowDesignImport(true)}
+          title="Importar diseño (SVG, PSD, AI, FIG)"
+          style={{ color: "var(--editor-accent, #6c5ce7)" }}
+        >
+          <IconUpload size={14} />
+          <span style={{ fontSize: 11, marginLeft: 4 }}>Importar</span>
+        </button>
 
         <div className="editor-v2-topbar-sep" />
 
@@ -3880,10 +3910,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconImage size={16} /> Capture Thumbnail
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowExportMenu(!showExportMenu); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { setShowDesignImport(true); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconDownload size={16} /> Export
+                  <IconUpload size={16} /> Importar diseño
                 </span>
               </button>
               
@@ -4449,6 +4479,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }}
         />
       )}
+
+      {/* ═══ Design Import Modal (SVG, PSD, AI, FIG) ═══ */}
+      <DesignImportModal
+        open={showDesignImport}
+        onClose={() => setShowDesignImport(false)}
+        onImport={handleDesignImport}
+      />
 
       {/* ═══ Icon Picker ═══ */}
       {showIconPicker && (
