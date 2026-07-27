@@ -54,26 +54,34 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
 
   if (apiKey && sb) {
     try {
-      const { data } = await sb.from("workspace_api_keys")
-        .select("id, created_by, workspace_id, role")
+      // Look up without filtering so we can return a specific failure reason
+      const { data: rawRow } = await sb.from("workspace_api_keys")
+        .select("id, created_by, workspace_id, role, label, revoked_at, expires_at")
         .eq("key_hash", keyHash(apiKey))
-        .is("revoked_at", null)
-        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
         .maybeSingle();
-      if (data) {
-        void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
+      if (rawRow) {
+        if (rawRow.revoked_at) {
+          return res.status(401).json({ success: false, error: `API key revoked at ${rawRow.revoked_at}. Generate a new key at Settings → API Keys.`, reason: "key_revoked" });
+        }
+        if (rawRow.expires_at && new Date(rawRow.expires_at) <= new Date()) {
+          return res.status(401).json({ success: false, error: `API key expired at ${rawRow.expires_at}. Generate a new key at Settings → API Keys.`, reason: "key_expired" });
+        }
+        void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", rawRow.id);
         return proceed({
-          userId: data.created_by,
+          userId: rawRow.created_by,
           authType: "workspace_key",
-          workspaceId: data.workspace_id,
-          workspaceRole: data.role,
-          keyId: data.id,
+          workspaceId: rawRow.workspace_id,
+          workspaceRole: rawRow.role,
+          keyId: rawRow.id,
         });
       }
-    } catch { /* reject below */ }
+      return res.status(401).json({ success: false, error: "API key not found in database. Verify the key or create a new one at Settings → API Keys. Use the MCP tool verify_api_key for full diagnostics.", reason: "key_not_found" });
+    } catch (err: any) {
+      return res.status(401).json({ success: false, error: `Database error during key validation: ${err?.message || err}. Retry in a moment.`, reason: "database_error" });
+    }
   }
 
-  res.status(401).json({ success: false, error: "Unauthorized: sign in or provide a valid workspace API key" });
+  res.status(401).json({ success: false, error: "Unauthorized: sign in or provide a valid workspace API key", reason: "no_credentials" });
 }
 
 export function requireUserSession(req: Request, res: Response, next: NextFunction) {

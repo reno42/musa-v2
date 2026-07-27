@@ -2759,6 +2759,17 @@ const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: "verify_api_key",
+    description: "PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        apiKey: { type: "string", description: "The API key to verify (e.g. 'fdr_ws_...')" },
+      },
+      required: ["apiKey"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -2810,26 +2821,44 @@ function keyHash(rawKey) {
 
 /**
  * Validate an API key against the database.
- * Returns { valid, userId, keyId, label } or { valid: false }.
+ * Returns { valid, userId, keyId, label, reason } or { valid: false, reason }.
+ * `reason` is always populated on failure so callers and agents can self-diagnose
+ * instead of guessing why authentication failed.
  */
 async function validateApiKey(apiKey) {
   const sb = getSupabaseAdmin();
   if (!sb) {
     // No Supabase — accept any non-empty key as valid (dev mode)
-    return apiKey ? { valid: true, userId: apiKey, keyId: "local", label: "Local Dev Key" } : { valid: false };
+    return apiKey ? { valid: true, userId: apiKey, keyId: "local", label: "Local Dev Key" } : { valid: false, reason: "no_api_key_provided" };
   }
   try {
-    const { data, error } = await sb.from("workspace_api_keys")
-      .select("id, created_by, workspace_id, role, label, revoked_at")
+    // Step 1: look up the key hash WITHOUT filtering on revoked_at / expires_at
+    // so we can tell the caller exactly what's wrong.
+    const { data: rawRow, error: lookupError } = await sb.from("workspace_api_keys")
+      .select("id, created_by, workspace_id, role, label, revoked_at, expires_at, created_at, last_used_at")
       .eq("key_hash", keyHash(apiKey))
-      .is("revoked_at", null)
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .maybeSingle();
-    if (error || !data) return { valid: false };
-    void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-    return { valid: true, userId: data.created_by, workspaceId: data.workspace_id, role: data.role, keyId: data.id, label: data.label };
-  } catch {
-    return { valid: false };
+    if (lookupError) return { valid: false, reason: `database_error: ${lookupError.message}` };
+    if (!rawRow) return { valid: false, reason: "key_not_found_in_database" };
+    if (rawRow.revoked_at) return { valid: false, reason: `key_revoked_at_${rawRow.revoked_at}`, label: rawRow.label, keyId: rawRow.id };
+    if (rawRow.expires_at && new Date(rawRow.expires_at) <= new Date()) {
+      return { valid: false, reason: `key_expired_at_${rawRow.expires_at}`, label: rawRow.label, keyId: rawRow.id };
+    }
+    // Key is valid — update last_used_at fire-and-forget
+    void sb.from("workspace_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", rawRow.id);
+    return {
+      valid: true,
+      userId: rawRow.created_by,
+      workspaceId: rawRow.workspace_id,
+      role: rawRow.role,
+      keyId: rawRow.id,
+      label: rawRow.label,
+      createdAt: rawRow.created_at,
+      lastUsedAt: rawRow.last_used_at,
+      expiresAt: rawRow.expires_at,
+    };
+  } catch (err) {
+    return { valid: false, reason: `exception: ${err?.message || err}` };
   }
 }
 
@@ -2870,7 +2899,7 @@ async function checkAuth(event) {
     return { valid: true, userId: result.userId, workspaceId: result.workspaceId, workspaceRole: result.role, isAdmin: false, authType: "workspace_key", keyLabel: result.label };
   }
 
-  return { valid: false };
+  return { valid: false, reason: result.reason || "unknown" };
 }
 
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
@@ -7869,6 +7898,39 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
       return { name: params.name, file, url, content };
     }
+    case "verify_api_key": {
+      const key = String(params.apiKey || "").trim();
+      if (!key) return { valid: false, reason: "no_api_key_provided", diagnostic: "Pass the apiKey parameter with your fdr_ws_... key." };
+      const result = await validateApiKey(key);
+      if (result.valid) {
+        return {
+          valid: true,
+          keyId: result.keyId,
+          label: result.label,
+          workspaceId: result.workspaceId,
+          role: result.role,
+          createdAt: result.createdAt,
+          expiresAt: result.expiresAt || "never (permanent)",
+          lastUsedAt: result.lastUsedAt || "never",
+          message: "Key is valid and ready to use. Store it permanently in your MCP client config — it will not expire.",
+        };
+      }
+      // Provide actionable guidance for each failure mode
+      const reason = result.reason || "unknown";
+      let guidance = "";
+      if (reason === "key_not_found_in_database") {
+        guidance = "This key does not exist in the database. It may have been created on a different deployment or the creation failed silently. Generate a new key at https://design.futuraria.com → Settings → API Keys → Generate Key. IMPORTANT: Save the returned key permanently — you will never need to generate another one.";
+      } else if (reason.startsWith("key_revoked")) {
+        guidance = "This key was manually revoked. Generate a new one and save it permanently.";
+      } else if (reason.startsWith("key_expired")) {
+        guidance = "This key has expired. Generate a new one and save it permanently.";
+      } else if (reason.startsWith("database_error")) {
+        guidance = `Database connectivity issue: ${reason}. This is a transient infrastructure problem — retry in a few minutes.`;
+      } else {
+        guidance = `Unexpected failure: ${reason}. Report this to support.`;
+      }
+      return { valid: false, reason, label: result.label, keyId: result.keyId, guidance };
+    }
     case "get_agent_guide": {
       const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
       return {
@@ -7876,7 +7938,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         connection: {
           endpoint: `${siteUrl}/mcp`,
           protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
-          auth: "Pass x-api-key header on every POST request. Create API keys at https://design.futuraria.com → Settings → API Keys.",
+          auth: {
+            method: "Pass x-api-key header on every POST request.",
+            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
+            persistence: "CRITICAL: API keys are PERMANENT (no expiry). Once you have a key, SAVE IT in your MCP client config file permanently. NEVER create a new key if you already have one. If auth fails, call verify_api_key first to diagnose before creating a new key.",
+            diagnose: "If you get 401, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why the key failed (not_found, revoked, expired, database_error).",
+          },
         },
         first_steps: [
           "1. Call tools/list to see all 145+ available tools.",
@@ -7905,6 +7972,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "Cache the playbook index so you can match user intents to playbooks without calling get_agent_guide every time.",
           "After creating a template, store its templateId for future reference.",
           "Remember which mode the user prefers: creative (set_html/set_css) vs editable (set_frame_layers).",
+          "CRITICAL: Save the API key permanently. Keys never expire. If auth fails, call verify_api_key to diagnose — do NOT create a new key.",
         ],
         docs: {
           skillUrl: `${siteUrl}/SKILL.md`,
@@ -10352,9 +10420,10 @@ export const handler = async (event) => {
           auth: {
             required: "tools/call requires x-api-key header on every POST request. initialize + tools/list are public (no auth).",
             how_to_send: "Include header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If using an MCP client (Cursor, Claude, etc.), configure it in the MCP server settings under 'headers': { 'x-api-key': 'YOUR_KEY' }.",
-            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys.",
-            troubleshooting: "If tools/call returns 401 but initialize works: your MCP client is likely sending the SSE handshake without the x-api-key header. The key must be on EVERY POST, not just the initial connection. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. For custom clients: add x-api-key header to every fetch() call.",
-            public_tools_no_auth: "get_agent_guide and get_playbook are public (no auth required). Call them even without an API key configured.",
+            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
+            key_persistence: "API keys are PERMANENT — they never expire. Once you have a key, save it in your config permanently. Do NOT create a new key each session.",
+            troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json.",
+            public_tools_no_auth: "get_agent_guide, get_playbook, and verify_api_key are public (no auth required).",
           },
           step1_discover: "Call tools/list to see all available tools.",
           step2_learn: "Call get_agent_guide (no auth required) to receive the onboarding summary. Or read the full manual: " + siteUrl + "/SKILL.md",
@@ -10387,21 +10456,20 @@ export const handler = async (event) => {
 
   if (method === "tools/call") {
     // ── Public tools (no auth required) ──
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook"]);
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key"]);
 
     if (!PUBLIC_TOOLS.has(params.name)) {
       // ── Auth enforcement ──
       const auth = await checkAuth(event);
       if (!auth.valid) {
+        const reason = auth.reason || "unknown";
         return {
           statusCode: 401, headers,
           body: JSON.stringify(jsonRpcError(id, -32001,
-            "Unauthorized: valid x-api-key header required. " +
-            "Send 'x-api-key: YOUR_KEY' header on every POST request. " +
-            "Create API keys at https://design.futuraria.com → Settings → API Keys. " +
-            "Public tools (no auth): get_agent_guide, get_playbook. " +
-            "Tip: if your MCP client sends initialize + tools/list but tools/call fails with 401, " +
-            "check that your client includes the x-api-key header on POST requests, not just the SSE handshake."
+            `Authentication failed (reason: ${reason}). ` +
+            "The key you provided was rejected by the database. " +
+            "Call the public tool 'verify_api_key' with your key to get a full diagnostic. " +
+            "Create or manage keys at https://design.futuraria.com → Settings → API Keys."
           )),
         };
       }
@@ -10443,18 +10511,18 @@ export const handler = async (event) => {
 
   // Direct method fallback: if method matches a tool name, route to tools/call
   if (MCP_TOOLS.some(t => t.name === method)) {
-    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook"]);
+    const PUBLIC_TOOLS = new Set(["get_agent_guide", "get_playbook", "verify_api_key"]);
 
     if (!PUBLIC_TOOLS.has(method)) {
       const auth = await checkAuth(event);
       if (!auth.valid) {
+        const reason = auth.reason || "unknown";
         return {
           statusCode: 401, headers,
           body: JSON.stringify(jsonRpcError(id, -32001,
-            "Unauthorized: valid x-api-key header required. " +
-            "Send 'x-api-key: YOUR_KEY' header on every POST request. " +
-            "Create API keys at https://design.futuraria.com → Settings → API Keys. " +
-            "Public tools (no auth): get_agent_guide, get_playbook."
+            `Authentication failed (reason: ${reason}). ` +
+            "Call 'verify_api_key' with your key to get a full diagnostic. " +
+            "Create or manage keys at https://design.futuraria.com → Settings → API Keys."
           )),
         };
       }
