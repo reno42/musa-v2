@@ -583,8 +583,8 @@ const MCP_TOOLS = [
         width: { type: "number", description: "Canvas width in pixels (default 1080)" },
         height: { type: "number", description: "Canvas height in pixels (default 1080)" },
         engine: { type: "string", enum: ["html"], description: "Rendering engine (default 'html'). Use 'html' for code-based designs." },
-        html: { type: "string", description: "Initial HTML content (HTML engine only)" },
-        css: { type: "string", description: "Initial CSS styles (HTML engine only)" },
+        html: { type: "string", description: "Initial HTML content (HTML engine only). If provided, body { width/height } in CSS will be auto-synced to match width/height parameters." },
+        css: { type: "string", description: "Initial CSS styles (HTML engine only). body dimensions are auto-corrected to match width/height params — no need to manually set them." },
         allowGroupedLayers: { type: "boolean", description: "Set true only when groups/components are intentional. Default false rejects grouped raw HTML." },
       },
       required: ["name", "workspaceId"],
@@ -3325,8 +3325,25 @@ async function handleMethod(method, params, userId, auth) {
       const useEngine = params.engine || "html";
       if (useEngine === "html") {
         tpl.engine = "html";
+        // Sync body dimensions in CSS to match the template/frame dimensions.
+        // AI-generated HTML often hardcodes body { width: 1080px; height: 1080px }
+        // but the actual frame may be 1080x1350 or 1080x1920, causing visual breakage.
+        let syncedCss = params.css || "";
+        if (syncedCss) {
+          syncedCss = syncedCss.replace(
+            /body\s*\{([^}]*)\}/s,
+            (match, inner) => {
+              let fixed = inner;
+              const hasWidth = /width\s*:\s*\d/.test(fixed);
+              const hasHeight = /height\s*:\s*\d/.test(fixed);
+              if (hasWidth) fixed = fixed.replace(/width\s*:\s*\d+(?:\.\d+)?px/, `width: ${tplWidth}px`);
+              if (hasHeight) fixed = fixed.replace(/height\s*:\s*\d+(?:\.\d+)?px/, `height: ${tplHeight}px`);
+              return `body {${fixed}}`;
+            }
+          );
+        }
         tpl.html = params.html || "";
-        tpl.css = params.css || "";
+        tpl.css = syncedCss;
         // Create a default frame with the template dimensions
         const defaultFrame = {
           id: `frame_${uuid().slice(0, 12)}`,
@@ -3334,20 +3351,41 @@ async function handleMethod(method, params, userId, auth) {
           x: 0, y: 0,
           width: tplWidth, height: tplHeight,
           html: params.html || "",
-          css: params.css || "",
+          css: syncedCss,
           background: "#ffffff",
         };
         tpl.frames = [defaultFrame];
         // CRITICAL FIX: persist engine/html/css/frames — previously missing!
-        await templates.updateTemplate(tpl.id, {
+        // Also verify persistence succeeded — return an error if the DB write failed.
+        const persisted = await templates.updateTemplate(tpl.id, {
           engine: "html",
           html: tpl.html,
           css: tpl.css,
           frames: tpl.frames,
         });
+        if (!persisted) {
+          throw { code: -32000, message: `create_template: template "${tplName}" was created but the HTML/CSS content could not be persisted to the database (likely payload too large or database timeout). The template exists but is empty. Try: (1) use set_html and set_css as separate calls, (2) reduce inline content.` };
+        }
       }
       autoSnapshot(tpl.id, "create_template");
-      return { ...tpl, _editability: createEditability };
+      // Return a lean summary instead of the full template object.
+      // Returning { ...tpl } duplicated the HTML/CSS (once at template level, once
+      // in frames[0]) which inflated the JSON-RPC response and caused null-array
+      // parsing errors on the client side for larger designs.
+      return {
+        templateId: tpl.id,
+        name: tpl.name,
+        workspaceId: tpl.workspaceId,
+        engine: tpl.engine || "html",
+        width: tplWidth,
+        height: tplHeight,
+        frameId: tpl.frames?.[0]?.id || null,
+        frameCount: tpl.frames?.length || 0,
+        htmlLength: (params.html || "").length,
+        cssLength: (params.css || "").length,
+        _editability: createEditability,
+        hint: "Use get_template({ id }) to inspect the full content, or open the editor to preview visually.",
+      };
     }
     case "create_deck": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
@@ -6568,11 +6606,14 @@ async function handleMethod(method, params, userId, auth) {
       }
       tpl.metadata.updatedAt = new Date().toISOString();
       // Persist
-      await templates.updateTemplate(params.templateId, {
+      const framePersisted = await templates.updateTemplate(params.templateId, {
         frames: tpl.frames,
         html: tpl.html,
         css: tpl.css,
       });
+      if (!framePersisted) {
+        throw { code: -32000, message: "create_html_frame: frame created in memory but database persistence FAILED. The frame will vanish on cold start. Try using set_html and set_css as separate smaller calls." };
+      }
       autoSnapshot(params.templateId, "create_html_frame");
       const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
       return { ...frame, _editability: frameEditability, frameStrategy: strategy, hint: strategy === "single-web"
@@ -10281,7 +10322,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         validateFrameSizes([frame], "import_design");
         tpl.metadata = tpl.metadata || {};
         tpl.metadata.updatedAt = new Date().toISOString();
-        await templates.updateTemplate(params.templateId, { frames: existingFrames });
+        const persistedUpdate = await templates.updateTemplate(params.templateId, { frames: existingFrames });
+        if (!persistedUpdate) {
+          throw { code: -32000, message: "import_design (update path): HTML+CSS parsed successfully but database persistence FAILED. The design was NOT saved and will appear empty on reload. Likely cause: payload too large for Supabase write or database timeout. Try: (1) use set_html and set_css as separate smaller calls, (2) reduce inline images / use external URLs." };
+        }
         autoSnapshot(params.templateId, "import_design");
         return {
           templateId: params.templateId,
@@ -10319,11 +10363,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
         tpl.metadata = tpl.metadata || {};
         tpl.metadata.updatedAt = new Date().toISOString();
-        await templates.updateTemplate(params.templateId, {
+        const persistedCreate = await templates.updateTemplate(params.templateId, {
           frames: tpl.frames,
           html: tpl.html,
           css: tpl.css,
         });
+        if (!persistedCreate) {
+          throw { code: -32000, message: "import_design (create path): frame created in memory but database persistence FAILED. The design was NOT saved and will vanish on cold start. Likely cause: payload too large for Supabase write or database timeout. Try: (1) use set_html and set_css as separate smaller calls, (2) reduce inline images / use external URLs." };
+        }
         autoSnapshot(params.templateId, "import_design");
         const strategy = tpl.metadata?.frameStrategy || (frameHeight > frameWidth * 2 ? "single-web" : "multi");
         return {

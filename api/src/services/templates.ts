@@ -170,24 +170,37 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
     if (UUID_RE.test(userId)) {
       row.user_id = userId;
     }
-    const { error } = await sb.from("templates").upsert(row);
+    // 8s timeout — the data JSONB column can be several MB with inline images.
+    // Without this, large payloads hang silently and Netlify returns 502.
+    const upsertPromise = sb.from("templates").upsert(row);
+    const result = await withTimeout(upsertPromise as any, 8000);
+    if (!result) {
+      console.error(`[templates] Supabase upsert TIMED OUT (8s) for template ${tpl.id}. Payload size: ${JSON.stringify(tpl).length} bytes. The design is in ephemeral memory only.`);
+      return false;
+    }
+    const { error } = result as any;
     if (error) {
       // slug column added by v7 migration — retry without it if missing
       if (error.message?.includes("slug") && error.message?.includes("does not exist")) {
         delete row.slug;
-        const { error: err2 } = await sb.from("templates").upsert(row);
+        const retryResult = await withTimeout(sb.from("templates").upsert(row) as any, 8000);
+        if (!retryResult) {
+          console.error(`[templates] Supabase upsert retry TIMED OUT (8s) for template ${tpl.id}`);
+          return false;
+        }
+        const { error: err2 } = retryResult as any;
         if (err2) {
-          console.warn("[templates] Supabase upsert failed (retry):", err2.message);
+          console.error(`[templates] Supabase upsert failed (retry): ${err2.message}. Template: ${tpl.id}`);
           return false;
         }
         return true;
       }
-      console.warn("[templates] Supabase upsert failed:", error.message);
+      console.error(`[templates] Supabase upsert failed: ${error.message}. Template: ${tpl.id}, Payload size: ${JSON.stringify(tpl).length} bytes`);
       return false;
     }
     return true;
   } catch (e) {
-    console.warn("[templates] Supabase upsert failed:", (e as Error).message);
+    console.error(`[templates] Supabase upsert exception: ${(e as Error).message}. Template: ${tpl.id}`);
     return false;
   }
 }
