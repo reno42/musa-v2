@@ -214,7 +214,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
     const toWorld = (sx: number, sy: number) => ({ x: (sx - view.x) / view.k, y: (sy - view.y) / view.k });
 
-    const wsNode = sim.find(n => n.kind === "workspace");
+    const wsNode = sim[0]; // workspace is always the first node
 
     // ── Physics tick ──
     const tick = (t: number) => {
