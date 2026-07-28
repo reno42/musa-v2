@@ -1,0 +1,16 @@
+# Futuraria Design — AI Agent Discovery
+# MCP endpoint: POST https://design.futuraria.com/mcp
+# Full discovery: GET https://design.futuraria.com/.well-known/mcp.json
+
+User-agent: *
+Allow: /
+
+# AI Agent Discovery
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+# MCP Discovery endpoint
+Sitemap: https://design.futuraria.com/.well-known/mcp.json

@@ -4,6 +4,18 @@
 **Description:** React + TypeScript + Vite HTML/CSS design editor with iframe-sandboxed rendering, Monaco code panels, frame-based layout, floating dockable panels, MCP tool API, and Supabase persistence. Deployed on Netlify with serverless functions.
 **Triggers:** Any task involving the Futuraria editor UI, HTML/CSS design manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, React best-practice refactors, or Graph Playbook workflows (replicate, create from scratch, CSV batch, design system extraction, multi-agent collaboration).
 
+## 🤖 Agent Discovery (for AI agents who just received a URL)
+
+If someone gave you a URL like `design.futuraria.com` and you need to figure out what this is and how to connect:
+
+1. **Fetch this file:** `GET https://design.futuraria.com/.well-known/mcp.json` — returns the full MCP discovery document with endpoint, auth, capabilities, and step-by-step onboarding.
+2. **Read this skill file:** `GET https://design.futuraria.com/SKILL.md` — the complete manual you're reading now.
+3. **Initialize the MCP:** `POST https://design.futuraria.com/mcp` with JSON-RPC method `initialize` (no auth needed). The response includes `_agentGuide` with playbooks.
+4. **Get the onboarding guide:** Call the public tool `get_agent_guide` (no auth needed).
+5. **Ask the user for their API key** — they create it at the website under Settings -> API Keys. The key starts with `fdr_ws_` and is permanent.
+
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 145+ MCP tools. The platform renders, stores, and exports them.
+
 ---
 
 ## Overview

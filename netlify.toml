@@ -5,6 +5,13 @@
 [functions]
   node_bundler = "esbuild"
 
+# Serve .well-known discovery files (mcp.json, robots.txt) as static assets
+[[redirects]]
+  from = "/.well-known/*"
+  to = "/.well-known/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/api/render/*"
   to = "/.netlify/functions/render"

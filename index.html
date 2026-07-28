@@ -4,12 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
-    <title>Futuraria Design</title>
+    <title>Futuraria Design — AI-Native Design Platform</title>
+    <meta name="description" content="Create, edit, and export HTML/CSS designs with 145+ MCP tools. AI agents connect via MCP at /mcp endpoint. Social media posts, stories, landing pages, brand materials, batch generation." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <link rel="alternate" type="application/json" href="/.well-known/mcp.json" title="MCP Discovery" />
+    <meta name="mcp-endpoint" content="/mcp" />
+    <meta name="mcp-auth" content="x-api-key header required for tools/call" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Futuraria Design",
+      "description": "AI-native design platform with 145+ MCP tools for creating, editing, and exporting HTML/CSS designs.",
+      "url": "https://design.futuraria.com",
+      "applicationCategory": "DesignApplication",
+      "operatingSystem": "Web",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    }
+    </script>
   </head>
   <body>
+    <!--
+    AI Agent Discovery: This is an MCP (Model Context Protocol) server.
+    - MCP endpoint: POST https://design.futuraria.com/mcp
+    - Auth: x-api-key header (create at Settings -> API Keys)
+    - Public tools (no auth): initialize, tools/list, get_agent_guide, get_playbook, verify_api_key
+    - Full discovery: GET /.well-known/mcp.json
+    - Documentation: GET /SKILL.md
+    -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

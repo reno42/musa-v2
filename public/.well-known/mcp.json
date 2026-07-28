@@ -1,0 +1,98 @@
+{
+  "$schema": "https://design.futuraria.com/.well-known/mcp.schema.json",
+  "name": "Futuraria Design",
+  "description": "AI-native design platform. Create, edit, and export HTML/CSS designs for social media, landing pages, and brand materials. 145+ MCP tools for design creation, brand extraction, batch generation, and multi-agent collaboration.",
+  "production_url": "https://design.futuraria.com",
+  "mcp": {
+    "endpoint": "https://design.futuraria.com/mcp",
+    "protocol": "JSON-RPC 2.0 over HTTP POST (SSE for streaming)",
+    "protocol_version": "2024-11-05",
+    "transport": "http"
+  },
+  "auth": {
+    "type": "api_key",
+    "header_name": "x-api-key",
+    "required_for": "tools/call (all design tools)",
+    "not_required_for": ["initialize", "tools/list", "get_agent_guide", "get_playbook", "verify_api_key"],
+    "key_format": "fdr_ws_<random>",
+    "key_expiry": "never (keys are permanent — create once, use forever)",
+    "how_to_get_key": {
+      "step_1": "The HUMAN user logs into https://design.futuraria.com",
+      "step_2": "Navigate to Settings (gear icon, usually top-right)",
+      "step_3": "Click 'API Keys' section",
+      "step_4": "Click 'Generate Key'",
+      "step_5": "Copy the key immediately (format: fdr_ws_...) — it's only shown once",
+      "step_6": "Paste it into your MCP client config as a header: x-api-key: fdr_ws_..."
+    },
+    "key_diagnostic": "If auth fails, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why (not_found, revoked, expired, database_error).",
+    "config_examples": {
+      "cursor": {
+        "file": ".cursor/mcp.json",
+        "config": {
+          "mcpServers": {
+            "futuraria": {
+              "url": "https://design.futuraria.com/mcp",
+              "headers": { "x-api-key": "fdr_ws_YOUR_KEY_HERE" }
+            }
+          }
+        }
+      },
+      "claude_desktop": {
+        "file": "claude_desktop_config.json",
+        "config": {
+          "mcpServers": {
+            "futuraria": {
+              "url": "https://design.futuraria.com/mcp",
+              "headers": { "x-api-key": "fdr_ws_YOUR_KEY_HERE" }
+            }
+          }
+        }
+      },
+      "custom_client": {
+        "method": "POST",
+        "url": "https://design.futuraria.com/mcp",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "fdr_ws_YOUR_KEY_HERE"
+        },
+        "body_example": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}"
+      }
+    }
+  },
+  "agent_onboarding": {
+    "what_am_i": "Futuraria is a design tool that lets AI agents create professional HTML/CSS designs — social media posts, stories, landing pages, brand materials — through 145+ MCP tools. You create designs by sending HTML+CSS, and the platform renders, stores, and exports them.",
+    "what_can_i_do": [
+      "Create design templates with HTML+CSS (import_design, create_template)",
+      "Create frames at specific dimensions (1080x1080, 1080x1920, 1080x1350, etc.)",
+      "Edit HTML and CSS of existing designs (set_html, set_css, set_frame_layers)",
+      "Export designs as PNG/JPG (render_frame, export_batch)",
+      "Extract design systems and brand guidelines (get_design_system)",
+      "Generate 100+ design variants from CSV data (render_batch)",
+      "Upload and manage brand assets (logos, images)",
+      "Manage workspaces, brands, and templates"
+    ],
+    "step_by_step": [
+      "1. POST to https://design.futuraria.com/mcp with method 'initialize' — no auth needed. Read the _agentGuide in the response.",
+      "2. POST with method 'tools/list' — no auth needed. See all 145+ tools.",
+      "3. Call get_agent_guide (no auth) — get the full onboarding summary with playbooks.",
+      "4. Ask the HUMAN user for their API key (they create it at Settings -> API Keys).",
+      "5. Once you have the key, include 'x-api-key: fdr_ws_...' header on all subsequent requests.",
+      "6. Call list_workspaces to find where to create designs.",
+      "7. Match the user's intent to a playbook: replicate-html, create-from-scratch, csv-batch, design-system, multi-agent.",
+      "8. Use import_design({ templateId, document: '<full HTML with inline <style>>' }) to import designs — it's the primary tool for pasting HTML+CSS."
+    ],
+    "first_time_user_message": "If the human user just gave you a URL and nothing else, ask them for their API key. Explain: 'Go to design.futuraria.com -> Settings -> API Keys -> Generate Key, then give me the key that starts with fdr_ws_'"
+  },
+  "documentation": {
+    "skill_md": "https://design.futuraria.com/SKILL.md",
+    "docs_base": "https://design.futuraria.com/docs/",
+    "tool_catalog": "https://design.futuraria.com/docs/MCP_TOOL_CATALOG.md",
+    "playbooks": {
+      "replicate-html": "Copy HTML+CSS into a frame, adapt to formats",
+      "create-from-scratch": "Build a new design from a description",
+      "csv-batch": "Generate 100+ variants from a CSV data source",
+      "design-system": "Extract design tokens and generate brand identity guide",
+      "multi-agent": "Multiple AI agents edit the same template simultaneously"
+    }
+  }
+}
