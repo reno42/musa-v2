@@ -10267,6 +10267,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       // ── Parse document if provided (complete HTML with <style> tags) ──
       if (params.document) {
+        // Guard: reject oversized documents BEFORE cheerio parsing to prevent 10s timeouts.
+        // cheerio.load() on a 2MB+ HTML string can take 3-8s alone; combined with cold start
+        // and Supabase writes it easily exceeds Netlify's 10s sync function limit.
+        const docBytes = Buffer.byteLength(params.document, "utf8");
+        if (docBytes > MAX_FRAME_HTML_BYTES) {
+          throw {
+            code: -32000,
+            message: `Document HTML is ${(docBytes / 1024).toFixed(0)} KB — exceeds the ${(MAX_FRAME_HTML_BYTES / 1024 / 1024).toFixed(0)} MB safety limit for parsing. ` +
+              "Netlify's 10s function timeout makes parsing large documents unreliable. " +
+              "Split your work: (1) Call create_template first with just the frame dimensions. " +
+              "(2) Then call set_html + set_css as separate smaller calls for each frame. " +
+              "If using base64 images, upload them first via upload_image and use the returned URL as the src attribute."
+          };
+        }
         const $ = cheerio.load(params.document);
 
         // Extract CSS: all <style> contents + convert <link> font imports to @import
@@ -10397,6 +10411,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
 export const handler = async (event) => {
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
+
+  try {
 
   // Rate limiting
   const clientIp = event.headers["x-forwarded-for"] || event.headers["client-ip"] || "unknown";
@@ -10614,4 +10630,19 @@ export const handler = async (event) => {
     statusCode: 200, headers,
     body: JSON.stringify(jsonRpcError(id, -32601, `Method not found: ${method}`)),
   };
+
+  } catch (fatalError) {
+    // Last-resort safety net: any unhandled crash must return JSON-RPC, NEVER HTML.
+    // Without this, a crash causes Netlify to serve the SPA fallback (index.html)
+    // which confuses AI agents into thinking the MCP is a Webflow site.
+    console.error("[mcp] FATAL handler crash:", fatalError?.message || fatalError);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify(jsonRpcError(null, -32000,
+        `MCP function crashed: ${fatalError?.message || "Unknown error"}. ` +
+        "Check Netlify function logs for details."
+      )),
+    };
+  }
 };

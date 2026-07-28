@@ -6,6 +6,7 @@ import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
 import { TextsTab } from "./TextsTab";
+import { KanbanTab } from "./KanbanTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
@@ -124,7 +125,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "kanban" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
@@ -770,6 +771,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
               { id: "templates", label: "Archivos", icon: <IconFile size={14} /> },
+              { id: "kanban", label: "Kanban", icon: (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="18" rx="1" />
+                  <rect x="14" y="3" width="7" height="10" rx="1" />
+                </svg>
+              )},
               { id: "texts", label: "Textos", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4 7 4 4 20 4 20 7" />
@@ -890,6 +897,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <IconFile size={14} /> Archivos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab("kanban"); setUserMenuOpen(false); }}
+                        style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1" /><rect x="14" y="3" width="7" height="10" rx="1" /></svg>
+                        Kanban
                       </button>
                       <button
                         type="button"
@@ -1160,6 +1175,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* ── Texts Tab ── */}
       {activeTab === "texts" && (
         <TextsTab workspaceId={DEFAULT_WORKSPACE_ID} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+      )}
+
+      {/* ── Kanban Tab ── */}
+      {activeTab === "kanban" && (
+        <KanbanTab workspaceId={DEFAULT_WORKSPACE_ID} />
       )}
 
       {/* Key Visuals / Recipes Grid */}
