@@ -65,10 +65,17 @@ CREATE TABLE studio_cards (
 
 ## 🟡 PRIORIDAD 2: Correcciones MCP
 
-### 2A. MCP timeout con Hermes
-**Síntoma:** `tool_call` nativo de Hermes timeoutea 300s. Curl directo funciona.
-**Diagnóstico:** Probablemente el handshake SSE no completa. El endpoint responde JSON-RPC correctamente por POST.
-**Acción:** Revisar `mcp.mjs` — verificar que soporte tanto SSE como POST directo. Si solo soporta POST, documentarlo para que Hermes use modo POST en vez de SSE.
+### 2A. MCP timeout con Hermes — DIAGNÓSTICO FINAL
+
+**Servidor:** ✅ FUNCIONA. Soporta SSE y POST directo.
+- `GET /mcp` con `Accept: text/event-stream` → `event: endpoint\ndata: /mcp` ✅
+- `POST /mcp` con JSON-RPC → 200 OK, 100+ tools ✅
+- CORS: abierto ✅
+- Cache: deshabilitado ✅
+
+**Hermes cliente MCP:** ❌ Timeout 300s en `tool_call` nativo.
+- Posible causa: el cliente MCP de Hermes usa una librería SSE que no completa el handshake correctamente con este servidor, o espera un evento `endpoint` con formato diferente, o falla en la fase POST posterior al handshake.
+- Workaround: usar `execute_code` con `subprocess.run(["curl", "-X", "POST", ...])` para llamadas JSON-RPC directas. Funciona para TODAS las operaciones.
 
 ### 2B. `generate_design_artifacts` publish no retorna brandId
 **Síntoma:** Al publicar con `action:"publish"`, la respuesta tiene `_published:true` pero no incluye el `brandId`.
