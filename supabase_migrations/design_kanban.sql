@@ -96,6 +96,37 @@ CREATE INDEX IF NOT EXISTS idx_dkt_created   ON design_kanban_tasks(created_at D
 CREATE INDEX IF NOT EXISTS idx_dkal_task     ON design_kanban_activity_log(task_id, created_at DESC);
 
 -- ============================================================
+-- ROW LEVEL SECURITY: allow anon+authenticated reads, admin writes
+-- The MCP server writes via SECRET_KEY (bypasses RLS).
+-- The frontend KanbanTab reads via PUBLISHABLE_KEY (needs policies).
+-- ============================================================
+ALTER TABLE design_kanban_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE design_kanban_activity_log ENABLE ROW LEVEL SECURITY;
+
+-- Anyone can read tasks (the UI needs this)
+DROP POLICY IF EXISTS "Anyone can read kanban tasks" ON design_kanban_tasks;
+CREATE POLICY "Anyone can read kanban tasks" ON design_kanban_tasks
+  FOR SELECT USING (true);
+
+-- Anyone can read activity log
+DROP POLICY IF EXISTS "Anyone can read activity log" ON design_kanban_activity_log;
+CREATE POLICY "Anyone can read activity log" ON design_kanban_activity_log
+  FOR SELECT USING (true);
+
+-- Only authenticated users can insert/update/delete (MCP uses admin key, bypasses RLS)
+DROP POLICY IF EXISTS "Authenticated can insert kanban tasks" ON design_kanban_tasks;
+CREATE POLICY "Authenticated can insert kanban tasks" ON design_kanban_tasks
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Authenticated can update kanban tasks" ON design_kanban_tasks;
+CREATE POLICY "Authenticated can update kanban tasks" ON design_kanban_tasks
+  FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Authenticated can insert activity log" ON design_kanban_activity_log;
+CREATE POLICY "Authenticated can insert activity log" ON design_kanban_activity_log
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+-- ============================================================
 -- TRIGGER: auto-update updated_at on design_kanban_tasks
 -- ============================================================
 CREATE OR REPLACE FUNCTION update_dkt_updated_at()
