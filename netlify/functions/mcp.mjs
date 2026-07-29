@@ -2771,6 +2771,70 @@ const MCP_TOOLS = [
       required: ["apiKey"],
     },
   },
+  // ── Studio Board (Kanban) tools ──
+  {
+    name: "studio_create_card",
+    description: "Create a design task card in the Studio Board (Kanban). Each card represents a design to be produced: banner, post, deck, landing, etc. The card tracks status through the pipeline: pending -> in_progress -> review -> done. Use this when you need to track a design task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Title of the design task" },
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand guideline ID (optional)" },
+        templateId: { type: "string", description: "Template ID if design exists (optional)" },
+        type: { type: "string", enum: ["banner","post","deck","template","landing","factura","cotizacion","other"], description: "Design type" },
+        format: { type: "string", description: "Format descriptor (e.g. 'linkedin_post', 'instagram_story', '1200x627')" },
+        status: { type: "string", enum: ["backlog","research","draft","design","review","feedback","done"], description: "Initial status (default: backlog)" },
+        priority: { type: "integer", minimum: 1, maximum: 3, description: "Priority: 1=urgent, 2=normal, 3=low" },
+        deadline: { type: "string", description: "Deadline in YYYY-MM-DD format" },
+        brief: { type: "string", description: "Description of the design task" },
+        tone: { type: "string", description: "Tone (professional, casual, etc.)" },
+        cta: { type: "string", description: "Call to action text" },
+        assignedTo: { type: "string", description: "Agent/person assigned to this task" },
+        tags: { type: "array", items: { type: "string" }, description: "Free-form tags" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "studio_list_cards",
+    description: "List design task cards from the Studio Board. Filter by workspace, brand, status, priority, or assigned person. Returns cards sorted by priority then deadline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Filter by workspace" },
+        brandId: { type: "string", description: "Filter by brand" },
+        status: { type: "string", enum: ["backlog","research","draft","design","review","feedback","done"], description: "Filter by status" },
+        priority: { type: "integer", minimum: 1, maximum: 3, description: "Filter by priority" },
+        assignedTo: { type: "string", description: "Filter by assigned person/agent" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "studio_move_card",
+    description: "Move a design task card to a new status in the Studio Board. Use this to progress cards through the pipeline: backlog -> research -> draft -> design -> review -> done, or send back to feedback.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID to move" },
+        status: { type: "string", enum: ["backlog","research","draft","design","review","feedback","done"], description: "New status" },
+        comment: { type: "string", description: "Optional comment explaining the status change" },
+      },
+      required: ["cardId", "status"],
+    },
+  },
+  {
+    name: "studio_get_card",
+    description: "Get full details of a single design task card, including activity log of all status transitions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID" },
+      },
+      required: ["cardId"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -7501,8 +7565,8 @@ async function handleMethod(method, params, userId, auth) {
 
     // ── extract_design_system: multi-template design system extraction ──
     case "extract_design_system": {
-      var templateIds = params.templateIds || [];
-      if (!templateIds.length) throw { code: -32602, message: "At least one templateId required" };
+      var templateIds = params.templateIds || (params.templateId ? [params.templateId] : []);
+      if (!templateIds.length) throw { code: -32602, message: "Use 'templateIds' (array) to specify one or more template IDs. Example: { templateIds: ['tpl_abc123'] }. 'templateId' (singular) works as shorthand for a single template." };
 
       // Collect frames from all templates
       var allExtractions = [];
@@ -10455,6 +10519,103 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           mode: "created",
         };
       }
+    }
+
+    // ── Studio Board: create a design task card ──
+    case "studio_create_card": {
+      const sbCard = getSupabaseAdmin();
+      if (!sbCard) throw { code: -32000, message: "Studio Board requires Supabase. The kanban table design_kanban_tasks must exist." };
+      const cardId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const newCard = {
+        id: cardId,
+        title: params.title,
+        brand_id: params.brandId || null,
+        workspace_id: params.workspaceId || null,
+        type: params.type || "other",
+        format: params.format || null,
+        status: params.status || "backlog",
+        priority: params.priority || 2,
+        deadline: params.deadline || null,
+        brief: params.brief || null,
+        tone: params.tone || null,
+        cta: params.cta || null,
+        template_id: params.templateId || null,
+        assigned_to: params.assignedTo || null,
+        created_by: "mcp",
+        tags: params.tags || [],
+      };
+      const { data: created, error: createErr } = await sbCard.from("design_kanban_tasks").insert(newCard).select().single();
+      if (createErr) throw { code: -32000, message: "Failed to create card: " + createErr.message, detail: createErr };
+      // Log initial activity
+      await sbCard.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: cardId,
+        to_status: newCard.status,
+        comment: "Card created via MCP",
+        created_by: "mcp",
+      });
+      return { success: true, card: created, cardId: cardId };
+    }
+
+    // ── Studio Board: list design task cards ──
+    case "studio_list_cards": {
+      const sbList = getSupabaseAdmin();
+      if (!sbList) throw { code: -32000, message: "Studio Board requires Supabase. The kanban table design_kanban_tasks must exist." };
+      let query = sbList.from("design_kanban_tasks").select("*").order("priority", { ascending: true }).order("deadline", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false });
+      if (params.workspaceId) query = query.eq("workspace_id", params.workspaceId);
+      if (params.brandId) query = query.eq("brand_id", params.brandId);
+      if (params.status) query = query.eq("status", params.status);
+      if (params.priority) query = query.eq("priority", params.priority);
+      if (params.assignedTo) query = query.eq("assigned_to", params.assignedTo);
+      const { data: cards, error: listErr } = await query;
+      if (listErr) throw { code: -32000, message: "Failed to list cards: " + listErr.message };
+      // Group by status for kanban boards
+      var columns = {};
+      var statuses = ["backlog", "research", "draft", "design", "review", "feedback", "done"];
+      for (var si = 0; si < statuses.length; si++) { columns[statuses[si]] = []; }
+      for (var ci = 0; ci < (cards || []).length; ci++) {
+        var c = cards[ci];
+        var col = columns[c.status];
+        if (col) col.push(c); else (columns.other = columns.other || []).push(c);
+      }
+      return { cards: cards || [], columns: columns, total: (cards || []).length };
+    }
+
+    // ── Studio Board: move card to new status ──
+    case "studio_move_card": {
+      const sbMove = getSupabaseAdmin();
+      if (!sbMove) throw { code: -32000, message: "Studio Board requires Supabase." };
+      // Fetch current card for activity log
+      var { data: currentCard } = await sbMove.from("design_kanban_tasks").select("id, status").eq("id", params.cardId).single();
+      if (!currentCard) throw { code: -32000, message: "Card not found: " + params.cardId };
+      var oldStatus = currentCard.status;
+      // Update status
+      const { data: moved, error: moveErr } = await sbMove.from("design_kanban_tasks")
+        .update({ status: params.status, updated_at: new Date().toISOString() })
+        .eq("id", params.cardId).select().single();
+      if (moveErr) throw { code: -32000, message: "Failed to move card: " + moveErr.message };
+      // Log activity
+      await sbMove.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: params.cardId,
+        from_status: oldStatus,
+        to_status: params.status,
+        comment: params.comment || null,
+        created_by: "mcp",
+      });
+      return { success: true, card: moved, fromStatus: oldStatus, toStatus: params.status, cardId: params.cardId };
+    }
+
+    // ── Studio Board: get card details ──
+    case "studio_get_card": {
+      const sbGet = getSupabaseAdmin();
+      if (!sbGet) throw { code: -32000, message: "Studio Board requires Supabase." };
+      const { data: cardDetail, error: getErr } = await sbGet.from("design_kanban_tasks").select("*").eq("id", params.cardId).single();
+      if (getErr || !cardDetail) throw { code: -32000, message: "Card not found: " + params.cardId };
+      // Fetch activity log
+      const { data: activity } = await sbGet.from("design_kanban_activity_log").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
+      return { card: cardDetail, activityLog: activity || [], activityCount: (activity || []).length };
     }
 
     default:
