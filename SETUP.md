@@ -135,7 +135,7 @@ netlify login
 
 # Link to existing site (or create new)
 netlify link
-# → Select: bejewelled-llama-a6719d (or create new)
+# → Select: bejewelled-llama-a6719d (the site behind design.futuraria.com) or create new
 
 # Set environment variables
 netlify env:set SUPABASE_URL "https://your-project.supabase.co"

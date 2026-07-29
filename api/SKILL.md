@@ -10,13 +10,13 @@
 
 You are an AI agent with full access to the Futuraria Design API and MCP server. The API lets you create workspaces, templates, frames, and manipulate design elements using 100% of the available canvas tools. The MCP server exposes the same capabilities via JSON-RPC for AI agent consumption.
 
-**Prod URL:** `https://bejewelled-llama-a6719d.netlify.app/api`  
+**Prod URL:** `https://design.futuraria.com/api`  
 **Dev URL:** `http://localhost:3001/api`  
 **Health:** `GET /api/health` → `{ "status": "ok", "timestamp": "..." }`  
-**MCP Endpoint:** `https://bejewelled-llama-a6719d.netlify.app/mcp` (SSE + JSON-RPC)
-**Editor (v2 HTML engine):** `https://bejewelled-llama-a6719d.netlify.app`
+**MCP Endpoint:** `https://design.futuraria.com/mcp` (SSE + JSON-RPC)
+**Editor (v2 HTML engine):** `https://design.futuraria.com`  
 
-> ⚠️ `futuraria.netlify.app` es el Webflow de Futuraria (sitio principal), NO la Design API. La API solo existe en `bejewelled-llama`.  
+> ⚠️ El dominio oficial es `design.futuraria.com`. El subdominio anterior `bejewelled-llama` fue reemplazado por el custom domain.
 **Auth:** Pass `X-API-Key: your-key` or `Authorization: Bearer your-token` header. Falls back to `dev_user_default` if no auth provided.  
 **Rate Limit:** 100 requests per 15-second window (shared across all endpoints).  
 **Persistence:** Supabase-primary dual-write with in-memory Map store fallback.  

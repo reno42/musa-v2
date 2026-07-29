@@ -2665,6 +2665,42 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, templateName, addToast]);
 
+  // ── Publish Style to Style Library (saves to brand_guidelines) ──
+  const [publishingStyle, setPublishingStyle] = useState(false);
+  const handlePublishStyle = useCallback(async () => {
+    setPublishingStyle(true);
+    try {
+      const mcpRes = await fetch("/mcp", {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "generate_design_artifacts", arguments: { templateId, action: "publish", brandName: templateName } },
+          id: 1,
+        }),
+      });
+      const json = await mcpRes.json();
+      if (json?.error) throw new Error(json.error.message);
+      const text = json?.result?.content?.[0]?.text;
+      if (!text) throw new Error("No response from publish");
+      const data = JSON.parse(text);
+      if (data._published) {
+        const msg = data.autoMerged
+          ? `Estilo fusionado con "${data.mergedIntoBrand}" — auto-merge por fingerprint coincidente`
+          : `Estilo publicado en Style Library como "${templateName}"`;
+        addToast(msg + (data.brandId ? ` (brandId: ${data.brandId})` : ""), "success");
+      } else {
+        throw new Error("Publish did not complete");
+      }
+    } catch (e: any) {
+      console.error("[Publish Style]", e);
+      addToast("Error al publicar estilo: " + (e?.message || "Error desconocido"), "error");
+    } finally {
+      setPublishingStyle(false);
+    }
+  }, [templateId, templateName, addToast]);
+
   // ── Frame rename (double-click in top bar) ──
   const commitFrameRename = useCallback(() => {
     if (!selectedFrameId || editingFrameName === null) return;
@@ -3500,6 +3536,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
           <IconPalette size={14} />
           <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
+        </button>
+
+        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handlePublishStyle} disabled={publishingStyle} title="Extraer y guardar este diseño como estilo en la Style Library" style={{ opacity: publishingStyle ? 0.5 : 1 }}>
+          {publishingStyle ? <span style={{ fontSize: 10 }}>...</span> : <IconPalette size={14} />}
+          <span style={{ fontSize: 9, marginLeft: 3 }}>{publishingStyle ? "Pub" : "Publicar"}</span>
         </button>
 
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowFontPicker(!showFontPicker)} title="Fonts">

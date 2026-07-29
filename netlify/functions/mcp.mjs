@@ -2374,6 +2374,7 @@ const MCP_TOOLS = [
         sharedCss: { type: "string", description: "Updated shared CSS" },
         sourceHash: { type: "string", description: "Updated source hash" },
         sourceTemplateIds: { type: "array", items: { type: "string" }, description: "Updated source template IDs" },
+        mode: { type: "string", enum: ["replace", "append"], description: "replace (default) overwrites fields. append concatenates tokensJson, designMd, and sharedCss to the end of existing content — useful for incrementally building a brand guideline without reading the current value first." },
       },
       required: ["brandId"],
     },
@@ -4409,7 +4410,7 @@ async function handleMethod(method, params, userId, auth) {
       else if (fmt === "png@3x") scale = 3;
       const isSvg = fmt === "svg";
       const frameIds = params.frameIds?.length ? params.frameIds : (tpl.frames || [{}]).map(f => f.id || "frame_0").filter(Boolean);
-      const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
+      const API_BASE = process.env.URL || "https://design.futuraria.com";
 
       // Detect HTML engine
       const isHtml = tpl.engine === "html" || tpl.frames?.some(f => f.html || f.css);
@@ -9398,16 +9399,68 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     // ── update_brand_guideline: modify an existing brand ──
     case "update_brand_guideline": {
       var updates = {};
+      const appendMode = params.mode === "append";
+
+      // If append mode, fetch existing content first to concatenate
+      var existingBrand = null;
+      if (appendMode) {
+        existingBrand = await brands.getBrand(params.brandId);
+        if (!existingBrand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+      }
+
       if (params.name !== undefined) updates.name = params.name;
       if (params.description !== undefined) updates.description = params.description;
-      if (params.tokensJson !== undefined) updates.tokensJson = params.tokensJson;
-      if (params.designMd !== undefined) updates.designMd = params.designMd;
-      if (params.sharedCss !== undefined) updates.sharedCss = params.sharedCss;
+
+      // tokensJson: append mode concatenates raw JSON objects (graceful fallback)
+      if (params.tokensJson !== undefined) {
+        if (appendMode && existingBrand?.tokensJson) {
+          try {
+            const existing = JSON.parse(existingBrand.tokensJson);
+            const incoming = JSON.parse(params.tokensJson);
+            // Deep merge: incoming keys override existing, new keys added
+            const merged = { ...existing, ...incoming };
+            updates.tokensJson = JSON.stringify(merged, null, 2);
+          } catch {
+            // JSON parse failed — concatenate as raw text with separator
+            updates.tokensJson = existingBrand.tokensJson + "\n\n" + params.tokensJson;
+          }
+        } else {
+          updates.tokensJson = params.tokensJson;
+        }
+      }
+
+      // designMd: append mode concatenates with separator
+      if (params.designMd !== undefined) {
+        if (appendMode && existingBrand?.designMd) {
+          updates.designMd = existingBrand.designMd + "\n\n---\n\n" + params.designMd;
+        } else {
+          updates.designMd = params.designMd;
+        }
+      }
+
+      // sharedCss: append mode concatenates with newline
+      if (params.sharedCss !== undefined) {
+        if (appendMode && existingBrand?.sharedCss) {
+          updates.sharedCss = existingBrand.sharedCss + "\n\n" + params.sharedCss;
+        } else {
+          updates.sharedCss = params.sharedCss;
+        }
+      }
+
       if (params.sourceHash !== undefined) updates.sourceHash = params.sourceHash;
-      if (params.sourceTemplateIds !== undefined) updates.sourceTemplateIds = params.sourceTemplateIds;
+      if (params.sourceTemplateIds !== undefined) {
+        if (appendMode && existingBrand?.sourceTemplateIds) {
+          // Merge arrays, deduplicate
+          const existing = new Set(existingBrand.sourceTemplateIds);
+          for (const id of params.sourceTemplateIds) existing.add(id);
+          updates.sourceTemplateIds = [...existing];
+        } else {
+          updates.sourceTemplateIds = params.sourceTemplateIds;
+        }
+      }
       var brand = await brands.updateBrand(params.brandId, updates);
       if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
-      return { success: true, brand: brand };
+      return { success: true, brand: brand, mode: appendMode ? "append" : "replace" };
     }
 
     // ── delete_brand_guideline: remove a brand permanently ──

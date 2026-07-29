@@ -15,7 +15,7 @@
 
 import { JSON_UTF8_CONTENT_TYPE, parseNetlifyJson } from "./http-encoding.mjs";
 
-const API_BASE = process.env.URL || "https://bejewelled-llama-a6719d.netlify.app";
+const API_BASE = process.env.URL || "https://design.futuraria.com";
 
 // ─── Auth ─────────────────────────────────────────────────
 
