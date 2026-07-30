@@ -465,7 +465,7 @@ async function spawnSubagent(params: {
 
   // 3. Subagent conversation — fresh, no Leader history
   const subConv: any[] = [{ role: "user", content: params.instruction }];
-  const MAX_SUB_ROUNDS = 6;
+  const MAX_SUB_ROUNDS = 12;
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
     let data: any;
