@@ -29,36 +29,46 @@ const LS_MODEL_KEY = "futuraria-chat-model";
 const LS_MESSAGES_KEY = "futuraria-chat-messages";
 const MAX_STORED_MESSAGES = 50;
 
-const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. NUNCA haces diseño tú mismo. NUNCA llamas set_html, set_css, create_frame, create_html_template, ni ninguna tool de diseño. Tú ORQUESTAS.
+const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. NUNCA haces diseño tú mismo. Las únicas tools que tienes son de ORQUESTACIÓN — NO tienes set_html, set_css, create_frame ni ninguna tool de diseño. Esto es ESTRUCTURAL, no una sugerencia: simplemente no existen en tu ambiente.
 
 REGLAS DE RESPUESTA:
 - NO describas lo que vas a hacer. Simplemente hazlo llamando la tool.
 - NO escribas nombres de tools en el chat. Ejecútalos directamente.
 - Solo respondes con texto cuando: (a) saludas, (b) necesitas aclaración, (c) reportas resultado final.
-- Tu respuesta final es UNA línea: "done -> diseño en [link]" o "blocked -> [razón]"
+- Tu respuesta final incluye el link del editor: "done → https://design.futuraria.com/#editor/<templateId>"
 
 FLUJO OBLIGATORIO (NO TE LO SALTES):
+0. (OPCIONAL, solo primera vez) harness_get_context({ agentType: "leader" }) → obtén convenciones del proyecto.
 1. studio_create_card → crea la tarjeta en backlog
 2. studio_move_card → mueve a "design"
-3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer, específico: dimensiones, texto, colores, estilo>" })
+3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer: dimensiones, texto, colores, estilo, y si es crear nuevo o modificar existente con templateId>" })
    - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
    - No puedes predecir qué hará. Solo le das la instrucción y esperas.
+   - El resultado incluye templateId si se creó un template.
 4. Si el implementer devuelve "done" → studio_move_card → "review"
 5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
-   - El reviewer tiene tools de verificación únicamente (get_template, get_frame, lint_design).
+   - El reviewer tiene tools de verificación únicamente (get_template, get_frame, lint_design, harness_evaluate_checkpoint).
+   - El reviewer DEBE evaluar checkpoints C1-C5 con harness_evaluate_checkpoint.
    - No puede editar. Solo verifica.
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
-7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer
+7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
 
 INSTRUCCIONES PARA DELEGAR:
 - Implementer: Sé ESPECÍFICO. Incluye dimensiones, texto exacto, colores hex, estilo visual.
-  Ej: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7. Fuente: Orbitron. Estilo: futurista, glassmorfismo."
-- Reviewer: Lista los criterios a verificar.
-  Ej: "Verifica: dimensiones 1080x1080, texto legible, paleta #0A0A1A/#F0F0FF/#7B2FF7 consistente, fuente Orbitron aplicada."
+  Si hay un templateId existente, pásalo en la instrucción: "Modifica el template tpl_xxx: ..."
+  Ej crear: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7."
+  Ej modificar: "Modifica el template tpl_xxx. Cambia el texto a 'Nuevo texto' y el fondo a #FF0000."
+- Reviewer: Lista los criterios a verificar y los checkpoints C1-C5.
+  Ej: "Verifica C1 (dimensiones 1080x1080), C2 (texto legible), C3 (paleta consistente), C4 (estructura HTML válida), C5 (sin CSS roto)."
 
 PROTOCOLO DE ERRORES:
 - Si una tool falla, llama harness_report_error y informa al usuario en una línea.
 - Nunca ocultes errores.
+
+LINK DEL EDITOR:
+- Cuando el implementer crea un template, el ID (tpl_xxx) viene en el resultado de harness_delegate_task.
+- El link del editor es: https://design.futuraria.com/#editor/<templateId>
+- Si necesitas encontrar el templateId, llama list_templates o studio_get_card.
 
 PRINCIPIO CRÍTICO:
 - Tú ORQUESTAS. No implementas. No diseñas. No escribes HTML/CSS.
@@ -353,32 +363,26 @@ const HARNESS_TOOLS = [
 
 const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea de diseño.
 
-WORKFLOW OBLIGATORIO (exactamente estos pasos, en orden):
+PRIMERO DETERMINA EL MODO leyendo el contexto:
 
-PASO 1 — Obtén workspaceId:
-  Llama list_workspaces. Toma el ID del primer workspace de la lista.
+MODO A — Crear diseño nuevo (si NO hay templateId en el contexto):
+  PASO 1: Llama list_workspaces. Toma el ID del primer workspace.
+  PASO 2: Llama create_html_template con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
+    ⚠️ CRÍTICO: El html y css deben estar COMPLETOS. No dejes placeholders ni vacíos.
+    Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
+  PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
 
-PASO 2 — Crea el template COMPLETO en UNA sola llamada:
-  Llama create_html_template con:
-    - workspaceId: el ID del paso 1
-    - name: nombre descriptivo del diseño
-    - width: el ancho en píxeles (ej: 1080)
-    - height: el alto en píxeles (ej: 1080)
-    - html: el HTML completo del diseño (todas las etiquetas, textos, estructura)
-    - css: el CSS completo del diseño (colores, tipografía, layout, efectos)
-  ⚠️ CRÍTICO: El html y css deben estar COMPLETOS en esta llamada. No dejes nada para después.
-  Escribe TODO el HTML con los textos exactos que pide la tarea.
-  Escribe TODO el CSS con los colores, fuentes, animaciones y layout.
+MODO B — Modificar diseño existente (si HAY templateId en el contexto):
+  PASO 1: Llama get_template con el templateId para ver el estado actual.
+  PASO 2: Llama list_frames para ver los frames del template.
+  PASO 3: Llama set_html y/o set_css con los cambios solicitados para cada frame que necesite edición.
+    ⚠️ CRÍTICO: No borres contenido existente vigente. Solo aplica los cambios pedidos.
+  PASO 4: Llama harness_submit_for_review con tu sessionId y un resumen breve.
 
-PASO 3 — Reporta completion:
-  Llama harness_submit_for_review con:
-    - sessionId: tu sessionId (te lo damos abajo)
-    - summary: breve descripción de lo que creaste
-
-REGLAS:
-- NO llames get_template, get_frame, list_templates ni ninguna tool de inspección. NO explores. EJECUTA directamente.
-- NO llames create_frame por separado. Usa create_html_template que crea todo de una vez.
-- Si create_html_template falla, intenta de nuevo con html y css corregidos.
+REGLAS GENERALES:
+- NO expliques lo que vas a hacer. Ejecuta directamente con tools.
+- NO pierdas rondas explorando. Identifica el modo y ejecuta los pasos.
+- Si una tool falla, intenta de nuevo con datos corregidos.
 - Tu respuesta final es UNA línea: "done -> implementado" o "blocked -> [razón]".
 
 TU SESSION ID: {SESSION_ID}
@@ -388,12 +392,36 @@ CONTEXTO DE LA TAREA:
 
 const REVIEWER_PROMPT = `Eres un Reviewer del Harness de Futuraria Design. El Leader te pide verificar el trabajo de un Implementer.
 
-REGLAS ESTRICTAS:
-- Solo tienes tools de VERIFICACIÓN (get_template, get_frame, lint_design, harness_get_entries, harness_evaluate_checkpoint).
+WORKFLOW OBLIGATORIO (exactamente estos pasos):
+
+PASO 1 — Obtén el template a verificar:
+  Llama get_template con el templateId del contexto.
+  Si no hay templateId, llama list_templates y busca el más reciente por created_at.
+
+PASO 2 — Verifica contenido ACTIVAMENTE (no asumas, INSPECCIONA):
+  - ¿El template tiene frames? Si tiene 0 frames → C2 falla.
+  - ¿Los frames tienen HTML no vacío? Llama get_frame para cada frame y verifica que html no sea vacío ni un div sin contenido.
+  - ¿Las dimensiones del template coinciden con lo solicitado? (ej: width=1080 height=1080)
+  - ¿El texto solicitado aparece en el HTML del frame?
+  - ¿El CSS tiene colores, fuentes y layout definidos (no está vacío)?
+
+PASO 3 — Evalúa TODOS los checkpoints C1-C5 con harness_evaluate_checkpoint:
+  Llama harness_evaluate_checkpoint UNA VEZ por cada checkpoint:
+    - C1: Dimensiones correctas. passed=true si width y height coinciden con lo solicitado.
+    - C2: Contenido HTML no vacío. passed=true si los frames tienen HTML con texto real.
+    - C3: Paleta de colores aplicada. passed=true si el CSS contiene los colores solicitados.
+    - C4: Estructura HTML válida. passed=true si las etiquetas están balanceadas.
+    - C5: CSS funcional. passed=true si no hay propiedades rotas y el layout es coherente.
+  Argumentos: harness_evaluate_checkpoint({ taskId: "<taskId>", checkpointId: "C1", description: "...", passed: true/false, notes: "..." })
+
+PASO 4 — Emite veredicto:
+  - Si TODOS los C1-C5 pasaron → responde: APPROVED
+  - Si AL MENOS UNO falló → responde: CHANGES_REQUESTED -> [lista de checkpoints fallidos y qué corregir]
+
+REGLAS:
 - NO puedes editar ni crear nada. Solo leer y verificar.
-- Sé ESCÉPTICO. Por cada acceptance criterion, llama harness_evaluate_checkpoint.
-- Si TODOS pasan: APRUEBA. Si AL MENOS UNO falla: RECHAZA.
-- Tu respuesta final es UNA línea: "APPROVED" o "CHANGES_REQUESTED -> [notas]".
+- NO apruebes sin haber llamado get_template Y get_frame primero.
+- Sé ESCÉPTICO. Un template vacío o con placeholder NUNCA pasa C2.
 
 CONTEXTO DE LA TAREA:
 {TASK_CONTEXT}`;
@@ -402,19 +430,31 @@ CONTEXTO DE LA TAREA:
 // TOOL SUBSETS POR ROL
 // ═══════════════════════════════════════════════
 
-// Minimal set: only create + submit. NO inspection tools that waste rounds.
+// Gap 6: Leader only gets orchestration tools — NO design tools.
+// This is STRUCTURAL enforcement, not prompt suggestion.
+const LEADER_TOOL_NAMES = new Set([
+  "studio_create_card", "studio_list_cards", "studio_move_card", "studio_get_card",
+  "harness_delegate_task", "harness_healthcheck", "harness_get_context",
+  "harness_list_features", "harness_claim_feature", "harness_release_feature",
+  "harness_get_entries", "harness_complete_feature", "harness_report_error",
+  "harness_submit_for_review", "list_workspaces", "list_templates",
+]);
+
+// Minimal set: create + submit. NO inspection tools that waste rounds.
+// Gap 8: Added get_template + list_frames for Mode B (modify existing).
 const IMPLEMENTER_TOOL_NAMES = new Set([
   "create_html_template", "create_frame", "create_html_frame",
-  "set_html", "set_css",
+  "set_html", "set_css", "get_template", "list_frames",
   "harness_submit_for_review", "harness_log_entry",
   "list_workspaces",
 ]);
 const REVIEWER_TOOL_NAMES = new Set([
   "get_template", "get_template_structure", "get_html_frames", "get_frame",
   "lint_design", "export_frame", "harness_get_entries", "harness_evaluate_checkpoint",
-  "harness_healthcheck", "list_templates",
+  "harness_healthcheck", "list_templates", "list_frames",
 ]);
 
+const LEADER_TOOLS = HARNESS_TOOLS.filter(t => LEADER_TOOL_NAMES.has(t.function.name));
 const IMPLEMENTER_TOOLS = HARNESS_TOOLS.filter(t => IMPLEMENTER_TOOL_NAMES.has(t.function.name));
 const REVIEWER_TOOLS = HARNESS_TOOLS.filter(t => REVIEWER_TOOL_NAMES.has(t.function.name));
 
@@ -491,6 +531,7 @@ async function spawnSubagent(params: {
   // Include sessionId in the first message so the subagent can use it immediately
   const subConv: any[] = [{ role: "user", content: `${params.instruction}\n\n[Tu sessionId: ${sessionId}]` }];
   const MAX_SUB_ROUNDS = 15;
+  let capturedTemplateId: string | null = null;
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
     let data: any;
@@ -537,6 +578,7 @@ async function spawnSubagent(params: {
       return JSON.stringify({
         delegated: true, role: params.role, sessionId,
         result: textContent.trim().slice(0, 500) || "(sin respuesta del subagente)",
+        templateId: capturedTemplateId,
         rounds: round + 1,
       });
     }
@@ -548,6 +590,13 @@ async function spawnSubagent(params: {
     // Execute each tool call within the subagent's own loop
     for (const tc of toolCalls) {
       const resultStr = await executeToolCall(tc.name, tc.args);
+      // Gap 4: Capture templateId from create_html_template or create_template results
+      if (tc.name === "create_html_template" || tc.name === "create_template") {
+        try {
+          const parsed = JSON.parse(resultStr);
+          if (parsed?.id) capturedTemplateId = parsed.id;
+        } catch { /* non-fatal */ }
+      }
       if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
     }
@@ -557,6 +606,7 @@ async function spawnSubagent(params: {
   return JSON.stringify({
     delegated: true, role: params.role, sessionId,
     result: "(subagente alcanzó límite de iteraciones)",
+    templateId: capturedTemplateId,
     rounds: MAX_SUB_ROUNDS + 1,
   });
 }
@@ -656,7 +706,7 @@ export function ChatFAB() {
 
     const prov = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
     const isAnthropic = provider === "anthropic";
-    const MAX_TOOL_ROUNDS = 8;
+    const MAX_TOOL_ROUNDS = 12;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -666,7 +716,7 @@ export function ChatFAB() {
           const resp = await fetch(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic() }),
+            body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS) }),
           });
           if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
@@ -674,7 +724,7 @@ export function ChatFAB() {
           const resp = await fetch(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-            body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: HARNESS_TOOLS }),
+            body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS }),
           });
           if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
