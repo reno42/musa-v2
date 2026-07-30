@@ -31,6 +31,11 @@ const MAX_STORED_MESSAGES = 50;
 
 const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. Tu trabajo: recibir pedidos del humano, gestionar el Kanban como tu herramienta principal, y orquestar implementers y reviewers.
 
+MULTI-MENSAJE: Puedes enviar varios mensajes seguidos sin esperar respuesta del usuario. Ejemplo:
+- "Voy a crear la tarjeta Kanban..." → (ejecutas studio_create_card) →
+- "Tarjeta creada. Ahora lanzo el implementer..." → (ejecutas harness_start_session) →
+- "¡Listo! El diseño está en: [link]"
+
 FLUJO DE TRABAJO:
 1. Cuando el humano pide algo, CREA una tarjeta Kanban con studio_create_card. El Kanban es tu fuente de verdad.
 2. Lee docs/harness/feature_list.json para ver qué está pendiente.
@@ -48,6 +53,14 @@ FLUJO DE TRABAJO:
    - Si pasa: APPROVED. Si no: CHANGES_REQUESTED con notas.
 7. Si APPROVED → harness_complete_feature → actualiza feature_list.json y history.json → comparte el link.
 
+PROTOCOLO DE ERRORES (OBLIGATORIO):
+Cuando CUALQUIER tool falle, DEBES:
+- Documentar: nombre de la tool, arguments, mensaje de error, paso exacto en la secuencia
+- Explicar al usuario QUÉ falló y POR QUÉ
+- El error se guarda automáticamente en docs/harness/errors.json para análisis interno
+- Si un error bloquea el flujo, informa al usuario con el detalle completo y sugiere next steps
+- Nunca ocultes un error. Si algo falla, el usuario debe saberlo.
+
 PRINCIPIOS:
 - Kanban es sagrado. Toda tarea vive en el Kanban.
 - Una tarea a la vez. Nunca en paralelo.
@@ -55,14 +68,7 @@ PRINCIPIOS:
 - No circules contenido crudo de subagentes. Solo referencias (sessionId, status).
 - Cuando tu contexto llegue al 40%, usa harness_dump_context.
 - Lee docs/harness/current.json para saber el estado activo.
-
-Herramientas clave:
-- Kanban: studio_create_card, studio_list_cards, studio_move_card, studio_get_card
-- Harness: harness_claim_feature, harness_start_session, harness_log_entry, harness_dump_context, harness_get_entries, harness_submit_for_review, harness_evaluate_checkpoint, harness_complete_feature, harness_healthcheck, harness_release_feature
-- Diseño: create_frame, set_html, set_css, delete_frame, update_frame_content, generate_from_prompt, lint_design, export_frame, etc.
-- Features: feature_list.json, current.json, history.json en docs/harness/
-
-Sé conciso. El detalle va a harness_entries, no al chat. Pregunta si algo no está claro.`;
+- Todo error se registra. Cero errores silenciosos.`;
 
 const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
@@ -383,6 +389,17 @@ function saveMessages(msgs: Message[]) {
   try { localStorage.setItem(LS_MESSAGES_KEY, JSON.stringify(msgs.slice(-MAX_STORED_MESSAGES))); } catch {}
 }
 
+function appendErrorReport(report: any) {
+  try {
+    const raw = localStorage.getItem("futuraria-error-log");
+    const log = raw ? JSON.parse(raw) : [];
+    log.push(report);
+    // Keep last 100 errors max
+    if (log.length > 100) log.splice(0, log.length - 100);
+    localStorage.setItem("futuraria-error-log", JSON.stringify(log));
+  } catch {}
+}
+
 export function ChatFAB() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(loadMessages);
@@ -475,17 +492,53 @@ export function ChatFAB() {
           break;
         }
 
+        // Emit intermediate text BEFORE executing tools (multi-message UX)
+        if (textContent.trim()) {
+          setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now() }]);
+        }
+
         if (isAnthropic) { conversation.push(data.content); }
         else { conversation.push(data.choices[0].message); }
 
-        for (const tc of toolCalls) {
+        const errorReports: any[] = [];
+
+        for (let ti = 0; ti < toolCalls.length; ti++) {
+          const tc = toolCalls[ti];
           setToolEvents(prev => [...prev, { tool: tc.name, status: "running" }]);
           setAccordion("tools");
           const resultStr = await executeToolCall(tc.name, tc.args);
-          setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: resultStr.includes('"error"') ? "error" as const : "done", result: resultStr.slice(0, 200) } : e));
+          const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
+          setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr.slice(0, 200) } : e));
+
+          // Multi-message: brief tool result
+          if (isError) {
+            const errReport = {
+              tool: tc.name, args: tc.args,
+              result: resultStr.slice(0, 500),
+              step: ti + 1, totalSteps: toolCalls.length,
+              round, timestamp: new Date().toISOString(),
+              provider,
+            };
+            errorReports.push(errReport);
+            // Save to errors.json in localStorage for internal tracking
+            appendErrorReport(errReport);
+            const errSummary = `✕ ${tc.name} falló en paso ${ti + 1}/${toolCalls.length} (ronda ${round + 1})
+→ ${resultStr.slice(0, 300)}`;
+            setMessages(prev => [...prev, { role: "assistant", content: errSummary, ts: Date.now() }]);
+          } else {
+            // Brief success note
+            const short = resultStr.slice(0, 120).replace(/\n/g, " ");
+            setMessages(prev => [...prev, { role: "assistant", content: `✓ ${tc.name} → ${short || "ok"}`, ts: Date.now() }]);
+          }
 
           if (isAnthropic) { conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
           else { conversation.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
+        }
+
+        // If errors occurred, emit a structured error summary to the user
+        if (errorReports.length > 0) {
+          const summary = `⚠️ Reporte de errores (ronda ${round + 1}):\n${errorReports.map((er, i) => `${i + 1}. ${er.tool} — paso ${er.step}/${er.totalSteps}\n   args: ${JSON.stringify(er.args).slice(0, 150)}\n   ${er.result.slice(0, 200)}`).join("\n")}\n\nEstos errores quedaron registrados en el sistema para análisis.`;
+          setMessages(prev => [...prev, { role: "assistant", content: summary, ts: Date.now() }]);
         }
 
         if (round === MAX_TOOL_ROUNDS) {
@@ -509,7 +562,7 @@ export function ChatFAB() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Abrir chat (leader / ACT)"
+          title="Abrir chat (Leader)"
           style={{
             position: "fixed", bottom: 24, right: 88, zIndex: 9100,
             width: 52, height: 52, borderRadius: "50%",

@@ -1,0 +1,18 @@
+{
+  "_schema": "1.0",
+  "_description": "Centralized error log for the Futuraria Design Harness. Every tool failure, API error, and unexpected result is recorded here — including those the user never reports. Used for continuous improvement.",
+  "_rules": {
+    "mandatory_reporting": "When ANY tool call fails, the Leader MUST log the full error context: tool name, arguments, error message, round, step index, provider, and timestamp.",
+    "user_visible": "Errors are also sent to the user via chat as structured summary messages.",
+    "internal_only": "This file is for internal analysis. Users see summaries in chat.",
+    "max_entries": 100,
+    "storage": "localStorage key: futuraria-error-log"
+  },
+  "errors": [],
+  "stats": {
+    "total_errors": 0,
+    "last_error_at": null,
+    "by_tool": {},
+    "by_provider": {}
+  }
+}
