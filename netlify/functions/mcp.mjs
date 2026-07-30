@@ -11235,7 +11235,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         reviewed_at: new Date().toISOString(),
         notes: params.notes || null,
       };
-      const { data: cp, error } = await sb.from("harness_checkpoints").upsert(newCp, { onConflict: "task_id,checkpoint_id" }).select().single();
+      // Use select+update+insert instead of upsert+onConflict (which requires a UNIQUE constraint that may not exist)
+      const { data: existingCp } = await sb.from("harness_checkpoints").select("id").eq("task_id", params.taskId).eq("checkpoint_id", params.checkpointId).maybeSingle();
+      let cp, error;
+      if (existingCp) {
+        ({ data: cp, error } = await sb.from("harness_checkpoints").update(newCp).eq("id", existingCp.id).select().single());
+      } else {
+        ({ data: cp, error } = await sb.from("harness_checkpoints").insert(newCp).select().single());
+      }
       if (error) throw { code: -32000, message: "Checkpoint insert failed: " + error.message };
 
       const { data: task } = await sb.from("design_kanban_tasks").select("checkpoint_json").eq("id", params.taskId).maybeSingle();
