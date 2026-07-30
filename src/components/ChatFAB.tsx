@@ -20,6 +20,7 @@ interface Message { role: Role; content: string; ts?: number }
 const PROVIDERS = [
   { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_OPENAI_API_KEY" },
   { id: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-sonnet-20241022", endpoint: "https://api.anthropic.com/v1/messages", keyPrefix: "sk-ant-", keyEnv: "VITE_ANTHROPIC_API_KEY" },
+  { id: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat", endpoint: "https://api.deepseek.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_DEEPSEEK_API_KEY" },
   { id: "openrouter", label: "OpenRouter", defaultModel: "anthropic/claude-3.5-sonnet", endpoint: "https://openrouter.ai/api/v1/chat/completions", keyPrefix: "sk-or-", keyEnv: "VITE_OPENROUTER_API_KEY" },
 ] as const;
 
@@ -242,7 +243,7 @@ export function ChatFAB() {
           onClick={() => setOpen(true)}
           title="Abrir chat (leader / ACT)"
           style={{
-            position: "fixed", bottom: 24, right: 24, zIndex: 9100,
+            position: "fixed", bottom: 24, right: 88, zIndex: 9100,
             width: 52, height: 52, borderRadius: "50%",
             background: "linear-gradient(135deg, rgba(108,92,231,0.85), rgba(167,139,250,0.85))",
             border: "1px solid rgba(167,139,250,0.4)",
