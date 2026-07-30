@@ -30,7 +30,7 @@ import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
 import { ImageToDesignModal } from "../components/ImageToDesignModal";
 import { IconPicker } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
-import { ChatTab } from "../components/ChatTab";
+
 import { useDockablePanel } from "../hooks/useDockablePanel";
 import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
@@ -3381,7 +3381,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const RIGHT_PANEL_TABS = [
     { id: "contextual", icon: <IconSliders size={14} />, title: "Properties" },
     { id: "structure", icon: <IconLayout size={14} />, title: "Structure" },
-    { id: "chat", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>, title: "Chat" },
     { id: "vars", icon: <IconDna size={14} />, title: "Variables" },
     { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
     { id: "format", icon: <IconFile size={14} />, title: "Format" },
@@ -4423,9 +4422,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           )}
           {rightPanelTab === "history" && (
             <VersionHistoryPanel templateId={templateId} onRestore={reloadFromServer} />
-          )}
-          {rightPanelTab === "chat" && (
-            <ChatTab workspaceId={templateWorkspaceId || "ws_default"} mcpApiKey="" />
           )}
           {rightPanelTab === "agents" && (
             <ActiveAgentsPanel agents={activeAgents} />

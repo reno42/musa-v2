@@ -92,6 +92,7 @@ export function KanbanTab({ workspaceId }: Props) {
   const [error, setError] = useState("");
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [movingCardId, setMovingCardId] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [detailCardId, setDetailCardId] = useState<string | null>(null);
@@ -169,12 +170,10 @@ export function KanbanTab({ workspaceId }: Props) {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
-  // ── Move card to next status ──
-  const advanceCard = useCallback(async (cardId: string) => {
+  // ── Move card to any status (drag-and-drop, both directions) ──
+  const moveCardToStatus = useCallback(async (cardId: string, targetStatus: string) => {
     const task = tasks.find(t => t.id === cardId);
-    if (!task) return;
-    const next = NEXT_STATUS[task.status] || task.status;
-    if (next === task.status) return;
+    if (!task || task.status === targetStatus) return;
     setMovingCardId(cardId);
     try {
       await apiFetch("/mcp", {
@@ -182,29 +181,39 @@ export function KanbanTab({ workspaceId }: Props) {
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "studio_move_card",
-          params: { cardId, status: next },
+          params: { cardId, status: targetStatus },
           id: 1,
         }),
       });
       // Optimistic update
-      setTasks(prev => prev.map(t => t.id === cardId ? { ...t, status: next } : t));
+      setTasks(prev => prev.map(t => t.id === cardId ? { ...t, status: targetStatus } : t));
       setColumns(prev => {
         const nextCols = { ...prev };
         for (const key of Object.keys(nextCols)) {
           nextCols[key] = nextCols[key].filter(t => t.id !== cardId);
         }
-        const moved = { ...task, status: next };
-        if (!nextCols[next]) nextCols[next] = [];
-        nextCols[next].push(moved);
+        const moved = { ...task, status: targetStatus };
+        if (!nextCols[targetStatus]) nextCols[targetStatus] = [];
+        nextCols[targetStatus].push(moved);
         return nextCols;
       });
     } catch (e: any) {
       setError(e?.message || "Error al mover tarjeta");
-      fetchTasks(); // refresh on error
+      fetchTasks();
     } finally {
       setMovingCardId(null);
+      setDragOverColumn(null);
     }
   }, [tasks, fetchTasks]);
+
+  // Keep backward-compat alias
+  const advanceCard = useCallback(async (cardId: string) => {
+    const task = tasks.find(t => t.id === cardId);
+    if (!task) return;
+    const next = NEXT_STATUS[task.status] || task.status;
+    if (next === task.status) return;
+    await moveCardToStatus(cardId, next);
+  }, [tasks, moveCardToStatus]);
 
   // ── Create card via MCP ──
   const handleCreate = useCallback(async () => {
@@ -553,11 +562,21 @@ export function KanbanTab({ workspaceId }: Props) {
         {STATUS_COLUMNS.map(col => {
           const columnTasks = tasksByStatus(col.key);
           return (
-            <div key={col.key} style={{
+            <div key={col.key}
+              onDragOver={e => { e.preventDefault(); setDragOverColumn(col.key); }}
+              onDragLeave={() => setDragOverColumn(null)}
+              onDrop={e => {
+                e.preventDefault();
+                const cardId = e.dataTransfer.getData("text/plain");
+                if (cardId) moveCardToStatus(cardId, col.key);
+              }}
+              style={{
               flex: "1 1 0", minWidth: 220, maxWidth: 360,
               display: "flex", flexDirection: "column",
-              background: "rgba(255,255,255,0.015)", borderRadius: 16,
-              border: "1px solid rgba(255,255,255,0.04)", overflow: "hidden",
+              background: dragOverColumn === col.key ? "rgba(108,92,231,0.08)" : "rgba(255,255,255,0.015)",
+              borderRadius: 16,
+              border: dragOverColumn === col.key ? "1px solid rgba(108,92,231,0.25)" : "1px solid rgba(255,255,255,0.04)",
+              overflow: "hidden", transition: "all 0.2s ease",
             }}>
               {/* Column Header */}
               <div style={{
@@ -587,15 +606,18 @@ export function KanbanTab({ workspaceId }: Props) {
                     const hasNext = NEXT_STATUS[task.status] && NEXT_STATUS[task.status] !== task.status;
                     return (
                       <div key={task.id}
+                        draggable
+                        onDragStart={e => {
+                          e.dataTransfer.setData("text/plain", task.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
                         style={{
                           ...cardBase,
-                          cursor: task.template_id ? "pointer" : "default",
+                          cursor: "grab",
                           opacity: isMoving ? 0.5 : 1,
                           position: "relative",
                         }}
-                        onClick={() => {
-                          if (task.template_id) window.location.href = `/?template=${task.template_id}&v=2`;
-                        }}
+                        onClick={() => setDetailCardId(task.id)}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "rgba(255,255,255,0.06)";
                           e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";

@@ -2,6 +2,7 @@ import { useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
+import { ChatFAB } from "./components/ChatFAB";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
@@ -280,23 +281,29 @@ function App(): JSX.Element {
 
   if (view === "dashboard") {
     return (
-      <ErrorBoundary>
-        <Dashboard
-          onSelectTemplate={handleSelectTemplate}
-          onCreateHtmlTemplate={handleCreateHtmlTemplate}
-        />
-      </ErrorBoundary>
+      <>
+        <ErrorBoundary>
+          <Dashboard
+            onSelectTemplate={handleSelectTemplate}
+            onCreateHtmlTemplate={handleCreateHtmlTemplate}
+          />
+        </ErrorBoundary>
+        <ChatFAB />
+      </>
     );
   }
 
   return (
-    <ErrorBoundary>
-      <EditorV2
-        templateId={templateId!}
-        onBack={enterWorkspace}
-        onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
-      />
-    </ErrorBoundary>
+    <>
+      <ErrorBoundary>
+        <EditorV2
+          templateId={templateId!}
+          onBack={enterWorkspace}
+          onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
+        />
+      </ErrorBoundary>
+      <ChatFAB />
+    </>
   );
 }
 

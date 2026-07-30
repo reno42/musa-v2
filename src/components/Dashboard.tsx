@@ -7,7 +7,6 @@ import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
 import { TextsTab } from "./TextsTab";
 import { KanbanTab } from "./KanbanTab";
-import { ChatTab } from "./ChatTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -127,7 +126,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "kanban" | "chat" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
+  const [activeTab, setActiveTab] = useState<"templates" | "kanban" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
@@ -780,12 +779,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <rect x="14" y="3" width="7" height="10" rx="1" />
                 </svg>
               )},
-              { id: "chat", label: "Chat", icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              )},
-              { id: "texts", label: "Textos", icon: (
+{ id: "texts", label: "Textos", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4 7 4 4 20 4 20 7" />
                   <line x1="9" y1="20" x2="15" y2="20" />
@@ -1190,12 +1184,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         <KanbanTab workspaceId={DEFAULT_WORKSPACE_ID} />
       )}
 
-      {/* ── Chat Tab (harness leader) ── */}
-      {activeTab === "chat" && (
-        <ChatTab workspaceId={DEFAULT_WORKSPACE_ID} mcpApiKey={getApiKey()} />
-      )}
-
-      {/* Key Visuals / Recipes Grid */}
+{/* Key Visuals / Recipes Grid */}
       {activeTab === "recipes" && (
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {loadingRecipes ? (
