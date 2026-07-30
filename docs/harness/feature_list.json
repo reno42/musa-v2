@@ -1,0 +1,41 @@
+{
+  "_schema": "1.0",
+  "_description": "Master feature list for the Futuraria Design Harness. The Leader reads this file to know what needs work. Implementers pick ONE task with status 'pending'. Only ONE task in_progress at a time per account.",
+  "_rules": {
+    "one_at_a_time": "Only one task can be 'in_progress' at any time. harness_claim_feature enforces this server-side.",
+    "implementer_pick": "Implementers pick from pending tasks. They never create tasks — only the Leader creates via studio_create_card.",
+    "status_flow": "pending → in_progress → review → done | feedback → in_progress (retry)",
+    "review_required": "Every task MUST pass review before marking done. harness_submit_for_review → harness_evaluate_checkpoint."
+  },
+  "features": [
+    {
+      "id": "feat_001",
+      "title": "Diseño de post 1080×1080",
+      "type": "post",
+      "status": "pending",
+      "priority": 1,
+      "brief": "Crear un diseño para Instagram 1080×1080 con estilo moderno",
+      "acceptance": [
+        "Dimensiones exactas 1080×1080px",
+        "Paleta de colores consistente",
+        "Tipografía legible en mobile",
+        "Export PNG funcional"
+      ],
+      "cardId": null,
+      "implementer_session": null,
+      "reviewer_session": null,
+      "created_at": "2026-07-17T00:00:00Z",
+      "updated_at": "2026-07-17T00:00:00Z",
+      "templateId": null,
+      "result_url": null
+    }
+  ],
+  "stats": {
+    "total": 1,
+    "pending": 1,
+    "in_progress": 0,
+    "review": 0,
+    "done": 0,
+    "feedback": 0
+  }
+}

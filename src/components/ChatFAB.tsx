@@ -14,7 +14,6 @@ import { mcpCall } from "../lib/mcpClient";
  */
 
 type Role = "user" | "assistant" | "system";
-type ChatMode = "agent" | "act";
 interface Message { role: Role; content: string; ts?: number }
 
 const PROVIDERS = [
@@ -27,73 +26,43 @@ const PROVIDERS = [
 const LS_PROVIDER_KEY = "futuraria-chat-provider";
 const LS_LLM_KEY_KEY = "futuraria-chat-llm-key";
 const LS_MODEL_KEY = "futuraria-chat-model";
-const LS_MODE_KEY = "futuraria-chat-mode";
+const LS_MESSAGES_KEY = "futuraria-chat-messages";
+const MAX_STORED_MESSAGES = 50;
 
-const HARNESS_SYSTEM_PROMPT = `Eres el leader del harness de Futuraria Design.
+const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. Tu trabajo: recibir pedidos del humano, gestionar el Kanban como tu herramienta principal, y orquestar implementers y reviewers.
 
-Tu trabajo: recibir pedidos del humano, descomponerlos en tareas del Kanban, y orquestar implementers y reviewers via MCP.
+FLUJO DE TRABAJO:
+1. Cuando el humano pide algo, CREA una tarjeta Kanban con studio_create_card. El Kanban es tu fuente de verdad.
+2. Lee docs/harness/feature_list.json para ver qué está pendiente.
+3. Solo UNA tarea a la vez. Si ya hay una activa, termínala primero.
+4. Reclama la tarea con harness_claim_feature.
+5. Lanza un implementer con harness_start_session(role:"implementer"). El implementer:
+   - Lee feature_list.json y elige la tarea con status "pending"
+   - Lee docs/harness/conventions.md para saber cómo trabajar
+   - Trabaja con las tools de diseño (create_frame, set_html, set_css, etc.)
+   - Registra cada paso con harness_log_entry
+   - Al terminar: harness_submit_for_review
+6. Lanza un reviewer con harness_start_session(role:"reviewer"):
+   - Lee harness_get_entries para ver lo que hizo el implementer
+   - Corre harness_healthcheck y harness_evaluate_checkpoint por cada checkpoint
+   - Si pasa: APPROVED. Si no: CHANGES_REQUESTED con notas.
+7. Si APPROVED → harness_complete_feature → actualiza feature_list.json y history.json → comparte el link.
 
-PRINCIPIO CRÍTICO: Cuando tu contexto se llene (>40%), llama a harness_dump_context para vaciarlo a la base de datos. El siguiente turno lo recuperas via harness_get_context.
+PRINCIPIOS:
+- Kanban es sagrado. Toda tarea vive en el Kanban.
+- Una tarea a la vez. Nunca en paralelo.
+- El implementer trabaja, el reviewer verifica, tú coordinas.
+- No circules contenido crudo de subagentes. Solo referencias (sessionId, status).
+- Cuando tu contexto llegue al 40%, usa harness_dump_context.
+- Lee docs/harness/current.json para saber el estado activo.
 
-Herramientas MCP disponibles (POST https://design.futuraria.com/mcp con header x-api-key):
-- harness_healthcheck() — verifica entorno
-- harness_get_context({ agentType }) — bootstrap tu rol
-- harness_list_features({ status: "backlog" }) — ver tareas pendientes
-- harness_claim_feature({ taskId }) — tomar una tarea
-- harness_start_session({ taskId, role, plan }) — iniciar sesión de subagente
-- harness_log_entry({ sessionId, entryType, content }) — bitácora
-- harness_dump_context({ sessionId, content }) — extraer memoria
-- harness_get_entries({ sessionId }) — leer bitácora
-- harness_submit_for_review({ sessionId, summary }) — pedir review
-- harness_evaluate_checkpoint({ taskId, checkpointId, description, passed }) — evaluar
-- harness_complete_feature({ taskId }) — marcar done
-- studio_create_card, studio_list_cards, studio_move_card, studio_get_card — manejo Kanban
-- Y todas las tools de diseño (set_html, set_css, create_frame, lint_design, etc.) listadas en SKILL.md
-
-PROTOCOLO:
-1. Saluda brevemente y pregunta qué necesita el humano.
-2. Si el humano describe una tarea, créala con studio_create_card (con acceptance criteria).
-3. Luego reclámala con harness_claim_feature.
-4. Trabájala usando las tools de diseño del MCP.
-5. Pide review con harness_submit_for_review.
-6. Auto-revisa con harness_evaluate_checkpoint.
-7. Marca done con harness_complete_feature.
-
-No hagas TODO en una respuesta. Divide en pasos. Si el humano pide algo complejo, propón un plan primero.
-
-Las respuestas al humano deben ser concisas. El detalle va a harness_entries, no al chat.`;
-
-const ACT_SYSTEM_PROMPT = `Eres un agente de acción directa de Futuraria Design. Modo ACT: ejecutas herramientas MCP directamente sin orquestación.
-
-Todas las herramientas disponibles (POST https://design.futuraria.com/mcp con header x-api-key):
-- Workspace/Template: list_workspaces, create_workspace, list_templates, create_template, create_html_template, create_deck, update_template, delete_template, rename_template, duplicate_template, tag_template, untag_template, find_templates
-- Frames: create_frame, create_html_frame, list_frames, get_frame, get_html_frames, delete_frame, delete_html_frame, duplicate_frame, update_frame_content, update_html_frame, get_frame_changes
-- HTML/CSS: set_html, set_css, set_css_variable, get_css_variables, create_variable, link_variable, extract_variables, apply_variables
-- Elementos: select_element, update_element, add_element, add_primitive, remove_element, reorder_element, change_element_tag, lock_element, hide_element, set_frame_layers, set_canvas_layers, transform_element, group_elements, align_elements
-- Vector/Path: draw_shape, draw_path, draw_bezier, edit_path_points, edit_path_point, shape_to_path, pathfinder, set_stroke_style, set_gradient, set_blend_mode, outline_stroke, offset_path
-- Texto: edit_text_content, list_all_texts, copy_style, paste_style, set_pseudo_state
-- AI: generate_from_prompt, ai_generate_text, ai_generate_image, ai_palette, ai_suggest_layout, ai_translate, image_to_design, enhance_template, generate_ui_components, generate_design_artifacts, generate_brand_manual, generate_csv_template, suggest_color_palette
-- Brand: register_brand, validate_brand, auto_fix_brand, check_contrast, check_accessibility, get_brands, apply_brand, create_brand_guideline, get_brand_guideline, list_brand_guidelines, update_brand_guideline, delete_brand_guideline, apply_brand_to_template, get_active_styles, set_style_lock, find_duplicate_styles, merge_brand_guidelines, download_style_template
-- Análisis: lint_design, get_design_system, extract_design_system, verify_design_system, get_design_artifacts, analyze_template_structure, detect_structure, export_design_tokens
-- Export: export_template, export_frame, export_batch, export_pdf, copy_as, render_batch, render_html_template, render_to_formats, batch_render_html
-- Import: import_template, import_design, import_svg, assemble_template
+Herramientas clave:
 - Kanban: studio_create_card, studio_list_cards, studio_move_card, studio_get_card
-- Comentarios: comment_add, comment_list, comment_resolve, comment_reply
-- Fuentes: list_fonts, search_google_fonts, preview_font, add_font_to_template, get_font_details
-- Assets: optimize_image, upload_image, list_assets, delete_asset, replace_asset, search_stock_image, upload_cover_image
-- Iconos: search_icons, insert_icon
-- Formatos: adapt_format, adapt_all_formats, compare_adaptations
-- Batch: profile_template_pool, apply_csv_to_frames, list_batch_templates, update_thumbnail
-- Recetas: save_recipe, list_recipes, get_recipe, create_from_recipe
-- Colaboración: get_active_agents, subscribe_template, unsubscribe_template, broadcast_section_change, claim_section, release_section
-- API keys: create_api_key, revoke_api_key, list_api_keys, verify_api_key, auth_token
-- Graph: query_design_graph, get_file_meta, set_file_meta, get_metrics
-- Playbooks: get_playbook, get_agent_guide, observe_session
-- Utilidades: color_picker, smart_layout, register_tool, skill_clone
-- Versiones: list_versions, save_version, restore_version, diff_versions
-- Integraciones: list_workspace_integrations, call_workspace_mcp
+- Harness: harness_claim_feature, harness_start_session, harness_log_entry, harness_dump_context, harness_get_entries, harness_submit_for_review, harness_evaluate_checkpoint, harness_complete_feature, harness_healthcheck, harness_release_feature
+- Diseño: create_frame, set_html, set_css, delete_frame, update_frame_content, generate_from_prompt, lint_design, export_frame, etc.
+- Features: feature_list.json, current.json, history.json en docs/harness/
 
-Responde siempre ejecutando las herramientas necesarias. Sé conciso. Si necesitas crear una tarea, usa studio_create_card. Si no sabes algo, dilo.`;
+Sé conciso. El detalle va a harness_entries, no al chat. Pregunta si algo no está claro.`;
 
 const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
@@ -399,14 +368,24 @@ const inputBase: React.CSSProperties = {
   outline: "none", fontFamily: "inherit", width: "100%", boxSizing: "border-box",
 };
 
+function loadMessages(): Message[] {
+  try {
+    const raw = localStorage.getItem(LS_MESSAGES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(-MAX_STORED_MESSAGES);
+    }
+  } catch {}
+  return [{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }];
+}
+
+function saveMessages(msgs: Message[]) {
+  try { localStorage.setItem(LS_MESSAGES_KEY, JSON.stringify(msgs.slice(-MAX_STORED_MESSAGES))); } catch {}
+}
+
 export function ChatFAB() {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<ChatMode>(() => {
-    try { return (localStorage.getItem(LS_MODE_KEY) || "agent") as ChatMode; } catch { return "agent"; }
-  });
-  const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hola. Soy el leader del harness. ¿Qué necesitas que haga hoy?", ts: Date.now() },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
@@ -423,20 +402,17 @@ export function ChatFAB() {
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Persist
+  // Persist settings
   useEffect(() => { try { localStorage.setItem(LS_PROVIDER_KEY, provider); } catch {} }, [provider]);
   useEffect(() => { try { localStorage.setItem(LS_LLM_KEY_KEY, llmKey); } catch {} }, [llmKey]);
   useEffect(() => { try { localStorage.setItem(LS_MODEL_KEY, model); } catch {} }, [model]);
-  useEffect(() => { try { localStorage.setItem(LS_MODE_KEY, mode); } catch {} }, [mode]);
+
+  // Persist messages
+  useEffect(() => { saveMessages(messages); }, [messages]);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, toolEvents]);
 
-  // Reset messages when switching mode
-  useEffect(() => {
-    setMessages([{ role: "assistant", content: mode === "agent" ? "Hola. Soy el leader del harness. ¿Qué necesitas que haga hoy?" : "Modo ACT activado. Dime qué acción ejecutar.", ts: Date.now() }]);
-  }, [mode]);
-
-  const systemPrompt = mode === "agent" ? HARNESS_SYSTEM_PROMPT : ACT_SYSTEM_PROMPT;
+  const systemPrompt = HARNESS_SYSTEM_PROMPT;
 
   const send = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -451,7 +427,7 @@ export function ChatFAB() {
 
     const prov = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
     const isAnthropic = provider === "anthropic";
-    const MAX_TOOL_ROUNDS = mode === "agent" ? 6 : 3;
+    const MAX_TOOL_ROUNDS = 8;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -522,7 +498,7 @@ export function ChatFAB() {
       setSending(false);
       setToolEvents([]);
     }
-  }, [input, sending, llmKey, messages, model, provider, mode, systemPrompt]);
+  }, [input, sending, llmKey, messages, model, provider, systemPrompt]);
 
   const panelWidth = 420;
 
@@ -574,21 +550,6 @@ export function ChatFAB() {
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
           <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)", flex: 1 }}>Chat</span>
-
-          {/* Mode toggle */}
-          <div style={{
-            display: "flex", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 2, gap: 2,
-          }}>
-            {(["agent", "act"] as ChatMode[]).map(m => (
-              <button key={m} type="button" onClick={() => setMode(m)} style={{
-                padding: "4px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-                fontSize: 11, fontWeight: 600, fontFamily: "inherit",
-                background: mode === m ? "rgba(108,92,231,0.35)" : "transparent",
-                color: mode === m ? "#c4b5fd" : "rgba(255,255,255,0.3)",
-                transition: "all 0.15s",
-              }}>{m === "agent" ? "Agent" : "Act"}</button>
-            ))}
-          </div>
 
           <button type="button" onClick={() => setOpen(false)} style={{
             background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",
@@ -662,7 +623,7 @@ export function ChatFAB() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder={llmKey ? (mode === "agent" ? "Pídele algo al leader…" : "Describe la acción…") : "Configura tu API key ↑"}
+              placeholder={llmKey ? "Pídele algo al Leader…" : "Configura tu API key ↑"}
               disabled={sending}
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />

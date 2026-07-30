@@ -1,0 +1,21 @@
+{
+  "_schema": "1.0",
+  "_description": "Current working state of the Harness. Tracks what's happening RIGHT NOW. Only ONE active task at a time.",
+  "active": {
+    "feature_id": null,
+    "card_id": null,
+    "status": "idle",
+    "leader_session": null,
+    "implementer_session": null,
+    "reviewer_session": null,
+    "current_step": null,
+    "started_at": null,
+    "last_activity": null
+  },
+  "context": {
+    "workspace_id": null,
+    "brand_id": null,
+    "template_id": null
+  },
+  "notes": "Updated by the Leader during orchestration. Cleared when task completes."
+}

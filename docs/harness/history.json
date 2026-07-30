@@ -1,0 +1,11 @@
+{
+  "_schema": "1.0",
+  "_description": "Completed work history. Each entry represents a feature that passed review and was marked done.",
+  "completed": [],
+  "stats": {
+    "total_completed": 0,
+    "total_cycles": 0,
+    "avg_review_cycles": 0,
+    "last_completed_at": null
+  }
+}
