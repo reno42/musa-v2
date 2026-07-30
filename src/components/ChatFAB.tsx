@@ -590,12 +590,26 @@ async function spawnSubagent(params: {
     // Execute each tool call within the subagent's own loop
     for (const tc of toolCalls) {
       const resultStr = await executeToolCall(tc.name, tc.args);
-      // Gap 4: Capture templateId from create_html_template or create_template results
-      if (tc.name === "create_html_template" || tc.name === "create_template") {
-        try {
-          const parsed = JSON.parse(resultStr);
-          if (parsed?.id) capturedTemplateId = parsed.id;
-        } catch { /* non-fatal */ }
+      // Gap 4: Robust templateId capture from any design tool
+      if (!capturedTemplateId) {
+        // From create_html_template / create_template result: { id: "tpl_xxx", ... }
+        if (tc.name === "create_html_template" || tc.name === "create_template") {
+          try {
+            const parsed = JSON.parse(resultStr);
+            if (parsed?.id) capturedTemplateId = parsed.id;
+          } catch { /* non-fatal */ }
+        }
+        // From set_html / set_css result: { templateId: "tpl_xxx", ... }
+        if (tc.name === "set_html" || tc.name === "set_css") {
+          try {
+            const parsed = JSON.parse(resultStr);
+            if (parsed?.templateId) capturedTemplateId = parsed.templateId;
+          } catch { /* non-fatal */ }
+        }
+        // From args of any tool that passes templateId (create_frame, create_html_frame, get_template, etc.)
+        if (tc.args?.templateId) {
+          capturedTemplateId = tc.args.templateId;
+        }
       }
       if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
