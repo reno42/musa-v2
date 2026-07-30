@@ -351,14 +351,37 @@ const HARNESS_TOOLS = [
 // ROLE-SPECIFIC SYSTEM PROMPTS (for subagents)
 // ═══════════════════════════════════════════════
 
-const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea.
+const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea de diseño.
 
-REGLAS ESTRICTAS:
-- Solo tienes tools de DISEÑO. No tienes harness_ ni studio_ tools (excepto harness_log_entry y harness_submit_for_review).
-- Ejecuta la tarea. No preguntes. No expliques. Solo ejecuta con tools.
-- Cuando termines, llama harness_submit_for_review con un resumen breve.
-- Si algo falla, registra el error y termina con "blocked -> [razón]".
+WORKFLOW OBLIGATORIO (exactamente estos pasos, en orden):
+
+PASO 1 — Obtén workspaceId:
+  Llama list_workspaces. Toma el ID del primer workspace de la lista.
+
+PASO 2 — Crea el template COMPLETO en UNA sola llamada:
+  Llama create_html_template con:
+    - workspaceId: el ID del paso 1
+    - name: nombre descriptivo del diseño
+    - width: el ancho en píxeles (ej: 1080)
+    - height: el alto en píxeles (ej: 1080)
+    - html: el HTML completo del diseño (todas las etiquetas, textos, estructura)
+    - css: el CSS completo del diseño (colores, tipografía, layout, efectos)
+  ⚠️ CRÍTICO: El html y css deben estar COMPLETOS en esta llamada. No dejes nada para después.
+  Escribe TODO el HTML con los textos exactos que pide la tarea.
+  Escribe TODO el CSS con los colores, fuentes, animaciones y layout.
+
+PASO 3 — Reporta completion:
+  Llama harness_submit_for_review con:
+    - sessionId: tu sessionId (te lo damos abajo)
+    - summary: breve descripción de lo que creaste
+
+REGLAS:
+- NO llames get_template, get_frame, list_templates ni ninguna tool de inspección. NO explores. EJECUTA directamente.
+- NO llames create_frame por separado. Usa create_html_template que crea todo de una vez.
+- Si create_html_template falla, intenta de nuevo con html y css corregidos.
 - Tu respuesta final es UNA línea: "done -> implementado" o "blocked -> [razón]".
+
+TU SESSION ID: {SESSION_ID}
 
 CONTEXTO DE LA TAREA:
 {TASK_CONTEXT}`;
@@ -379,13 +402,12 @@ CONTEXTO DE LA TAREA:
 // TOOL SUBSETS POR ROL
 // ═══════════════════════════════════════════════
 
+// Minimal set: only create + submit. NO inspection tools that waste rounds.
 const IMPLEMENTER_TOOL_NAMES = new Set([
-  "create_frame", "create_html_frame", "create_html_template", "set_html", "set_css",
-  "delete_frame", "update_frame_content", "get_template", "get_template_structure",
-  "get_html_frames", "get_frame", "generate_from_prompt", "add_font_to_template",
-  "enhance_template", "set_css_variable", "ai_palette", "color_picker", "smart_layout",
-  "list_fonts", "search_google_fonts", "rename_template", "duplicate_template",
-  "harness_log_entry", "harness_submit_for_review", "list_workspaces", "list_templates",
+  "create_html_template", "create_frame", "create_html_frame",
+  "set_html", "set_css",
+  "harness_submit_for_review", "harness_log_entry",
+  "list_workspaces",
 ]);
 const REVIEWER_TOOL_NAMES = new Set([
   "get_template", "get_template_structure", "get_html_frames", "get_frame",
@@ -452,11 +474,13 @@ async function spawnSubagent(params: {
     }
   } catch { /* non-fatal */ }
 
-  // 2. Pick role-specific prompt and tools
+  // 2. Pick role-specific prompt and tools (inject sessionId for implementer)
   let systemPrompt: string;
   let tools: any[];
   if (params.role === "implementer") {
-    systemPrompt = IMPLEMENTER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
+    systemPrompt = IMPLEMENTER_PROMPT
+      .replace("{SESSION_ID}", sessionId)
+      .replace("{TASK_CONTEXT}", taskContext);
     tools = IMPLEMENTER_TOOLS;
   } else {
     systemPrompt = REVIEWER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
@@ -464,8 +488,9 @@ async function spawnSubagent(params: {
   }
 
   // 3. Subagent conversation — fresh, no Leader history
-  const subConv: any[] = [{ role: "user", content: params.instruction }];
-  const MAX_SUB_ROUNDS = 12;
+  // Include sessionId in the first message so the subagent can use it immediately
+  const subConv: any[] = [{ role: "user", content: `${params.instruction}\n\n[Tu sessionId: ${sessionId}]` }];
+  const MAX_SUB_ROUNDS = 15;
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
     let data: any;
