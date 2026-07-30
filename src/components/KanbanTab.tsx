@@ -170,6 +170,12 @@ export function KanbanTab({ workspaceId }: Props) {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+  // Auto-poll every 10s so cards created by the Leader appear without manual refresh
+  useEffect(() => {
+    const id = setInterval(() => fetchTasks(), 10_000);
+    return () => clearInterval(id);
+  }, [fetchTasks]);
+
   // ── Move card to any status (drag-and-drop, both directions) ──
   const moveCardToStatus = useCallback(async (cardId: string, targetStatus: string) => {
     const task = tasks.find(t => t.id === cardId);

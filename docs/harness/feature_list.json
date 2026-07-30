@@ -1,11 +1,18 @@
 {
   "_schema": "1.0",
-  "_description": "Master feature list for the Futuraria Design Harness. The Leader reads this file to know what needs work. Implementers pick ONE task with status 'pending'. Only ONE task in_progress at a time per account.",
+  "_description": "Master feature list for the Futuraria Design Harness. The Leader reads this for PLANNING. The Kanban (design_kanban_tasks in Supabase) is the source of truth for STATUS. Use studio_list_cards for live status.",
   "_rules": {
+    "source_of_truth": "Kanban (Supabase/studio_list_cards) = live status. feature_list.json = planning guide.",
+    "status_mapping": {
+      "pending": "backlog/research/draft in Kanban",
+      "in_progress": "design in Kanban",
+      "review": "review in Kanban",
+      "done": "done in Kanban",
+      "feedback": "feedback in Kanban"
+    },
     "one_at_a_time": "Only one task can be 'in_progress' at any time. harness_claim_feature enforces this server-side.",
-    "implementer_pick": "Implementers pick from pending tasks. They never create tasks — only the Leader creates via studio_create_card.",
-    "status_flow": "pending → in_progress → review → done | feedback → in_progress (retry)",
-    "review_required": "Every task MUST pass review before marking done. harness_submit_for_review → harness_evaluate_checkpoint."
+    "implementer_pick": "Implementers pick ONE pending task from this list. They never create tasks — only the Leader creates via studio_create_card.",
+    "cronjobs_optional": "Cronjobs are OPTIONAL. Not every feature needs one. Only create cronjobs for recurring tasks."
   },
   "features": [
     {
