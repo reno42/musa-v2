@@ -67,6 +67,24 @@ interface Props {
   workspaceId: string;
 }
 
+// ── Small inline components for the detail modal ──
+const Badge = ({ label, color, textColor }: { label: string; color: string; textColor: string }) => (
+  <span style={{
+    fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 100,
+    background: color, color: textColor, border: `1px solid ${color}`,
+  }}>{label}</span>
+);
+
+const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{
+      fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)",
+      textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8,
+    }}>{title}</div>
+    {children}
+  </div>
+);
+
 export function KanbanTab({ workspaceId }: Props) {
   const [columns, setColumns] = useState<KanbanColumns>({});
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
@@ -76,6 +94,7 @@ export function KanbanTab({ workspaceId }: Props) {
   const [movingCardId, setMovingCardId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [detailCardId, setDetailCardId] = useState<string | null>(null);
   const [sessionEntries, setSessionEntries] = useState<Record<string, any[]>>({});
   const [createAcceptance, setCreateAcceptance] = useState("");
   const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "" });
@@ -362,6 +381,143 @@ export function KanbanTab({ workspaceId }: Props) {
         </div>
       )}
 
+      {/* Detail Modal — shows ALL fields of a task card */}
+      {detailCardId && (() => {
+        const task = tasks.find(t => t.id === detailCardId);
+        if (!task) return null;
+        return (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 9200,
+            background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }} onClick={() => setDetailCardId(null)}>
+            <div style={{
+              background: "rgba(13,13,18,0.95)", borderRadius: 16,
+              border: "1px solid rgba(255,255,255,0.08)",
+              width: "min(680px, 94vw)", maxHeight: "min(90vh, 820px)",
+              overflowY: "auto", padding: 24,
+            }} onClick={e => e.stopPropagation()}>
+              {/* Close */}
+              <button type="button" onClick={() => setDetailCardId(null)} style={{
+                position: "absolute", top: 16, right: 16,
+                background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",
+                cursor: "pointer", fontSize: 18, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
+              }}>✕</button>
+
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                <span style={{ fontSize: 28 }}>{TYPE_ICONS[task.type] || "📌"}</span>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: 0, lineHeight: 1.3 }}>{task.title}</h3>
+                  <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                    <Badge label={task.type} color="rgba(108,92,231,0.2)" textColor="#a78bfa" />
+                    <Badge label={task.status.toUpperCase()} color={`${STATUS_COLUMNS.find(s => s.key === task.status)?.color}33` || "rgba(255,255,255,0.1)"} textColor={STATUS_COLUMNS.find(s => s.key === task.status)?.color || "#ccc"} />
+                    <Badge label={PRIORITY_LABELS[task.priority] || `P${task.priority}`} color={PRIORITY_COLORS[task.priority] || "rgba(255,255,255,0.08)"} textColor="#ccc" />
+                    {task.tags?.map((t, i) => t && t !== "comment" && <Badge key={i} label={t} color="rgba(255,255,255,0.04)" textColor="rgba(255,255,255,0.35)" />)}
+                    {task.tags?.includes("comment") && <Badge label="💬 comment" color="rgba(251,191,36,0.12)" textColor="#fbbf24" />}
+                  </div>
+                </div>
+              </div>
+
+              {/* Metadata row */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 24px", fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 16 }}>
+                <div>ID: <code style={{ color: "rgba(255,255,255,0.6)", fontSize: 10 }}>{task.id}</code></div>
+                <div>Deadline: {task.deadline ? new Date(task.deadline).toLocaleDateString("es-ES") : "—"}</div>
+                <div>Creado: {new Date(task.created_at).toLocaleString("es-ES")}</div>
+                <div>Actualizado: {new Date(task.updated_at).toLocaleString("es-ES")}</div>
+                <div>Por: {task.created_by || "—"}</div>
+                <div>Asignado: {task.assigned_to || "—"}</div>
+                {task.brand_name && <div>Brand: {task.brand_name}</div>}
+                {task.workspace_name && <div>Workspace: {task.workspace_name}</div>}
+              </div>
+
+              {/* Brief */}
+              {task.brief && (
+                <Section title="Brief / Descripción">
+                  <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>{task.brief}</p>
+                </Section>
+              )}
+
+              {/* Copy + Tone + CTA */}
+              {(task.copy_draft || task.tone || task.cta) && (
+                <Section title="Contenido editorial">
+                  {task.tone && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Tono: <span style={{ color: "rgba(255,255,255,0.75)" }}>{task.tone}</span></div>}
+                  {task.copy_draft && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", lineHeight: 1.5, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 10 }}>{task.copy_draft}</div>}
+                  {task.cta && <div style={{ fontSize: 12, color: "#a78bfa", marginTop: 4 }}>CTA: {task.cta}</div>}
+                </Section>
+              )}
+
+              {/* Acceptance Criteria */}
+              {task.acceptance && task.acceptance.length > 0 && (
+                <Section title={`Acceptance criteria (${task.acceptance.length})`}>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                    {task.acceptance.map((a, i) => {
+                      const cpKey = `C2_item_${i + 1}`;
+                      const cp = task.checkpoint_json?.[cpKey];
+                      return (
+                        <li key={i} style={{ marginBottom: 4, color: cp ? (cp.passed ? "#6ee7b7" : "#fca5a5") : "rgba(255,255,255,0.5)" }}>
+                          {cp ? (cp.passed ? "✓" : "✕") : "•"} {a}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Section>
+              )}
+
+              {/* Checkpoints */}
+              {task.checkpoint_json && Object.keys(task.checkpoint_json).length > 0 && (
+                <Section title="Checkpoints">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {Object.entries(task.checkpoint_json).map(([cid, cp]) => (
+                      <span key={cid} title={cp.notes || cid} style={{
+                        fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 100,
+                        background: cp.passed ? "rgba(52,211,153,0.12)" : "rgba(248,113,113,0.12)",
+                        color: cp.passed ? "#6ee7b7" : "#fca5a5",
+                        border: `1px solid ${cp.passed ? "rgba(52,211,153,0.2)" : "rgba(248,113,113,0.2)"}`,
+                      }}>{cid}: {cp.passed ? "PASS" : "FAIL"}</span>
+                    ))}
+                  </div>
+                </Section>
+              )}
+
+              {/* Template link */}
+              {task.template_id && (
+                <Section title="Diseño vinculado">
+                  <a href={`/?template=${task.template_id}&v=2`} target="_blank" rel="noopener" style={{
+                    fontSize: 11, color: "#a78bfa", textDecoration: "underline", fontFamily: "monospace",
+                  }}>
+                    Abrir {task.template_name || task.template_id}
+                  </a>
+                  {task.frame_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginLeft: 8 }}>frame: {task.frame_id}</span>}
+                </Section>
+              )}
+
+              {/* Activity log */}
+              {(sessionEntries[task.id] || []).length > 0 && (
+                <Section title="Actividad">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {(sessionEntries[task.id] || []).slice(0, 10).map((log: any, i: number) => (
+                      <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
+                        <strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.from_status || "start"}</strong>
+                        {" → "}<strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.to_status}</strong>
+                        {log.comment && <span style={{ color: "rgba(255,255,255,0.25)" }}> · {log.comment}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              )}
+
+              {/* Blocked reason */}
+              {task.blocker_reason && (
+                <Section title="🚫 Bloqueado">
+                  <div style={{ fontSize: 12, color: "#fca5a5", background: "rgba(248,113,113,0.08)", borderRadius: 8, padding: 10 }}>{task.blocker_reason}</div>
+                </Section>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexShrink: 0 }}>
         <div>
@@ -438,7 +594,7 @@ export function KanbanTab({ workspaceId }: Props) {
                           position: "relative",
                         }}
                         onClick={() => {
-                          if (task.template_id) window.location.href = `/?templateId=${task.template_id}`;
+                          if (task.template_id) window.location.href = `/?template=${task.template_id}&v=2`;
                         }}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "rgba(255,255,255,0.06)";

@@ -3046,6 +3046,66 @@ const MCP_TOOLS = [
       required: ["cronjobId", "action"],
     },
   },
+  // ── Design Comments (canvas pins) ──
+  {
+    name: "comment_add",
+    description: "Add a comment pin on the canvas. Auto-creates a Kanban task unless createKanbanTask is false.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID (optional)" },
+        workspaceId: { type: "string", description: "Workspace ID" },
+        xPct: { type: "number", description: "X position in frame as percentage 0-100" },
+        yPct: { type: "number", description: "Y position in frame as percentage 0-100" },
+        body: { type: "string", description: "Comment text" },
+        authorName: { type: "string", description: "Who wrote this comment" },
+        source: { type: "string", enum: ["editor_pin", "mobile_pin", "kanban", "ai_review", "chat"], description: "Where the comment was created" },
+        createKanbanTask: { type: "boolean", description: "If true (default), also creates a Kanban task" },
+        parentId: { type: "string", description: "Parent comment ID for threaded replies" },
+      },
+      required: ["templateId", "body"],
+    },
+  },
+  {
+    name: "comment_list",
+    description: "List comments for a template, optionally filtered by frame and status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Filter by frame" },
+        status: { type: "string", enum: ["open", "resolved", "archived"], description: "Filter by status" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "comment_resolve",
+    description: "Mark a comment as resolved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        commentId: { type: "string", description: "Comment to resolve" },
+      },
+      required: ["commentId"],
+    },
+  },
+  {
+    name: "comment_reply",
+    description: "Reply to an existing comment (threading).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        parentId: { type: "string", description: "Parent comment ID" },
+        body: { type: "string", description: "Reply text" },
+        authorName: { type: "string", description: "Who wrote this reply" },
+        frameId: { type: "string", description: "Frame ID (optional)" },
+      },
+      required: ["templateId", "parentId", "body"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -11327,6 +11387,96 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (error) throw { code: -32000, message: "Toggle failed: " + error.message };
       if (!updated) throw { code: -32000, message: "Cronjob not found: " + params.cronjobId };
       return { success: true, cronjob: { ...updated, encrypted_api_key: updated.encrypted_api_key ? "[set]" : null } };
+    }
+
+    // ── Design Comments (pins on canvas like Word) ──────────────
+    case "comment_add": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Comments require Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      const newComment = {
+        id: "comment_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+        template_id: params.templateId,
+        frame_id: params.frameId || null,
+        workspace_id: params.workspaceId || null,
+        account_id: accountId,
+        x_pct: params.xPct ?? 50,
+        y_pct: params.yPct ?? 50,
+        body: params.body,
+        author_name: params.authorName || "Anónimo",
+        author_avatar: params.authorAvatar || null,
+        source: params.source || "editor_pin",
+        parent_id: params.parentId || null,
+      };
+      const { data: comment, error } = await sb.from("design_comments").insert(newComment).select().single();
+      if (error) throw { code: -32000, message: "Comment insert failed: " + error.message };
+
+      // Optionally auto-create a Kanban task from this comment
+      let kanbanTask = null;
+      if (params.createKanbanTask !== false) {
+        const taskId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+        const { data: kt, error: ktErr } = await sb.from("design_kanban_tasks").insert({
+          id: taskId,
+          title: `Comentario: ${params.body.slice(0, 60)}${params.body.length > 60 ? "…" : ""}`,
+          workspace_id: params.workspaceId || null,
+          template_id: params.templateId,
+          frame_id: params.frameId || null,
+          brief: params.body,
+          status: "backlog",
+          type: "other",
+          created_by: params.authorName || "comment",
+          tags: ["comment", params.source || "editor_pin"],
+          account_id: accountId,
+        }).select().single();
+        if (!ktErr && kt) {
+          kanbanTask = kt;
+          await sb.from("design_comments").update({ kanban_task_id: taskId }).eq("id", comment.id);
+        }
+      }
+
+      return { success: true, comment: { ...comment, kanban_task_id: kanbanTask?.id || null }, kanbanTask };
+    }
+
+    case "comment_list": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Comments require Supabase." };
+      let query = sb.from("design_comments").select("*").eq("template_id", params.templateId).order("created_at", { ascending: false });
+      if (params.frameId) query = query.eq("frame_id", params.frameId);
+      if (params.status) query = query.eq("status", params.status);
+      const { data: comments, error } = await query;
+      if (error) throw { code: -32000, message: "Comment list failed: " + error.message };
+      return { comments: comments || [] };
+    }
+
+    case "comment_resolve": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Comments require Supabase." };
+      const { data: updated, error } = await sb.from("design_comments")
+        .update({ status: "resolved", resolved_at: new Date().toISOString() })
+        .eq("id", params.commentId).select().maybeSingle();
+      if (error) throw { code: -32000, message: "Resolve failed: " + error.message };
+      if (!updated) throw { code: -32000, message: "Comment not found: " + params.commentId };
+      return { success: true, comment: updated };
+    }
+
+    case "comment_reply": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Comments require Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      const newReply = {
+        id: "comment_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+        template_id: params.templateId,
+        frame_id: params.frameId || null,
+        account_id: accountId,
+        body: params.body,
+        author_name: params.authorName || "Anónimo",
+        source: "chat",
+        parent_id: params.parentId,
+      };
+      const { data: reply, error } = await sb.from("design_comments").insert(newReply).select().single();
+      if (error) throw { code: -32000, message: "Reply failed: " + error.message };
+      return { success: true, reply };
     }
 
     default:

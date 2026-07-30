@@ -1,7 +1,7 @@
 /**
  * Integration test: MCP Phase 1-5 features
  */
-const BASE = "https://bejewelled-llama-a6719d.netlify.app/mcp";
+const BASE = "https://design.futuraria.com/mcp";
 
 async function mcp(method, params) {
   const res = await fetch(BASE, {

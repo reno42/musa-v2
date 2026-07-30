@@ -1,6 +1,6 @@
 // Render endpoint test (HTML-based)
-const MCP = 'https://bejewelled-llama-a6719d.netlify.app/mcp';
-const RENDER = 'https://bejewelled-llama-a6719d.netlify.app/api/render';
+const MCP = 'https://design.futuraria.com/mcp';
+const RENDER = 'https://design.futuraria.com/api/render';
 
 async function mcp(method, params) {
   const r = await fetch(MCP, {

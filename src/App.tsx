@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
 import { type AppRoute, readAppRoute, routeRequiresAccount } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
+import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
 import {
   AuthConfigurationScreen,
   AuthScreen,
@@ -107,24 +108,46 @@ function App(): JSX.Element {
 
   const enterWorkspace = () => {
     window.history.replaceState(null, "", "/#workspace");
+    saveCurrentRoute();
     setRoute({ kind: "workspace" });
     dispatch({ type: "ENTER_WORKSPACE" });
   };
 
   const openTemplate = (id: string, url: string) => {
     window.history.replaceState(null, "", url);
+    saveCurrentRoute();
     setRoute({ kind: "template", templateId: id });
     dispatch({ type: "OPEN_TEMPLATE_V2", id });
   };
+
+  // ── Persist route on every navigation ──
+  useEffect(() => {
+    saveCurrentRoute();
+  }, [route]);
 
   useEffect(() => {
     if (authLoading) return;
 
     if (route.kind === "root") {
       if (user) {
-        window.history.replaceState(null, "", "/#workspace");
-        setRoute({ kind: "workspace" });
-        dispatch({ type: "ENTER_WORKSPACE" });
+        // ── Page persistence: restore last route instead of always going to dashboard ──
+        const lastRoute = getLastRoute();
+        if (lastRoute && lastRoute !== "/#workspace" && lastRoute.includes("template=")) {
+          // User was in the editor — restore that template
+          window.history.replaceState(null, "", lastRoute);
+          const restored = readAppRoute(window.location);
+          setRoute(restored);
+          const ns = stateForRoute(restored);
+          if (ns.view === "editor-v2" && ns.templateId) {
+            dispatch({ type: "OPEN_TEMPLATE_V2", id: ns.templateId });
+          } else {
+            dispatch({ type: "ENTER_WORKSPACE" });
+          }
+        } else {
+          window.history.replaceState(null, "", "/#workspace");
+          setRoute({ kind: "workspace" });
+          dispatch({ type: "ENTER_WORKSPACE" });
+        }
       } else {
         dispatch({ type: "SET_VIEW", view: "landing" });
       }
@@ -227,7 +250,22 @@ function App(): JSX.Element {
   }
 
   if (authConfigured && !user && protectedRoute) {
-    return <AuthScreen onBack={showLanding} />;
+    // ── Deep-link redirect: save the URL the user wanted so we can return after login ──
+    const currentUrl = window.location.pathname + window.location.search + window.location.hash;
+    setPendingRedirect(currentUrl);
+    return <AuthScreen onBack={showLanding} onAuthSuccess={() => {
+      // After login, go to the saved URL, not the dashboard
+      const targetUrl = resolvePostLoginUrl();
+      window.history.replaceState(null, "", targetUrl);
+      const nextRoute = readAppRoute(window.location);
+      setRoute(nextRoute);
+      const ns = stateForRoute(nextRoute);
+      if (ns.view === "editor-v2" && ns.templateId) {
+        dispatch({ type: "OPEN_TEMPLATE_V2", id: ns.templateId });
+      } else {
+        dispatch({ type: "ENTER_WORKSPACE" });
+      }
+    }} />;
   }
 
   if (view === "booting") return <AppStartupScreen />;

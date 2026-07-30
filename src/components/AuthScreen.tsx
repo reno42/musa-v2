@@ -50,7 +50,7 @@ export function AuthConfigurationScreen({ onBack, error }: { onBack: () => void;
   );
 }
 
-export function AuthScreen({ onBack, invitation }: { onBack: () => void; invitation?: InvitationPreview }) {
+export function AuthScreen({ onBack, invitation, onAuthSuccess }: { onBack: () => void; invitation?: InvitationPreview; onAuthSuccess?: () => void }) {
   const [mode, setMode] = useState<AuthMode>(() => invitation && !invitation.accountExists ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -95,6 +95,10 @@ export function AuthScreen({ onBack, invitation }: { onBack: () => void; invitat
     if (result.error) setError(friendlyAuthError(result.error.message));
     else if (mode === "signup" && !result.data.session) {
       setMessage("Cuenta creada. Revisa tu correo para confirmarla y entrar.");
+    } else if (result.data.session && onAuthSuccess) {
+      // ── Deep-link redirect: after successful login, go to saved URL ──
+      onAuthSuccess();
+      return;
     }
     setSubmitting(false);
   };

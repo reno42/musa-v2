@@ -10,6 +10,7 @@ import { KanbanTab } from "./KanbanTab";
 import { ChatTab } from "./ChatTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
+import { saveCurrentRoute } from "../lib/routePersistence";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { WorkspaceConsole } from "./WorkspaceConsole";
@@ -143,6 +144,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, []);
 
   const handleSignOut = useCallback(async () => {
+    saveCurrentRoute();
     await signOut();
     setUserMenuOpen(false);
     window.location.href = "/";

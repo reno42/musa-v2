@@ -5,7 +5,7 @@ const BLUE = "#002aff";
 const WHITE = "#ffffff";
 const OFFWHITE = "#f8f9ff";
 const TEMPLATE_ID = "tpl_eee431a0-a3e";
-const API = "https://bejewelled-llama-a6719d.netlify.app";
+const API = "https://design.futuraria.com";
 
 function pill(text, top, left, rot = 0) {
   return `<div data-layer-name="${text}" style="position:absolute;top:${top}px;left:${left}px;background:${WHITE};border:5px solid ${BLUE};border-radius:80px;padding:10px 36px;z-index:10;box-shadow:0 6px 18px rgba(0,42,255,0.06);transform:rotate(${rot}deg);"><span style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;color:${BLUE};letter-spacing:0.02em;text-transform:uppercase;">${text}</span></div>`;
