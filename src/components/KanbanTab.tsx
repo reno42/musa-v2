@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
 
+type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
+
 type KanbanTask = {
   id: string;
   title: string;
@@ -27,6 +29,12 @@ type KanbanTask = {
   workspace_name?: string;
   brand_name?: string;
   template_name?: string;
+  // Harness fields (added by harness.sql ALTER TABLE)
+  account_id?: string | null;
+  acceptance?: string[] | null;
+  blocker_reason?: string | null;
+  checkpoint_json?: CheckpointJson | null;
+  completed_at?: string | null;
 };
 
 type KanbanColumns = Record<string, KanbanTask[]>;
@@ -67,7 +75,35 @@ export function KanbanTab({ workspaceId }: Props) {
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [movingCardId, setMovingCardId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [sessionEntries, setSessionEntries] = useState<Record<string, any[]>>({});
+  const [createAcceptance, setCreateAcceptance] = useState("");
   const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "" });
+
+  // ── Fetch harness entries for a task's most recent session ──
+  const fetchTaskEntries = useCallback(async (taskId: string) => {
+    if (sessionEntries[taskId]) return; // cached
+    try {
+      // First find the most recent session for this task
+      const sessJson = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          // Reuse studio_get_card which returns activity log; entries come via separate call
+          method: "studio_get_card",
+          params: { cardId: taskId },
+          id: 1,
+        }),
+      });
+      const sessText = sessJson?.result?.content?.[0]?.text;
+      const sessData = sessText ? JSON.parse(sessText) : sessJson?.result || {};
+      // We don't have a session list tool yet — use the activity log as a proxy for now.
+      // If we wanted harness_entries we'd add harness_list_sessions({ taskId }).
+      setSessionEntries(prev => ({ ...prev, [taskId]: sessData?.activityLog || [] }));
+    } catch {
+      setSessionEntries(prev => ({ ...prev, [taskId]: [] }));
+    }
+  }, [sessionEntries]);
 
   // ── Fetch via MCP ──
   const fetchTasks = useCallback(async () => {
@@ -155,6 +191,11 @@ export function KanbanTab({ workspaceId }: Props) {
   const handleCreate = useCallback(async () => {
     if (!createForm.title.trim()) return;
     try {
+      // Parse acceptance criteria: one per line, ignore blanks
+      const acceptanceLines = createAcceptance
+        .split("\n")
+        .map(l => l.replace(/^[\s\-*]+/, "").trim())
+        .filter(Boolean);
       await apiFetch("/mcp", {
         method: "POST",
         body: JSON.stringify({
@@ -167,17 +208,19 @@ export function KanbanTab({ workspaceId }: Props) {
             priority: createForm.priority,
             brief: createForm.brief.trim() || undefined,
             deadline: createForm.deadline || undefined,
+            acceptance: acceptanceLines.length > 0 ? acceptanceLines : undefined,
           },
           id: 1,
         }),
       });
       setShowCreateModal(false);
       setCreateForm({ title: "", type: "post", priority: 2, brief: "", deadline: "" });
+      setCreateAcceptance("");
       await fetchTasks();
     } catch (e: any) {
       setError(e?.message || "Error al crear tarjeta");
     }
-  }, [createForm, workspaceId, fetchTasks]);
+  }, [createForm, createAcceptance, workspaceId, fetchTasks]);
 
   const tasksByStatus = (status: string) => tasks.filter(t => t.status === status);
 
@@ -298,6 +341,18 @@ export function KanbanTab({ workspaceId }: Props) {
                 style={{ ...inputStyle, minHeight: 80, resize: "vertical" }}
                 rows={3}
               />
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
+                  Acceptance criteria (uno por línea)
+                </label>
+                <textarea
+                  placeholder={"Ej: Botón Publicar existe en topbar\nAl click llama generate_design_artifacts\nMuestra toast con brandId"}
+                  value={createAcceptance}
+                  onChange={e => setCreateAcceptance(e.target.value)}
+                  style={{ ...inputStyle, minHeight: 70, resize: "vertical", fontSize: 12 }}
+                  rows={3}
+                />
+              </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" onClick={() => setShowCreateModal(false)} style={btnSecondary}>Cancelar</button>
                 <button type="button" onClick={handleCreate} disabled={!createForm.title.trim()} style={btnPrimary(!!createForm.title.trim())}>Crear</button>
@@ -459,6 +514,90 @@ export function KanbanTab({ workspaceId }: Props) {
                             overflow: "hidden",
                           }}>
                             {task.brief}
+                          </div>
+                        )}
+
+                        {/* Acceptance + Checkpoint badges (harness) */}
+                        {((task.acceptance && task.acceptance.length > 0) || (task.checkpoint_json && Object.keys(task.checkpoint_json).length > 0)) && (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.03)",
+                            flexWrap: "wrap",
+                          }}>
+                            {task.acceptance && task.acceptance.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  const newId = expandedCard === task.id ? null : task.id;
+                                  setExpandedCard(newId);
+                                  if (newId) fetchTaskEntries(task.id);
+                                }}
+                                style={{
+                                  fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.5)",
+                                  background: "rgba(255,255,255,0.04)", borderRadius: 100,
+                                  padding: "2px 8px", border: "1px solid rgba(255,255,255,0.06)",
+                                  cursor: "pointer", fontFamily: "inherit",
+                                }}>
+                                {expandedCard === task.id ? "▾" : "▸"} {task.acceptance.length} acceptance
+                              </button>
+                            )}
+                            {task.checkpoint_json && Object.entries(task.checkpoint_json).slice(0, 5).map(([cid, cp]) => (
+                              <span key={cid} title={`${cid}: ${cp.passed ? "PASS" : "FAIL"}${cp.notes ? " — " + cp.notes : ""}`}
+                                style={{
+                                  fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 100,
+                                  background: cp.passed ? "rgba(52,211,153,0.15)" : "rgba(248,113,113,0.15)",
+                                  color: cp.passed ? "#6ee7b7" : "#fca5a5",
+                                  border: `1px solid ${cp.passed ? "rgba(52,211,153,0.25)" : "rgba(248,113,113,0.25)"}`,
+                                }}>
+                                {cid} {cp.passed ? "✓" : "✕"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Expanded panel: acceptance criteria + activity log */}
+                        {expandedCard === task.id && (
+                          <div style={{
+                            marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.05)",
+                            fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5,
+                          }} onClick={e => e.stopPropagation()}>
+                            {task.acceptance && task.acceptance.length > 0 && (
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                  Acceptance criteria
+                                </div>
+                                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                  {task.acceptance.map((a, i) => {
+                                    // Match by index to checkpoint C2_item_<i+1> if exists
+                                    const cpKey = `C2_item_${i + 1}`;
+                                    const cp = task.checkpoint_json?.[cpKey];
+                                    return (
+                                      <li key={i} style={{ marginBottom: 3, color: cp ? (cp.passed ? "#6ee7b7" : "#fca5a5") : "rgba(255,255,255,0.45)" }}>
+                                        {cp ? (cp.passed ? "✓" : "✕") : "•"} {a}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                            {(sessionEntries[task.id] || []).length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                                  Actividad reciente
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {(sessionEntries[task.id] || []).slice(0, 4).map((log: any, i: number) => (
+                                    <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.08)" }}>
+                                      <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.from_status || "start"}</strong>
+                                      {" → "}
+                                      <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.to_status}</strong>
+                                      {log.comment && <span style={{ color: "rgba(255,255,255,0.3)" }}> · {log.comment}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

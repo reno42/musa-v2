@@ -1,0 +1,760 @@
+{
+  "$schema": "https://design-tokens.org/format",
+  "$version": "2.0",
+  "$instructions": [
+    "ESTE ARCHIVO ES EL TEMPLATE COMPLETO para replicar estilos de diseño al nivel NewForm/Adisruptive.",
+    "Todas las secciones son obligatorias. Si una categoría no aplica a tu estilo, usa \"none\" o array vacío [].",
+    "Los valores en este archivo representan el estilo NewForm — un sistema editorial/financiero con UN solo color de acento neón.",
+    "Para usar con Gemini: 'Replicá este estilo usando el template adjunto. Quiero [N] slides de [1080x1080|1080x1350] para [propósito].'",
+    "Cada componente incluye el CSS exacto que lo define. Gemini debe usar estas clases tal cual o adaptarlas manteniendo proporciones.",
+    "Las reglas 'do' y 'dont' NO SON OPCIONALES — son constraints que Gemini debe respetar estrictamente."
+  ],
+
+  "meta": {
+    "name": "NewForm / Adisruptive",
+    "version": "2.0",
+    "theme": "light",
+    "density": "spacious",
+    "mood": "editorial-financial-broadsheet",
+    "description": "Editorial financial publication aesthetic. Near-white faintly green-tinted canvas holds massive serif display type at 60-295px. Single neon green accent as surgical punctuation. B&W photography in rounded tiles overlapping or beside display headlines. No card grids, no multi-column features — type scale alone defines hierarchy.",
+    "similarBrands": [
+      "Brainchild (VC fund) — broadsheet-editorial, massive serif display, single vivid accent",
+      "Paradigm (crypto fund) — oversized display serif 200px+, monochrome + neon accent",
+      "Atelier TOC — magazine-spread layout where type and photography interlock asymmetrically",
+      "Werkstatt — near-white pages with oversized serif type, editorial rhythm"
+    ],
+    "formatDimensions": {
+      "instagramPost": "1080×1080px",
+      "carouselSlide": "1080×1350px",
+      "storyVertical": "1080×1920px"
+    }
+  },
+
+  "color": {
+    "canvas": {
+      "$value": "#fafffa",
+      "role": "Page background — full-bleed canvas for every section",
+      "description": "Faintly green-tinted near-white. NOT pure #ffffff. Keeps the site from reading as stark white. Also used for card surfaces — cards are defined by radius + padding, not a different fill.",
+      "constraints": "Every section sits on this canvas. Never use pure #ffffff for large surfaces."
+    },
+    "ink": {
+      "$value": "#121613",
+      "role": "Primary text, dominant borders, image frames",
+      "description": "Warm-tinted near-black that pairs with canvas instead of pure black. Used for all headings, primary text, footer backgrounds.",
+      "constraints": "Primary text color for h1-h6, strong tags, and dominant borders."
+    },
+    "inkPure": {
+      "$value": "#000000",
+      "role": "Hard borders, icon strokes, deepest text layer",
+      "description": "Pure black reserved for maximum contrast moments — icon strokes, hard borders, the deepest text layer where ink doesn't provide enough contrast against canvas."
+    },
+    "bark": {
+      "$value": "#232924",
+      "role": "Secondary dark surface",
+      "description": "Half-step lighter than ink for layered depth — subtle elevated panels, secondary dark backgrounds."
+    },
+    "inkSecondary": {
+      "$value": "#516254",
+      "role": "Muted body text, secondary borders, labels",
+      "description": "Desaturated green-gray for body copy and secondary text. Keeps muted copy tonally consistent with the green-tinted canvas. Used for paragraphs, captions, labels, detail values."
+    },
+    "border": {
+      "$value": "#c8d2c8",
+      "role": "Hairline dividers, card borders, subtle separators",
+      "description": "Barely-there green-gray that registers only at large display sizes. Used for footer-bar top border, card borders, calendar grid lines, timeline vertical line."
+    },
+    "accent": {
+      "$value": "#2bee4b",
+      "role": "Primary CTA color — filled buttons, selected nav, tick marks, focused conversion moments",
+      "description": "Neon green. THE ONLY saturated color in the entire chromatic system. Used surgically — CTAs, the '||' mark icon, short tick accents, agenda times, timeline dots.",
+      "constraints": "NEVER use for body text, headings, or backgrounds. NEVER use as a second saturated color alongside another accent. Only for CTAs, tick marks, nav selected states, and focused conversion moments."
+    },
+    "accentSupport": {
+      "$value": "#93b799",
+      "role": "Supporting accent — decorative details, low-frequency emphasis",
+      "description": "Muted moss green. For decorative elements that need green but shouldn't compete with the primary accent.",
+      "constraints": "Decorative only. Do NOT promote to primary CTA color. Lower frequency than accent."
+    },
+    "pollen": {
+      "$value": "#c4e4c9",
+      "role": "Gray supporting accent — decorative, low-frequency",
+      "description": "Very light green-gray. For subtle decorative accents and low-frequency emphasis.",
+      "constraints": "Decorative only. Do NOT promote to primary CTA."
+    },
+    "success": {
+      "$value": "#2bee4b",
+      "role": "Success state — reuses accent color",
+      "description": "Same as accent. The accent color IS the success color in this system."
+    },
+    "warning": {
+      "$value": "#c9a800",
+      "role": "Warning state",
+      "description": "Muted gold for warning indicators."
+    },
+    "error": {
+      "$value": "#d9473a",
+      "role": "Error state",
+      "description": "Muted red for error states."
+    }
+  },
+
+  "typography": {
+    "families": [
+      {
+        "name": "Editorial New",
+        "token": "--font-display-primary",
+        "role": "Hero display headlines at 60-240px",
+        "weights": [300],
+        "defaultSize": "64-240px",
+        "lineHeight": 0.9,
+        "letterSpacing": "-0.04em at 240px, -0.02em at 140px, -0.01em at 60px",
+        "ideal": "Editorial New — ultra-tight 0.90 leading means lines of type nearly touch",
+        "fallback": "'Playfair Display', Georgia, 'Times New Roman', serif",
+        "usage": "Literary-feeling statements. Tight leading is the signature. Lines visually lock together at 0.90.",
+        "constraints": "Weight 300 only. Never go heavier. The display whispers at billboard scale because it stays thin."
+      },
+      {
+        "name": "PP Mondwest",
+        "token": "--font-display-secondary",
+        "role": "Alternative display voice at 60-295px for architectural/monumental statements",
+        "weights": [400],
+        "defaultSize": "60-295px",
+        "lineHeight": 0.9,
+        "letterSpacing": "-0.04em",
+        "ideal": "PP Mondwest — geometric, almost western-style serifs",
+        "fallback": "'Playfair Display', Georgia, 'Times New Roman', serif",
+        "usage": "Different emotional register from Editorial New — more architectural, more monumental. Used when the message needs gravitas rather than literary elegance.",
+        "constraints": "Do NOT mix Editorial New and PP Mondwest in the same headline. Choose one per headline."
+      },
+      {
+        "name": "TWK Lausanne",
+        "token": "--font-ui",
+        "role": "Primary UI and body family. All non-display text: nav, labels, body copy, buttons, captions at larger sizes.",
+        "weights": [200, 350, 400, 550],
+        "ideal": "TWK Lausanne — 350 weight is the brand's signature body voice: present but never loud",
+        "fallback": "'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        "defaultSize": "11-155px",
+        "lineHeight": "1.4 for body, 1.1 for larger UI",
+        "usage": "Weight 350 for nav and labels (signature voice). Weight 400 for body copy. Weight 550 for rare emphasized UI moments (CTA buttons, strong tags). Weight 200 reserved for whisper-weight display moments.",
+        "constraints": "NEVER use weights heavier than 550. The brand voice lives in the 200-400 range.",
+        "weightRoles": {
+          "200": "Rare whisper-weight display moments — barely-there presence",
+          "350": "Signature body voice — nav items, menu labels, paragraph text",
+          "400": "Standard body copy, general UI text",
+          "550": "Emphasized UI: CTA button text, strong tags, wordmark"
+        }
+      },
+      {
+        "name": "Times / Georgia",
+        "token": "--font-caption",
+        "role": "System serif for image captions and micro-copy",
+        "weights": [400],
+        "ideal": "Times (system)",
+        "fallback": "Georgia, 'Times New Roman', serif",
+        "defaultSize": "16px",
+        "lineHeight": 1.2,
+        "usage": "Appears sparingly in image captions and editorial metadata. Short observational fragments, not full sentences. Times' neutrality avoids competing with the custom display faces.",
+        "constraints": "Captions only. Never for headings or body text."
+      }
+    ],
+    "scale": [
+      { "role": "caption", "size": "11px", "lineHeight": 1.4, "letterSpacing": "0.01em", "family": "ui", "weight": 350, "token": "--text-caption" },
+      { "role": "body-sm", "size": "14px", "lineHeight": 1.4, "letterSpacing": "-0.02em", "family": "ui", "weight": 350, "token": "--text-body-sm" },
+      { "role": "body", "size": "16px", "lineHeight": 1.4, "letterSpacing": "-0.02em", "family": "ui", "weight": 350, "token": "--text-body" },
+      { "role": "body-lg", "size": "20px", "lineHeight": 1.45, "letterSpacing": "-0.01em", "family": "ui", "weight": 350, "token": "--text-body-lg" },
+      { "role": "body-xl", "size": "22px", "lineHeight": 1.4, "letterSpacing": "-0.01em", "family": "ui", "weight": 350, "token": "--text-body-xl" },
+      { "role": "subheading", "size": "18px", "lineHeight": 1.4, "letterSpacing": "-0.02em", "family": "ui", "weight": 600, "token": "--text-subheading", "textTransform": "uppercase" },
+      { "role": "heading-sm", "size": "60px", "lineHeight": 0.9, "letterSpacing": "-0.02em", "family": "display", "weight": 300, "token": "--text-heading-sm" },
+      { "role": "heading", "size": "72px", "lineHeight": 1.1, "letterSpacing": "-0.02em", "family": "display", "weight": 300, "token": "--text-heading" },
+      { "role": "heading-lg", "size": "96px", "lineHeight": 1.1, "letterSpacing": "-0.02em", "family": "display", "weight": 300, "token": "--text-heading-lg" },
+      { "role": "heading-xl", "size": "132px", "lineHeight": 0.9, "letterSpacing": "-0.025em", "family": "display", "weight": 300, "token": "--text-heading-xl" },
+      { "role": "display", "size": "140px", "lineHeight": 0.9, "letterSpacing": "-0.01em", "family": "display", "weight": 300, "token": "--text-display" },
+      { "role": "display-lg", "size": "240px", "lineHeight": 0.9, "letterSpacing": "-0.02em", "family": "display", "weight": 300, "token": "--text-display-lg" }
+    ],
+    "textTransformRules": {
+      "ctaButton": "uppercase, letter-spacing +0.01em to +0.02em",
+      "sectionLabel": "uppercase, letter-spacing +0.08em to +0.1em, weight 600, color inkSecondary",
+      "detailLabel": "uppercase, letter-spacing +0.08em, weight 600, color inkSecondary, size 11-15px",
+      "bodyText": "sentence case, no transform",
+      "navLinks": "no transform, weight 350-400",
+      "calendarHeaders": "uppercase, letter-spacing +0.08em, weight 600, color inkSecondary",
+      "countdownLabels": "uppercase, letter-spacing +0.1em, weight 500, color inkSecondary"
+    },
+    "colorRules": {
+      "h1": "ink (#121613), display family, weight 300-400, line-height 0.9",
+      "h1 .italic": "italic style, keep same weight and color",
+      "h1 .accentWord": "accent (#2bee4b), italic — used for ONE key word per headline maximum",
+      "h3": "inkSecondary (#516254), ui family, weight 600, uppercase, letter-spacing +0.1em — section labels above display headlines",
+      "p": "inkSecondary (#516254), ui family, weight 350, line-height 1.4-1.5",
+      "p strong": "ink (#121613), weight 550",
+      "caption": "inkSecondary (#516254), caption family, italic, 16-22px",
+      "detailLabel": "inkSecondary (#516254), ui family, weight 600, uppercase, letter-spacing +0.08em",
+      "detailValue": "ink (#121613), ui family, weight 400"
+    },
+    "pairingLogic": "TWK Lausanne handles everything from 11px captions to 155px sub-display moments. When the headline needs to exceed 155px and carry a serif voice, switch to Editorial New (weight 300, tighter apertures, literary) or PP Mondwest (weight 400, geometric serifs, architectural). The choice is editorial, not systematic: Editorial New for literary statements, PP Mondwest for architectural ones. Do NOT mix both display faces in the same headline."
+  },
+
+  "spacing": {
+    "scale": {
+      "4": { "$value": "4px", "use": "Micro gaps, icon padding" },
+      "8": { "$value": "8px", "use": "Tight inline spacing" },
+      "10": { "$value": "10px", "use": "CTA arrow gap" },
+      "15": { "$value": "15px", "use": "Green mark icon width" },
+      "20": { "$value": "20px", "use": "Card padding, element gap rhythm" },
+      "25": { "$value": "25px", "use": "Medium gaps" },
+      "30": { "$value": "30px", "use": "Section internal spacing" },
+      "32": { "$value": "32px", "use": "Tick margin-bottom, divider margin" },
+      "35": { "$value": "35px", "use": "Medium-large gaps" },
+      "40": { "$value": "40px", "use": "Detail row gap" },
+      "45": { "$value": "45px", "use": "Large internal spacing" },
+      "50": { "$value": "50px", "use": "Masthead horizontal padding (minimum)" },
+      "55": { "$value": "55px", "use": "Large gaps" },
+      "60": { "$value": "60px", "use": "Large section padding" },
+      "120": { "$value": "120px", "use": "Section gap (lower bound)" },
+      "190": { "$value": "190px", "use": "Section gap (upper bound)" }
+    },
+    "semantic": {
+      "sectionGap": "80-120px — vertical rhythm between content blocks. No visible divider — whitespace IS the divider.",
+      "cardPadding": "20-28px — standard internal card padding",
+      "elementGap": "20px — inline rhythm between elements of the same type",
+      "mastheadPadding": "50-76px horizontal, 0 bottom",
+      "contentPadding": "56-76px horizontal, 44-72px top",
+      "footerPadding": "24-28px top (after border), 40-48px bottom, same horizontal as content"
+    }
+  },
+
+  "radius": {
+    "card": {
+      "$value": "14px",
+      "appliesTo": "Cards, images, editorial frames, portfolio cards"
+    },
+    "button": {
+      "$value": "10px",
+      "appliesTo": "CTA buttons only"
+    },
+    "pill": {
+      "$value": "9999px",
+      "appliesTo": "Pill-style elements: audience pills, tags, badges, navbar when pill-shaped"
+    },
+    "formField": {
+      "$value": "9px",
+      "appliesTo": "Input fields, text areas"
+    },
+    "calendarDay": {
+      "$value": "8px",
+      "appliesTo": "Calendar day cells"
+    },
+    "tag": {
+      "$value": "24px",
+      "appliesTo": "Tag/chip elements"
+    },
+    "chart": {
+      "$value": "6px",
+      "appliesTo": "Chart bars, progress tracks"
+    }
+  },
+
+  "shadows": {
+    "cta": {
+      "$value": "rgba(16,94,29,0.45) 1px 8px 20px 0px, rgba(18,146,39,0.25) 1px 8px 20px 0px",
+      "description": "CTA button shadow — dual-layer GREEN-tinted shadow. The glow is on-brand. A deliberate choice that keeps the luminous accent on-brand even in elevation.",
+      "constraints": "ONLY on filled CTA buttons. No other element carries box-shadow. NEVER use neutral-gray shadows on the accent button. The shadow must be tinted with the accent color."
+    }
+  },
+
+  "surfaces": [
+    {
+      "level": 0,
+      "name": "Canvas",
+      "value": "#fafffa",
+      "purpose": "Full-bleed page background. Every section sits on this surface.",
+      "elevation": "none"
+    },
+    {
+      "level": 1,
+      "name": "Card",
+      "value": "#fafffa",
+      "purpose": "Cards use the same hex as canvas. They are defined by 14px radius and 20-28px padding — NOT by a different fill color. No border on primary cards.",
+      "elevation": "none"
+    },
+    {
+      "level": 2,
+      "name": "Dark Panel",
+      "value": "#121613",
+      "purpose": "Rare dark surface for footer or inverted moments. Text on top uses canvas color (#fafffa).",
+      "elevation": "none"
+    },
+    {
+      "level": 3,
+      "name": "Bordered Card",
+      "value": "#fafffa",
+      "purpose": "When a card needs visible separation, add border: 1px solid border (#c8d2c8). Used for expect-grid cards, audience pills.",
+      "border": "1px solid #c8d2c8",
+      "elevation": "none"
+    }
+  ],
+
+  "layout": {
+    "pageMaxWidth": "1440px",
+    "contentMaxWidth": "880px for text pages, 1200px for grids",
+    "sectionGap": "80-120px — vertical rhythm between content blocks",
+    "cardPadding": "20-28px internal",
+    "grids": {
+      "desktop": { "columns": 12, "margin": "24px", "gutter": "24px" },
+      "tablet": { "columns": 6, "margin": "24px", "gutter": "24px" },
+      "mobile": { "columns": 2, "margin": "24px", "gutter": "24px" }
+    },
+    "postLayout": {
+      "container": "1080×1080px or 1080×1350px, flex column, overflow hidden",
+      "structure": "masthead → content (flex:1) → footer-bar",
+      "masthead": "flex row, space-between, padding 56px 72px 0",
+      "content": "flex column, padding 64-72px 72-76px 44px, flex:1",
+      "footerBar": "flex row, space-between, padding 24-28px 72-76px 40-48px, border-top 1px solid border, margin-top auto"
+    }
+  },
+
+  "components": {
+    "masthead": {
+      "name": "Masthead / Nav Header",
+      "description": "Top bar with split-color wordmark (left) + menu label and green mark icon (right).",
+      "css": ".masthead{display:flex;justify-content:space-between;align-items:center;padding:56px 72px 0}",
+      "wordmark": {
+        "css": ".wm{font-family:ui;font-size:19px;font-weight:600} .wm .first{color:ink} .wm .second{color:accent}",
+        "rule": "Split-color: first part in ink (#121613), second part in accent (#2bee4b). Example: 'New' in ink + 'Form' in accent. For Adisruptive: 'ADIS' in ink + 'ruptive' in accent. For Futuraria: 'Futur' in ink + 'aria' in accent."
+      },
+      "menu": {
+        "css": ".ml{font-family:ui;font-size:19px;font-weight:400;color:ink}",
+        "structure": "Menu label text + green mark icon"
+      },
+      "greenMark": {
+        "css": ".gm{display:inline-block;width:15px;height:15px;margin-left:9px;position:relative;vertical-align:middle} .gm::before,.gm::after{content:'';position:absolute;top:0;width:3px;height:15px;background:accent} .gm::before{left:3px} .gm::after{right:3px}",
+        "description": "Two vertical accent-color bars (3px wide each, 15px tall). The '||' mark. Only decorative element in the masthead."
+      }
+    },
+
+    "heroHeadline": {
+      "name": "Hero Display Headline",
+      "description": "Massive serif display headline that breaks across multiple lines. The core identity element.",
+      "css": "h1{font-family:display;font-weight:300-400;color:ink;line-height:0.9}",
+      "sizes": {
+        "xl": "font-size:132px;letter-spacing:-0.025em",
+        "lg": "font-size:96px;letter-spacing:-0.02em",
+        "md": "font-size:64px;letter-spacing:-0.015em"
+      },
+      "emphasisPatterns": [
+        "Italic for style contrast: 'Design<br>Engineers<span class='italic'>.</span>'",
+        "One accent-color word: '<span class='accent'>España</span>' — accent + italic, max ONE word per headline",
+        "Line breaks with &lt;br&gt; for multi-line rhythm"
+      ],
+      "constraints": "Line-height 0.90 is MANDATORY — lines must nearly touch. This is the signature. Never use 1.0+ line-height for display headlines."
+    },
+
+    "accentTick": {
+      "name": "Accent Tick Mark",
+      "description": "Short horizontal accent lines that function as visual rests between headline and body.",
+      "css": ".tick{width:56-72px;height:2-3px;background:accent;margin-bottom:28-32px}",
+      "variants": {
+        "centered": ".tick.center{margin-left:auto;margin-right:auto}",
+        "decorative": ".vt{position:absolute;width:40-54px;height:2-3px;background:accent;opacity:0.5-1.0}"
+      },
+      "positioning": "Between headline and body text, or at page corners for decoration. 40-72px wide × 2-3px tall. Opacity can vary from 0.5 (decorative) to 1.0 (functional divider).",
+      "constraints": "Short. Never wider than 72px. Accent color only."
+    },
+
+    "bodyText": {
+      "name": "Body Text",
+      "description": "Paragraphs and inline text in muted sage.",
+      "css": "p{font-family:ui;font-size:16-22px;font-weight:350;color:inkSecondary;line-height:1.4-1.5;max-width:520-560px} p strong{color:ink;font-weight:550} p.lg{font-size:23px;line-height:1.4}",
+      "constraints": "Body text max-width ~560px to maintain readable line length. Use &mdash; for em-dashes, not regular hyphens."
+    },
+
+    "ctaButton": {
+      "name": "Voltage CTA Button",
+      "description": "Primary action — the ONLY filled button. Green background with dual-layer green shadow.",
+      "css": ".cta{display:inline-flex;align-items:center;gap:8-10px;background:accent;color:inkPure;font-family:ui;font-size:14-19px;font-weight:550-600;text-transform:uppercase;letter-spacing:0.01em-0.02em;padding:14-20px 36-50px;border-radius:10-14px;box-shadow:rgba(16,94,29,0.45) 1px 8px 20px 0px, rgba(18,146,39,0.25) 1px 8px 20px 0px;text-decoration:none} .cta .arr{font-size:16-21px}",
+      "structure": "Label text (uppercase) + right arrow (→ or &rarr;)",
+      "examples": {
+        "small": "font-size:14px;padding:14px 36px;border-radius:10px",
+        "standard": "font-size:19px;padding:16px 40px;border-radius:14px"
+      },
+      "constraints": "ALWAYS includes right arrow. Shadow is green-tinted (tinted with accent color), never neutral gray. Only filled button on the page. Never use accent as button background for secondary actions."
+    },
+
+    "ghostLink": {
+      "name": "Ghost Link / Secondary Action",
+      "description": "Text-only links for navigation where a full CTA would be too loud.",
+      "css": "color:ink;font-size:14-19px;font-family:ui;font-weight:350-400;text-decoration:none. Underline appears on hover.",
+      "usage": "Menu label, footer links, read-more affordances."
+    },
+
+    "imageTile": {
+      "name": "Image Tile",
+      "description": "B&W editorial photography cropped into rounded rectangles.",
+      "css": "14px border-radius. No border. No shadow. Overflow hidden.",
+      "style": "Black-and-white or desaturated duotone. Tight editorial crops — architectural details, work environments, human subjects in context. NOT product shots.",
+      "placement": "Asymmetric — overlapping or sitting beside massive display headlines. NOT centered in cards. Some tall portrait crops, some wide landscape. Sizes vary, not uniform.",
+      "constraints": "NO color photography. ALL B&W or desaturated duotone. 14px radius mandatory."
+    },
+
+    "captionPair": {
+      "name": "Caption / Editorial Metadata",
+      "description": "Small italic caption for images or footer context.",
+      "css": ".cap{font-family:caption;font-size:16-22px;font-style:italic;color:inkSecondary}",
+      "usage": "Short observational fragments — not full sentences. Positioned bottom-left of image tiles or left side of footer bar.",
+      "constraints": "Caption family only (Times/Georgia). Never in UI or display fonts."
+    },
+
+    "sectionLabel": {
+      "name": "Section Label (h3)",
+      "description": "Small uppercase label above display headlines to give context.",
+      "css": "h3{font-family:ui;font-size:18px;font-weight:600;color:inkSecondary;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:16px}",
+      "usage": "Precedes the main display headline. Example: 'Evento' → then big 'Design Engineers.España'"
+    },
+
+    "calendarGrid": {
+      "name": "Calendar Grid",
+      "description": "7-column responsive grid for event date visualization.",
+      "css": ".cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-top:20px} .cal-header{font-family:ui;font-size:15px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:inkSecondary;text-align:center;padding:8px 0} .cal-day{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-family:ui;font-size:20px;font-weight:400;color:ink;border-radius:8px;position:relative}",
+      "states": {
+        "event": ".cal-day.event{background:accent;color:inkPure;font-weight:600} .cal-day.event::after{content:'';position:absolute;bottom:4px;width:6px;height:6px;border-radius:50%;background:inkPure}",
+        "today": ".cal-day.today{border:3px solid ink;font-weight:600}",
+        "dim": ".cal-day.dim{color:border}"
+      },
+      "dayHeaders": "L M X J V S D or M T W T F S S — always 1-2 letter abbreviations, uppercase, inkSecondary, centered."
+    },
+
+    "countdown": {
+      "name": "Countdown Timer",
+      "description": "Large numbers for event-urgency countdown display.",
+      "css": ".countdown{display:flex;gap:44px;margin-top:32px} .cd-item{text-align:center} .cd-num{font-family:display;font-size:120px;font-weight:400;color:ink;line-height:1} .cd-label{font-family:ui;font-size:18px;font-weight:500;color:inkSecondary;text-transform:uppercase;letter-spacing:0.1em;margin-top:6px}",
+      "structure": "Horizontal flex row of items: each has a giant number (120px display family) + uppercase label below."
+    },
+
+    "agendaList": {
+      "name": "Agenda / Schedule List",
+      "description": "Left-aligned time + title + description for event schedules.",
+      "css": ".agenda{display:flex;flex-direction:column;gap:28px;margin-top:28px} .agenda-item{display:flex;gap:28px;align-items:baseline} .agenda-time{font-family:ui;font-size:19px;font-weight:600;color:accent;min-width:88px} .agenda-text h4{font-family:display;font-size:33px;font-weight:400;color:ink;margin-bottom:6px} .agenda-text p{font-size:20px;color:inkSecondary}",
+      "structure": "Vertical stack of items. Each: accent-colored time label (fixed 88px width) → display family title → body description."
+    },
+
+    "timeline": {
+      "name": "Vertical Timeline",
+      "description": "Chronological timeline with accent dots on a vertical line.",
+      "css": ".timeline{display:flex;flex-direction:column;gap:0;margin-top:28px;position:relative;padding-left:44px} .timeline::before{content:'';position:absolute;left:12px;top:0;bottom:0;width:3px;background:border} .tl-item{position:relative;padding-bottom:36px} .tl-item::before{content:'';position:absolute;left:-38px;top:8px;width:18px;height:18px;border-radius:50%;background:accent} .tl-date{font-family:ui;font-size:16px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:accent;margin-bottom:6px} .tl-item h4{font-family:display;font-size:30px;font-weight:400;color:ink;margin-bottom:6px} .tl-item p{font-size:20px;color:inkSecondary}",
+      "structure": "Vertical line (border color, 3px) with 18px accent circles at each event. Each event: uppercase accent date label → display title → body description."
+    },
+
+    "speakerBio": {
+      "name": "Speaker / Person Bio",
+      "description": "Circular photo placeholder + name + role.",
+      "css": ".speaker{display:flex;gap:32px;align-items:center;margin-top:32px} .sp-photo{width:120px;height:120px;border-radius:50%;background:ink;display:flex;align-items:center;justify-content:center;color:canvas;font-family:display;font-size:42px} .sp-info h4{font-family:display;font-size:38px;font-weight:400;color:ink;margin-bottom:8px} .sp-info .role{font-family:ui;font-size:20px;color:inkSecondary}",
+      "photo": "120px circle, ink background, canvas-colored initials (42px display font) — a typographic placeholder when no photo exists."
+    },
+
+    "blockquote": {
+      "name": "Blockquote / Testimonial",
+      "description": "Large italic quote with left accent border.",
+      "css": ".blockquote{padding-left:44px;border-left:4px solid accent;margin-top:24px;max-width:800px} .blockquote .q{font-family:display;font-size:42px;font-style:italic;font-weight:400;color:ink;line-height:1.25;margin-bottom:16px} .blockquote .a{font-family:ui;font-size:20px;font-weight:500;color:inkSecondary}",
+      "structure": "4px accent left border → italic quote (display family, 42px) → attribution (ui family, inkSecondary)."
+    },
+
+    "audiencePills": {
+      "name": "Audience / Target Pills",
+      "description": "Checkmark-led pills showing target audience segments.",
+      "css": ".audience{display:flex;flex-wrap:wrap;gap:16px;margin-top:28px;max-width:800px} .aud-pill{background:canvas;border:1px solid border;border-radius:pills;padding:14px 24px;font-family:ui;font-size:20px;color:ink} .aud-pill::before{content:'\\2713  ';color:accent;font-weight:700}",
+      "structure": "Flex-wrap row of pills. Each pill: ✓ checkmark (accent, bold) + text (ink). Bordered canvas bg. Pill radius."
+    },
+
+    "expectGrid": {
+      "name": "Expectations / Features Grid",
+      "description": "2-column grid of feature cards with emoji or icon headers.",
+      "css": ".expect-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:28px;max-width:760px} .expect-card{background:canvas;border:1px solid border;border-radius:card-radius;padding:28px} .expect-card h4{font-family:display;font-size:27px;font-weight:400;color:ink;margin-bottom:8px} .expect-card p{font-size:18px;color:inkSecondary}",
+      "structure": "CSS Grid 2 columns. Each card: bordered canvas bg, 14px radius, 28px padding, display heading + body text."
+    },
+
+    "statGrid": {
+      "name": "Statistics / KPI Grid",
+      "description": "Big-number stats for impact metrics.",
+      "css": ".stat-grid{display:flex;gap:56px;margin-top:32px} .stat-item{text-align:center} .stat-big{font-family:display;font-size:96px;font-weight:400;color:ink;line-height:1} .stat-big.volt{color:accent} .stat-sub{font-family:ui;font-size:19px;color:inkSecondary;margin-top:8px}",
+      "structure": "Flex row of stat items. Each: giant display number (can be ink or accent) + subtitle label.",
+      "variants": [
+        "ink stat: .stat-big — 96px display family, ink color",
+        "accent stat: .stat-big.volt — same size but accent color for emphasis"
+      ]
+    },
+
+    "statCard": {
+      "name": "Stat Card (Carousel PPT style)",
+      "description": "Card with big number + label, tinted background.",
+      "css": ".stat-card{flex:1;padding:28px 32px;background:rgba(200,210,200,0.25);border-radius:card-radius;border:1px solid border} .stat-card .num{font-family:display;font-size:56px;font-weight:400;color:ink;line-height:1} .stat-card .lbl{font-family:ui;font-size:15px;color:inkSecondary;margin-top:8px;line-height:1.4}"
+    },
+
+    "formFields": {
+      "name": "Registration / Form Fields",
+      "description": "Form with uppercase labels and bordered inputs.",
+      "css": ".reg-fields{display:flex;flex-direction:column;gap:16px;margin-top:28px;max-width:560px} .reg-field{display:flex;flex-direction:column;gap:6px} .reg-field label{font-family:ui;font-size:16px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:inkSecondary} .input{background:canvas;border:1px solid border;border-radius:form-radius;padding:16px 20px;font-family:ui;font-size:20px;color:ink}",
+      "structure": "Vertical stack of field groups. Each: uppercase label → bordered input. Canvas bg, border color border. 9px radius."
+    },
+
+    "footerBar": {
+      "name": "Footer Bar",
+      "description": "Bottom bar with italic caption (left) + CTA button (right), separated by hairline top border.",
+      "css": ".footer-bar{display:flex;justify-content:space-between;align-items:center;padding:24-28px 56-76px 40-48px;border-top:1px solid border;margin-top:auto}",
+      "structure": "Flex row. Left: italic caption (caption family, inkSecondary). Right: CTA button. Hairline border-top separates from content above."
+    },
+
+    "detailRow": {
+      "name": "Detail / Metadata Row",
+      "description": "Horizontal row of label+value pairs for event metadata.",
+      "css": ".detail-row{display:flex;gap:40-56px;margin-top:auto} .detail-item{display:flex;flex-direction:column;gap:2-4px} .detail-label{font-family:ui;font-size:11-15px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:inkSecondary;margin-bottom:4px} .detail-value{font-family:ui;font-size:14-20px;font-weight:400;color:ink}",
+      "structure": "Flex row of stacked label+value pairs. Labels small, uppercase, muted. Values larger, ink colored."
+    },
+
+    "chartBar": {
+      "name": "Horizontal Bar Chart",
+      "description": "Comparison bar chart with accent-colored fills.",
+      "css": ".bars-wrap{display:flex;flex-direction:column;gap:24px;width:440px} .bar-row{display:flex;align-items:center;gap:20px} .bar-label{font-family:ui;font-size:26px;font-weight:600;color:ink;width:36px} .bar-track{flex:1;height:26px;background:#e8ede8;border-radius:6px;overflow:hidden} .bar-fill{height:100%;border-radius:6px} .bar-pct{font-family:ui;font-size:20px;font-weight:500;color:ink;width:46px;text-align:right}",
+      "colorVariants": {
+        "red": "background:linear-gradient(90deg,#d9473a,#e5735e)",
+        "blue": "background:linear-gradient(90deg,#3a7bd9,#5b9ae8)"
+      },
+      "structure": "Vertical stack of bar rows. Each: left label → track with gradient fill → right percentage."
+    },
+
+    "chartRadar": {
+      "name": "Radar Chart",
+      "description": "SVG-based radar/spider chart for multi-dimensional comparison.",
+      "css": ".radar-wrap{position:relative;width:360px;height:360px} .radar-svg{width:100%;height:100%} .radar-legend{display:flex;gap:28px;justify-content:center;margin-top:16px;font-size:15px;color:inkSecondary} .radar-legend span{display:inline-flex;align-items:center;gap:8px} .radar-legend .dot{width:10px;height:10px;border-radius:50%}",
+      "colorVariants": {
+        "red": ".radar-legend .dot.red{background:#d9473a}",
+        "blue": ".radar-legend .dot.blue{background:#3a7bd9}"
+      }
+    },
+
+    "chartLine": {
+      "name": "Line Chart",
+      "description": "SVG-based line chart for trend visualization.",
+      "css": ".line-wrap{width:100%;max-width:680px} .line-svg{width:100%;height:250px} .line-legend{display:flex;gap:28px;justify-content:center;margin-top:14px;font-size:15px;color:inkSecondary}",
+      "colorVariants": {
+        "solid": ".lred{display:inline-block;width:20px;height:2px;background:#d9473a}",
+        "dashed": ".lblue{display:inline-block;width:20px;height:0;border-top:2px dashed #3a7bd9}"
+      }
+    },
+
+    "personalityGrid": {
+      "name": "Personality / Quadrant Grid",
+      "description": "2×2 grid of personality/quadrant cells with icons.",
+      "css": ".pgrid{display:grid;grid-template-columns:1fr 1fr;gap:2px;width:540px} .pcell{padding:28px 24px;text-align:center} .pcell .picon{font-size:26px;margin-bottom:8px} .pcell .pname{font-family:ui;font-size:17px;font-weight:600;color:ink;margin-bottom:4px} .pcell .pscore{font-family:ui;font-size:13px;color:inkSecondary}",
+      "colorVariants": {
+        "red": ".pcell.red{background:rgba(217,71,58,0.06)}",
+        "purple": ".pcell.purple{background:rgba(142,68,173,0.06)}",
+        "gray": ".pcell.gray{background:rgba(127,140,141,0.06)}",
+        "blue": ".pcell.blue{background:rgba(58,123,217,0.06)}"
+      }
+    },
+
+    "tagRow": {
+      "name": "Tag / Chip Row",
+      "description": "Color-coded rounded tags for categorization.",
+      "css": ".tag-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px} .tag{padding:9px 20px;border-radius:24px;font-family:ui;font-size:14px;font-weight:500}",
+      "variants": {
+        "red": "background:rgba(217,71,58,0.1);color:#c0392b",
+        "purple": "background:rgba(142,68,173,0.1);color:#8e44ad",
+        "gray": "background:rgba(127,140,141,0.1);color:#7f8c8d",
+        "blue": "background:rgba(58,123,217,0.1);color:#2980b9",
+        "gold": "background:rgba(201,168,0,0.1);color:#b7950b"
+      }
+    },
+
+    "formulaBox": {
+      "name": "Formula / Code Box",
+      "description": "Left-bordered box for formulas, equations, or key metrics.",
+      "css": ".fbox{background:rgba(200,210,200,0.2);border-left:3px solid accent;padding:18px 24px;margin:12px 0;border-radius:0 8px 8px 0} .fbox .eq{font-family:ui,monospace;font-size:16px;font-weight:500;color:ink} .fbox .note{font-size:13px;color:inkSecondary;margin-top:4px}",
+      "structure": "Tinted bg, 3px accent left border, right-side radius only. Monospace or ui font for formula, smaller note below."
+    },
+
+    "divider": {
+      "name": "Divider / Separator",
+      "description": "Hairline horizontal rule between sections or content blocks.",
+      "css": ".divider{width:100%;height:1.5px;background:border;margin:32px 0}",
+      "defaultStrategy": "Sections are separated by generous whitespace (80-120px), NOT visible dividers. The absence of a divider IS the divider. Use visible dividers only inside components (footer-bar top border, between card rows, between stat groups)."
+    },
+
+    "slide": {
+      "name": "Slide Container (Carousel/PPT)",
+      "description": "Container for 1080×1350 carousel slides — the PPT/deck format.",
+      "css": ".slide{width:1080px;height:1350px;background:canvas;position:relative;overflow:hidden;display:flex;flex-direction:column;font-family:ui;page-break-after:always}",
+      "difference": "Same design system as 1080×1080 posts but 270px taller. More vertical space for content-heavy slides (charts, data, detailed agendas). Masthead, content, and footer-bar proportions stay the same."
+    }
+  },
+
+  "decoration": {
+    "accentTicks": {
+      "description": "Short accent horizontal lines (40-72px × 2-3px) placed at page corners or between sections.",
+      "usage": "Visual rests — small accent beats against the monochrome field. Can be full opacity (between headline and body) or 0.5 opacity (decorative corners).",
+      "css": ".vt{position:absolute;width:40-54px;height:2-3px;background:accent}",
+      "positions": [
+        "top-right: 90-124px from top, 52-76px from right",
+        "bottom-right: 100-172px from bottom, 52-56px from right",
+        "bottom-left: 120px from bottom, 52px from left"
+      ]
+    },
+    "ornaments": {
+      "description": "Large faint circles in pure black at very low opacity for atmospheric depth.",
+      "css": ".orn{position:absolute;width:120px;height:120px;border-radius:50%;background:inkPure;opacity:0.05-0.06}",
+      "placement": "Bottom-right corner area: bottom ~100px, right ~56px. Never center. Never competing with content."
+    },
+    "greenMark": {
+      "description": "The '||' icon mark in accent color — 2 vertical bars used in masthead.",
+      "css": ".gm{display:inline-block;width:12-15px;height:12-15px;margin-left:8-9px;position:relative;vertical-align:middle} .gm::before,.gm::after{content:'';position:absolute;top:0;width:2-3px;height:12-15px;background:accent} .gm::before{left:2-3px} .gm::after{right:2-3px}",
+      "usage": "Only in masthead, to the right of the menu label. Not used elsewhere."
+    },
+    "strategyText": {
+      "description": "Special paragraph style for strategic/analytical content in carousel slides.",
+      "css": "p.strat{font-size:17px;color:inkSecondary;line-height:1.5;margin-top:6px} p.strat strong{color:ink}"
+    },
+    "incubatorTag": {
+      "description": "Special tag for incubation/incubator status with gold dot.",
+      "css": ".incub-tag{display:inline-flex;align-items:center;gap:8px;font-size:15px;color:inkSecondary;justify-content:center;margin-top:14px} .incub-tag .dot{width:8px;height:8px;border-radius:50%;background:#c9a800}"
+    }
+  },
+
+  "imagery": {
+    "style": "Black-and-white editorial photography throughout. Tightly cropped architectural details, financial infrastructure (ticker boards, server racks, vault interiors), and human subjects in work environments.",
+    "treatment": "Monochrome or desaturated duotone. NO color photography appears anywhere.",
+    "frames": "14px border radius. No border. No shadow. Overflow hidden.",
+    "placement": "Asymmetric — overlapping or sitting beside massive display headlines. NOT centered in cards. Editorial crops, not uniform sizes. Some tall portrait, some wide landscape.",
+    "constraints": [
+      "NO color photography — all B&W or desaturated duotone",
+      "14px radius mandatory on all image tiles",
+      "No borders, no shadows on images",
+      "Images overlap or sit beside type, never centered in cards",
+      "Tight editorial crops, not safe product-shot framing",
+      "Visual register is broadsheet financial press, not product marketing"
+    ]
+  },
+
+  "rules": {
+    "do": [
+      "Use accent (#2bee4b) ONLY for filled CTAs, the green mark, tick marks, and focused conversion moments — never for body text, headings, or backgrounds",
+      "Set display headlines at line-height 0.90 with tracking between -0.04em and -0.01em — this tight leading IS the signature",
+      "Pair display faces rather than using one for every display moment — Editorial New for literary, PP Mondwest for architectural",
+      "Keep image tiles at 14px radius and let them overlap or sit adjacent to display type — they are editorial crops, not product thumbnails",
+      "Use 20px gaps for inline element rhythm and reserve 80-120px for section breaks",
+      "Split the wordmark with first part in ink (#121613) and second part in accent (#2bee4b) — this split IS the logo",
+      "Let the canvas (#fafffa) carry the page; avoid placing any large surface in pure #ffffff",
+      "Use the UI font weight 350 for body — this is the brand's signature body voice: present but never loud",
+      "Include a right arrow (→) in every CTA button",
+      "Use &mdash; for em-dashes in body text",
+      "Keep body text max-width to ~560px for readable line length"
+    ],
+    "dont": [
+      "Do NOT add a second saturated color — the entire chromatic system is ONE accent color",
+      "Do NOT use box-shadows outside the CTA button, and never use a neutral-gray shadow on the button — shadows must be green-tinted",
+      "Do NOT set display headlines at 1.0+ line-height — 0.90 is mandatory",
+      "Do NOT use bordered cards, filled panels, or elevated surfaces — type scale alone defines hierarchy",
+      "Do NOT place colored photographs — all imagery is B&W or desaturated duotone",
+      "Do NOT use UI font weights heavier than 550 — the brand voice lives in the 200-400 range",
+      "Do NOT break the canvas with a dark hero section — the page stays canvas (#fafffa) top to bottom",
+      "Do NOT mix both display faces (Editorial New + PP Mondwest) in the same headline",
+      "Do NOT use accent color as background for any section or card",
+      "Do NOT center images in cards — images overlap or sit beside type asymmetrically",
+      "Do NOT use accent tick marks wider than 72px",
+      "Do NOT add borders to image tiles"
+    ]
+  },
+
+  "cssCustomProperties": {
+    "description": "Complete :root block ready to copy into any CSS file. Uses available fallback fonts.",
+    ":root": {
+      "--color-canvas": "#fafffa",
+      "--color-ink": "#121613",
+      "--color-ink-pure": "#000000",
+      "--color-bark": "#232924",
+      "--color-ink-secondary": "#516254",
+      "--color-border": "#c8d2c8",
+      "--color-accent": "#2bee4b",
+      "--color-accent-support": "#93b799",
+      "--color-pollen": "#c4e4c9",
+      "--color-success": "#2bee4b",
+      "--color-warning": "#c9a800",
+      "--color-error": "#d9473a",
+      "--font-display": "'Playfair Display', Georgia, 'Times New Roman', serif",
+      "--font-ui": "'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+      "--font-caption": "Georgia, 'Times New Roman', serif",
+      "--text-caption": "11px/1.4 var(--font-ui)",
+      "--text-body-sm": "14px/1.4 var(--font-ui)",
+      "--text-body": "16px/1.4 var(--font-ui)",
+      "--text-body-lg": "20px/1.45 var(--font-ui)",
+      "--text-body-xl": "22px/1.4 var(--font-ui)",
+      "--text-subheading": "18px/1.4 var(--font-ui)",
+      "--text-heading-sm": "60px/0.9 var(--font-display)",
+      "--text-heading": "72px/1.1 var(--font-display)",
+      "--text-heading-lg": "96px/1.1 var(--font-display)",
+      "--text-heading-xl": "132px/0.9 var(--font-display)",
+      "--text-display": "140px/0.9 var(--font-display)",
+      "--text-display-lg": "240px/0.9 var(--font-display)",
+      "--radius-card": "14px",
+      "--radius-button": "10px",
+      "--radius-pill": "9999px",
+      "--radius-form": "9px",
+      "--radius-calendar": "8px",
+      "--radius-tag": "24px",
+      "--radius-chart": "6px",
+      "--shadow-cta": "rgba(16,94,29,0.45) 1px 8px 20px 0px, rgba(18,146,39,0.25) 1px 8px 20px 0px",
+      "--section-gap": "80px",
+      "--card-padding": "20px",
+      "--element-gap": "20px",
+      "--page-max-width": "1440px",
+      "--content-max-width": "880px"
+    }
+  },
+
+  "promptExamples": [
+    {
+      "scenario": "Instagram Post — Event Announcement",
+      "prompt": "Create a 1080×1080px Instagram post for a conference announcement. Use the NewForm style: masthead with 'ADISruptive' split-color wordmark, hero headline in 96px Playfair Display with one accent-color word in italic, voltage tick below headline, body text in sage at 22px with bold key phrases, detail row with date/location/speaker metadata, footer bar with italic caption and green CTA button with arrow."
+    },
+    {
+      "scenario": "Carousel Slide Deck (7 slides, 1080×1350)",
+      "prompt": "Build a 7-slide carousel at 1080×1350px for a conference announcement. Slide 1: title + date + speaker. Slide 2: calendar grid highlighting July 7-11 with accent-colored event days. Slide 3: agenda list with accent time labels + display titles. Slide 4: audience pills with checkmark. Slide 5: countdown timer with 120px display numbers. Slide 6: speaker bio with circular photo placeholder. Slide 7: registration form with uppercase labels + bordered inputs. All slides share masthead + footer bar."
+    },
+    {
+      "scenario": "Data / Chart Slide",
+      "prompt": "Create a 1080×1350px data slide with a horizontal bar chart comparing two metrics. Use accent-color bar fills on light gray tracks. Include percentage labels right-aligned. Add a stat grid above with 2 big numbers. Masthead + footer bar as standard."
+    },
+    {
+      "scenario": "Timeline / Process Slide",
+      "prompt": "Create a 1080×1080px timeline slide showing a 5-step process. Use the vertical timeline component: 3px border-color line with 18px accent dots. Each step: uppercase accent date label → display title → short body description. Masthead + section label ('Cómo Será') + footer bar with CTA."
+    },
+    {
+      "scenario": "Quote / Testimonial Post",
+      "prompt": "Create a 1080×1080px testimonial post. Hero area: 4px accent left border → 42px italic display quote → attribution line in ui font. Keep it sparse — no other content beyond masthead + footer bar. The quote IS the content."
+    }
+  ],
+
+  "adaptationGuide": {
+    "description": "How to adapt this template for a different brand while keeping the same structure.",
+    "steps": [
+      "1. Change meta.name and meta.description to your brand.",
+      "2. Replace all color hex values. Keep the same number of tokens and the same semantic roles (canvas, ink, accent, etc).",
+      "3. Replace font families. Keep the 4-tier structure: display-primary, display-secondary, ui, caption.",
+      "4. Adjust the type scale sizes to match your brand's proportions. Keep the line-height + letter-spacing per size.",
+      "5. Adjust spacing scale if your brand is more compact or more airy.",
+      "6. Adjust radius values per element type.",
+      "7. Rewrite shadows to use your brand's accent colors tinted.",
+      "8. Keep ALL component CSS structures — just change colors and fonts to your tokens.",
+      "9. Rewrite do/don't rules for your brand's constraints.",
+      "10. Rewrite prompt examples with your brand's name and scenarios.",
+      "11. Update CSS custom properties block.",
+      "12. Change imagery rules to match your photography style."
+    ],
+    "nonNegotiableStructure": [
+      "The JSON structure (meta → color → typography → spacing → radius → shadows → surfaces → layout → components → decoration → imagery → rules → cssCustomProperties → promptExamples) MUST be preserved.",
+      "Every component must include its CSS definition.",
+      "Every color must include role, description, and constraints.",
+      "Type scale must include line-height and letter-spacing per size.",
+      "Do/don't rules must be explicit and enforceable."
+    ]
+  }
+}

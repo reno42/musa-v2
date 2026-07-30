@@ -9,3 +9,9 @@ dist
 # Local Netlify folder
 .netlify
 public/SKILL.md
+
+# Reference repos (not part of codebase)
+ejemplo-harness-subagentes-main/
+
+# QA screenshots
+tsc-output.txt

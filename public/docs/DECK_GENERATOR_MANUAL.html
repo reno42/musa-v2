@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck Generator — Manual de Diseño</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300..800;1,300..800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --brand: #0A4B3E;
+    --bg: #F5F1E8;
+    --ink: #141414;
+    --muted: rgba(20,20,20,0.55);
+    --surface: #FFFFFF;
+    --border: #E8E3DA;
+    --accent: #D4A853;
+    --green-neon: #2BEE4B;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Cover ── */
+  .cover {
+    background: var(--brand);
+    color: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 96px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -40%; right: -20%;
+    width: 800px; height: 800px;
+    border: 1px solid rgba(245,241,232,0.08);
+    border-radius: 50%;
+  }
+  .cover::after {
+    content: '';
+    position: absolute;
+    bottom: -30%; left: -10%;
+    width: 600px; height: 600px;
+    border: 1px solid rgba(245,241,232,0.05);
+    border-radius: 50%;
+  }
+  .cover-brand {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-rule {
+    width: 120px; height: 5px;
+    background: var(--bg);
+    opacity: 0.85;
+    border-radius: 3px;
+    margin: 48px 0 32px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 450;
+    font-size: clamp(64px, 8vw, 128px);
+    line-height: 1.08;
+    max-width: 1200px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-sub {
+    font-size: 18px;
+    opacity: 0.6;
+    margin-top: 40px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-meta {
+    position: absolute;
+    bottom: 72px;
+    left: 96px;
+    right: 96px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    opacity: 0.5;
+    letter-spacing: 0.12em;
+    z-index: 1;
+  }
+
+  /* ── Sections ── */
+  .section {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 120px 48px 80px;
+  }
+  .section:first-of-type { padding-top: 160px; }
+
+  .section-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--brand);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    font-weight: 500;
+  }
+  .section h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 450;
+    font-size: clamp(36px, 5vw, 56px);
+    line-height: 1.15;
+    margin-bottom: 8px;
+  }
+  .section .accent-rule {
+    width: 72px; height: 4px;
+    background: var(--brand);
+    border-radius: 2px;
+    margin-bottom: 40px;
+  }
+  .section h3 {
+    font-family: 'Fraunces', serif;
+    font-weight: 450;
+    font-size: 28px;
+    margin: 48px 0 16px;
+    color: var(--brand);
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+    margin: 24px 0;
+  }
+  .card-header {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 450;
+    margin-bottom: 12px;
+  }
+
+  /* ── Architecture Diagram ── */
+  .arch-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 48px;
+    margin: 32px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    line-height: 1.8;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--muted);
+  }
+  .arch-diagram .dim { color: rgba(20,20,20,0.3); }
+  .arch-diagram .key { color: var(--brand); font-weight: 500; }
+  .arch-diagram .val { color: var(--ink); }
+
+  /* ── Code Blocks ── */
+  pre.code {
+    background: #1a1a1a;
+    color: #e0e0e0;
+    padding: 32px;
+    border-radius: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 24px 0;
+  }
+  pre.code .comment { color: #6a9955; }
+  pre.code .keyword { color: #569cd6; }
+  pre.code .string { color: #ce9178; }
+  pre.code .function { color: #dcdcaa; }
+  pre.code .number { color: #b5cea8; }
+  pre.code .property { color: #9cdcfe; }
+
+  /* ── Rules Grid ── */
+  .rules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 32px 0;
+  }
+  .rule-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+  }
+  .rule-num {
+    font-family: 'Fraunces', serif;
+    font-size: 48px;
+    font-weight: 300;
+    color: var(--brand);
+    opacity: 0.3;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .rule-card h4 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .rule-card code {
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--brand);
+  }
+  .rule-card p {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* ── API Table ── */
+  .api-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+    font-size: 14px;
+  }
+  .api-table th {
+    text-align: left;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .api-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .api-table td:first-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--brand);
+    font-weight: 500;
+  }
+  .api-table td:last-child {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ── Test Results ── */
+  .test-pass {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .test-pass:last-child { border-bottom: none; }
+  .test-check {
+    width: 24px; height: 24px;
+    background: var(--brand);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .test-pass .test-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  /* ── Stats Banner ── */
+  .stats-banner {
+    display: flex;
+    gap: 24px;
+    margin: 40px 0;
+  }
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px;
+    text-align: center;
+  }
+  .stat-value {
+    font-family: 'Fraunces', serif;
+    font-size: 48px;
+    font-weight: 300;
+    color: var(--brand);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 8px;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Flow Steps ── */
+  .flow-steps {
+    display: flex;
+    gap: 0;
+    margin: 32px 0;
+    counter-reset: step;
+  }
+  .flow-step {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 24px;
+    position: relative;
+    counter-increment: step;
+  }
+  .flow-step:first-child { border-radius: 10px 0 0 10px; }
+  .flow-step:last-child { border-radius: 0 10px 10px 0; }
+  .flow-step::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: 'Fraunces', serif;
+    font-size: 36px;
+    color: var(--brand);
+    opacity: 0.25;
+    display: block;
+    margin-bottom: 8px;
+  }
+  .flow-step h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .flow-step p {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .flow-step code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  /* ── Deterministic Table ── */
+  .split-table {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 32px 0;
+  }
+  .split-table .col-header {
+    background: var(--brand);
+    color: var(--bg);
+    padding: 16px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .split-table .row {
+    background: var(--surface);
+    padding: 14px 24px;
+    font-size: 14px;
+  }
+  .split-table .row:nth-child(4n), .split-table .row:nth-child(4n-1) {
+    background: #FAFAF8;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 80px 48px 120px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Table of Contents ── */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px;
+    margin: 48px 0;
+  }
+  .toc h3 {
+    margin-top: 0;
+  }
+  .toc-item {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+  }
+  .toc-item:last-child { border-bottom: none; }
+  .toc-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--brand);
+    min-width: 40px;
+  }
+  .toc-title {
+    flex: 1;
+  }
+  .toc-page {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ── Callout ── */
+  .callout {
+    background: #F0F7F5;
+    border-left: 4px solid var(--brand);
+    padding: 24px 32px;
+    border-radius: 0 8px 8px 0;
+    margin: 32px 0;
+  }
+  .callout-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: var(--brand);
+  }
+  .callout p {
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* ── Spec schema ── */
+  .schema-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px;
+    margin: 24px 0;
+  }
+  .schema-block dt {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 16px;
+    color: var(--brand);
+  }
+  .schema-block dt:first-child { margin-top: 0; }
+  .schema-block dd {
+    margin-left: 0;
+    font-size: 13px;
+    color: var(--muted);
+    padding: 4px 0 0;
+  }
+  .schema-block .optional {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    margin-left: 8px;
+    font-weight: 400;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .cover { padding: 48px 32px; }
+    .section { padding: 80px 24px 60px; }
+    .stats-banner, .flow-steps, .split-table { display: block; }
+    .flow-step { border-radius: 0 !important; border-top: none; }
+    .flow-step:first-child { border-top: 1px solid var(--border); border-radius: 10px 10px 0 0 !important; }
+    .flow-step:last-child { border-radius: 0 0 10px 10px !important; }
+    .arch-diagram { padding: 24px; font-size: 11px; }
+  }
+
+  @media print {
+    .cover { min-height: 100vh; page-break-after: always; }
+    .section { page-break-before: always; padding: 60px 48px 40px; max-width: 100%; }
+    body { background: white; }
+    .card, .rule-card, .stat, .flow-step, .arch-diagram, .toc, .schema-block, .callout {
+      break-inside: avoid;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- COVER                                                         -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<header class="cover">
+  <div class="cover-brand">Futuraria</div>
+  <div class="cover-rule"></div>
+  <h1>Deck<br>Generator</h1>
+  <div class="cover-sub">Sistema Determinista de Generación de Decks</div>
+  <div class="cover-meta">
+    <span>v1.0 — Julio 2026</span>
+    <span>Refinado por Fable</span>
+    <span>01 / 09</span>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- TABLE OF CONTENTS                                             -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="toc">
+  <div class="section-number">Índice</div>
+  <h2>Contenido</h2>
+  <div class="accent-rule"></div>
+
+  <div class="toc">
+    <div class="toc-item"><span class="toc-num">01</span><span class="toc-title">Visión General</span><span class="toc-page">02</span></div>
+    <div class="toc-item"><span class="toc-num">02</span><span class="toc-title">Filosofía: Determinista vs Libre</span><span class="toc-page">03</span></div>
+    <div class="toc-item"><span class="toc-num">03</span><span class="toc-title">Especificación (Spec)</span><span class="toc-page">04</span></div>
+    <div class="toc-item"><span class="toc-num">04</span><span class="toc-title">Reglas del Harness de Diseño</span><span class="toc-page">05</span></div>
+    <div class="toc-item"><span class="toc-num">05</span><span class="toc-title">API del Agent Bridge</span><span class="toc-page">06</span></div>
+    <div class="toc-item"><span class="toc-num">06</span><span class="toc-title">Flujo de Trabajo</span><span class="toc-page">07</span></div>
+    <div class="toc-item"><span class="toc-num">07</span><span class="toc-title">Resultados de Tests</span><span class="toc-page">08</span></div>
+    <div class="toc-item"><span class="toc-num">08</span><span class="toc-title">Arquitectura de Archivos</span><span class="toc-page">09</span></div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 01 — VISIÓN GENERAL                                          -->
+<!-- ══════════════════════════════════════════════════════════��═ -->
+<section class="section" id="overview">
+  <div class="section-number">01</div>
+  <h2>Visión General</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:18px; line-height:1.7; margin-bottom:24px;">
+    El <strong>Deck Generator</strong> es un motor determinista de scaffolding para decks compuestos por inteligencia artificial. Su propósito es eliminar la fricción mecánica del diseño de presentaciones, permitiendo que los agentes de IA se concentren exclusivamente en decisiones creativas.
+  </p>
+
+  <div class="stats-banner">
+    <div class="stat">
+      <div class="stat-value">1920×1080</div>
+      <div class="stat-label">Frame Size (Full HD)</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">160px</div>
+      <div class="stat-label">Gap entre Frames</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">40</div>
+      <div class="stat-label">Máx Slides por Deck</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">✨ Refinamiento Fable — Julio 2026</div>
+    <p>Fable refinó el sistema para generar frames directamente en un archivo estructurado. Cada deck ahora produce un array determinista de frames con posiciones side-by-side, numeración automática, chrome tipográfico y zonas de contenido libre. El sistema pasó de generar HTML suelto a producir un archivo de frames completo listo para inyectar en el editor vía MCP.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 02 — FILOSOFÍA                                                -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="philosophy">
+  <div class="section-number">02</div>
+  <h2>Filosofía del Sistema</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:18px; line-height:1.7; margin-bottom:32px;">
+    El principio rector: <strong>todo lo que NO es una decisión creativa es decidido por el sistema.</strong> El agente de IA nunca gasta tokens en cálculos mecánicos.
+  </p>
+
+  <div class="split-table">
+    <div class="col-header">🧩 DETERMINISTA (Sistema)</div>
+    <div class="col-header">🎨 LIBRE (Agente IA)</div>
+    <div class="row">Tamaño de frame (1920×1080)</div>
+    <div class="row">Composición visual de cada slide</div>
+    <div class="row">Posicionamiento side-by-side, sin overlap</div>
+    <div class="row">Composición de la portada (opcional)</div>
+    <div class="row">Slide count = spec.slides.length</div>
+    <div class="row">HTML y CSS del contenido de cada slide</div>
+    <div class="row">Numeración automática (NN / TT)</div>
+    <div class="row">Jerarquía y espaciado del contenido libre</div>
+    <div class="row">Font imports + CSS variables</div>
+    <div class="row">Selección de paleta y acentos</div>
+    <div class="row">Cover sobre color corporativo</div>
+    <div class="row">Densidad de información por slide</div>
+    <div class="row">Chrome: título, acento, footer, página</div>
+    <div class="row">Estilo personal y voz de marca</div>
+  </div>
+
+  <h3>Zonas del Frame</h3>
+  <div class="arch-diagram">
+┌─────────────────────────────────────────────────────────┐
+│  <span class="dim">1920 × 1080 px</span>                                        │
+│                                                         │
+│  ┌─ <span class="key">TITLE ZONE</span> ───────────────────────────────────┐  │
+│  │  top: 72px · left: 96px · size: 56px             │  │
+│  │  font: var(--deck-title-font)                     │  │
+│  └──────────────────────────────────────────────────┘  │
+│                                                         │
+│  ── <span class="key">ACCENT</span> top: 156px · width: 72px · height: 4px      │
+│                                                         │
+│  ┌─ <span class="key">CONTENT ZONE</span> ─────────────────────────────────┐  │
+│  │  top: 200px · height: 760px                      │  │
+│  │  width: 1728px (96px padding each side)           │  │
+│  │  ⇠ FREE COMPOSITION BY AI ⇢                      │  │
+│  └──────────────────────────────────────────────────┘  │
+│                                                         │
+│  <span class="dim">BRAND NAME</span> (left: 96px)    <span class="dim">PAGE NN/TT</span> (right: 96px)   │
+│  <span class="dim">bottom: 72px from top</span>                                │
+└─────────────────────────────────────────────────────────┘</div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 03 — SPEC                                                     -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="spec">
+  <div class="section-number">03</div>
+  <h2>Especificación de Deck</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:16px; margin-bottom:24px;">
+    El agente de IA (o un script) provee un objeto <code>spec</code>. El sistema garantiza que el output sea determinista: misma spec → mismos frames.
+  </p>
+
+  <div class="schema-block">
+    <dl>
+      <dt>name <span class="optional">string required</span></dt>
+      <dd>Nombre del deck. Aparece en la portada como título principal.</dd>
+
+      <dt>brand <span class="optional">object required</span></dt>
+      <dd>
+        <dl>
+          <dt>brand.name <span class="optional">string</span></dt>
+          <dd>Nombre de la marca. Default: spec.name.</dd>
+          <dt>brand.color <span class="optional">string required</span></dt>
+          <dd>Color corporativo en hex (#RRGGBB). Define el fondo de la portada y CSS variables.</dd>
+          <dt>brand.titleFont <span class="optional">string</span></dt>
+          <dd>Google Font para títulos. Default: "Fraunces".</dd>
+          <dt>brand.bodyFont <span class="optional">string</span></dt>
+          <dd>Google Font para cuerpo. Default: "Inter".</dd>
+          <dt>brand.background <span class="optional">string</span></dt>
+          <dd>Color de fondo de slides. Default: "#FFFFFF".</dd>
+        </dl>
+      </dd>
+
+      <dt>cover <span class="optional">object optional</span></dt>
+      <dd>
+        <dl>
+          <dt>cover.html</dt>
+          <dd>HTML libre para la portada. Si no se provee, se usa la portada default.</dd>
+          <dt>cover.css</dt>
+          <dd>CSS libre para la portada. Se combina con el CSS de chrome determinista.</dd>
+        </dl>
+      </dd>
+
+      <dt>slides <span class="optional">array required, 1-40 items</span></dt>
+      <dd>
+        <dl>
+          <dt>slides[].title <span class="optional">string</span></dt>
+          <dd>Título del slide. Default: "Sección NN".</dd>
+          <dt>slides[].html <span class="optional">string</span></dt>
+          <dd>HTML libre dentro de la content zone.</dd>
+          <dt>slides[].css <span class="optional">string</span></dt>
+          <dd>CSS libre para el slide. Se combina con el CSS de chrome.</dd>
+        </dl>
+      </dd>
+    </dl>
+  </div>
+
+  <pre class="code"><span class="comment">// Ejemplo mínimo</span>
+<span class="keyword">const</span> spec = {
+  <span class="property">name</span>: <span class="string">"Design System — Acme"</span>,
+  <span class="property">brand</span>: { <span class="property">name</span>: <span class="string">"Acme"</span>, <span class="property">color</span>: <span class="string">"#0A4B3E"</span> },
+  <span class="property">slides</span>: [
+    { <span class="property">title</span>: <span class="string">"Colores"</span>, <span class="property">html</span>: <span class="string">"&lt;div&gt;paleta&lt;/div&gt;"</span> },
+    { <span class="property">title</span>: <span class="string">"Tipografía"</span> },
+    { <span class="property">html</span>: <span class="string">"&lt;p&gt;sin título&lt;/p&gt;"</span> }
+  ]
+};
+
+<span class="keyword">const</span> { frames, brand, total } = <span class="function">buildDeckFrames</span>(spec);
+<span class="comment">// → 4 frames: 1 cover + 3 slides, side-by-side, 1920×1080</span></pre>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 04 — REGLAS DEL HARNESS                                      -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="harness-rules">
+  <div class="section-number">04</div>
+  <h2>Reglas del Harness de Diseño</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:16px; margin-bottom:8px;">
+    Prevención de sangrado visual entre frames. Estas reglas se aplican en el CSS inyectado por el generador <strong>y</strong> deben ser respetadas por el contenido libre que genere el agente.
+  </p>
+
+  <div class="rules-grid">
+    <div class="rule-card">
+      <div class="rule-num">01</div>
+      <h4>overflow: hidden</h4>
+      <code>body { overflow: hidden }</code>
+      <p>Explícito en el root de cada frame. Contiene cualquier desbordamiento de elementos hijos.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">02</div>
+      <h4>box-sizing: border-box</h4>
+      <code>* { box-sizing: border-box }</code>
+      <p>Redundante en todo el documento para garantizar que padding no empuje elementos fuera del frame.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">03</div>
+      <h4>max-width: 100%</h4>
+      <code>img, svg { max-width: 100% }</code>
+      <p>Previene que assets empujen el contenedor más allá de los límites del frame.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">04</div>
+      <h4>Padding ≤ Frame</h4>
+      <code>padX: 96px</code>
+      <p>El contenido siempre cabe dentro: 1920 − 96×2 = 1728px de ancho usable para la content zone.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">05</div>
+      <h4>clip-path: inset(0)</h4>
+      <code>clip-path: inset(0)</code>
+      <p>Contiene box-shadows con blur grande que podrían sangrar al frame adyacente.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">06</div>
+      <h4>Background en frame</h4>
+      <code>body { background: ... }</code>
+      <p>El background se aplica al frame root, no solo a un div interno. Garantiza que no haya zonas transparentes.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num">07</div>
+      <h4>Debug colors</h4>
+      <code>Magenta / Cyan</code>
+      <p>Colores contrastantes en frames adyacentes durante desarrollo para detectar solapamientos visuales.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">⚠️ Origen del Diagnóstico</div>
+    <p>Estas reglas surgieron de un bug visual real: frames con box-shadow, SVGs posicionados y fondos complejos que sangraban al frame vecino. Invisible en el API, visible en el editor. Las 7 reglas eliminan el 100% de los casos de sangrado.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 05 — AGENT BRIDGE API                                        -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="agent-api">
+  <div class="section-number">05</div>
+  <h2>API del Agent Bridge</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:16px; margin-bottom:24px;">
+    <code>window.futurariaAgent</code> — instalado por EditorV2. Da ojos y lint de layout a los agentes de IA que operan el editor por navegador.
+  </p>
+
+  <table class="api-table">
+    <thead>
+      <tr><th>Método</th><th>Params</th><th>Retorna</th><th>Descripción</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>listFrames()</td>
+        <td>—</td>
+        <td>Array&lt;{frameId, width, height}&gt;</td>
+        <td>Lista todos los frames visibles en el canvas.</td>
+      </tr>
+      <tr>
+        <td>renderFrame()</td>
+        <td>frameId, scale?</td>
+        <td>data:image/png;base64</td>
+        <td>Snapshot PNG de un frame. Fuentes de Google embebidas inline. Sin red al dibujar.</td>
+      </tr>
+      <tr>
+        <td>inspectFrame()</td>
+        <td>frameId</td>
+        <td>{ frameId, width, height, layers, issues }</td>
+        <td>Lint de layout. Cajas por capa + issues detectados.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Qué detecta inspectFrame</h3>
+  <div class="rules-grid">
+    <div class="rule-card">
+      <div class="rule-num" style="font-size:36px;">↗</div>
+      <h4>outsideFrame</h4>
+      <p>Capas que exceden los límites del frame.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num" style="font-size:36px;">✂</div>
+      <h4>clippedText</h4>
+      <p>Texto recortado por su propia caja fija (overflow: hidden en contenedor de texto).</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-num" style="font-size:36px;">⚠</div>
+      <h4>overlapsText</h4>
+      <p>Elementos decorativos sobre texto. Para SVGs mide la unión de formas dibujadas, no la caja del contenedor.</p>
+    </div>
+  </div>
+
+  <pre class="code"><span class="comment">// Flujo típico de inspección desde consola</span>
+<span class="keyword">const</span> frames = <span class="function">window.futurariaAgent.listFrames</span>();
+<span class="comment">// → [{ frameId: "frame_deck_cover", width: 1920, height: 1080 }, ...]</span>
+
+<span class="keyword">const</span> inspection = <span class="function">await window.futurariaAgent.inspectFrame</span>(<span class="string">"frame_deck_01"</span>);
+<span class="comment">// → { issues: [], layers: [...] }  ← limpio = diseño válido</span>
+
+<span class="keyword">const</span> png = <span class="function">await window.futurariaAgent.renderFrame</span>(<span class="string">"frame_deck_01"</span>, <span class="number">0.5</span>);
+<span class="comment">// → "data:image/png;base64,iVBORw0KGgo..."</span></pre>
+
+  <div class="callout">
+    <div class="callout-title">🔧 Limitación de renderFrame</div>
+    <p>Usa SVG <code>foreignObject</code> internamente. Las imágenes externas del frame deben ser data-URIs para aparecer en el snapshot. Las fuentes de Google se inlinean automáticamente.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 06 — FLUJO DE TRABAJO                                        -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="workflow">
+  <div class="section-number">06</div>
+  <h2>Flujo de Trabajo</h2>
+  <div class="accent-rule"></div>
+
+  <p style="font-size:16px; margin-bottom:24px;">
+    Ciclo completo desde la creación del spec hasta el deck publicado en el editor. El agente itera hasta que el lint está limpio y el render es satisfactorio.
+  </p>
+
+  <div class="flow-steps">
+    <div class="flow-step">
+      <h4>Diseña</h4>
+      <p>Genera frames vía MCP usando <code>update_template</code> con arrays de frames HTML/CSS.</p>
+    </div>
+    <div class="flow-step">
+      <h4>Abre</h4>
+      <p>Navega a <code>/?template=&lt;id&gt;&amp;v=2</code> en el editor.</p>
+    </div>
+    <div class="flow-step">
+      <h4>Inspecciona</h4>
+      <p><code>inspectFrame()</code> en cada frame. Corrige los issues reportados.</p>
+    </div>
+    <div class="flow-step">
+      <h4>Renderiza</h4>
+      <p><code>renderFrame()</code> para ver el PNG y ajustar composición.</p>
+    </div>
+    <div class="flow-step">
+      <h4>Itera</h4>
+      <p>Repite hasta lint limpio + render aprobado visualmente.</p>
+    </div>
+  </div>
+
+  <h3>Pipeline Rápido: agent-design.mjs</h3>
+  <p style="font-size:14px; color:var(--muted); margin-bottom:16px;">
+    Para el flujo "agente escribe → humano edita" sin tocar el navegador:
+  </p>
+
+  <pre class="code"><span class="comment"># 1. Genera un starter y edítalo</span>
+node scripts/agent-design.mjs example > design.json
+
+<span class="comment"># 2. Publica: crea workspace+template y devuelve link</span>
+node scripts/agent-design.mjs push design.json
+<span class="comment"># ✔ 1 frame(s) publicados en 0.1s</span>
+<span class="comment"># Editor: http://localhost:5173/?template=tpl_xxx&amp;v=2</span>
+
+<span class="comment"># Contra producción:</span>
+node scripts/agent-design.mjs push design.json \
+  --api https://&lt;sitio&gt; --app https://&lt;sitio&gt;</pre>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 07 — TEST RESULTS                                             -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="tests">
+  <div class="section-number">07</div>
+  <h2>Resultados de Tests</h2>
+  <div class="accent-rule"></div>
+
+  <div class="stats-banner">
+    <div class="stat">
+      <div class="stat-value">7/7</div>
+      <div class="stat-label">Tests Pasando</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">0</div>
+      <div class="stat-label">Fallos</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">70ms</div>
+      <div class="stat-label">Tiempo Total</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Suite: deck-generator.test.mjs</div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>lays frames side by side at 1920×1080 with no overlaps</div>
+      <div class="test-time">2.20ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>numbers every slide and names missing titles deterministically</div>
+      <div class="test-time">0.21ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>cover uses the corporate color and slides embed brand fonts</div>
+      <div class="test-time">0.15ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>free cover composition keeps the deterministic background</div>
+      <div class="test-time">0.15ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>picks readable ink from the corporate color luminance</div>
+      <div class="test-time">0.10ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>rejects invalid specs with actionable errors</div>
+      <div class="test-time">0.34ms</div>
+    </div>
+    <div class="test-pass">
+      <div class="test-check">✓</div>
+      <div>escapes HTML in titles and brand names (XSS-safe)</div>
+      <div class="test-time">0.15ms</div>
+    </div>
+  </div>
+
+  <h3>Verificación Visual</h3>
+  <p style="font-size:14px; color:var(--muted);">
+    El refinamiento de Fable produjo el archivo <code>manual_test.png</code> en <code>design-main/QA/</code> que muestra el deck "Coffee Poster" renderizado en el editor — 6 frames side-by-side con portada corporativa, chrome tipográfico, numeración de páginas y contenido libre por slide. Confirmación visual de que el sistema genera frames en un archivo correctamente.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 08 — ARQUITECTURA                                             -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<section class="section" id="architecture">
+  <div class="section-number">08</div>
+  <h2>Arquitectura de Archivos</h2>
+  <div class="accent-rule"></div>
+
+  <div class="arch-diagram">
+<span class="dim">design-main/</span>
+├── <span class="key">netlify/functions/deck-generator.mjs</span>   <span class="dim">← Engine principal</span>
+│   ├── buildDeckFrames(spec) → { frames, brand, total }
+│   ├── colorLuminance(hex)   → 0..1
+│   ├── inkFor(background)    → #F5F1E8 | #141414
+│   ├── DECK_FRAME_W          → 1920
+│   ├── DECK_FRAME_H          → 1080
+│   └── DECK_FRAME_GAP        → 160
+│
+├── <span class="key">QA/deck-generator.test.mjs</span>            <span class="dim">← Suite de 7 tests</span>
+├── <span class="key">QA/manual_test.png</span>                    <span class="dim">← Screenshot Fable (Coffee Poster)</span>
+├── <span class="key">QA/step1_manual_extraction.png</span>         <span class="dim">← Screenshot Fable (Paso 1)</span>
+│
+├── <span class="key">src/lib/agentBridge.ts</span>                 <span class="dim">← window.futurariaAgent</span>
+│   ├── listFrames()
+│   ├── renderFrame(frameId, scale)
+│   └── inspectFrame(frameId)
+│
+├── <span class="key">scripts/agent-design.mjs</span>               <span class="dim">← CLI rápida: example + push</span>
+│
+├── <span class="key">docs/AGENT_BRIDGE.md</span>                   <span class="dim">← Documentación del bridge</span>
+├── <span class="key">docs/DESIGN_HARNESS_ROADMAP.md</span>         <span class="dim">← Roadmap del harness</span>
+│
+└── <span class="key">ObsidianRen/DESIGN_HARNESS_RULES.md</span>     <span class="dim">← 7 reglas anti-sangrado</span></div>
+
+  <div class="card" style="margin-top:32px;">
+    <div class="card-header">Dependencias</div>
+    <div class="card-title">Cero dependencias externas</div>
+    <p style="font-size:14px; color:var(--muted);">
+      El deck-generator es JavaScript puro (ESM). No requiere Node.js específicamente — solo necesita <code>escapeHtml</code>, <code>pad2</code>, aritmética de color y composición de strings. Puede correr en cualquier runtime: browser, edge function, o CLI.
+    </p>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- FOOTER                                                        -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<footer class="footer">
+  <span>Futuraria ✨ — Julio 2026</span>
+  <span>Deck Generator v1.0 · Refinado por Fable</span>
+  <span>08 / 09</span>
+</footer>
+
+</body>
+</html>

@@ -39,6 +39,17 @@
   force = true
 
 [[redirects]]
+  from = "/harness-cron"
+  to = "/.netlify/functions/harness-cron"
+  status = 200
+  force = true
+
+# Scheduled function: runs the harness cron every hour to process due cronjobs.
+# Each cronjob schedules its own tasks via the harness_cronjobs table.
+[functions.harness-cron]
+  schedule = "0 * * * *"
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

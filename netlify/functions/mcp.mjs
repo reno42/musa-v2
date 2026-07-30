@@ -2792,6 +2792,7 @@ const MCP_TOOLS = [
         cta: { type: "string", description: "Call to action text" },
         assignedTo: { type: "string", description: "Agent/person assigned to this task" },
         tags: { type: "array", items: { type: "string" }, description: "Free-form tags" },
+        acceptance: { type: "array", items: { type: "string" }, description: "Acceptance criteria — objective verifiable items. The reviewer checks each one. Example: ['Button exists in topbar', 'Build passes without TS errors']" },
       },
       required: ["title"],
     },
@@ -2833,6 +2834,216 @@ const MCP_TOOLS = [
         cardId: { type: "string", description: "Card ID" },
       },
       required: ["cardId"],
+    },
+  },
+  // ── Harness: multi-agent orchestration (12 tools) ──
+  // These tools let any AI (Claude, Hermes, Codex, Qoder, OpenClaw) act as
+  // leader/implementer/reviewer and keep state in Supabase so context windows
+  // can be flushed. See AGENTS.md at the repo root.
+  {
+    name: "harness_get_context",
+    description: "Bootstrap context for an agent session. Returns AGENTS.md, the agent definition (labor + protocol + hard_rules), relevant docs, and the latest 3 entries of the session if provided. Use this BEFORE doing any work — it replaces reading many files. This is how subagents stay efficient: minimal context, just what is needed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agentType: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"], description: "Which role to bootstrap" },
+        taskId: { type: "string", description: "Optional task to include its acceptance criteria" },
+        sessionId: { type: "string", description: "Optional session to include its latest entries" },
+      },
+      required: ["agentType"],
+    },
+  },
+  {
+    name: "harness_list_features",
+    description: "List Kanban tasks eligible for work (the cloud equivalent of feature_list.json). Returns pending tasks with acceptance criteria. The leader picks ONE. Filtering by status is supported — defaults to backlog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["backlog", "research", "draft", "design", "review", "feedback", "done"], description: "Status filter (default: backlog)" },
+        workspaceId: { type: "string", description: "Filter by workspace" },
+        brandId: { type: "string", description: "Filter by brand" },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Max tasks returned (default: 20)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "harness_claim_feature",
+    description: "Atomically claim a task for this agent. Sets status to 'draft' (in_progress). Fails with code -32000 if there is already an active task for the account (hard rule: only ONE in_progress at a time per account, mirroring init.sh's check). On success, returns the full task with acceptance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task to claim" },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "harness_release_feature",
+    description: "Release the lock on a claimed task (set to 'feedback' or 'backlog'). Use when blocked or pausing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task to release" },
+        toStatus: { type: "string", enum: ["backlog", "feedback"], description: "Status to release to (default: backlog)" },
+        reason: { type: "string", description: "Why releasing (saved to activity log)" },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "harness_start_session",
+    description: "Start a new harness session for an agent working on a task. Returns a minimal context_summary built from the agent definition + acceptance + recent entries — subagents get only what they need (anti-context-degradation).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task being worked on" },
+        role: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer", "custom"], description: "Agent role" },
+        agentName: { type: "string", description: "Who is running this session (e.g. 'claude', 'hermes', 'qoder')" },
+        plan: { type: "string", description: "3-5 bullet plan" },
+      },
+      required: ["taskId", "role"],
+    },
+  },
+  {
+    name: "harness_log_entry",
+    description: "Append to the bitácora (anti-teléfono-descompuesto). Subagents write results HERE, not in chat. The leader reads references, not content. Every meaningful step should be logged: plan, progress, blocker, exploration, verdict.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Session to log to" },
+        entryType: { type: "string", enum: ["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump"], description: "Type of entry" },
+        content: { type: "string", description: "Markdown content of the entry" },
+        filesTouched: { type: "array", items: { type: "string" }, description: "Files modified" },
+        verdict: { type: "string", description: "If entryType=verdict: APPROVED or CHANGES_REQUESTED" },
+        promptUsed: { type: "string", description: "Prompt that produced this result (for harness auto-improvement)" },
+        promptOutcome: { type: "string", enum: ["success", "partial", "failed"], description: "Did the prompt work?" },
+      },
+      required: ["sessionId", "entryType", "content"],
+    },
+  },
+  {
+    name: "harness_dump_context",
+    description: "Extract current context (decisions, learnings, state) into harness_entries as a context_dump. Frees the context window. The next agent (or next session of the same agent) reads it via harness_get_context. Critical for >40% context usage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Session to dump to" },
+        content: { type: "string", description: "Markdown summary of what to remember" },
+      },
+      required: ["sessionId", "content"],
+    },
+  },
+  {
+    name: "harness_get_entries",
+    description: "Read bitácora entries for a session. Used by reviewers to audit implementer work, and by leaders to recover context after a flush. Returns entries in reverse chronological order.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Session to read" },
+        limit: { type: "integer", minimum: 1, maximum: 100, description: "Max entries (default: 50)" },
+        entryType: { type: "string", description: "Filter by type" },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "harness_healthcheck",
+    description: "Cloud equivalent of init.sh. Verifies: (1) MCP reachable, (2) Supabase reachable, (3) harness tables exist, (4) design_kanban_tasks reachable, (5) optional lint_design on a template. Returns ok: true|false and per-check details. The reviewer MUST call this before approving.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Optional template to lint_design as part of the check" },
+        workspaceId: { type: "string", description: "Optional workspace to verify ownership" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "harness_evaluate_checkpoint",
+    description: "Record pass/fail for a checkpoint (C1-C5) on a task. Reviewer calls this once per checkpoint while reviewing. Implementation stores result in harness_checkpoints AND in design_kanban_tasks.checkpoint_json.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task being evaluated" },
+        checkpointId: { type: "string", description: "Checkpoint identifier (e.g. 'C1', 'C2')" },
+        description: { type: "string", description: "What this checkpoint checks" },
+        passed: { type: "boolean", description: "Pass or fail" },
+        notes: { type: "string", description: "Evidence or failure reason" },
+      },
+      required: ["taskId", "checkpointId", "description", "passed"],
+    },
+  },
+  {
+    name: "harness_submit_for_review",
+    description: "Implementer signals work is ready for review. Sets task status to 'review' and logs the submission. The leader then launches a reviewer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Implementer session" },
+        summary: { type: "string", description: "What was done" },
+      },
+      required: ["sessionId", "summary"],
+    },
+  },
+  {
+    name: "harness_complete_feature",
+    description: "Mark a task as done. Only callable if all checkpoints on the task have passed=true (the hard rule). Sets status='done', completed_at=now(), closes the active session. Reviewer approval is verified via checkpoints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task to complete" },
+        sessionId: { type: "string", description: "Implementer session to close" },
+      },
+      required: ["taskId"],
+    },
+  },
+  // ── Harness: cronjob management (3 tools) ──
+  {
+    name: "harness_list_cronjobs",
+    description: "List scheduled cronjobs for the account. Returns enabled and disabled jobs with their schedule, last_run_at, and next_run_at.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        enabledOnly: { type: "boolean", description: "If true, return only enabled cronjobs (default: false)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "harness_create_cronjob",
+    description: "Create a scheduled cronjob that auto-creates and processes tasks. Requires a cron schedule, a task template, and the account's fdr_ws_ api key (stored encrypted_api_key) so the cron runner can authenticate to MCP.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Human label for the cronjob" },
+        schedule: { type: "string", description: "5-field cron expression, e.g. '0 6 * * *' for daily at 6am" },
+        taskTemplate: { type: "object", description: "Template for created tasks", properties: {
+          title: { type: "string" },
+          type: { type: "string" },
+          priority: { type: "integer", minimum: 1, maximum: 3 },
+          brief: { type: "string" },
+          acceptance: { type: "array", items: { type: "string" } },
+        } },
+        workspaceId: { type: "string" },
+        brandId: { type: "string" },
+        encryptedApiKey: { type: "string", description: "Account's fdr_ws_ API key — used by the cron runner to call MCP on the account's behalf" },
+        timezone: { type: "string", description: "IANA timezone (default: America/Lima)" },
+        enabled: { type: "boolean", description: "Start enabled? (default: true)" },
+      },
+      required: ["name", "schedule", "taskTemplate"],
+    },
+  },
+  {
+    name: "harness_toggle_cronjob",
+    description: "Enable, disable, or delete a cronjob.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronjobId: { type: "string", description: "Cronjob to modify" },
+        action: { type: "string", enum: ["enable", "disable", "delete"], description: "What to do" },
+      },
+      required: ["cronjobId", "action"],
     },
   },
 ];
@@ -10543,6 +10754,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         assigned_to: params.assignedTo || null,
         created_by: "mcp",
         tags: params.tags || [],
+        acceptance: params.acceptance || [],
       };
       const { data: created, error: createErr } = await sbCard.from("design_kanban_tasks").insert(newCard).select().single();
       if (createErr) throw { code: -32000, message: "Failed to create card: " + createErr.message, detail: createErr };
@@ -10616,6 +10828,505 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // Fetch activity log
       const { data: activity } = await sbGet.from("design_kanban_activity_log").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
       return { card: cardDetail, activityLog: activity || [], activityCount: (activity || []).length };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HARNESS — multi-agent orchestration tools
+    // State lives in Supabase (harness_sessions, harness_entries,
+    // harness_checkpoints, harness_agent_definitions, harness_cronjobs).
+    // design_kanban_tasks IS the feature_list: 'draft'/'design' =
+    // in_progress, 'review' = under review, 'done' = completed.
+    // ═══════════════════════════════════════════════════════════════
+
+    case "harness_get_context": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase. Run supabase_migrations/harness.sql first." };
+
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      let agentDef = null;
+      if (accountId) {
+        const { data: own } = await sb.from("harness_agent_definitions")
+          .select("*").eq("name", params.agentType).eq("account_id", accountId).maybeSingle();
+        agentDef = own;
+      }
+      if (!agentDef) {
+        const { data: def } = await sb.from("harness_agent_definitions")
+          .select("*").eq("name", params.agentType).is("account_id", null).maybeSingle();
+        agentDef = def;
+      }
+      if (!agentDef && params.agentType !== "custom") {
+        throw { code: -32000, message: "Agent definition not found: " + params.agentType + ". Run harness.sql to seed defaults." };
+      }
+
+      let task = null;
+      if (params.taskId) {
+        const { data: t, error: terr } = await sb.from("design_kanban_tasks")
+          .select("*").eq("id", params.taskId).maybeSingle();
+        if (terr) throw { code: -32000, message: "Task lookup failed: " + terr.message };
+        task = t;
+      }
+
+      let entries = [];
+      if (params.sessionId) {
+        const { data: es } = await sb.from("harness_entries")
+          .select("*").eq("session_id", params.sessionId)
+          .order("created_at", { ascending: false }).limit(3);
+        entries = es || [];
+      }
+
+      return {
+        agentDefinition: agentDef,
+        task,
+        recentEntries: entries,
+        note: "This is your minimal context. Read it, work, and write results via harness_log_entry. Do NOT circulate content in chat.",
+      };
+    }
+
+    case "harness_list_features": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const status = params.status || "backlog";
+      const limit = Math.min(params.limit || 20, 50);
+      let q = sb.from("design_kanban_tasks")
+        .select("id, title, type, status, priority, deadline, brief, acceptance, assigned_to, brand_id, workspace_id, template_id, created_at")
+        .eq("status", status)
+        .order("priority", { ascending: true })
+        .order("deadline", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+      if (params.brandId) q = q.eq("brand_id", params.brandId);
+      const { data: tasks, error } = await q;
+      if (error) throw { code: -32000, message: "List failed: " + error.message };
+      return {
+        status,
+        total: (tasks || []).length,
+        features: tasks || [],
+        rule: "Pick ONE. Call harness_claim_feature with its id. Do not work on multiple features at once.",
+      };
+    }
+
+    case "harness_claim_feature": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      // Hard rule: only 1 in_progress (draft or design) per account.
+      if (accountId) {
+        const { count } = await sb.from("design_kanban_tasks")
+          .select("id", { count: "exact", head: true })
+          .eq("account_id", accountId)
+          .in("status", ["draft", "design"]);
+        if (count && count > 0) {
+          throw {
+            code: -32000,
+            message: `Hard rule violated: account already has ${count} task(s) in draft/design status. Complete or release the active task first (harness_release_feature or harness_complete_feature). This mirrors init.sh's one-feature-at-a-time enforcement.`
+          };
+        }
+      }
+
+      // Atomically flip status draft IF still backlog (avoid races)
+      const { data: updated, error } = await sb.from("design_kanban_tasks")
+        .update({
+          status: "draft",
+          assigned_to: params.assignedTo || "implementer",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", params.taskId)
+        .eq("status", "backlog")
+        .select()
+        .maybeSingle();
+      if (error) throw { code: -32000, message: "Claim failed: " + error.message };
+      if (!updated) {
+        const { data: cur } = await sb.from("design_kanban_tasks").select("id, status, assigned_to").eq("id", params.taskId).maybeSingle();
+        if (!cur) throw { code: -32000, message: "Task not found: " + params.taskId };
+        throw {
+          code: -32000,
+          message: `Cannot claim: task is in status '${cur.status}'${cur.assigned_to ? " (assigned to " + cur.assigned_to + ")" : ""}. Another agent may have taken it.`
+        };
+      }
+
+      await sb.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: params.taskId,
+        from_status: "backlog",
+        to_status: "draft",
+        comment: "Task claimed via harness_claim_feature",
+        created_by: "harness",
+      });
+
+      return { success: true, task: updated, message: "Claimed. Status is now 'draft' (in_progress). Start a session with harness_start_session." };
+    }
+
+    case "harness_release_feature": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const toStatus = params.toStatus || "backlog";
+      const { data: cur } = await sb.from("design_kanban_tasks").select("id, status").eq("id", params.taskId).maybeSingle();
+      if (!cur) throw { code: -32000, message: "Task not found: " + params.taskId };
+      const { data: released, error } = await sb.from("design_kanban_tasks")
+        .update({ status: toStatus, blocker_reason: params.reason || null, updated_at: new Date().toISOString() })
+        .eq("id", params.taskId).select().maybeSingle();
+      if (error) throw { code: -32000, message: "Release failed: " + error.message };
+      await sb.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: params.taskId, from_status: cur.status, to_status: toStatus,
+        comment: params.reason || "Released via harness_release_feature", created_by: "harness",
+      });
+      return { success: true, task: released };
+    }
+
+    case "harness_start_session": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      let agentDef = null;
+      if (accountId) {
+        const { data: own } = await sb.from("harness_agent_definitions")
+          .select("*").eq("name", params.role).eq("account_id", accountId).maybeSingle();
+        agentDef = own;
+      }
+      if (!agentDef) {
+        const { data: def } = await sb.from("harness_agent_definitions")
+          .select("*").eq("name", params.role).is("account_id", null).maybeSingle();
+        agentDef = def;
+      }
+
+      const { data: task } = await sb.from("design_kanban_tasks").select("*").eq("id", params.taskId).maybeSingle();
+
+      const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const context_summary = JSON.stringify({
+        agent: agentDef ? { name: agentDef.name, labor: agentDef.labor, protocol: agentDef.protocol, hard_rules: agentDef.hard_rules } : null,
+        task: task ? { id: task.id, title: task.title, acceptance: task.acceptance || [], type: task.type, brief: task.brief } : null,
+        plan: params.plan || null,
+      }, null, 2);
+
+      const newSession = {
+        id: sessionId,
+        account_id: accountId,
+        task_id: params.taskId,
+        agent_name: params.agentName || "unknown",
+        role: params.role,
+        status: "active",
+        plan: params.plan || null,
+        context_summary,
+        started_at: new Date().toISOString(),
+      };
+      const { data: session, error } = await sb.from("harness_sessions").insert(newSession).select().single();
+      if (error) throw { code: -32000, message: "Session start failed: " + error.message };
+
+      if (params.plan) {
+        await sb.from("harness_entries").insert({
+          id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          account_id: accountId,
+          session_id: sessionId,
+          agent_name: params.agentName || "unknown",
+          role: params.role,
+          entry_type: "plan",
+          content: params.plan,
+        });
+      }
+
+      return {
+        success: true,
+        session,
+        contextSummary: context_summary,
+        note: "Subagent context is pre-built. Inject this context_summary into the subagent. It contains only what it needs.",
+      };
+    }
+
+    case "harness_log_entry": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      const { data: sess, error: serr } = await sb.from("harness_sessions")
+        .select("id, account_id, agent_name, role").eq("id", params.sessionId).maybeSingle();
+      if (!sess) throw { code: -32000, message: "Session not found: " + params.sessionId };
+      if (sess.account_id && accountId && sess.account_id !== accountId) {
+        throw { code: -32000, message: "Session belongs to a different account. Multi-tenant isolation prevents cross-account writes." };
+      }
+
+      const entryId = "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const newEntry = {
+        id: entryId,
+        account_id: sess.account_id || accountId,
+        session_id: params.sessionId,
+        agent_name: sess.agent_name || "unknown",
+        role: sess.role,
+        entry_type: params.entryType,
+        content: params.content,
+        files_touched: params.filesTouched || [],
+        verdict: params.verdict || null,
+        prompt_used: params.promptUsed || null,
+        prompt_outcome: params.promptOutcome || null,
+      };
+      const { data: entry, error } = await sb.from("harness_entries").insert(newEntry).select().single();
+      if (error) throw { code: -32000, message: "Log entry failed: " + error.message };
+      return { success: true, entry, entryId };
+    }
+
+    case "harness_dump_context": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      const { data: sess } = await sb.from("harness_sessions")
+        .select("id, account_id, agent_name, role").eq("id", params.sessionId).maybeSingle();
+      if (!sess) throw { code: -32000, message: "Session not found: " + params.sessionId };
+      const entryId = "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const { data: entry, error } = await sb.from("harness_entries").insert({
+        id: entryId,
+        account_id: sess.account_id || accountId,
+        session_id: params.sessionId,
+        agent_name: sess.agent_name || "unknown",
+        role: sess.role,
+        entry_type: "context_dump",
+        content: params.content,
+      }).select().single();
+      if (error) throw { code: -32000, message: "Context dump failed: " + error.message };
+      return { success: true, entry, note: "Context saved to disk. You can now safely flush your context window — the next agent will recover via harness_get_context." };
+    }
+
+    case "harness_get_entries": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const limit = Math.min(params.limit || 50, 100);
+      let q = sb.from("harness_entries")
+        .select("*").eq("session_id", params.sessionId)
+        .order("created_at", { ascending: false }).limit(limit);
+      if (params.entryType) q = q.eq("entry_type", params.entryType);
+      const { data: entries, error } = await q;
+      if (error) throw { code: -32000, message: "Get entries failed: " + error.message };
+      return { sessionId: params.sessionId, total: (entries || []).length, entries: entries || [] };
+    }
+
+    case "harness_healthcheck": {
+      const sb = getSupabaseAdmin();
+      const checks = [];
+      let ok = true;
+
+      checks.push({ name: "mcp_reachable", passed: true, detail: "You are reading this response, so MCP is up." });
+
+      if (!sb) {
+        checks.push({ name: "supabase_reachable", passed: false, detail: "No service_role key configured. Set SUPABASE_URL + SUPABASE_SECRET_KEY env vars." });
+        return { ok: false, checks };
+      }
+      checks.push({ name: "supabase_reachable", passed: true, detail: "Service role client initialized." });
+
+      const { error: hadErr } = await sb.from("harness_agent_definitions").select("id").limit(1).maybeSingle();
+      if (hadErr && hadErr.code !== "PGRST116") {
+        checks.push({ name: "harness_tables_exist", passed: false, detail: "harness_agent_definitions not found. Run supabase_migrations/harness.sql: " + hadErr.message });
+        ok = false;
+      } else {
+        checks.push({ name: "harness_tables_exist", passed: true, detail: "harness schema present." });
+      }
+
+      const { error: dktErr } = await sb.from("design_kanban_tasks").select("id").limit(1).maybeSingle();
+      if (dktErr && dktErr.code !== "PGRST116") {
+        checks.push({ name: "kanban_table_exists", passed: false, detail: "design_kanban_tasks not found. Run supabase_migrations/design_kanban.sql first: " + dktErr.message });
+        ok = false;
+      } else {
+        checks.push({ name: "kanban_table_exists", passed: true, detail: "design_kanban_tasks present." });
+      }
+
+      if (params.templateId && ok) {
+        try {
+          const lintResult = await handleMethod("lint_design", { templateId: params.templateId }, userId, auth);
+          const issueCount = (lintResult?.issues || []).length;
+          checks.push({
+            name: "lint_design_template",
+            passed: issueCount === 0,
+            detail: issueCount === 0 ? "No layout issues detected." : `${issueCount} issue(s): ` + lintResult.issues.slice(0, 3).map(i => i.type).join(", "),
+          });
+          if (issueCount > 0) ok = false;
+        } catch (e) {
+          checks.push({ name: "lint_design_template", passed: false, detail: "lint_design call failed: " + (e.message || String(e)) });
+          ok = false;
+        }
+      }
+
+      return { ok, checks, timestamp: new Date().toISOString() };
+    }
+
+    case "harness_evaluate_checkpoint": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      const cpId = "hc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const newCp = {
+        id: cpId,
+        account_id: accountId,
+        task_id: params.taskId,
+        checkpoint_id: params.checkpointId,
+        description: params.description,
+        passed: params.passed,
+        reviewer_agent: params.reviewerAgent || "reviewer",
+        reviewed_at: new Date().toISOString(),
+        notes: params.notes || null,
+      };
+      const { data: cp, error } = await sb.from("harness_checkpoints").upsert(newCp, { onConflict: "task_id,checkpoint_id" }).select().single();
+      if (error) throw { code: -32000, message: "Checkpoint insert failed: " + error.message };
+
+      const { data: task } = await sb.from("design_kanban_tasks").select("checkpoint_json").eq("id", params.taskId).maybeSingle();
+      const existing = (task?.checkpoint_json && typeof task.checkpoint_json === "object") ? task.checkpoint_json : {};
+      existing[params.checkpointId] = { passed: params.passed, description: params.description, notes: params.notes || null, reviewedAt: new Date().toISOString() };
+      await sb.from("design_kanban_tasks").update({ checkpoint_json: existing }).eq("id", params.taskId);
+
+      return { success: true, checkpoint: cp, taskCheckpointJson: existing };
+    }
+
+    case "harness_submit_for_review": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+
+      const { data: sess } = await sb.from("harness_sessions").select("*").eq("id", params.sessionId).maybeSingle();
+      if (!sess) throw { code: -32000, message: "Session not found: " + params.sessionId };
+
+      const { data: task } = await sb.from("design_kanban_tasks").select("id, status").eq("id", sess.task_id).maybeSingle();
+      if (!task) throw { code: -32000, message: "Task not found for session." };
+      const { error: updErr } = await sb.from("design_kanban_tasks")
+        .update({ status: "review", updated_at: new Date().toISOString() })
+        .eq("id", sess.task_id);
+      if (updErr) throw { code: -32000, message: "Status update failed: " + updErr.message };
+
+      await sb.from("harness_entries").insert({
+        id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        account_id: sess.account_id,
+        session_id: params.sessionId,
+        agent_name: sess.agent_name,
+        role: sess.role,
+        entry_type: "review",
+        content: params.summary,
+      });
+
+      await sb.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: sess.task_id, from_status: task.status, to_status: "review",
+        comment: "Submitted for review via harness", created_by: "harness",
+      });
+
+      return { success: true, taskId: sess.task_id, status: "review", message: "Task moved to 'review'. Leader should now launch a reviewer." };
+    }
+
+    case "harness_complete_feature": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+
+      const { data: cps } = await sb.from("harness_checkpoints")
+        .select("checkpoint_id, passed").eq("task_id", params.taskId);
+      const failed = (cps || []).filter(c => c.passed === false);
+      if ((cps || []).length === 0) {
+        throw { code: -32000, message: "Cannot complete: no checkpoints have been evaluated yet. The reviewer must run harness_evaluate_checkpoint for C1-C5 before completion." };
+      }
+      if (failed.length > 0) {
+        throw { code: -32000, message: `Cannot complete: ${failed.length} checkpoint(s) failed: ` + failed.map(c => c.checkpoint_id).join(", ") };
+      }
+
+      const now = new Date().toISOString();
+      const { data: task, error: tErr } = await sb.from("design_kanban_tasks")
+        .update({ status: "done", completed_at: now, updated_at: now })
+        .eq("id", params.taskId).select().maybeSingle();
+      if (tErr) throw { code: -32000, message: "Completion failed: " + tErr.message };
+
+      if (params.sessionId) {
+        await sb.from("harness_sessions")
+          .update({ status: "completed", ended_at: now, next_step: "Task completed. Session closed." })
+          .eq("id", params.sessionId);
+        await sb.from("harness_entries").insert({
+          id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          account_id: task?.account_id || null,
+          session_id: params.sessionId,
+          agent_name: "harness",
+          role: "implementer",
+          entry_type: "summary",
+          content: `Task ${params.taskId} marked done at ${now}. All checkpoints passed.`,
+        });
+      }
+
+      await sb.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: params.taskId, from_status: "review", to_status: "done",
+        comment: "Task completed via harness_complete_feature", created_by: "harness",
+      });
+
+      return { success: true, task, message: "Task is DONE. All checkpoints passed and session closed." };
+    }
+
+    case "harness_list_cronjobs": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      let q = sb.from("harness_cronjobs")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (params.enabledOnly) q = q.eq("enabled", true);
+      if (accountId) q = q.eq("account_id", accountId);
+      const { data: cronjobs, error } = await q;
+      if (error) throw { code: -32000, message: "List cronjobs failed: " + error.message };
+      // Don't leak the api key
+      const safe = (cronjobs || []).map(c => ({ ...c, encrypted_api_key: c.encrypted_api_key ? "[set]" : null }));
+      return { total: safe.length, cronjobs: safe };
+    }
+
+    case "harness_create_cronjob": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      if (!accountId) throw { code: -32000, message: "Creating cronjobs requires authentication. Provide a Bearer token or a workspace-bound api key." };
+
+      const cronId = "cron_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+      const now = new Date();
+      // Compute first next_run_at from schedule
+      let nextRun = new Date(now.getTime() + 86400000);
+      try {
+        const parts = params.schedule.trim().split(/\s+/);
+        if (parts.length === 5) {
+          const [minStr, hourStr] = parts;
+          nextRun = new Date(now);
+          nextRun.setSeconds(0, 0);
+          nextRun.setMinutes(minStr === "*" ? nextRun.getMinutes() : parseInt(minStr, 10), 0, 0);
+          nextRun.setHours(hourStr === "*" ? nextRun.getHours() : parseInt(hourStr, 10), 0, 0);
+          if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
+        }
+      } catch (_) { /* keep default */ }
+
+      const newCron = {
+        id: cronId,
+        account_id: accountId,
+        name: params.name,
+        schedule: params.schedule,
+        action: "create_task",
+        task_template: params.taskTemplate || {},
+        feature_type: params.taskTemplate?.type || "post",
+        workspace_id: params.workspaceId || null,
+        brand_id: params.brandId || null,
+        enabled: params.enabled !== false,
+        encrypted_api_key: params.encryptedApiKey || null,
+        timezone: params.timezone || "America/Lima",
+        next_run_at: nextRun.toISOString(),
+      };
+      const { data: cron, error } = await sb.from("harness_cronjobs").insert(newCron).select().single();
+      if (error) throw { code: -32000, message: "Create cronjob failed: " + error.message };
+      const safe = { ...cron, encrypted_api_key: cron.encrypted_api_key ? "[set]" : null };
+      return { success: true, cronjob: safe, message: `Cronjob created. Next run at ${cron.next_run_at}.` };
+    }
+
+    case "harness_toggle_cronjob": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      if (params.action === "delete") {
+        const { error } = await sb.from("harness_cronjobs").delete().eq("id", params.cronjobId);
+        if (error) throw { code: -32000, message: "Delete failed: " + error.message };
+        return { success: true, deleted: true, cronjobId: params.cronjobId };
+      }
+      const enabled = params.action === "enable";
+      const { data: updated, error } = await sb.from("harness_cronjobs")
+        .update({ enabled }).eq("id", params.cronjobId).select().maybeSingle();
+      if (error) throw { code: -32000, message: "Toggle failed: " + error.message };
+      if (!updated) throw { code: -32000, message: "Cronjob not found: " + params.cronjobId };
+      return { success: true, cronjob: { ...updated, encrypted_api_key: updated.encrypted_api_key ? "[set]" : null } };
     }
 
     default:

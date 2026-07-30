@@ -1,0 +1,154 @@
+{
+  "$schema": "https://design-tokens.org/format",
+  "$instructions": [
+    "Fill each $value with the exact value from the design you want to replicate.",
+    "Colors must be hex (e.g. #FF6B00). Sizes in px (e.g. 16px). Weights as numbers.",
+    "Keep the $description fields — they power fingerprint deduplication.",
+    "Upload the result via Style Library → Upload or create_brand_guideline MCP tool."
+  ],
+  "color": {
+    "canvas": {
+      "$value": "",
+      "$description": "primary background color"
+    },
+    "surface-2": {
+      "$value": "",
+      "$description": "secondary background / card color"
+    },
+    "ink": {
+      "$value": "",
+      "$description": "primary text color"
+    },
+    "ink-2": {
+      "$value": "",
+      "$description": "secondary text color"
+    },
+    "accent": {
+      "$value": "",
+      "$description": "accent / CTA color"
+    },
+    "accent-2": {
+      "$value": "",
+      "$description": "secondary accent / link color"
+    },
+    "border": {
+      "$value": "",
+      "$description": "border / divider color"
+    },
+    "success": {
+      "$value": "",
+      "$description": "success state color"
+    },
+    "warning": {
+      "$value": "",
+      "$description": "warning state color"
+    },
+    "error": {
+      "$value": "",
+      "$description": "error state color"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "primary": {
+        "$value": "",
+        "$description": "primary font (headings)"
+      },
+      "secondary": {
+        "$value": "",
+        "$description": "secondary font (body)"
+      }
+    },
+    "fontSize": {
+      "caption": {
+        "$value": "px"
+      },
+      "body-sm": {
+        "$value": "px"
+      },
+      "body": {
+        "$value": "px"
+      },
+      "subheading": {
+        "$value": "px"
+      },
+      "heading-sm": {
+        "$value": "px"
+      },
+      "heading": {
+        "$value": "px"
+      },
+      "heading-lg": {
+        "$value": "px"
+      },
+      "display": {
+        "$value": "px"
+      }
+    },
+    "fontWeight": {
+      "weight-400": {
+        "$value": 400
+      },
+      "weight-500": {
+        "$value": 500
+      },
+      "weight-600": {
+        "$value": 600
+      },
+      "weight-700": {
+        "$value": 700
+      }
+    }
+  },
+  "spacing": {
+    "space-4": {
+      "$value": "4px"
+    },
+    "space-8": {
+      "$value": "8px"
+    },
+    "space-12": {
+      "$value": "12px"
+    },
+    "space-16": {
+      "$value": "16px"
+    },
+    "space-20": {
+      "$value": "20px"
+    },
+    "space-24": {
+      "$value": "24px"
+    },
+    "space-32": {
+      "$value": "32px"
+    },
+    "space-40": {
+      "$value": "40px"
+    },
+    "space-60": {
+      "$value": "60px"
+    },
+    "space-80": {
+      "$value": "80px"
+    }
+  },
+  "radius": {
+    "default": {
+      "$value": ""
+    },
+    "radius-2": {
+      "$value": ""
+    },
+    "radius-3": {
+      "$value": ""
+    }
+  },
+  "shadow": {
+    "default": {
+      "$value": ""
+    },
+    "shadow-2": {
+      "$value": ""
+    }
+  }
+}
