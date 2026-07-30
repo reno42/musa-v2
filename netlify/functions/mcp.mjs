@@ -4243,8 +4243,8 @@ async function handleMethod(method, params, userId, auth) {
       if (!tpl) throw { code: -32000, message: "Failed to create HTML template" };
 
       tpl.engine = "html";
-      tpl.html = params.initialHtml || "";
-      tpl.css = params.initialCss || "";
+      tpl.html = params.html || params.initialHtml || "";
+      tpl.css = params.css || params.initialCss || "";
 
       await templates.updateTemplate(tpl.id, {
         engine: "html",
@@ -6379,9 +6379,17 @@ async function handleMethod(method, params, userId, auth) {
         } catch { /* AI failed, use fallback */ }
       }
 
-      const tpl = await templates.createTemplate(`AI: ${params.prompt.substring(0, 40)}`, params.width || 1080, params.height || 1080, undefined, "", "default");
+      // Respect existing templateId if provided; otherwise create new
+      let tpl;
+      if (params.templateId) {
+        tpl = await templates.getTemplate(params.templateId);
+        if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+        if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      } else {
+        tpl = await templates.createTemplate(`AI: ${params.prompt.substring(0, 40)}`, params.width || 1080, params.height || 1080, undefined, "", "default");
+      }
       tpl.engine = "html"; tpl.html = html; tpl.css = css;
-      await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: [] });
+      await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: tpl.frames || [] });
       return { templateId: tpl.id, previewUrl: "" };
     }
 
@@ -10802,6 +10810,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         title: params.title,
         brand_id: params.brandId || null,
         workspace_id: params.workspaceId || null,
+        account_id: UUID_RE.test(userId || "") ? userId : null,
         type: params.type || "other",
         format: params.format || null,
         status: params.status || "backlog",
