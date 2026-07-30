@@ -263,6 +263,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_list_cronjobs", description: "Lista los cronjobs programados.", parameters: { type: "object", properties: {} } } },
   { type: "function", function: { name: "harness_create_cronjob", description: "Crea un cronjob automático.", parameters: { type: "object", required: ["name", "schedule"], properties: { name: { type: "string" }, schedule: { type: "string", description: "cron expression" }, action: { type: "string" }, featureType: { type: "string" }, workspaceId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_toggle_cronjob", description: "Activa/desactiva un cronjob.", parameters: { type: "object", required: ["cronjobId", "enabled"], properties: { cronjobId: { type: "string" }, enabled: { type: "boolean" } } } } },
+  { type: "function", function: { name: "harness_report_error", description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.", parameters: { type: "object", required: ["tool", "error_message"], properties: { tool: { type: "string", description: "Nombre de la tool que falló" }, args: { type: "object", description: "Argumentos con los que se llamó" }, error_message: { type: "string", description: "Mensaje de error o resultado" }, step: { type: "number" }, totalSteps: { type: "number" }, round: { type: "number" }, provider: { type: "string" }, source: { type: "string", description: "chatfab, mcp, manual" } } } } },
   // ═══════════════════════════════════════════════
   //  Fonts
   // ═══════════════════════════════════════════════
@@ -389,12 +390,29 @@ function saveMessages(msgs: Message[]) {
   try { localStorage.setItem(LS_MESSAGES_KEY, JSON.stringify(msgs.slice(-MAX_STORED_MESSAGES))); } catch {}
 }
 
-function appendErrorReport(report: any) {
+async function appendErrorReport(report: any) {
+  // 1. Primary: send to Supabase via MCP
+  try {
+    await mcpCall("harness_report_error", {
+      tool: report.tool,
+      args: report.args || {},
+      error_message: report.result || report.error_message || "unknown error",
+      step: report.step,
+      totalSteps: report.totalSteps,
+      round: report.round,
+      provider: report.provider,
+      source: "chatfab",
+    });
+    return; // success — no need for fallback
+  } catch (mcpErr) {
+    console.warn("[appendErrorReport] Supabase unreachable, using localStorage fallback:", (mcpErr as any)?.message);
+  }
+
+  // 2. Fallback: localStorage if Supabase/MCP is unreachable
   try {
     const raw = localStorage.getItem("futuraria-error-log");
     const log = raw ? JSON.parse(raw) : [];
-    log.push(report);
-    // Keep last 100 errors max
+    log.push({ ...report, _fallback: true, _fallback_reason: "Supabase unreachable via MCP" });
     if (log.length > 100) log.splice(0, log.length - 100);
     localStorage.setItem("futuraria-error-log", JSON.stringify(log));
   } catch {}

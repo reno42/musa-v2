@@ -11389,6 +11389,30 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { success: true, cronjob: { ...updated, encrypted_api_key: updated.encrypted_api_key ? "[set]" : null } };
     }
 
+    // ── Error Logging ───────────────────────────────────────
+    case "harness_report_error": {
+      const sb_err = getSupabaseAdmin();
+      if (!sb_err) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId_err = UUID_RE.test(userId || "") ? userId : null;
+
+      const entry = {
+        id: "err_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+        account_id: accountId_err,
+        tool: params.tool || "unknown",
+        args: params.args || {},
+        error_message: typeof params.error_message === "string" ? params.error_message.slice(0, 2000) : JSON.stringify(params.error_message || {}).slice(0, 2000),
+        step_index: params.step ?? null,
+        total_steps: params.totalSteps ?? null,
+        round: params.round ?? null,
+        provider: params.provider || null,
+        mcp_status_code: params.mcp_status_code ?? null,
+        source: params.source || "chatfab",
+      };
+      const { data: logged, error: logErr } = await sb_err.from("harness_error_logs").insert(entry).select().single();
+      if (logErr) throw { code: -32000, message: "Error log insert failed: " + logErr.message };
+      return { success: true, error_id: entry.id, message: "Error logged to Supabase." };
+    }
+
     // ── Design Comments (pins on canvas like Word) ──────────────
     case "comment_add": {
       const sb = getSupabaseAdmin();
