@@ -29,53 +29,41 @@ const LS_MODEL_KEY = "futuraria-chat-model";
 const LS_MESSAGES_KEY = "futuraria-chat-messages";
 const MAX_STORED_MESSAGES = 50;
 
-const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. Tu trabajo: recibir pedidos del humano, gestionar el Kanban como tu herramienta principal, y orquestar implementers y reviewers.
+const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. NUNCA haces diseño tú mismo. NUNCA llamas set_html, set_css, create_frame, create_html_template, ni ninguna tool de diseño. Tú ORQUESTAS.
 
-MULTI-MENSAJE: Puedes enviar varios mensajes seguidos sin esperar respuesta del usuario. Ejemplo:
-- "Voy a crear la tarjeta Kanban..." → (ejecutas studio_create_card) →
-- "Tarjeta creada: card_abc123. Revisa el tab Kanban para verla." →
-- "Ahora lanzo el implementer..." → (ejecutas harness_start_session) →
-- "¡Listo! El diseño está en: [link]"
+REGLAS DE RESPUESTA:
+- NO describas lo que vas a hacer. Simplemente hazlo llamando la tool.
+- NO escribas nombres de tools en el chat. Ejecútalos directamente.
+- Solo respondes con texto cuando: (a) saludas, (b) necesitas aclaración, (c) reportas resultado final.
+- Tu respuesta final es UNA línea: "done -> diseño en [link]" o "blocked -> [razón]"
 
-FUENTE DE VERDAD:
-- El KANBAN en Supabase (design_kanban_tasks) es la fuente de verdad para ESTADO de tareas.
-  Usa studio_list_cards para ver qué hay en cada columna: backlog, research, draft, design, review, done.
-- feature_list.json en docs/harness/ es la guía de PLANIFICACIÓN — describe QUÉ features existen.
-  El Kanban muestra CÓMO van (estado real).
-- Después de crear una tarjeta, dile al usuario: "Tarjeta [id] creada en [status]. Revisa el tab Kanban."
+FLUJO OBLIGATORIO (NO TE LO SALTES):
+1. studio_create_card → crea la tarjeta en backlog
+2. studio_move_card → mueve a "design"
+3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer, específico: dimensiones, texto, colores, estilo>" })
+   - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
+   - No puedes predecir qué hará. Solo le das la instrucción y esperas.
+4. Si el implementer devuelve "done" → studio_move_card → "review"
+5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
+   - El reviewer tiene tools de verificación únicamente (get_template, get_frame, lint_design).
+   - No puede editar. Solo verifica.
+6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
+7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer
 
-FLUJO DE TRABAJO Y ESTADOS DEL KANBAN:
-1. Cuando el humano pide algo, CREA una tarjeta con studio_create_card(status:"backlog").
-2. Mueve la tarjeta a "research" mientras analizas requisitos.
-3. Mueve a "draft" cuando definas acceptance criteria.
-4. Lanza implementer → mueve a "design" (harness_start_session role:"implementer").
-   El implementer lee feature_list.json y elige UNA tarea pendiente.
-5. Implementer termina → mueve a "review" (harness_submit_for_review).
-6. Lanza reviewer → evalúa checkpoints. Si APRUEBA → mueve a "done".
-   Si RECHAZA → mueve a "feedback" con notas.
-7. Marca done → comparte el link del diseño.
+INSTRUCCIONES PARA DELEGAR:
+- Implementer: Sé ESPECÍFICO. Incluye dimensiones, texto exacto, colores hex, estilo visual.
+  Ej: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7. Fuente: Orbitron. Estilo: futurista, glassmorfismo."
+- Reviewer: Lista los criterios a verificar.
+  Ej: "Verifica: dimensiones 1080x1080, texto legible, paleta #0A0A1A/#F0F0FF/#7B2FF7 consistente, fuente Orbitron aplicada."
 
-ESTADOS KANBAN → feature_list.json:
-- backlog/research/draft → "pending"
-- design → "in_progress"
-- review → "review"
-- done → "done"
-- feedback → "feedback"
+PROTOCOLO DE ERRORES:
+- Si una tool falla, llama harness_report_error y informa al usuario en una línea.
+- Nunca ocultes errores.
 
-PROTOCOLO DE ERRORES (OBLIGATORIO):
-Cuando CUALQUIER tool falle, DEBES:
-- Llamar harness_report_error con: tool, args, error_message, step, round, provider
-- Explicar al usuario QUÉ falló y POR QUÉ
-- Si un error bloquea el flujo, informa con detalle completo y sugiere next steps
-- Nunca ocultes un error. Cero errores silenciosos.
-
-PRINCIPIOS:
-- Kanban (Supabase) = fuente de verdad de estado. feature_list.json = plan.
-- Una tarea a la vez. Nunca en paralelo.
-- El implementer trabaja, el reviewer verifica, tú coordinas y mueves las tarjetas.
-- No circules contenido crudo de subagentes. Solo referencias (sessionId, status).
-- Cuando tu contexto llegue al 40%, usa harness_dump_context.
-- Todo error se registra en Supabase (harness_report_error) con fallback a localStorage.`;
+PRINCIPIO CRÍTICO:
+- Tú ORQUESTAS. No implementas. No diseñas. No escribes HTML/CSS.
+- harness_delegate_task es tu tool principal. Úsala SIEMPRE para diseño y review.
+- El implementer hace el trabajo. El reviewer verifica. Tú coordinas.`;
 
 const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
@@ -271,6 +259,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_create_cronjob", description: "Crea un cronjob automático.", parameters: { type: "object", required: ["name", "schedule"], properties: { name: { type: "string" }, schedule: { type: "string", description: "cron expression" }, action: { type: "string" }, featureType: { type: "string" }, workspaceId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_toggle_cronjob", description: "Activa/desactiva un cronjob.", parameters: { type: "object", required: ["cronjobId", "enabled"], properties: { cronjobId: { type: "string" }, enabled: { type: "boolean" } } } } },
   { type: "function", function: { name: "harness_report_error", description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.", parameters: { type: "object", required: ["tool", "error_message"], properties: { tool: { type: "string", description: "Nombre de la tool que falló" }, args: { type: "object", description: "Argumentos con los que se llamó" }, error_message: { type: "string", description: "Mensaje de error o resultado" }, step: { type: "number" }, totalSteps: { type: "number" }, round: { type: "number" }, provider: { type: "string" }, source: { type: "string", description: "chatfab, mcp, manual" } } } } },
+  { type: "function", function: { name: "harness_delegate_task", description: "DELEGA a un subagente real. Esto spawnea una llamada LLM SEPARADA con contexto aislado y tools restringidas al rol. El Leader NUNCA hace diseño directamente — SIEMPRE delega con esta tool. Retorna un resumen (done/blocked para implementer, APPROVED/CHANGES_REQUESTED para reviewer).", parameters: { type: "object", required: ["role", "instruction"], properties: { role: { type: "string", enum: ["implementer", "reviewer"], description: "implementer ejecuta diseño con tools de diseño, reviewer verifica con tools de solo lectura" }, taskId: { type: "string", description: "ID de la tarjeta Kanban (card_xxx)" }, instruction: { type: "string", description: "Instrucción específica para el subagente. Ej implementer: 'Crea frame 1080x1080 con texto Hola Ren en estilo Futuraria (morado #7B2FF7, Orbitron).' Ej reviewer: 'Verifica: dimensiones 1080x1080, tipografía legible, paleta consistente.'" }, templateId: { type: "string", description: "Template ID si ya existe (tpl_xxx)" } } } } },
   // ═══════════════════════════════════════════════
   //  Fonts
   // ═══════════════════════════════════════════════
@@ -358,8 +347,57 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "skill_clone", description: "Clona un SKILL.md de un agente para crear uno nuevo.", parameters: { type: "object", required: ["source", "target"], properties: { source: { type: "string", description: "Nombre del skill fuente" }, target: { type: "string", description: "Nombre del nuevo skill" }, overrides: { type: "object" } } } } },
 ];
 
+// ═══════════════════════════════════════════════
+// ROLE-SPECIFIC SYSTEM PROMPTS (for subagents)
+// ═══════════════════════════════════════════════
+
+const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea.
+
+REGLAS ESTRICTAS:
+- Solo tienes tools de DISEÑO. No tienes harness_ ni studio_ tools (excepto harness_log_entry y harness_submit_for_review).
+- Ejecuta la tarea. No preguntes. No expliques. Solo ejecuta con tools.
+- Cuando termines, llama harness_submit_for_review con un resumen breve.
+- Si algo falla, registra el error y termina con "blocked -> [razón]".
+- Tu respuesta final es UNA línea: "done -> implementado" o "blocked -> [razón]".
+
+CONTEXTO DE LA TAREA:
+{TASK_CONTEXT}`;
+
+const REVIEWER_PROMPT = `Eres un Reviewer del Harness de Futuraria Design. El Leader te pide verificar el trabajo de un Implementer.
+
+REGLAS ESTRICTAS:
+- Solo tienes tools de VERIFICACIÓN (get_template, get_frame, lint_design, harness_get_entries, harness_evaluate_checkpoint).
+- NO puedes editar ni crear nada. Solo leer y verificar.
+- Sé ESCÉPTICO. Por cada acceptance criterion, llama harness_evaluate_checkpoint.
+- Si TODOS pasan: APRUEBA. Si AL MENOS UNO falla: RECHAZA.
+- Tu respuesta final es UNA línea: "APPROVED" o "CHANGES_REQUESTED -> [notas]".
+
+CONTEXTO DE LA TAREA:
+{TASK_CONTEXT}`;
+
+// ═══════════════════════════════════════════════
+// TOOL SUBSETS POR ROL
+// ═══════════════════════════════════════════════
+
+const IMPLEMENTER_TOOL_NAMES = new Set([
+  "create_frame", "create_html_frame", "create_html_template", "set_html", "set_css",
+  "delete_frame", "update_frame_content", "get_template", "get_template_structure",
+  "get_html_frames", "get_frame", "generate_from_prompt", "add_font_to_template",
+  "enhance_template", "set_css_variable", "ai_palette", "color_picker", "smart_layout",
+  "list_fonts", "search_google_fonts", "rename_template", "duplicate_template",
+  "harness_log_entry", "harness_submit_for_review", "list_workspaces", "list_templates",
+]);
+const REVIEWER_TOOL_NAMES = new Set([
+  "get_template", "get_template_structure", "get_html_frames", "get_frame",
+  "lint_design", "export_frame", "harness_get_entries", "harness_evaluate_checkpoint",
+  "harness_healthcheck", "list_templates",
+]);
+
+const IMPLEMENTER_TOOLS = HARNESS_TOOLS.filter(t => IMPLEMENTER_TOOL_NAMES.has(t.function.name));
+const REVIEWER_TOOLS = HARNESS_TOOLS.filter(t => REVIEWER_TOOL_NAMES.has(t.function.name));
+
 /** Convert OpenAI tool schema to Anthropic format */
-const toolsForAnthropic = () => HARNESS_TOOLS.map(t => ({
+const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
   name: t.function.name,
   description: t.function.description,
   input_schema: t.function.parameters,
@@ -367,11 +405,135 @@ const toolsForAnthropic = () => HARNESS_TOOLS.map(t => ({
 
 async function executeToolCall(name: string, args: Record<string, any>): Promise<string> {
   try {
+    if (name === "harness_delegate_task") {
+      return await spawnSubagent(args as any);
+    }
     const result = await mcpCall(name, args);
     return JSON.stringify(result, null, 2).slice(0, 4000);
   } catch (e: any) {
     return JSON.stringify({ error: e?.message || "tool call failed" });
   }
+}
+
+/**
+ * Spawn a subagent — a SEPARATE LLM call with role-specific system prompt
+ * and restricted toolset. The subagent has its own tool loop.
+ * Returns only a summary reference (not raw content).
+ */
+async function spawnSubagent(params: {
+  role: "implementer" | "reviewer";
+  taskId?: string;
+  instruction: string;
+  templateId?: string;
+}): Promise<string> {
+  const llmKey = localStorage.getItem(LS_LLM_KEY_KEY) || "";
+  const providerId = localStorage.getItem(LS_PROVIDER_KEY) || "deepseek";
+  const model = localStorage.getItem(LS_MODEL_KEY) || "";
+  const prov = PROVIDERS.find(p => p.id === providerId) || PROVIDERS[0];
+  const isAnthropic = providerId === "anthropic";
+
+  if (!llmKey) {
+    return JSON.stringify({ error: "No LLM API key found for subagent. Set your API key in chat settings." });
+  }
+
+  // 1. Start session in Supabase
+  let sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+  let taskContext = params.instruction;
+  try {
+    const sessResult = await mcpCall("harness_start_session", {
+      taskId: params.taskId || "standalone",
+      role: params.role,
+      agentName: params.role,
+      plan: params.instruction,
+    });
+    sessionId = sessResult?.session?.id || sessionId;
+    if (sessResult?.session?.context_summary) {
+      taskContext = sessResult.session.context_summary;
+    }
+  } catch { /* non-fatal */ }
+
+  // 2. Pick role-specific prompt and tools
+  let systemPrompt: string;
+  let tools: any[];
+  if (params.role === "implementer") {
+    systemPrompt = IMPLEMENTER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
+    tools = IMPLEMENTER_TOOLS;
+  } else {
+    systemPrompt = REVIEWER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
+    tools = REVIEWER_TOOLS;
+  }
+
+  // 3. Subagent conversation — fresh, no Leader history
+  const subConv: any[] = [{ role: "user", content: params.instruction }];
+  const MAX_SUB_ROUNDS = 6;
+
+  for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
+    let data: any;
+
+    if (isAnthropic) {
+      const resp = await fetch(prov.endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools) }),
+      });
+      if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+      data = await resp.json();
+    } else {
+      const resp = await fetch(prov.endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
+        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools }),
+      });
+      if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+      data = await resp.json();
+    }
+
+    let textContent = "";
+    let toolCalls: { id: string; name: string; args: any }[] = [];
+
+    if (isAnthropic) {
+      for (const block of data?.content || []) {
+        if (block.type === "text") textContent += block.text;
+        else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, args: block.input || {} });
+      }
+    } else {
+      const msg = data?.choices?.[0]?.message;
+      if (msg) {
+        textContent = msg.content || "";
+        for (const tc of msg.tool_calls || []) {
+          try { toolCalls.push({ id: tc.id, name: tc.function.name, args: JSON.parse(tc.function.arguments || "{}") }); }
+          catch { toolCalls.push({ id: tc.id, name: tc.function.name, args: {} }); }
+        }
+      }
+    }
+
+    // No more tool calls → subagent finished
+    if (toolCalls.length === 0) {
+      return JSON.stringify({
+        delegated: true, role: params.role, sessionId,
+        result: textContent.trim().slice(0, 500) || "(sin respuesta del subagente)",
+        rounds: round + 1,
+      });
+    }
+
+    // Push assistant message into subagent conversation
+    if (isAnthropic) { subConv.push(data.content); }
+    else { subConv.push(data.choices[0].message); }
+
+    // Execute each tool call within the subagent's own loop
+    for (const tc of toolCalls) {
+      const resultStr = await executeToolCall(tc.name, tc.args);
+      if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
+      else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
+    }
+  }
+
+  // Max rounds reached
+  return JSON.stringify({
+    delegated: true, role: params.role, sessionId,
+    result: "(subagente alcanzó límite de iteraciones)",
+    rounds: MAX_SUB_ROUNDS + 1,
+  });
 }
 
 interface ToolEvent { tool: string; status: "running" | "done" | "error"; result?: string }
