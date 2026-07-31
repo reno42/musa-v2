@@ -176,6 +176,64 @@ ${fontLinks}
     return new XMLSerializer().serializeToString(container);
   }
 
+  // When this SVG is loaded as an <img> (below), browsers are explicitly
+  // permitted to skip loading any EXTERNAL resource referenced inside a
+  // <foreignObject> — text and CSS painting still work, but an
+  // <img src="https://…"> pointing at Storage shows the broken-image icon.
+  // Bake every external image into a data: URI first, same treatment as fonts.
+  function inlineImages(rawHtml, rawCss, done) {
+    var container = document.createElement("div");
+    container.innerHTML = rawHtml;
+    var urls = [];
+    function addUrl(u) { if (urls.indexOf(u) === -1) urls.push(u); }
+    var imgs = container.querySelectorAll("img[src]");
+    for (var i = 0; i < imgs.length; i++) {
+      var src = imgs[i].getAttribute("src") || "";
+      if (/^https?:\\/\\//.test(src)) addUrl(src);
+    }
+    var styled = container.querySelectorAll("[style*=url]");
+    for (var j = 0; j < styled.length; j++) {
+      var style = styled[j].getAttribute("style") || "";
+      var re1 = /url\\((['"]?)(https?:\\/\\/[^'")]+)\\1\\)/g, m1;
+      while ((m1 = re1.exec(style)) !== null) addUrl(m1[2]);
+    }
+    var cssNoImports = rawCss.replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, "");
+    var re2 = /url\\((['"]?)(https?:\\/\\/[^'")]+)\\1\\)/g, m2;
+    while ((m2 = re2.exec(cssNoImports)) !== null) addUrl(m2[2]);
+
+    if (urls.length === 0) { done(rawHtml, rawCss); return; }
+
+    var map = {};
+    var remaining = urls.length;
+    urls.forEach(function(url) {
+      fetch(url).then(function(r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        var contentType = r.headers.get("content-type") || "image/png";
+        return r.arrayBuffer().then(function(buf) {
+          var bytes = new Uint8Array(buf), binary = "";
+          for (var k = 0; k < bytes.length; k += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+          map[url] = "data:" + contentType + ";base64," + btoa(binary);
+        });
+      }).catch(function() { map[url] = url; })
+        .then(function() { if (--remaining === 0) finish(); });
+    });
+
+    function finish() {
+      for (var i2 = 0; i2 < imgs.length; i2++) {
+        var src2 = imgs[i2].getAttribute("src") || "";
+        if (map[src2] && map[src2] !== src2) imgs[i2].setAttribute("src", map[src2]);
+      }
+      for (var j2 = 0; j2 < styled.length; j2++) {
+        var style2 = styled[j2].getAttribute("style") || "";
+        for (var url2 in map) { if (map[url2] !== url2) style2 = style2.split(url2).join(map[url2]); }
+        styled[j2].setAttribute("style", style2);
+      }
+      var nextCss = rawCss;
+      for (var url3 in map) { if (map[url3] !== url3) nextCss = nextCss.split(url3).join(map[url3]); }
+      done(container.innerHTML, nextCss);
+    }
+  }
+
   function inlineGoogleFonts(importUrls, done) {
     if (importUrls.length === 0) { done(""); return; }
     var results = [];
@@ -204,9 +262,10 @@ ${fontLinks}
     var re = /@import\\s+url\\(['"]?([^'")]+)['"]?\\)/g, m;
     while ((m = re.exec(css)) !== null) if (m[1].indexOf("fonts.googleapis.com") !== -1) importUrls.push(m[1]);
 
+    inlineImages(html, css, function(inlinedHtml, inlinedCss) {
     inlineGoogleFonts(importUrls, function(fontCss) {
-      var scopedCss = mapBodySelectors(css).replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, "");
-      var xhtml = toXhtml(html);
+      var scopedCss = mapBodySelectors(inlinedCss).replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, "");
+      var xhtml = toXhtml(inlinedHtml);
       var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">'
         + '<foreignObject width="100%" height="100%">'
         + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + w + 'px;height:' + h + 'px;position:relative;background:' + background + ';overflow:hidden">'
@@ -226,6 +285,7 @@ ${fontLinks}
         document.getElementById('status').style.color = '#dc2626';
       };
       img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
     });
   }
 

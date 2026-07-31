@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { rasterizeFrame, canvasToBlob } from "../lib/frameCapture";
+import { rasterizeFrame, canvasToBlob, inlineFrameImages } from "../lib/frameCapture";
+import { matchesCompoundSelector } from "../lib/cssSelectorMatch";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
@@ -2238,21 +2239,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
 
-    // Simple selector matching
-    const matchesSel = (el: HTMLElement, selector: string): boolean => {
-      if (/^[a-z0-9]+$/i.test(selector)) return el.tagName.toLowerCase() === selector;
-      if (selector.startsWith("#")) return el.id === selector.slice(1);
-      if (selector.startsWith(".")) return el.classList.contains(selector.slice(1));
-      const compound = selector.match(/^([a-z0-9]+)?(?:\.([\w-]+))?(?:#([\w-]+))?$/i);
-      if (compound) {
-        const [, tag, cls, id] = compound;
-        if (tag && el.tagName.toLowerCase() !== tag) return false;
-        if (cls && !el.classList.contains(cls)) return false;
-        if (id && el.id !== id) return false;
-        return true;
-      }
-      return false;
-    };
+    const matchesSel = (el: HTMLElement, selector: string): boolean => matchesCompoundSelector(el, selector);
 
     const resolveStyles = (el: HTMLElement): Record<string, string> => {
       const resolved: Record<string, string> = {};
@@ -2278,6 +2265,33 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!root) return `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${bg}"/></svg>`;
 
     const svgParts: string[] = [];
+
+    // CSS `filter` has no direct SVG-attribute equivalent — it needs a
+    // <filter> def referenced via filter="url(#id)". resolveStyles() only
+    // bakes NAMED properties (color, width…) into fixed attributes, so
+    // without this an image styled with `filter: grayscale(1)` (this app's
+    // standard photo treatment, confirmed on every design in this project)
+    // would export in full color despite the PNG/JPG export showing it
+    // correctly desaturated — one shared def per distinct grayscale amount.
+    const filterDefs: string[] = [];
+    const filterIdByKey = new Map<string, string>();
+    const filterAttr = (style: Record<string, string>): string => {
+      const raw = style["filter"];
+      if (!raw) return "";
+      const m = raw.match(/grayscale\(\s*([\d.]+)(%?)\s*\)/);
+      if (!m) return "";
+      let amount = parseFloat(m[1]);
+      if (m[2] === "%") amount /= 100;
+      amount = Math.max(0, Math.min(1, amount));
+      const key = `gray-${Math.round(amount * 100)}`;
+      let id = filterIdByKey.get(key);
+      if (!id) {
+        id = `f-${key}`;
+        filterIdByKey.set(key, id);
+        filterDefs.push(`<filter id="${id}"><feColorMatrix type="saturate" values="${(1 - amount).toFixed(3)}"/></filter>`);
+      }
+      return ` filter="url(#${id})"`;
+    };
 
     const walkNode = (node: HTMLElement, offsetX: number, offsetY: number) => {
       for (const child of Array.from(node.children) as HTMLElement[]) {
@@ -2315,7 +2329,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         if (tag === "img") {
           const src = child.getAttribute("src") || "";
           if (src && width && height) {
-            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"/>`);
+            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"${filterAttr(style)}/>`);
           }
         }
 
@@ -2348,6 +2362,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   <defs>
     <style><![CDATA[${cleanCss}]]></style>
     ${fontLinks.join("\n  ")}
+    ${filterDefs.join("\n    ")}
   </defs>
   <rect width="${w}" height="${h}" fill="${bg}"/>
   ${svgParts.join("\n  ")}
@@ -2426,18 +2441,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [frames, captureFrameToPng]);
 
+  // SVG export bakes external images (Storage URLs) into data: URIs first —
+  // a downloaded .svg opened directly in a browser tab CAN load external
+  // images fine, but most consumers (thumbnailers, dragging it into another
+  // <img>, pasting into design tools) treat it as an image resource, which
+  // triggers the exact same "SVG-as-image skips external resources" browser
+  // rule documented in frameCapture.ts. Inlining makes the file self-contained
+  // everywhere, matching the PNG/JPG export's guarantee.
   const handleExportFrameSVG = useCallback(async () => {
     if (!selectedFrame) return;
-    // Export menu no longer used — ExportPanel handles UI state
-    const svgString = buildFrameSvg(selectedFrame);
+    const { html, css } = await inlineFrameImages(selectedFrame.html, selectedFrame.css);
+    const svgString = buildFrameSvg({ ...selectedFrame, html, css });
     const blob = new Blob([svgString], { type: "image/svg+xml" });
     downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
-  }, [selectedFrame]);
+  }, [selectedFrame, buildFrameSvg]);
 
   const handleExportAllFramesSVG = useCallback(async () => {
-    // Export menu no longer used — ExportPanel handles UI state
     for (const frame of frames) {
-      const svgString = buildFrameSvg(frame);
+      const { html, css } = await inlineFrameImages(frame.html, frame.css);
+      const svgString = buildFrameSvg({ ...frame, html, css });
       const blob = new Blob([svgString], { type: "image/svg+xml" });
       downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
       await new Promise(r => setTimeout(r, 200));

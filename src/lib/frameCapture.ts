@@ -26,6 +26,21 @@
  * (invisible, off-screen) instead of styling the export target, and anything
  * that depended on them (background, layout padding, centering) silently
  * vanished, shifting the whole design toward the top-left corner.
+ *
+ * A third bug, specific to photos: when an SVG is used AS AN IMAGE (loaded
+ * via `new Image().src = "data:image/svg+xml,…"`, exactly what this file
+ * does), browsers are explicitly permitted — and Chromium/Firefox both do
+ * this — to skip loading any EXTERNAL resource referenced inside it. A
+ * `<foreignObject>` in that mode renders text and CSS painting fine, but an
+ * `<img src="https://…">` pointing at Supabase Storage silently fails and
+ * shows the broken-image icon. Confirmed via
+ * https://bugzilla.mozilla.org/show_bug.cgi?id=628747,
+ * https://bugzilla.mozilla.org/show_bug.cgi?id=789249, and the reference
+ * write-up for this exact technique at
+ * https://semisignal.com/rendering-web-content-to-image-with-svg-foreign-object/.
+ * inlineFrameImages below fetches every external image ahead of time and
+ * bakes it into the markup as a data: URI — the same treatment already
+ * given to Google Fonts, for the same underlying reason.
  */
 
 /** Remap `body`/`html` selectors to `#__df_content` — identical to the live
@@ -68,6 +83,98 @@ export async function inlineGoogleFontCss(importUrls: string[]): Promise<string>
     parts.push(fontCssCache.get(cssUrl)!);
   }
   return parts.join("\n");
+}
+
+const imageDataUriCache = new Map<string, string>();
+
+/**
+ * Fetch one external image and convert it to a base64 data: URI. Cached by
+ * URL so exporting several frames that share a logo/photo — or re-exporting
+ * the same frame — never re-fetches. A failed fetch (network error, missing
+ * CORS headers) returns the ORIGINAL url unchanged and is cached as such —
+ * one broken image must degrade gracefully, not fail the whole export, and
+ * must not be retried on every single export afterward.
+ */
+export async function inlineImageUrl(url: string): Promise<string> {
+  if (url.startsWith("data:")) return url;
+  const cached = imageDataUriCache.get(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const contentType = res.headers.get("content-type") || "image/png";
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
+    }
+    const dataUri = `data:${contentType};base64,${btoa(binary)}`;
+    imageDataUriCache.set(url, dataUri);
+    return dataUri;
+  } catch {
+    imageDataUriCache.set(url, url);
+    return url;
+  }
+}
+
+/** Every `url(http…)` in css, EXCLUDING `@import` statements (those are font
+ *  stylesheets, handled separately by inlineGoogleFontCss — blindly treating
+ *  them as images here would corrupt the font import). */
+function collectCssImageUrls(css: string): string[] {
+  const withoutImports = css.replace(/@import\s+url\([^)]*\)[^;]*;/g, "");
+  const urls = new Set<string>();
+  for (const m of withoutImports.matchAll(/url\((['"]?)(https?:\/\/[^'")]+)\1\)/g)) urls.add(m[2]);
+  return [...urls];
+}
+
+/**
+ * Replace every external (http/https) image reference in a frame's html
+ * (`<img src>`) and css (`background(-image): url(...)`, inline `style`
+ * attributes) with its inlined data: URI. Must run before the markup is
+ * embedded in an SVG used as an image — see the module doc comment for why.
+ */
+export async function inlineFrameImages(html: string, css: string): Promise<{ html: string; css: string }> {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+
+  const htmlUrls = new Set<string>();
+  for (const img of container.querySelectorAll("img[src]")) {
+    const src = img.getAttribute("src") || "";
+    if (/^https?:\/\//.test(src)) htmlUrls.add(src);
+  }
+  for (const el of container.querySelectorAll<HTMLElement>("[style*=url]")) {
+    for (const m of (el.getAttribute("style") || "").matchAll(/url\((['"]?)(https?:\/\/[^'")]+)\1\)/g)) {
+      htmlUrls.add(m[2]);
+    }
+  }
+  const cssUrls = collectCssImageUrls(css);
+  const allUrls = [...new Set([...htmlUrls, ...cssUrls])];
+  if (allUrls.length === 0) return { html, css };
+
+  const map = new Map<string, string>();
+  await Promise.all(allUrls.map(async url => { map.set(url, await inlineImageUrl(url)); }));
+
+  for (const img of container.querySelectorAll("img[src]")) {
+    const src = img.getAttribute("src") || "";
+    const inlined = map.get(src);
+    if (inlined && inlined !== src) img.setAttribute("src", inlined);
+  }
+  for (const el of container.querySelectorAll<HTMLElement>("[style*=url]")) {
+    let style = el.getAttribute("style") || "";
+    for (const [url, dataUri] of map) {
+      if (dataUri === url) continue;
+      style = style.split(url).join(dataUri);
+    }
+    el.setAttribute("style", style);
+  }
+
+  let nextCss = css;
+  for (const [url, dataUri] of map) {
+    if (dataUri === url) continue;
+    nextCss = nextCss.split(url).join(dataUri);
+  }
+
+  return { html: container.innerHTML, css: nextCss };
 }
 
 /**
@@ -118,8 +225,11 @@ export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HT
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
     .map(m => m[1])
     .filter(url => url.includes("fonts.googleapis.com"));
-  const fontCss = await inlineGoogleFontCss(importUrls);
-  const svg = buildFrameSvgMarkup(source, fontCss);
+  const [{ html, css }, fontCss] = await Promise.all([
+    inlineFrameImages(source.html, source.css),
+    inlineGoogleFontCss(importUrls),
+  ]);
+  const svg = buildFrameSvgMarkup({ ...source, html, css }, fontCss);
 
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
   const parseError = parsed.querySelector("parsererror");
