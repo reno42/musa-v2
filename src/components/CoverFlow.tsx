@@ -176,16 +176,12 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
       const fling = clamp(velocity * 260, -4, 4);
       targetRef.current = clamp(Math.round(posRef.current + fling), 0, lenRef.current - 1);
       if (!moved) {
-        // Plain click: resolve which card was under the pointer via elements.
+        // Tap/click any card → open editor directly (iPod-style).
         const el = (ev.target as HTMLElement).closest("[data-flow-index]") as HTMLElement | null;
         if (el) {
           const idx = Number(el.dataset.flowIndex);
-          if (idx === Math.round(posRef.current)) {
-            const item = itemsRef.current[idx];
-            if (item) onOpenRef.current(item.id);
-          } else {
-            targetRef.current = idx;
-          }
+          const item = itemsRef.current[idx];
+          if (item) onOpenRef.current(item.id);
         }
       }
     };
