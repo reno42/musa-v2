@@ -16,6 +16,49 @@ import { mcpCall } from "../lib/mcpClient";
 type Role = "user" | "assistant" | "system";
 interface Message { role: Role; content: string; ts?: number }
 
+/**
+ * fetchWithRetry — wraps fetch with AbortController timeout AND exponential backoff retry.
+ * Prevents UI freezes (timeout) and transient API failures (retry).
+ * - Timeout: 90s per attempt (LLM calls can be slow with large tool schemas)
+ * - Retries: 2 (3 total attempts), backoff: 1s, 2s
+ * - Only retries on network errors and 429/500/502/503/504
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  opts: { timeoutMs?: number; maxRetries?: number } = {},
+): Promise<Response> {
+  const timeoutMs = opts.timeoutMs ?? 90_000;
+  const maxRetries = opts.maxRetries ?? 2;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+      // Retry on server errors and rate limiting
+      if (resp.status >= 500 || resp.status === 429) {
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+      }
+      return resp;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      const isAbort = err?.name === "AbortError";
+      const isNetwork = !isAbort;
+      if (attempt < maxRetries && (isNetwork || isAbort)) {
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("fetchWithRetry: unreachable");
+}
+
 const PROVIDERS = [
   { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_OPENAI_API_KEY" },
   { id: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-sonnet-20241022", endpoint: "https://api.anthropic.com/v1/messages", keyPrefix: "sk-ant-", keyEnv: "VITE_ANTHROPIC_API_KEY" },
@@ -537,7 +580,7 @@ async function spawnSubagent(params: {
     let data: any;
 
     if (isAnthropic) {
-      const resp = await fetch(prov.endpoint, {
+      const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools) }),
@@ -545,7 +588,7 @@ async function spawnSubagent(params: {
       if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
       data = await resp.json();
     } else {
-      const resp = await fetch(prov.endpoint, {
+      const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
         body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools }),
@@ -727,7 +770,7 @@ export function ChatFAB() {
         let data: any;
 
         if (isAnthropic) {
-          const resp = await fetch(prov.endpoint, {
+          const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
             body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS) }),
@@ -735,7 +778,7 @@ export function ChatFAB() {
           if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
         } else {
-          const resp = await fetch(prov.endpoint, {
+          const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
             body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS }),
@@ -807,8 +850,35 @@ export function ChatFAB() {
             setMessages(prev => [...prev, { role: "assistant", content: `✓ ${tc.name} → ${short || "ok"}`, ts: Date.now() }]);
           }
 
-          if (isAnthropic) { conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
-          else { conversation.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
+          // ── Post-delegate verification: confirm template exists in DB ──
+          // If harness_delegate_task returned a templateId, verify it with get_template
+          // before accepting the result. This prevents hallucinated "done" responses.
+          let finalResultStr = resultStr;
+          if (tc.name === "harness_delegate_task" && !isError) {
+            try {
+              const parsed = JSON.parse(resultStr);
+              const delegateTemplateId = parsed?.templateId;
+              const delegateRole = parsed?.role;
+              // Only verify after implementer (not reviewer — reviewer doesn't create templates)
+              if (delegateTemplateId && delegateRole === "implementer") {
+                setToolEvents(prev => [...prev, { tool: "get_template (verify)", status: "running" }]);
+                const verifyResult = await mcpCall("get_template", { templateId: delegateTemplateId });
+                const verifyOk = verifyResult && !verifyResult.error && (verifyResult.id || verifyResult.template?.id);
+                setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: verifyOk ? "done" as const : "error" as const, result: verifyOk ? "Template confirmed" : "Template NOT found" } : e));
+                if (!verifyOk) {
+                  // Template was NOT created — inject error into conversation for Leader to handle
+                  const verifyErr = `⚠️ VERIFICATION FAILED: harness_delegate_task reported templateId "${delegateTemplateId}" but get_template could not find it in the database. The implementer may have returned "done" without actually creating the template. Do NOT move to review — re-delegate to the implementer with clearer instructions.`;
+                  finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr });
+                  setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
+                } else {
+                  setMessages(prev => [...prev, { role: "assistant", content: `✓ get_template (verify) → Template confirmed: ${delegateTemplateId}`, ts: Date.now() }]);
+                }
+              }
+            } catch { /* resultStr was not JSON — skip verification */ }
+          }
+
+          if (isAnthropic) { conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }] }); }
+          else { conversation.push({ role: "tool", tool_call_id: tc.id, content: finalResultStr }); }
         }
 
         // If errors occurred, emit a structured error summary to the user
