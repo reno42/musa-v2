@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
-import html2canvas from "html2canvas";
+import { rasterizeFrame } from "../lib/frameCapture";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
@@ -528,7 +528,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     onCreateHtmlTemplate(DEFAULT_WORKSPACE_ID, name);
   };
 
-  /* Snapshot all templates: capture each frame via html2canvas → save as base64 thumbnail */
+  /* Snapshot all templates: rasterize each frame (see frameCapture.ts — replaced
+     html2canvas, which never supported CSS filters and dropped body/html rules
+     scoped to the frame) → save as base64 thumbnail. */
   const [snapshotProgress, setSnapshotProgress] = useState({ running: false, done: 0, total: 0 });
   const handleSnapshotAll = useCallback(async () => {
     const htmlTemplates = templates.filter(t => t.frames?.[0]?.html);
@@ -538,21 +540,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const t = htmlTemplates[i];
       const frame = t.frames![0];
       try {
-        const container = document.createElement("div");
-        container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
-        document.body.appendChild(container);
-        const target = document.createElement("div");
-        target.style.cssText = `width:${t.width}px;height:${t.height}px;overflow:hidden;position:relative;`;
-        const style = document.createElement("style");
-        style.textContent = frame.css || "";
-        target.appendChild(style);
-        const content = document.createElement("div");
-        content.innerHTML = frame.html || "";
-        target.appendChild(content);
-        container.appendChild(target);
-        const canvas = await html2canvas(target, { width: t.width, height: t.height, scale: 0.5, useCORS: true, allowTaint: true, backgroundColor: frame.background || "#0d0d1a" });
+        const canvas = await rasterizeFrame({
+          html: frame.html || "", css: frame.css || "",
+          width: t.width, height: t.height,
+          background: frame.background || "#0d0d1a",
+        }, 0.5);
         const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-        container.remove();
         await mcpCall("update_thumbnail", { templateId: t.id, thumbnail: dataUrl });
       } catch { /* skip failures, continue */ }
       setSnapshotProgress(prev => ({ ...prev, done: i + 1 }));
@@ -637,7 +630,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const renderTemplateCard = (t: Template, i?: number) => {
     /* Thumbnail preview: both flow and grid modes use static <img> thumbnails.
        Server-side pipeline generates SVG placeholders on commit; browser-side
-       handleSnapshotAll replaces them with real PNGs via html2canvas.
+       handleSnapshotAll replaces them with real PNGs via rasterizeFrame.
        Prefer curated cover_image_url from design_file_meta over auto thumbnail. */
     const coverUrl = metaCovers.get(t.id) || t.thumbnail;
     const previewContent = coverUrl

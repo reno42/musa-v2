@@ -53,17 +53,10 @@ async function fetchTemplate(id, event) {
 // ─── Render Function handler ─────────────────────────────────
 
 /**
- * Extract Google Fonts @import URLs from CSS and convert to <link> tags.
- * This ensures fonts load properly in the SVG foreignObject render path.
- *
- * NOTE: Full Puppeteer rendering (page.setContent + page.screenshot) would
- * provide pixel-perfect output with all CSS features (gradients, shadows,
- * blend modes, animations). However, Puppeteer + Chromium (~130 MB) exceeds
- * Netlify's 50 MB function size limit for the free tier.
- *
- * For production use, a dedicated render service (AWS Lambda container,
- * Cloud Run, or a VPS) with Puppeteer is recommended. The foreignObject
- * approach below handles 90% of use cases and is the current fallback.
+ * Extract Google Fonts @import URLs from CSS and convert to <link> tags,
+ * for humans reading the page while it renders (the capture path below
+ * inlines fonts as data URIs separately, so the canvas draw never depends
+ * on these having finished loading).
  */
 function extractFontLinks(css) {
   const links = [];
@@ -84,7 +77,13 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
   // Support both single-template html/css and per-frame html/css
   const htmlContent = tpl._frameHtml || tpl.html || "";
   const cssContent = tpl._frameCss || tpl.css || "";
+  const background = tpl._frameBackground || tpl.background || "#ffffff";
   const fontLinks = extractFontLinks(cssContent);
+  // Passed into the page's own <script> below as JSON literals — this file
+  // never executes them, it only emits the string.
+  const htmlJson = JSON.stringify(htmlContent);
+  const cssJson = JSON.stringify(cssContent);
+  const bgJson = JSON.stringify(background);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -92,7 +91,6 @@ function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${safeName} — Futuraria HTML Render</title>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"><\/script>
 ${fontLinks}
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -135,6 +133,8 @@ ${fontLinks}
     box-shadow: 0 2px 8px rgba(0,0,0,0.12);
     overflow: hidden;
     position: relative;
+    max-width: 100%;
+    height: auto;
   }
   .info { margin-top:10px; font-size:11px; color:#888; }
 </style>
@@ -142,47 +142,110 @@ ${fontLinks}
 <body>
 <div class="toolbar">
   <h2>${safeName}</h2>
-  <button class="btn-download" onclick="doCapture()">⬇ Download PNG</button>
-  <span id="status" style="font-size:12px;color:#666">Loading fonts…</span>
+  <button class="btn-download" onclick="doCapture()">⬇ Download ${format.toUpperCase()}</button>
+  <span id="status" style="font-size:12px;color:#666">Rendering…</span>
 </div>
-<div id="render-target" style="width:${width}px;height:${height}px">
-  <style>${cssContent}</style>
-  ${htmlContent}
-</div>
+<canvas id="render-target" width="${width}" height="${height}" style="width:${width}px"></canvas>
 <div class="info">${width}×${height}px · ${format.toUpperCase()}</div>
 <script>
-  (function() {
-    var safeName = "${safeName}";
-    var format = "${format}";
-    var w = ${width};
-    var h = ${height};
+(function() {
+  // Same technique as src/lib/frameCapture.ts (the editor's export pipeline):
+  // paint through an SVG <foreignObject> so the browser's own CSS engine
+  // renders the design — filters, gradients and shadows all come out right,
+  // which a DOM-cloning capture library cannot guarantee.
+  var safeName = ${JSON.stringify(safeName)};
+  var format = ${JSON.stringify(format)};
+  var w = ${width};
+  var h = ${height};
+  var html = ${htmlJson};
+  var css = ${cssJson};
+  var background = ${bgJson};
 
-    window.doCapture = function() {
-      var el = document.getElementById('render-target');
-      document.getElementById('status').textContent = 'Capturing…';
-      html2canvas(el, { width: w, height: h, scale: 2, useCORS: true, allowTaint: true }).then(function(canvas) {
-        canvas.toBlob(function(blob) {
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = safeName + '.' + format;
-          a.click();
-          URL.revokeObjectURL(url);
-          document.getElementById('status').textContent = 'Downloaded ✓';
+  function mapBodySelectors(text) {
+    return text
+      .replace(/([{}]\\s*|,\\s*|^\\s*)html\\b/gm, "$1#__df_content")
+      .replace(/([{}]\\s*|,\\s*|^\\s*)body\\b/gm, "$1#__df_content")
+      .replace(/(\\s)html\\b/g, "$1#__df_content")
+      .replace(/(\\s)body\\b/g, "$1#__df_content");
+  }
+
+  function toXhtml(innerHtml) {
+    var container = document.createElement("div");
+    container.id = "__df_content";
+    container.innerHTML = innerHtml;
+    return new XMLSerializer().serializeToString(container);
+  }
+
+  function inlineGoogleFonts(importUrls, done) {
+    if (importUrls.length === 0) { done(""); return; }
+    var results = [];
+    var remaining = importUrls.length;
+    importUrls.forEach(function(cssUrl, idx) {
+      fetch(cssUrl).then(function(r) { return r.text(); }).then(function(cssText) {
+        var fontUrls = [];
+        var re = /url\\((https:[^)]+)\\)/g, m;
+        while ((m = re.exec(cssText)) !== null) if (fontUrls.indexOf(m[1]) === -1) fontUrls.push(m[1]);
+        var pending = fontUrls.length;
+        if (pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join("\\n")); return; }
+        fontUrls.forEach(function(fontUrl) {
+          fetch(fontUrl).then(function(r) { return r.arrayBuffer(); }).then(function(buf) {
+            var bytes = new Uint8Array(buf), binary = "";
+            for (var i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            cssText = cssText.split(fontUrl).join("data:font/woff2;base64," + btoa(binary));
+            if (--pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join("\\n")); }
+          }).catch(function() { if (--pending === 0) { results[idx] = cssText; if (--remaining === 0) done(results.join("\\n")); } });
+        });
+      }).catch(function() { results[idx] = ""; if (--remaining === 0) done(results.join("\\n")); });
+    });
+  }
+
+  function render() {
+    var importUrls = [];
+    var re = /@import\\s+url\\(['"]?([^'")]+)['"]?\\)/g, m;
+    while ((m = re.exec(css)) !== null) if (m[1].indexOf("fonts.googleapis.com") !== -1) importUrls.push(m[1]);
+
+    inlineGoogleFonts(importUrls, function(fontCss) {
+      var scopedCss = mapBodySelectors(css).replace(/@import\\s+url\\([^)]*\\)[^;]*;/g, "");
+      var xhtml = toXhtml(html);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">'
+        + '<foreignObject width="100%" height="100%">'
+        + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + w + 'px;height:' + h + 'px;position:relative;background:' + background + ';overflow:hidden">'
+        + '<style>' + fontCss + '\\n#__df_content{width:' + w + 'px;height:' + h + 'px;overflow:hidden}\\n' + scopedCss + '</style>' + xhtml + '</div></foreignObject></svg>';
+
+      var img = new Image();
+      img.onload = function() {
+        setTimeout(function() {
+          var canvas = document.getElementById('render-target');
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          document.getElementById('status').textContent = 'Rendered ✓';
           document.getElementById('status').style.color = '#059669';
-        }, format === 'jpg' ? 'image/jpeg' : 'image/png');
-      });
-    };
+        }, 350); // fonts/images inside the foreignObject decode asynchronously
+      };
+      img.onerror = function() {
+        document.getElementById('status').textContent = 'Render failed — the design markup may be malformed.';
+        document.getElementById('status').style.color = '#dc2626';
+      };
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
+  }
 
-    // Auto-capture when fonts are ready
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(function() {
-        document.getElementById('status').textContent = 'Rendered ✓';
-      });
-    } else {
-      document.getElementById('status').textContent = 'Rendered ✓';
-    }
-  })();
+  window.doCapture = function() {
+    var canvas = document.getElementById('render-target');
+    document.getElementById('status').textContent = 'Preparing download…';
+    canvas.toBlob(function(blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = safeName + '.' + format;
+      a.click();
+      URL.revokeObjectURL(url);
+      document.getElementById('status').textContent = 'Downloaded ✓';
+      document.getElementById('status').style.color = '#059669';
+    }, format === 'jpg' ? 'image/jpeg' : 'image/png', format === 'jpg' ? 0.92 : undefined);
+  };
+
+  render();
+})();
 </script>
 </body></html>`;
 }
@@ -227,7 +290,7 @@ export const handler = async (event) => {
       const format = event.queryStringParameters?.format || "png";
       const width = Math.round((frame.width || 1080) * scale);
       const height = Math.round((frame.height || 1080) * scale);
-      const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+      const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || "#ffffff", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
       const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId);
       return { statusCode: 200, headers: htmlHeaders, body: html };
     }
@@ -270,7 +333,7 @@ export const handler = async (event) => {
       if (!frame) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
       }
-      tpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+      tpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || "#ffffff", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
     }
     const baseW = tpl.width || 1080;
     const baseH = tpl.height || 1080;

@@ -8,6 +8,7 @@ import {
   updateCssProperties as mutateCssProperties,
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
+import { mapBodySelectors } from "../lib/frameCapture";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
@@ -2860,16 +2861,6 @@ function importantProperties(properties: Record<string, string>): Record<string,
  *   html body { }            — descendant (whitespace-preceded)
  *   body.dark { }            — compound class with dot
  */
-function mapBodySelectors(css: string): string {
-  // Pass 1 — body / html at selector start (line start, after brace, after comma)
-  return css
-    .replace(/([{}]\s*|,\s*|^\s*)html\b/gm, "$1#__df_content")
-    .replace(/([{}]\s*|,\s*|^\s*)body\b/gm, "$1#__df_content")
-    // Pass 2 — descendant selectors (whitespace-preceded, e.g. "div body", "html body")
-    .replace(/(\s)html\b/g, "$1#__df_content")
-    .replace(/(\s)body\b/g, "$1#__df_content");
-}
-
 function extractFontImports(css: string): string[] {
   // Extract ALL @import url(...) from CSS — Google Fonts, Phosphor Icons, any CDN.
   // Each becomes a <link rel="stylesheet"> injected into the Shadow DOM.

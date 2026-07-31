@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import html2canvas from "html2canvas";
+import { rasterizeFrame, canvasToBlob } from "../lib/frameCapture";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -2353,67 +2353,32 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 </svg>`;
   }, []);
 
-  /// Capture a single frame to PNG/blob via offscreen html2canvas (no page, no toolbars).
+  // Capture a single frame to a PNG/JPG blob via rasterizeFrame (see frameCapture.ts
+  // for why this replaced html2canvas — it dropped CSS filters and body/html styles).
   const captureFrameToPng = useCallback(async (frame: FrameData, scale: number = 2, format: "png" | "jpg" = "png"): Promise<Blob | null> => {
-    const container = document.createElement("div");
-    container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
-    document.body.appendChild(container);
-
-    const target = document.createElement("div");
-    target.style.cssText = `width:${frame.width}px;height:${frame.height}px;overflow:hidden;position:relative;`;
-    if (format === "jpg" && frame.background) {
-      target.style.background = frame.background;
-    }
-    const style = document.createElement("style");
-    style.textContent = frame.css;
-    target.appendChild(style);
-    const content = document.createElement("div");
-    content.innerHTML = frame.html;
-    target.appendChild(content);
-    container.appendChild(target);
-
-    const importRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
-    let m;
-    const fontLinks: HTMLLinkElement[] = [];
-    while ((m = importRe.exec(frame.css)) !== null) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = m[1];
-      document.head.appendChild(link);
-      fontLinks.push(link);
-    }
-
+    // JPEG has no alpha channel: an unresolved "transparent" background would
+    // rasterize as solid BLACK once flattened, not white — always resolve to
+    // an opaque color for jpg. PNG keeps true transparency when the frame has
+    // none set.
+    const background = frame.background || (format === "jpg" ? "#ffffff" : "transparent");
     try {
-      if (document.fonts?.ready) await document.fonts.ready;
-      else await new Promise(r => setTimeout(r, 2000));
-
-      const canvas = await html2canvas(target, {
-        width: frame.width,
-        height: frame.height,
+      const canvas = await rasterizeFrame(
+        { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background },
         scale,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: format === "jpg" ? (frame.background || "#ffffff") : null,
-      });
-
-      return new Promise(resolve => {
-        const mimeType = format === "jpg" ? "image/jpeg" : "image/png";
-        const quality = format === "jpg" ? 0.92 : undefined;
-        canvas.toBlob(blob => resolve(blob), mimeType, quality);
-      });
+      );
+      const mimeType = format === "jpg" ? "image/jpeg" : "image/png";
+      const quality = format === "jpg" ? 0.92 : undefined;
+      return await canvasToBlob(canvas, mimeType, quality);
     } catch (err) {
       console.warn("[Export] Capture failed", err);
       return null;
-    } finally {
-      fontLinks.forEach(l => l.remove());
-      container.remove();
     }
   }, []);
 
   const handleExportFramePNG = useCallback(async (format: "png" | "jpg" = "png") => {
     if (!selectedFrame) return;
     // Export menu no longer used — ExportPanel handles UI state
-    const blob = await captureFrameToPng(selectedFrame, format === "jpg" ? 1 : 2, format);
+    const blob = await captureFrameToPng(selectedFrame, 2, format);
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2458,7 +2423,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
     // Export menu no longer used — ExportPanel handles UI state
     for (const frame of frames) {
-      const blob = await captureFrameToPng(frame, format === "jpg" ? 1 : 2, format);
+      const blob = await captureFrameToPng(frame, 2, format);
       if (!blob) continue;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -3240,7 +3205,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
-  // When jobs are found, renders each frame offscreen via html2canvas
+  // When jobs are found, renders each frame via rasterizeFrame (frameCapture.ts)
   // and uploads the resulting PNG to the server for AI agent retrieval.
   const renderWorkerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const renderingRef = useRef(false);
@@ -3264,67 +3229,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
 
-      // Create offscreen container
-      const container = document.createElement("div");
-      container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
-      document.body.appendChild(container);
-
-      // Build render target with exact frame dimensions
-      const target = document.createElement("div");
-      target.style.cssText = `width:${frame.width}px;height:${frame.height}px;overflow:hidden;position:relative;`;
-      const style = document.createElement("style");
-      style.textContent = frame.css;
-      target.appendChild(style);
-      const content = document.createElement("div");
-      content.innerHTML = frame.html;
-      target.appendChild(content);
-      container.appendChild(target);
-
       try {
-        // Wait for fonts to load (extract @import from CSS)
-        const importRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
-        let m;
-        const fontLinks: HTMLLinkElement[] = [];
-        while ((m = importRe.exec(frame.css)) !== null) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = m[1];
-          document.head.appendChild(link);
-          fontLinks.push(link);
-        }
-
-        // Wait for fonts
-        if (document.fonts?.ready) {
-          await document.fonts.ready;
-        } else {
-          await new Promise(r => setTimeout(r, 2000));
-        }
-
-        // Capture
-        const canvas = await html2canvas(target, {
-          width: frame.width,
-          height: frame.height,
-          scale: job.scale || 2,
-          useCORS: true,
-          allowTaint: true,
-        });
-
+        const canvas = await rasterizeFrame(
+          { html: frame.html, css: frame.css, width: frame.width, height: frame.height, background: frame.background || "transparent" },
+          job.scale || 2,
+        );
         const dataUrl = canvas.toDataURL("image/png");
 
         // Upload to server
-        const res = await fetch(`${API_BASE}/api/render/job/${job.jobId}/complete`, {
+        await fetch(`${API_BASE}/api/render/job/${job.jobId}/complete`, {
           method: "POST",
           headers: getApiHeaders(),
           body: JSON.stringify({ pngDataUrl: dataUrl }),
         });
-        const json = await res.json();
-
-        // Cleanup font links
-        fontLinks.forEach(l => l.remove());
       } catch (err) {
         console.warn("[RenderWorker] Render failed", err);
-      } finally {
-        container.remove();
       }
     };
 
