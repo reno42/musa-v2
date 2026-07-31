@@ -143,7 +143,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "list_versions", description: "Lista el historial de versiones de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
   { type: "function", function: { name: "save_version", description: "Guarda una versión del estado actual de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, label: { type: "string" } } } } },
   { type: "function", function: { name: "restore_version", description: "Restaura un template a una versión anterior.", parameters: { type: "object", required: ["templateId", "versionId"], properties: { templateId: { type: "string" }, versionId: { type: "string" } } } } },
-  { type: "function", function: { name: "diff_versions", description: "Compara dos versiones de un template.", parameters: { type: "object", required: ["templateId", "versionIdA", "versionIdB"], properties: { templateId: { type: "string" }, versionIdA: { type: "string" }, versionIdB: { type: "string" } } } } },
+  { type: "function", function: { name: "diff_versions", description: "Compara dos versiones de un template. Muestra QUÉ cambió frame por frame, con HTML/CSS before/after. Omite toVersionId para comparar contra el estado actual.", parameters: { type: "object", required: ["templateId", "fromVersionId"], properties: { templateId: { type: "string" }, fromVersionId: { type: "string" }, toVersionId: { type: "string" }, frameId: { type: "string" }, includeUnchanged: { type: "boolean" } } } } },
   // ═══════════════════════════════════════════════
   //  Frame CRUD
   // ═══════════════════════════════════════════════

@@ -1,0 +1,48 @@
+{
+  "_schema": "1.0",
+  "_description": "Master feature list for the Futuraria Design Harness. The Leader reads this for PLANNING. The Kanban (design_kanban_tasks in Supabase) is the source of truth for STATUS. Use studio_list_cards for live status.",
+  "_rules": {
+    "source_of_truth": "Kanban (Supabase/studio_list_cards) = live status. feature_list.json = planning guide.",
+    "status_mapping": {
+      "pending": "backlog/research/draft in Kanban",
+      "in_progress": "design in Kanban",
+      "review": "review in Kanban",
+      "done": "done in Kanban",
+      "feedback": "feedback in Kanban"
+    },
+    "one_at_a_time": "Only one task can be 'in_progress' at any time. harness_claim_feature enforces this server-side.",
+    "implementer_pick": "Implementers pick ONE pending task from this list. They never create tasks — only the Leader creates via studio_create_card.",
+    "cronjobs_optional": "Cronjobs are OPTIONAL. Not every feature needs one. Only create cronjobs for recurring tasks."
+  },
+  "features": [
+    {
+      "id": "feat_001",
+      "title": "Diseño de post 1080×1080",
+      "type": "post",
+      "status": "pending",
+      "priority": 1,
+      "brief": "Crear un diseño para Instagram 1080×1080 con estilo moderno",
+      "acceptance": [
+        "Dimensiones exactas 1080×1080px",
+        "Paleta de colores consistente",
+        "Tipografía legible en mobile",
+        "Export PNG funcional"
+      ],
+      "cardId": null,
+      "implementer_session": null,
+      "reviewer_session": null,
+      "created_at": "2026-07-17T00:00:00Z",
+      "updated_at": "2026-07-17T00:00:00Z",
+      "templateId": null,
+      "result_url": null
+    }
+  ],
+  "stats": {
+    "total": 1,
+    "pending": 1,
+    "in_progress": 0,
+    "review": 0,
+    "done": 0,
+    "feedback": 0
+  }
+}

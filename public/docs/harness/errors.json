@@ -1,0 +1,20 @@
+{
+  "_schema": "1.1",
+  "_description": "Centralized error log for the Futuraria Design Harness. Every tool failure, API error, and unexpected result is recorded. PRIMARY STORE: Supabase (harness_error_logs table via MCP harness_report_error). FALLBACK: localStorage (futuraria-error-log) if Supabase is unreachable.",
+  "_rules": {
+    "mandatory_reporting": "When ANY tool call fails, the Leader MUST call harness_report_error with: tool name, arguments, error message, step index, round, and provider.",
+    "primary_store": "Supabase table 'harness_error_logs' — persistent, queryable, multi-device. Inserted via MCP tool harness_report_error.",
+    "fallback_store": "localStorage key 'futuraria-error-log' — used ONLY when Supabase/MCP is unreachable. Max 100 entries.",
+    "user_visible": "Errors are also sent to the user via chat as structured summary messages.",
+    "internal_analysis": "Query Supabase directly for error trends: SELECT tool, count(*) FROM harness_error_logs GROUP BY tool ORDER BY count DESC;",
+    "max_entries": "Supabase: unlimited. localStorage fallback: 100.",
+    "migration": "Run supabase_migrations_v15.sql to create the harness_error_logs table."
+  },
+  "errors": [],
+  "stats": {
+    "total_errors": 0,
+    "last_error_at": null,
+    "by_tool": {},
+    "by_provider": {}
+  }
+}
