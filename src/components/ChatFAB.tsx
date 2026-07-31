@@ -473,28 +473,170 @@ CONTEXTO DE LA TAREA:
 // TOOL SUBSETS POR ROL
 // ═══════════════════════════════════════════════
 
-// Gap 6: Leader only gets orchestration tools — NO design tools.
-// This is STRUCTURAL enforcement, not prompt suggestion.
+// ═══════════════════════════════════════════════
+// TOOL SUBSETS POR ROL — expanded to eliminate "dead ends".
+// Every MCP tool with a real handler is now reachable by at least one agent role.
+// Excluded: 6 in-memory tools (observe_session, register_tool, auth_token,
+//   subscribe_template, unsubscribe_template, broadcast_section_change)
+//   that need Supabase migration before agent exposure.
+// ═══════════════════════════════════════════════
+
+// Leader: orchestration + read-only inspection + management.
+// NO design execution tools. Inspects state, delegates work, manages resources.
 const LEADER_TOOL_NAMES = new Set([
+  // ── Kanban ──
   "studio_create_card", "studio_list_cards", "studio_move_card", "studio_get_card",
-  "harness_delegate_task", "harness_healthcheck", "harness_get_context",
-  "harness_list_features", "harness_claim_feature", "harness_release_feature",
-  "harness_get_entries", "harness_complete_feature", "harness_report_error",
-  "harness_submit_for_review", "list_workspaces", "list_templates",
+  // ── Orchestration ──
+  "harness_delegate_task", "harness_healthcheck", "harness_get_context", "harness_report_error",
+  // ── Feature lifecycle ──
+  "harness_list_features", "harness_claim_feature", "harness_release_feature", "harness_complete_feature",
+  // ── Session ──
+  "harness_get_entries", "harness_submit_for_review",
+  // ── Cronjobs ──
+  "harness_list_cronjobs", "harness_create_cronjob", "harness_toggle_cronjob",
+  // ── Read-only inspection ──
+  "list_workspaces", "list_templates", "find_templates",
+  "get_template", "get_template_structure", "list_frames", "get_html_frames", "get_frame",
+  "get_design_system", "get_design_artifacts", "get_file_meta",
+  // ── Template management ──
+  "delete_template", "duplicate_template",
+  // ── Brand management ──
+  "get_brands", "delete_brand_guideline",
+  // ── API Keys ──
+  "create_api_key", "list_api_keys", "revoke_api_key",
+  // ── Monitoring ──
+  "get_metrics", "list_workspace_integrations", "call_workspace_mcp", "get_active_agents",
+  // ── Playbooks ──
+  "get_playbook", "get_agent_guide",
+  // ── Comments ──
+  "comment_add", "comment_list", "comment_resolve", "comment_reply",
+  // ── Batch & Recipes (visibility) ──
+  "list_batch_templates", "list_recipes", "get_recipe",
+  // ── Versions ──
+  "list_versions",
 ]);
 
-// Minimal set: create + submit. NO inspection tools that waste rounds.
-// Gap 8: Added get_template + list_frames for Mode B (modify existing).
+// Implementer: ALL design creation + modification tools.
+// Full creative surface: HTML/CSS, elements, shapes, text, AI gen, fonts, assets, brand, export, import.
 const IMPLEMENTER_TOOL_NAMES = new Set([
-  "create_html_template", "create_frame", "create_html_frame",
-  "set_html", "set_css", "get_template", "list_frames",
-  "harness_submit_for_review", "harness_log_entry",
+  // ── Workspace ──
   "list_workspaces",
+  // ── Template CRUD ──
+  "create_html_template", "create_template", "create_deck",
+  "update_template", "rename_template", "tag_template", "untag_template",
+  "duplicate_template", "delete_template",
+  // ── Frame CRUD ──
+  "create_frame", "create_html_frame", "list_frames", "get_frame", "get_html_frames",
+  "delete_frame", "duplicate_frame", "update_frame_content", "update_html_frame", "delete_html_frame",
+  // ── HTML / CSS ──
+  "set_html", "set_css",
+  "set_css_variable", "get_css_variables",
+  "create_variable", "link_variable", "extract_variables", "apply_variables",
+  // ── Element Manipulation ──
+  "select_element", "update_element", "add_element", "add_primitive",
+  "remove_element", "reorder_element", "change_element_tag",
+  "lock_element", "hide_element", "set_frame_layers",
+  "transform_element", "group_elements", "align_elements",
+  // ── Shapes & Paths ──
+  "draw_shape", "draw_path", "draw_bezier",
+  "edit_path_points", "edit_path_point", "shape_to_path", "pathfinder",
+  "set_stroke_style", "set_gradient", "set_blend_mode",
+  "outline_stroke", "offset_path",
+  // ── Text ──
+  "edit_text_content", "list_all_texts", "copy_style", "paste_style", "set_pseudo_state",
+  // ── AI Generation ──
+  "generate_from_prompt", "ai_generate_text", "ai_generate_image",
+  "ai_palette", "ai_suggest_layout", "ai_translate",
+  "image_to_design", "enhance_template", "generate_ui_components",
+  // ── Design Artifacts ──
+  "generate_design_artifacts", "generate_brand_manual",
+  "generate_csv_template", "suggest_color_palette",
+  // ── Brand & Design System ──
+  "register_brand", "apply_brand", "auto_fix_brand",
+  "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines", "update_brand_guideline",
+  "apply_brand_to_template", "get_active_styles", "set_style_lock",
+  "merge_brand_guidelines", "download_style_template", "get_brands",
+  // ── Fonts ──
+  "list_fonts", "search_google_fonts", "preview_font", "add_font_to_template", "get_font_details",
+  // ── Images & Assets ──
+  "upload_image", "optimize_image", "list_assets", "delete_asset", "replace_asset",
+  "search_stock_image", "upload_cover_image",
+  // ── Icons ──
+  "search_icons", "insert_icon",
+  // ── Format Adaptation ──
+  "adapt_format", "adapt_all_formats",
+  // ── Export / Render ──
+  "export_template", "export_frame", "export_batch", "export_pdf",
+  "copy_as", "render_batch", "render_html_template", "render_to_formats", "batch_render_html",
+  // ── Import ──
+  "import_template", "import_design", "import_svg", "assemble_template",
+  // ── Batch / CSV ──
+  "apply_csv_to_frames", "update_thumbnail",
+  // ── Recipes ──
+  "save_recipe", "list_recipes", "get_recipe", "create_from_recipe",
+  // ── Versioning ──
+  "save_version", "restore_version",
+  // ── Inspection (for Mode B: modify existing) ──
+  "get_template", "get_template_structure", "find_templates", "get_frame_changes",
+  // ── Design Tokens ──
+  "export_design_tokens",
+  // ── Harness ──
+  "harness_submit_for_review", "harness_log_entry", "harness_dump_context", "harness_report_error",
+  // ── Collaboration ──
+  "claim_section", "release_section",
+  // ── Utilities ──
+  "color_picker", "skill_clone", "get_file_meta", "set_file_meta",
+  "get_playbook", "get_agent_guide",
 ]);
+
+// Reviewer: ALL verification + inspection + analysis tools.
+// Read-only except for comments. Validates, audits, diffs, reports.
 const REVIEWER_TOOL_NAMES = new Set([
+  // ── Core Inspection ──
   "get_template", "get_template_structure", "get_html_frames", "get_frame",
-  "lint_design", "export_frame", "harness_get_entries", "harness_evaluate_checkpoint",
-  "harness_healthcheck", "list_templates", "list_frames",
+  "list_templates", "list_frames", "find_templates",
+  // ── Lint & Quality ──
+  "lint_design",
+  // ── Design System Analysis ──
+  "get_design_system", "extract_design_system", "verify_design_system",
+  "get_design_artifacts", "analyze_template_structure", "detect_structure",
+  "export_design_tokens",
+  // ── Accessibility ──
+  "check_contrast", "check_accessibility",
+  // ── Brand Validation ──
+  "validate_brand", "get_brands", "get_brand_guideline", "list_brand_guidelines",
+  "get_active_styles", "find_duplicate_styles",
+  // ── Versioning & Diffs ──
+  "list_versions", "diff_versions", "get_frame_changes",
+  // ── Visual Export (for verification) ──
+  "export_frame", "export_template", "render_batch",
+  // ── Format Comparison ──
+  "compare_adaptations",
+  // ── Profile Analysis ──
+  "profile_template_pool",
+  // ── CSS / Variables ──
+  "get_css_variables", "extract_variables",
+  // ── Text Audit ──
+  "list_all_texts",
+  // ── Asset Audit ──
+  "list_assets",
+  // ── Font Audit ──
+  "list_fonts", "get_font_details",
+  // ── Comments ──
+  "comment_add", "comment_list",
+  // ── Metadata ──
+  "get_file_meta",
+  // ── Metrics ──
+  "get_metrics",
+  // ── Playbooks ──
+  "get_playbook", "get_agent_guide",
+  // ── Batch Visibility ──
+  "list_batch_templates",
+  // ── Recipe Visibility ──
+  "list_recipes", "get_recipe",
+  // ── Harness ──
+  "harness_get_entries", "harness_evaluate_checkpoint",
+  "harness_healthcheck", "harness_log_entry", "harness_dump_context", "harness_report_error",
 ]);
 
 const LEADER_TOOLS = HARNESS_TOOLS.filter(t => LEADER_TOOL_NAMES.has(t.function.name));
