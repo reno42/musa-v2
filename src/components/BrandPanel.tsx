@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
+import { downloadBlob } from "../lib/download";
 
 interface Props {
   templateId: string;
@@ -250,10 +251,7 @@ export function BrandPanel({ templateId, workspaceId, onCssUpdated }: Props) {
           if (data?.manual || data?.markdown) {
             const md = data.manual || data.markdown;
             const blob = new Blob([md], { type: "text/markdown" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url; a.download = "brand_manual.md"; a.click();
-            URL.revokeObjectURL(url);
+            downloadBlob(blob, "brand_manual.md");
             setApplyMsg("✓ Manual downloaded!");
           }
           setTimeout(() => setApplyMsg(""), 2000);
@@ -331,10 +329,7 @@ export function BrandPanel({ templateId, workspaceId, onCssUpdated }: Props) {
                 type="button"
                 onClick={() => {
                   const blob = new Blob([extraction.artifacts.tokensJson], { type: "application/json" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url; a.download = "tokens.json"; a.click();
-                  URL.revokeObjectURL(url);
+                  downloadBlob(blob, "tokens.json");
                 }}
                 style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", color: "#8B5CF6", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
               >
@@ -346,10 +341,7 @@ export function BrandPanel({ templateId, workspaceId, onCssUpdated }: Props) {
                 type="button"
                 onClick={() => {
                   const blob = new Blob([extraction.artifacts.sharedCss], { type: "text/css" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url; a.download = "shared.css"; a.click();
-                  URL.revokeObjectURL(url);
+                  downloadBlob(blob, "shared.css");
                 }}
                 style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)", color: "#22c55e", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
               >
@@ -361,10 +353,7 @@ export function BrandPanel({ templateId, workspaceId, onCssUpdated }: Props) {
                 type="button"
                 onClick={() => {
                   const blob = new Blob([extraction.artifacts.designMd], { type: "text/markdown" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url; a.download = "DESIGN.md"; a.click();
-                  URL.revokeObjectURL(url);
+                  downloadBlob(blob, "DESIGN.md");
                 }}
                 style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.2)", color: "#fbbf24", borderRadius: 4, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}
               >

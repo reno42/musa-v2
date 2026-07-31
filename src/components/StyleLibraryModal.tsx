@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "../lib/supabase";
+import { downloadBlob } from "../lib/download";
 
 interface Props {
   workspaceId: string;
@@ -134,12 +135,7 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
       const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
       if (data?.content) {
         const blob = new Blob([data.content], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = data.filename || "tokens-template.json";
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, data.filename || "tokens-template.json");
         onToast?.("tokens-template.json downloaded! Fill it with Gemini and upload back.", "success");
       }
     } catch {

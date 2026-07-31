@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react";
 import { motion } from "framer-motion";
 import { rasterizeFrame } from "../lib/frameCapture";
+import { downloadBlob } from "../lib/download";
 import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
@@ -460,10 +461,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try {
       const res = await apiFetch<any>(`/templates/${id}/export`);
       const blob = new Blob([JSON.stringify(res, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${name}.futuraria.json`;
-      a.click(); URL.revokeObjectURL(url);
+      downloadBlob(blob, `${name}.futuraria.json`);
     } catch {
       addToast("Error al exportar la plantilla.", "error");
     }
@@ -1260,10 +1258,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             const res = await fetch("/SKILL.md");
             const text = await res.text();
             const blob = new Blob([text], { type: "text/markdown" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url; a.download = "SKILL.md"; a.click();
-            URL.revokeObjectURL(url);
+            downloadBlob(blob, "SKILL.md");
           } catch { alert("Could not download SKILL.md"); }
         };
 

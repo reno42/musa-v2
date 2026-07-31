@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob } from "../lib/frameCapture";
+import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -2380,12 +2381,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // Export menu no longer used — ExportPanel handles UI state
     const blob = await captureFrameToPng(selectedFrame, 2, format);
     if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
   }, [selectedFrame, captureFrameToPng]);
 
   /* Capture current frame as a thumbnail for the dashboard Cover Flow / grid */
@@ -2425,12 +2421,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     for (const frame of frames) {
       const blob = await captureFrameToPng(frame, 2, format);
       if (!blob) continue;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
       await new Promise(r => setTimeout(r, 300));
     }
   }, [frames, captureFrameToPng]);
@@ -2440,12 +2431,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     // Export menu no longer used — ExportPanel handles UI state
     const svgString = buildFrameSvg(selectedFrame);
     const blob = new Blob([svgString], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
   }, [selectedFrame]);
 
   const handleExportAllFramesSVG = useCallback(async () => {
@@ -2453,12 +2439,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     for (const frame of frames) {
       const svgString = buildFrameSvg(frame);
       const blob = new Blob([svgString], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
       await new Promise(r => setTimeout(r, 200));
     }
   }, [frames, buildFrameSvg]);
@@ -2617,12 +2598,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       for (const d of downloads) {
         if (!d.content) continue;
         const blob = new Blob([d.content], { type: d.type });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = d.name;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, d.name);
         await new Promise(r => setTimeout(r, 150));
       }
     } catch (e: any) {
@@ -2703,10 +2679,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const tpl = await getTemplate(templateId);
     if (tpl) {
       const blob = new Blob([JSON.stringify({ ...tpl, frames, canvasObjects: canvasObjectsRef.current }, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${templateName}.futuraria.json`;
-      a.click(); URL.revokeObjectURL(url);
+      downloadBlob(blob, `${templateName}.futuraria.json`);
     }
   }, [templateId, templateName, frames]);
 
@@ -3099,12 +3072,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const data = await callMcp("export_design_tokens", { templateId });
       const json = JSON.stringify(data?.tokens || data, null, 2);
       const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${templateName.replace(/[^a-zA-Z0-9_]/g, "_")}_tokens.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `${templateName.replace(/[^a-zA-Z0-9_]/g, "_")}_tokens.json`);
       setMcpMsg("✓ Tokens exported");
     } catch { setMcpMsg("✗ Token export failed"); }
     setMcpLoading(null);
