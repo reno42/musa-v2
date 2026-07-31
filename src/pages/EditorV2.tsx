@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { rasterizeFrame, canvasToBlob, inlineFrameImages } from "../lib/frameCapture";
-import { matchesCompoundSelector } from "../lib/cssSelectorMatch";
+import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
@@ -2211,73 +2210,61 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   /// Serialize a frame to SVG for vector export
   // ── Native SVG generation: walks DOM tree, resolves styles, emits <rect>/<text>/<image> ──
   // Unlike foreignObject SVG, this produces elements Figma and Illustrator can import.
-  const buildFrameSvg = useCallback((frame: FrameData): string => {
+  const buildFrameSvg = useCallback(async (frame: FrameData): Promise<string> => {
     const w = frame.width || 1080;
     const h = frame.height || 1080;
     const bg = frame.background || "#ffffff";
     const html = frame.html || "";
     const css = frame.css || "";
 
-    // Parse CSS rules
-    const cssRules: { selector: string; props: Record<string, string> }[] = [];
-    const cleanCss = css.replace(/@import[^;]+;/g, "").replace(/@font-face\s*\{[^}]*\}/g, "");
-    const ruleRe = /([^{}]+)\{([^}]*)\}/g;
-    let rm;
-    while ((rm = ruleRe.exec(cleanCss)) !== null) {
-      const selectors = rm[1].trim().split(",").map(s => s.trim());
-      const props: Record<string, string> = {};
-      for (const decl of rm[2].trim().split(";")) {
-        const idx = decl.indexOf(":");
-        if (idx > 0) {
-          const p = decl.slice(0, idx).trim();
-          const v = decl.slice(idx + 1).trim();
-          if (p && v) props[p] = v;
-        }
-      }
-      if (Object.keys(props).length > 0) {
-        for (const sel of selectors) cssRules.push({ selector: sel, props });
-      }
-    }
-
-    const matchesSel = (el: HTMLElement, selector: string): boolean => matchesCompoundSelector(el, selector);
-
-    const resolveStyles = (el: HTMLElement): Record<string, string> => {
-      const resolved: Record<string, string> = {};
-      // Inline styles first
-      const inline = el.getAttribute("style") || "";
-      for (const decl of inline.split(";")) {
-        const idx = decl.indexOf(":");
-        if (idx > 0) resolved[decl.slice(0, idx).trim()] = decl.slice(idx + 1).trim();
-      }
-      // CSS rules cascade on top
-      for (const { selector, props } of cssRules) {
-        if (matchesSel(el, selector)) Object.assign(resolved, props);
-      }
-      return resolved;
-    };
-
     const escXml = (t: string) => t.replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]!);
 
-    // Parse HTML into temp container
-    const tmp = document.createElement("div");
-    tmp.innerHTML = `<div id="__svgroot">${html}</div>`;
-    const root = tmp.querySelector("#__svgroot") as HTMLElement;
-    if (!root) return `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${bg}"/></svg>`;
+    // Render into a hidden, real DOM (a shadow root, mirroring DesignFrame's
+    // own #__df_content scoping) instead of reimplementing CSS by hand. The
+    // previous version only ever read an element's OWN inline left/top as
+    // an absolute offset — anything positioned by document flow, a parent's
+    // padding, or a flex "Contenedor" layout (never an explicit left/top)
+    // silently landed at (0,0), which is exactly the "image pinned to the
+    // top-left, text missing" bug reported against real exports. Letting the
+    // browser do the actual layout, then reading it back with
+    // getBoundingClientRect/getComputedStyle, handles any layout mode
+    // correctly and also gives exact CSS cascade resolution (any selector
+    // shape) for free — no bespoke selector matcher needed.
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:-99999px;top:0;pointer-events:none;";
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: "open" });
+    const styleEl = document.createElement("style");
+    styleEl.textContent = `#__df_content { width: ${w}px; height: ${h}px; overflow: hidden; }\n${mapBodySelectors(css)}`;
+    shadow.appendChild(styleEl);
+    const content = document.createElement("div");
+    content.id = "__df_content";
+    content.innerHTML = html;
+    content.style.position = "relative";
+    content.style.background = bg;
+    shadow.appendChild(content);
+
+    // Let images (already inlined as data: URIs by the caller) and web
+    // fonts settle before measuring — an unloaded image or fallback font
+    // metric would throw off the box sizes we're about to read.
+    const imgs = Array.from(content.querySelectorAll("img"));
+    await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise<void>(resolve => {
+      img.addEventListener("load", () => resolve(), { once: true });
+      img.addEventListener("error", () => resolve(), { once: true });
+      setTimeout(resolve, 2000);
+    })));
+    if (document.fonts?.ready) { try { await document.fonts.ready; } catch { /* fall back to default metrics */ } }
 
     const svgParts: string[] = [];
 
     // CSS `filter` has no direct SVG-attribute equivalent — it needs a
-    // <filter> def referenced via filter="url(#id)". resolveStyles() only
-    // bakes NAMED properties (color, width…) into fixed attributes, so
-    // without this an image styled with `filter: grayscale(1)` (this app's
-    // standard photo treatment, confirmed on every design in this project)
-    // would export in full color despite the PNG/JPG export showing it
-    // correctly desaturated — one shared def per distinct grayscale amount.
+    // <filter> def referenced via filter="url(#id)". This app's standard
+    // photo treatment is grayscale(1) on every design in this project;
+    // translate it so the exported SVG matches the desaturated PNG/JPG.
     const filterDefs: string[] = [];
     const filterIdByKey = new Map<string, string>();
-    const filterAttr = (style: Record<string, string>): string => {
-      const raw = style["filter"];
-      if (!raw) return "";
+    const filterAttr = (raw: string): string => {
+      if (!raw || raw === "none") return "";
       const m = raw.match(/grayscale\(\s*([\d.]+)(%?)\s*\)/);
       if (!m) return "";
       let amount = parseFloat(m[1]);
@@ -2293,68 +2280,74 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return ` filter="url(#${id})"`;
     };
 
-    const walkNode = (node: HTMLElement, offsetX: number, offsetY: number) => {
+    const contentRect = content.getBoundingClientRect();
+
+    const walkNode = (node: Element) => {
       for (const child of Array.from(node.children) as HTMLElement[]) {
         const tag = child.tagName.toLowerCase();
         if (["script", "style", "link", "meta"].includes(tag)) continue;
 
-        const style = resolveStyles(child);
+        const rect = child.getBoundingClientRect();
+        const cs = getComputedStyle(child);
         const text = (child.textContent || "").trim();
         const hasChildren = child.children.length > 0;
 
-        const left = parseInt(style["left"]) || 0;
-        const top = parseInt(style["top"]) || 0;
-        const width = parseInt(style["width"]) || 0;
-        const height = parseInt(style["height"]) || 0;
-        const fontSize = style["font-size"] || style["fontSize"] || "16px";
-        const fontFamily = (style["font-family"] || style["fontFamily"] || "sans-serif").replace(/["']/g, "");
-        const color = style["color"] || "#000000";
-        const fontWeight = style["font-weight"] || style["fontWeight"] || "400";
-        const textAlign = style["text-align"] || style["textAlign"] || "left";
-        const background = style["background"] || style["background-color"] || style["backgroundColor"] || "";
-        const borderRadius = style["border-radius"] || style["borderRadius"] || "";
-        const opacity = parseFloat(style["opacity"]) || 1;
+        const x = rect.left - contentRect.left;
+        const y = rect.top - contentRect.top;
+        const width = rect.width;
+        const height = rect.height;
+        const opacity = parseFloat(cs.opacity) || 1;
 
-        const x = left + offsetX;
-        const y = top + offsetY;
-
-        // Background rect
-        const bgC = background.match(/#[0-9a-f]{3,8}/i)?.[0] || background.match(/rgba?\([^)]+\)/i)?.[0] || "";
-        if (bgC && width && height) {
-          const rx = borderRadius.match(/(\d+)/)?.[1] || "0";
-          svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${bgC}" rx="${rx}" opacity="${opacity}"/>`);
+        // Background rect — skip fully transparent paints
+        const bgColor = cs.backgroundColor;
+        if (width > 0 && height > 0 && bgColor && !/rgba?\(\s*0,\s*0,\s*0,\s*0\s*\)/.test(bgColor)) {
+          const rx = parseFloat(cs.borderTopLeftRadius) || 0;
+          svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escXml(bgColor)}" rx="${rx}" opacity="${opacity}"/>`);
         }
 
-        // Image
         if (tag === "img") {
           const src = child.getAttribute("src") || "";
-          if (src && width && height) {
-            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"${filterAttr(style)}/>`);
+          if (src && width > 0 && height > 0) {
+            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"${filterAttr(cs.filter)}/>`);
           }
+        } else if (text && !hasChildren) {
+          const fontFamily = cs.fontFamily.replace(/["']/g, "");
+          const fontSize = cs.fontSize;
+          const fontWeight = cs.fontWeight;
+          const color = cs.color;
+          const textAlign = cs.textAlign;
+          const anchor = textAlign === "center" ? "middle" : (textAlign === "right" || textAlign === "end") ? "end" : "start";
+          const textX = textAlign === "center" ? x + width / 2 : (textAlign === "right" || textAlign === "end") ? x + width : x;
+          const textY = y + (parseFloat(fontSize) || 16);
+          svgParts.push(`<text x="${textX}" y="${textY}" font-family="${escXml(fontFamily)}" font-size="${escXml(fontSize)}" font-weight="${escXml(fontWeight)}" fill="${escXml(color)}" text-anchor="${anchor}" opacity="${opacity}">${escXml(text)}</text>`);
         }
 
-        // Text (leaf nodes only)
-        if (text && !hasChildren && tag !== "img") {
-          const anchor = textAlign === "center" ? "middle" : textAlign === "right" ? "end" : "start";
-          const textX = textAlign === "center" ? x + width / 2 : textAlign === "right" ? x + width : x;
-          const textY = y + parseInt(fontSize) || y + 16;
-          svgParts.push(`<text x="${textX}" y="${textY}" font-family="${escXml(fontFamily)}" font-size="${escXml(fontSize)}" font-weight="${escXml(fontWeight)}" fill="${color}" text-anchor="${anchor}" opacity="${opacity}">${escXml(text)}</text>`);
-        }
-
-        // Recurse
-        walkNode(child, x, y);
+        walkNode(child);
       }
     };
 
-    walkNode(root, 0, 0);
+    walkNode(content);
+    host.remove();
 
     // Extract font links
     const fontImportRe = /@import\s+url\(['"]?(https:\/\/fonts\.googleapis\.com[^'")]+)['"]?\)\s*;/g;
     const fontLinks: string[] = [];
     let fm;
     while ((fm = fontImportRe.exec(css)) !== null) {
-      fontLinks.push(`<link rel="stylesheet" href="${fm[1]}"/>`);
+      // Google Fonts URLs are built with `&` between query params
+      // (…&display=swap) — a bare `&` in XML must start a valid entity
+      // reference, so every SVG export with a Google Font (the overwhelming
+      // majority of designs) produced a file that failed to parse: "This
+      // page contains the following errors: error … EntityRef: expecting
+      // ';'". escXml turns it into the required `&amp;`.
+      fontLinks.push(`<link rel="stylesheet" href="${escXml(fm[1])}"/>`);
     }
+
+    // Matches the balanced url(...) first, THEN the statement-ending `;` —
+    // a Google Fonts URL commonly has its own `;` inside (wght@400;700),
+    // which a naive /@import[^;]+;/ would stop at prematurely, leaving a
+    // dangling css fragment (e.g. "700&display=swap');") in the CDATA block.
+    const cleanCss = css.replace(/@import\s+url\([^)]*\)[^;]*;/g, "").replace(/@font-face\s*\{[^}]*\}/g, "");
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xhtml="http://www.w3.org/1999/xhtml"
@@ -2364,7 +2357,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     ${fontLinks.join("\n  ")}
     ${filterDefs.join("\n    ")}
   </defs>
-  <rect width="${w}" height="${h}" fill="${bg}"/>
+  <rect width="${w}" height="${h}" fill="${escXml(bg)}"/>
   ${svgParts.join("\n  ")}
 </svg>`;
   }, []);
@@ -2451,7 +2444,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleExportFrameSVG = useCallback(async () => {
     if (!selectedFrame) return;
     const { html, css } = await inlineFrameImages(selectedFrame.html, selectedFrame.css);
-    const svgString = buildFrameSvg({ ...selectedFrame, html, css });
+    const svgString = await buildFrameSvg({ ...selectedFrame, html, css });
     const blob = new Blob([svgString], { type: "image/svg+xml" });
     downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
   }, [selectedFrame, buildFrameSvg]);
@@ -2459,7 +2452,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleExportAllFramesSVG = useCallback(async () => {
     for (const frame of frames) {
       const { html, css } = await inlineFrameImages(frame.html, frame.css);
-      const svgString = buildFrameSvg({ ...frame, html, css });
+      const svgString = await buildFrameSvg({ ...frame, html, css });
       const blob = new Blob([svgString], { type: "image/svg+xml" });
       downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
       await new Promise(r => setTimeout(r, 200));
