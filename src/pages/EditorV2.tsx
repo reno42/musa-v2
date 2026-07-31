@@ -2257,27 +2257,210 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
     const svgParts: string[] = [];
 
-    // CSS `filter` has no direct SVG-attribute equivalent — it needs a
-    // <filter> def referenced via filter="url(#id)". This app's standard
-    // photo treatment is grayscale(1) on every design in this project;
-    // translate it so the exported SVG matches the desaturated PNG/JPG.
+    // ── Filters: CSS `filter` has no direct SVG-attribute equivalent — each
+    // function becomes an SVG filter primitive, chained in source order
+    // (grayscale/saturate → feColorMatrix, contrast/brightness → a linear
+    // feComponentTransfer, blur → feGaussianBlur). Needed because real
+    // designs chain more than grayscale alone, e.g.
+    // `grayscale(100%) contrast(220%) brightness(95%)` for a halftone photo
+    // treatment — translating only the grayscale term left the exported
+    // photo visibly flatter than the PNG/JPG export of the same frame.
     const filterDefs: string[] = [];
     const filterIdByKey = new Map<string, string>();
-    const filterAttr = (raw: string): string => {
-      if (!raw || raw === "none") return "";
-      const m = raw.match(/grayscale\(\s*([\d.]+)(%?)\s*\)/);
-      if (!m) return "";
-      let amount = parseFloat(m[1]);
-      if (m[2] === "%") amount /= 100;
-      amount = Math.max(0, Math.min(1, amount));
-      const key = `gray-${Math.round(amount * 100)}`;
+    const getOrCreateFilter = (primitives: string[]): string => {
+      if (!primitives.length) return "";
+      const key = primitives.join("|");
       let id = filterIdByKey.get(key);
       if (!id) {
-        id = `f-${key}`;
+        id = `f-${filterIdByKey.size}`;
         filterIdByKey.set(key, id);
-        filterDefs.push(`<filter id="${id}"><feColorMatrix type="saturate" values="${(1 - amount).toFixed(3)}"/></filter>`);
+        filterDefs.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">${primitives.join("")}</filter>`);
       }
-      return ` filter="url(#${id})"`;
+      return id;
+    };
+    const buildFilterChain = (raw: string): string => {
+      if (!raw || raw === "none") return "";
+      const primitives: string[] = [];
+      for (const fn of raw.matchAll(/([a-z-]+)\(([^)]*)\)/g)) {
+        const name = fn[1];
+        const arg = fn[2].trim();
+        if (name === "grayscale" || name === "saturate") {
+          let amt = parseFloat(arg) || 0;
+          if (arg.includes("%")) amt /= 100;
+          const values = name === "grayscale" ? (1 - Math.max(0, Math.min(1, amt))).toFixed(3) : amt.toFixed(3);
+          primitives.push(`<feColorMatrix type="saturate" values="${values}"/>`);
+        } else if (name === "contrast") {
+          let c = parseFloat(arg) || 1;
+          if (arg.includes("%")) c /= 100;
+          const intercept = (0.5 * (1 - c)).toFixed(3);
+          primitives.push(`<feComponentTransfer><feFuncR type="linear" slope="${c}" intercept="${intercept}"/><feFuncG type="linear" slope="${c}" intercept="${intercept}"/><feFuncB type="linear" slope="${c}" intercept="${intercept}"/></feComponentTransfer>`);
+        } else if (name === "brightness") {
+          let b = parseFloat(arg) || 1;
+          if (arg.includes("%")) b /= 100;
+          primitives.push(`<feComponentTransfer><feFuncR type="linear" slope="${b}"/><feFuncG type="linear" slope="${b}"/><feFuncB type="linear" slope="${b}"/></feComponentTransfer>`);
+        } else if (name === "blur") {
+          const px = parseFloat(arg) || 0;
+          primitives.push(`<feGaussianBlur stdDeviation="${(px / 2).toFixed(2)}"/>`);
+        }
+      }
+      const id = getOrCreateFilter(primitives);
+      return id ? ` filter="url(#${id})"` : "";
+    };
+
+    // ── Gradients & masks: parse a computed `linear-gradient(...)` (found
+    // anywhere inside a background-image/mask-image value — paren-depth
+    // scan, not a naive regex, so nested rgba(...) stops don't break it)
+    // into angle + color stops, shared by background fills and masks.
+    const splitTopLevel = (str: string, sep: string): string[] => {
+      const out: string[] = [];
+      let depth = 0, cur = "";
+      for (const ch of str) {
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        if (ch === sep && depth === 0) { out.push(cur); cur = ""; } else { cur += ch; }
+      }
+      if (cur) out.push(cur);
+      return out;
+    };
+    const splitColorAlpha = (color: string): { color: string; alpha: number } => {
+      const m = color.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\s*\)/);
+      if (m) return { color: `rgb(${m[1]}, ${m[2]}, ${m[3]})`, alpha: m[4] !== undefined ? parseFloat(m[4]) : 1 };
+      return { color, alpha: 1 };
+    };
+    const DIRECTION_ANGLES: Record<string, number> = {
+      top: 0, bottom: 180, left: 270, right: 90,
+      "top right": 45, "right top": 45, "bottom right": 135, "right bottom": 135,
+      "bottom left": 225, "left bottom": 225, "top left": 315, "left top": 315,
+    };
+    const parseLinearGradient = (source: string): { angleDeg: number; stops: { color: string; pct: number }[] } | null => {
+      const startIdx = source.indexOf("linear-gradient(");
+      if (startIdx === -1) return null;
+      let depth = 0, end = -1;
+      for (let i = startIdx + "linear-gradient(".length - 1; i < source.length; i++) {
+        if (source[i] === "(") depth++;
+        else if (source[i] === ")") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end === -1) return null;
+      const parts = splitTopLevel(source.slice(startIdx + "linear-gradient(".length, end), ",").map(p => p.trim());
+      if (!parts.length) return null;
+      let angleDeg = 180; // CSS default direction is "to bottom"
+      let stopParts = parts;
+      const angleMatch = parts[0].match(/^(-?[\d.]+)deg$/);
+      if (angleMatch) { angleDeg = parseFloat(angleMatch[1]); stopParts = parts.slice(1); }
+      else if (/^to\s+/i.test(parts[0])) {
+        const dir = parts[0].replace(/^to\s+/i, "").trim().toLowerCase();
+        angleDeg = DIRECTION_ANGLES[dir] ?? 180;
+        stopParts = parts.slice(1);
+      }
+      const stops = stopParts.map(p => {
+        const colorMatch = p.match(/^(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)/);
+        const color = colorMatch ? colorMatch[0] : "#000000";
+        const pctMatch = p.slice(color.length).trim().match(/(-?[\d.]+)%/);
+        return { color, pct: pctMatch ? parseFloat(pctMatch[1]) : null };
+      });
+      if (stops.length) {
+        if (stops[0].pct === null) stops[0].pct = 0;
+        if (stops[stops.length - 1].pct === null) stops[stops.length - 1].pct = 100;
+        for (let i = 1; i < stops.length - 1; i++) {
+          if (stops[i].pct === null) {
+            let j = i; while (j < stops.length && stops[j].pct === null) j++;
+            const startPct = stops[i - 1].pct as number, endPct = stops[j].pct as number, span = j - i + 1;
+            for (let k = i; k < j; k++) stops[k].pct = startPct + (endPct - startPct) * (k - i + 1) / span;
+          }
+        }
+      }
+      return { angleDeg, stops: stops as { color: string; pct: number }[] };
+    };
+    const angleToCoords = (deg: number) => {
+      const rad = (deg * Math.PI) / 180;
+      const dx = Math.sin(rad), dy = -Math.cos(rad);
+      return { x1: (0.5 - dx / 2).toFixed(4), y1: (0.5 - dy / 2).toFixed(4), x2: (0.5 + dx / 2).toFixed(4), y2: (0.5 + dy / 2).toFixed(4) };
+    };
+    const gradDefs: string[] = [];
+    const gradIdByKey = new Map<string, string>();
+    const getOrCreateGradient = (parsed: { angleDeg: number; stops: { color: string; pct: number }[] }): string => {
+      const key = JSON.stringify(parsed);
+      let id = gradIdByKey.get(key);
+      if (!id) {
+        id = `grad-${gradIdByKey.size}`;
+        gradIdByKey.set(key, id);
+        const { x1, y1, x2, y2 } = angleToCoords(parsed.angleDeg);
+        const stops = parsed.stops.map(s => {
+          const { color, alpha } = splitColorAlpha(s.color);
+          return `<stop offset="${s.pct}%" stop-color="${escXml(color)}" stop-opacity="${alpha}"/>`;
+        }).join("");
+        gradDefs.push(`<linearGradient id="${id}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient>`);
+      }
+      return id;
+    };
+    const resolveBackgroundFill = (cs: CSSStyleDeclaration): { type: "none" | "color" | "gradient"; value: string } => {
+      const bgImage = cs.backgroundImage;
+      if (bgImage && bgImage !== "none") {
+        const parsed = parseLinearGradient(bgImage);
+        if (parsed) return { type: "gradient", value: getOrCreateGradient(parsed) };
+      }
+      const bgColor = cs.backgroundColor;
+      if (bgColor && !/rgba?\(\s*0,\s*0,\s*0,\s*0\s*\)/.test(bgColor)) return { type: "color", value: bgColor };
+      return { type: "none", value: "" };
+    };
+    const maskIdByKey = new Map<string, string>();
+    // A CSS mask gradient fades by ALPHA, not luminance — SVG <mask> defaults
+    // to luminance. Using a solid white stop whose stop-opacity carries the
+    // source alpha makes luminance*alpha reduce to the same alpha ramp, so
+    // the two agree without needing mask-type="alpha" support everywhere.
+    const resolveMask = (cs: CSSStyleDeclaration): string | null => {
+      const maskImage = cs.getPropertyValue("mask-image") || cs.getPropertyValue("-webkit-mask-image");
+      if (!maskImage || maskImage === "none") return null;
+      const parsed = parseLinearGradient(maskImage);
+      if (!parsed) return null;
+      const key = JSON.stringify(parsed);
+      let id = maskIdByKey.get(key);
+      if (!id) {
+        id = `mask-${maskIdByKey.size}`;
+        maskIdByKey.set(key, id);
+        const { x1, y1, x2, y2 } = angleToCoords(parsed.angleDeg);
+        const gradId = `${id}-g`;
+        const stops = parsed.stops.map(s => `<stop offset="${s.pct}%" stop-color="#ffffff" stop-opacity="${splitColorAlpha(s.color).alpha}"/>`).join("");
+        gradDefs.push(`<linearGradient id="${gradId}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient>`);
+        gradDefs.push(`<mask id="${id}"><rect x="-10%" y="-10%" width="120%" height="120%" fill="url(#${gradId})"/></mask>`);
+      }
+      return id;
+    };
+
+    // ── Box-shadow: this app's card shadows are hard-edged (0 blur radius —
+    // a flat offset duplicate, not a soft glow), so most exports never touch
+    // the blur path at all; it's included for designs that do use a soft
+    // shadow. Multiple comma-separated shadows aren't split — real designs
+    // here use exactly one.
+    const parseBoxShadow = (raw: string): { color: string; offsetX: number; offsetY: number; blur: number; spread: number } | null => {
+      if (!raw || raw === "none" || /^inset\b/.test(raw.trim())) return null;
+      const first = splitTopLevel(raw, ",")[0].trim();
+      const colorMatch = first.match(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}/);
+      const color = colorMatch ? colorMatch[0] : "rgba(0,0,0,0.5)";
+      const [offsetX = 0, offsetY = 0, blur = 0, spread = 0] = (color ? first.replace(color, "") : first).trim().split(/\s+/).filter(Boolean).map(v => parseFloat(v) || 0);
+      return { color, offsetX, offsetY, blur, spread };
+    };
+
+    // Wraps text to the element's real content width using the same font
+    // the SVG will declare, since SVG <text> never auto-wraps — without
+    // this, long copy (card body text, headlines) rendered as a single
+    // <text> ran straight off the edge of the frame instead of wrapping
+    // onto multiple lines like the on-screen design.
+    const measureCtx = document.createElement("canvas").getContext("2d");
+    const wrapText = (text: string, fontSpec: string, maxWidth: number): string[] => {
+      if (!measureCtx || !(maxWidth > 0)) return [text];
+      measureCtx.font = fontSpec;
+      const words = text.split(/\s+/).filter(Boolean);
+      if (!words.length) return [];
+      const lines: string[] = [];
+      let current = words[0];
+      for (let i = 1; i < words.length; i++) {
+        const trial = `${current} ${words[i]}`;
+        if (measureCtx.measureText(trial).width > maxWidth) { lines.push(current); current = words[i]; }
+        else current = trial;
+      }
+      lines.push(current);
+      return lines;
     };
 
     const contentRect = content.getBoundingClientRect();
@@ -2297,18 +2480,61 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         const width = rect.width;
         const height = rect.height;
         const opacity = parseFloat(cs.opacity) || 1;
+        const radius = parseFloat(cs.borderTopLeftRadius) || 0;
 
-        // Background rect — skip fully transparent paints
-        const bgColor = cs.backgroundColor;
-        if (width > 0 && height > 0 && bgColor && !/rgba?\(\s*0,\s*0,\s*0,\s*0\s*\)/.test(bgColor)) {
-          const rx = parseFloat(cs.borderTopLeftRadius) || 0;
-          svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escXml(bgColor)}" rx="${rx}" opacity="${opacity}"/>`);
+        // Box-shadow — a separate rect painted BEFORE (i.e. beneath) the
+        // element's own fill, matching CSS's default shadow stacking.
+        const shadow = width > 0 && height > 0 ? parseBoxShadow(cs.boxShadow) : null;
+        if (shadow) {
+          const blurAttr = shadow.blur > 0 ? ` filter="url(#${getOrCreateFilter([`<feGaussianBlur stdDeviation="${(shadow.blur / 2).toFixed(2)}"/>`])})"` : "";
+          const sx = x + shadow.offsetX - shadow.spread, sy = y + shadow.offsetY - shadow.spread;
+          const sw = Math.max(0, width + shadow.spread * 2), sh = Math.max(0, height + shadow.spread * 2);
+          svgParts.push(`<rect x="${sx}" y="${sy}" width="${sw}" height="${sh}" fill="${escXml(shadow.color)}" rx="${radius}" opacity="${opacity}"${blurAttr}/>`);
+        }
+
+        // Background (solid or gradient) — separate from border, since a
+        // border-only element (fill: none) still needs to paint SOMETHING,
+        // and a divider that's only border-bottom (this app's card headers,
+        // image containers) has no "uniform border" to fold into one rect.
+        const fillInfo = resolveBackgroundFill(cs);
+        const maskId = resolveMask(cs);
+        const maskAttr = maskId ? ` mask="url(#${maskId})"` : "";
+        if (fillInfo.type !== "none" && width > 0 && height > 0) {
+          const fill = fillInfo.type === "gradient" ? `url(#${fillInfo.value})` : escXml(fillInfo.value);
+          svgParts.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fill}" rx="${radius}" opacity="${opacity}"${maskAttr}/>`);
+        }
+
+        // Border — a plain outline rect when all 4 sides match (the common
+        // case), otherwise individual <line> segments per side, since real
+        // designs here also use single-side borders as dividers
+        // (`.card-header{border-bottom:2px solid}`) that a "check the top
+        // side only" shortcut would silently miss.
+        if (width > 0 && height > 0) {
+          const sides = (["Top", "Right", "Bottom", "Left"] as const).map(edge => {
+            const w = parseFloat((cs as any)[`border${edge}Width`]) || 0;
+            return { w, style: (cs as any)[`border${edge}Style`], color: (cs as any)[`border${edge}Color`], has: w > 0 && (cs as any)[`border${edge}Style`] !== "none" };
+          });
+          const [top, right, bottom, left] = sides;
+          const uniform = top.has && right.has && bottom.has && left.has
+            && [right, bottom, left].every(s => s.w === top.w && s.color === top.color);
+          if (uniform) {
+            // SVG strokes are centered on the path; CSS borders sit fully
+            // inside the box. Insetting by half the stroke width lines the
+            // stroke's outer edge up with the CSS border's outer edge.
+            const inset = top.w / 2;
+            svgParts.push(`<rect x="${x + inset}" y="${y + inset}" width="${Math.max(0, width - top.w)}" height="${Math.max(0, height - top.w)}" fill="none" rx="${radius}" stroke="${escXml(top.color)}" stroke-width="${top.w}" opacity="${opacity}"/>`);
+          } else {
+            if (top.has) svgParts.push(`<line x1="${x}" y1="${y + top.w / 2}" x2="${x + width}" y2="${y + top.w / 2}" stroke="${escXml(top.color)}" stroke-width="${top.w}" opacity="${opacity}"/>`);
+            if (bottom.has) svgParts.push(`<line x1="${x}" y1="${y + height - bottom.w / 2}" x2="${x + width}" y2="${y + height - bottom.w / 2}" stroke="${escXml(bottom.color)}" stroke-width="${bottom.w}" opacity="${opacity}"/>`);
+            if (left.has) svgParts.push(`<line x1="${x + left.w / 2}" y1="${y}" x2="${x + left.w / 2}" y2="${y + height}" stroke="${escXml(left.color)}" stroke-width="${left.w}" opacity="${opacity}"/>`);
+            if (right.has) svgParts.push(`<line x1="${x + width - right.w / 2}" y1="${y}" x2="${x + width - right.w / 2}" y2="${y + height}" stroke="${escXml(right.color)}" stroke-width="${right.w}" opacity="${opacity}"/>`);
+          }
         }
 
         if (tag === "img") {
           const src = child.getAttribute("src") || "";
           if (src && width > 0 && height > 0) {
-            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"${filterAttr(cs.filter)}/>`);
+            svgParts.push(`<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escXml(src)}" preserveAspectRatio="xMidYMid slice"${buildFilterChain(cs.filter)}${maskAttr}/>`);
           }
         } else if (text && !hasChildren) {
           const fontFamily = cs.fontFamily.replace(/["']/g, "");
@@ -2316,10 +2542,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           const fontWeight = cs.fontWeight;
           const color = cs.color;
           const textAlign = cs.textAlign;
+          // Text sits in the CONTENT box, inset from the border box by
+          // padding/border — using the border box directly (as the first
+          // pass did) placed text too high and too far left/right on any
+          // padded element, e.g. a card body with `padding: 10px 8px`.
+          const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0, padT = parseFloat(cs.paddingTop) || 0;
+          const bL = parseFloat(cs.borderLeftWidth) || 0, bR = parseFloat(cs.borderRightWidth) || 0, bT = parseFloat(cs.borderTopWidth) || 0;
+          const contentX = x + bL + padL;
+          const contentY = y + bT + padT;
+          const contentWidth = Math.max(0, width - bL - bR - padL - padR);
           const anchor = textAlign === "center" ? "middle" : (textAlign === "right" || textAlign === "end") ? "end" : "start";
-          const textX = textAlign === "center" ? x + width / 2 : (textAlign === "right" || textAlign === "end") ? x + width : x;
-          const textY = y + (parseFloat(fontSize) || 16);
-          svgParts.push(`<text x="${textX}" y="${textY}" font-family="${escXml(fontFamily)}" font-size="${escXml(fontSize)}" font-weight="${escXml(fontWeight)}" fill="${escXml(color)}" text-anchor="${anchor}" opacity="${opacity}">${escXml(text)}</text>`);
+          const textX = textAlign === "center" ? contentX + contentWidth / 2 : (textAlign === "right" || textAlign === "end") ? contentX + contentWidth : contentX;
+          const lines = wrapText(text, `${fontWeight} ${fontSize} ${fontFamily}`, contentWidth);
+          let lineHeight = parseFloat(cs.lineHeight);
+          if (!cs.lineHeight || cs.lineHeight === "normal" || Number.isNaN(lineHeight)) lineHeight = parseFloat(fontSize) * 1.2;
+          const baseY = contentY + parseFloat(fontSize);
+          const tspans = lines.map((line, i) => `<tspan x="${textX}" y="${baseY + i * lineHeight}">${escXml(line)}</tspan>`).join("");
+          svgParts.push(`<text font-family="${escXml(fontFamily)}" font-size="${escXml(fontSize)}" font-weight="${escXml(fontWeight)}" fill="${escXml(color)}" text-anchor="${anchor}" opacity="${opacity}">${tspans}</text>`);
         }
 
         walkNode(child);
@@ -2356,6 +2595,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     <style><![CDATA[${cleanCss}]]></style>
     ${fontLinks.join("\n  ")}
     ${filterDefs.join("\n    ")}
+    ${gradDefs.join("\n    ")}
   </defs>
   <rect width="${w}" height="${h}" fill="${escXml(bg)}"/>
   ${svgParts.join("\n  ")}
