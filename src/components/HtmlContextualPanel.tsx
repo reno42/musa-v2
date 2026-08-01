@@ -969,43 +969,148 @@ export function HtmlContextualPanel({ workspaceId, element, css, onCssChange, on
   );
 }
 
+// ── Gradient parsing ──
+// Split on top-level commas only (a paren-depth counter, not a naive regex
+// split) — a color-stop list like "rgb(1,2,3) 0%, rgb(4,5,6) 100%" has
+// commas INSIDE the rgb() calls that must not become stop boundaries.
+function splitTopLevelCommas(str: string): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = "";
+  for (const ch of str) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else { cur += ch; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+const GRADIENT_DIRECTION_ANGLES: Record<string, number> = {
+  top: 0, bottom: 180, left: 270, right: 90,
+  "top right": 45, "right top": 45, "bottom right": 135, "right bottom": 135,
+  "bottom left": 225, "left bottom": 225, "top left": 315, "left top": 315,
+};
+
+interface GradientStop { color: string; alpha: number; pos: number }
+interface ParsedGradient { type: "linear" | "radial" | "conic"; angle: number; stops: GradientStop[] }
+
+/**
+ * Parse ANY CSS gradient — critically, one whose colors come back from
+ * getComputedStyle() as rgb()/rgba(), which is what the browser always
+ * reports regardless of how the source CSS was authored. The previous
+ * parser only matched literal #hex via regex, so it silently failed on
+ * every computed value, leaving the UI stuck showing its hardcoded purple
+ * placeholder instead of the design's real gradient — editing then meant
+ * "Apply" overwrote the real gradient with that placeholder.
+ */
+function parseGradientValue(value: string): ParsedGradient | null {
+  if (!value || value === "none") return null;
+  const typeMatch = value.match(/(linear|radial|conic)-gradient\(/);
+  if (!typeMatch) return null;
+  const type = typeMatch[1] as "linear" | "radial" | "conic";
+  const openIdx = value.indexOf(typeMatch[0]) + typeMatch[0].length - 1;
+  let depth = 0, end = -1;
+  for (let i = openIdx; i < value.length; i++) {
+    if (value[i] === "(") depth++;
+    else if (value[i] === ")") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) return null;
+  const parts = splitTopLevelCommas(value.slice(openIdx + 1, end)).map(p => p.trim());
+  if (!parts.length) return null;
+
+  let angle = 90;
+  let stopParts = parts;
+  const first = parts[0] || "";
+  if (type === "linear") {
+    const angleMatch = first.match(/^(-?[\d.]+)deg$/);
+    if (angleMatch) { angle = parseFloat(angleMatch[1]); stopParts = parts.slice(1); }
+    else if (/^to\s+/i.test(first)) {
+      angle = GRADIENT_DIRECTION_ANGLES[first.replace(/^to\s+/i, "").trim().toLowerCase()] ?? 90;
+      stopParts = parts.slice(1);
+    }
+  } else {
+    // radial()/conic()'s leading shape/position descriptor ("circle at
+    // center", "from 45deg") has no color. A real stop is just a color
+    // token optionally followed by one "N%" and nothing else — anything
+    // that doesn't fit that shape is the descriptor, not the first stop.
+    const angleMatch = first.match(/from\s+(-?[\d.]+)deg/);
+    if (angleMatch) angle = parseFloat(angleMatch[1]);
+    const isJustAStop = /^(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)\s*(-?[\d.]+%)?\s*$/.test(first);
+    if (!isJustAStop && parts.length > 1) stopParts = parts.slice(1);
+  }
+
+  const stops: GradientStop[] = [];
+  stopParts.forEach((p, i) => {
+    const colorMatch = p.match(/^(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)/);
+    if (!colorMatch) return;
+    const colorToken = colorMatch[0];
+    const rest = p.slice(colorToken.length).trim();
+    const pctMatch = rest.match(/(-?[\d.]+)%/);
+    stops.push({
+      color: toHexColor(colorToken),
+      alpha: parseAlpha(colorToken),
+      pos: pctMatch ? parseFloat(pctMatch[1]) : Math.round((i / Math.max(1, stopParts.length - 1)) * 100),
+    });
+  });
+  return stops.length >= 2 ? { type, angle, stops } : null;
+}
+
+function buildGradientCss(g: ParsedGradient): string {
+  const stopsStr = g.stops.map(s => `${s.alpha < 1 ? hexToRgba(s.color, s.alpha) : s.color} ${s.pos}%`).join(", ");
+  if (g.type === "linear") return `linear-gradient(${g.angle}deg, ${stopsStr})`;
+  if (g.type === "radial") return `radial-gradient(circle, ${stopsStr})`;
+  return `conic-gradient(from ${g.angle}deg, ${stopsStr})`;
+}
+
+const DEFAULT_NEW_GRADIENT: ParsedGradient = {
+  type: "linear", angle: 90,
+  stops: [{ color: "#667eea", alpha: 1, pos: 0 }, { color: "#764ba2", alpha: 1, pos: 100 }],
+};
+
 // ── Gradient Builder Component ──
 
 function GradientBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [stops, setStops] = useState<{ color: string; pos: number }[]>([
-    { color: "#667eea", pos: 0 },
-    { color: "#764ba2", pos: 100 },
-  ]);
-  const [gradType, setGradType] = useState<"linear" | "radial" | "conic">("linear");
-  const [angle, setAngle] = useState(90);
+  const [gradient, setGradient] = useState<ParsedGradient | null>(() => parseGradientValue(value));
   const [expanded, setExpanded] = useState(false);
+  // Tracks the CSS string WE last emitted, so an incoming `value` that only
+  // echoes our own edit doesn't re-parse and reset mid-drag — but a value
+  // that changed for any OTHER reason (undo, another collaborator, the AI
+  // editing this same element) does re-sync the editor to it.
+  const lastAppliedRef = useRef<string | null>(null);
 
-  // Parse existing gradient on mount
-  const initialized = useRef(false);
   useEffect(() => {
-    if (initialized.current || !value) return;
-    initialized.current = true;
-    if (value.includes("radial-gradient")) setGradType("radial");
-    else if (value.includes("conic-gradient")) setGradType("conic");
-    const angleMatch = value.match(/(\d+)deg/);
-    if (angleMatch) setAngle(parseInt(angleMatch[1]));
-    const colorMatches = value.match(/#[0-9a-fA-F]{3,8}\b/g);
-    const posMatches = value.match(/(\d+)%/g);
-    if (colorMatches && posMatches && colorMatches.length === posMatches.length) {
-      setStops(colorMatches.map((c, i) => ({ color: c, pos: parseInt(posMatches[i]) })));
-    }
+    if (value === lastAppliedRef.current) return;
+    setGradient(parseGradientValue(value));
   }, [value]);
 
-  const buildGradient = useCallback(() => {
-    const stopsStr = stops.map(s => `${s.color} ${s.pos}%`).join(", ");
-    if (gradType === "linear") return `linear-gradient(${angle}deg, ${stopsStr})`;
-    if (gradType === "radial") return `radial-gradient(circle, ${stopsStr})`;
-    return `conic-gradient(from ${angle}deg, ${stopsStr})`;
-  }, [stops, gradType, angle]);
+  const apply = useCallback((next: ParsedGradient) => {
+    setGradient(next);
+    const css = buildGradientCss(next);
+    lastAppliedRef.current = css;
+    onChange(css);
+  }, [onChange]);
+
+  const removeGradient = useCallback(() => {
+    setGradient(null);
+    lastAppliedRef.current = "none";
+    onChange("none");
+  }, [onChange]);
+
+  if (!gradient) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase" }}>Gradient</span>
+        <button type="button" onClick={() => apply(DEFAULT_NEW_GRADIENT)}
+          style={{ fontSize: 10, padding: "5px 8px", borderRadius: 4, border: "1px dashed rgba(200,184,152,0.25)", background: "none", color: "#c8b898", cursor: "pointer" }}>
+          + Add Gradient
+        </button>
+      </div>
+    );
+  }
 
   const previewStyle: React.CSSProperties = {
     height: 20, borderRadius: 4,
-    background: buildGradient(),
+    background: buildGradientCss(gradient),
     border: "1px solid rgba(255,255,255,0.06)",
     cursor: "pointer",
   };
@@ -1014,10 +1119,16 @@ function GradientBuilder({ value, onChange }: { value: string; onChange: (v: str
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase" }}>Gradient</span>
-        <button type="button" onClick={() => setExpanded(!expanded)}
-          style={{ fontSize: 9, color: "#c8b898", background: "none", border: "none", cursor: "pointer" }}>
-          {expanded ? "−" : "+"}
-        </button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button type="button" onClick={removeGradient} title="Remove gradient"
+            style={{ fontSize: 9, color: "#EF4444", background: "none", border: "none", cursor: "pointer" }}>
+            Remove
+          </button>
+          <button type="button" onClick={() => setExpanded(!expanded)}
+            style={{ fontSize: 9, color: "#c8b898", background: "none", border: "none", cursor: "pointer" }}>
+            {expanded ? "−" : "+"}
+          </button>
+        </div>
       </div>
       <div onClick={() => setExpanded(!expanded)} style={previewStyle} title="Click to expand" />
       {expanded && (
@@ -1025,64 +1136,60 @@ function GradientBuilder({ value, onChange }: { value: string; onChange: (v: str
           {/* Type */}
           <div style={{ display: "flex", gap: 4 }}>
             {(["linear", "radial", "conic"] as const).map(t => (
-              <button key={t} type="button" onClick={() => setGradType(t)}
+              <button key={t} type="button" onClick={() => apply({ ...gradient, type: t })}
                 style={{
                   flex: 1, fontSize: 9, padding: "2px 4px", borderRadius: 3,
-                  border: gradType === t ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.06)",
-                  background: gradType === t ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
-                  color: gradType === t ? "#c8b898" : "#7a7668",
+                  border: gradient.type === t ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.06)",
+                  background: gradient.type === t ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
+                  color: gradient.type === t ? "#c8b898" : "#7a7668",
                   cursor: "pointer", textTransform: "capitalize",
                 }}>
                 {t}
               </button>
             ))}
           </div>
-          {/* Angle */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ fontSize: 9, color: "#7a7668", width: 32 }}>Angle</span>
-            <ScrubbyInput value={String(angle)} onChange={v => setAngle(parseInt(v) || 0)} min={0} max={360} suffix="°" />
-          </div>
+          {/* Angle (linear/conic only — radial's "circle" has no direction) */}
+          {gradient.type !== "radial" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 9, color: "#7a7668", width: 32 }}>Angle</span>
+              <ScrubbyInput value={String(gradient.angle)} onChange={v => apply({ ...gradient, angle: parseInt(v) || 0 })} min={0} max={360} suffix="°" />
+            </div>
+          )}
           {/* Color Stops */}
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             <span style={{ fontSize: 9, color: "#7a7668" }}>Stops</span>
-            {stops.map((stop, i) => (
+            {gradient.stops.map((stop, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <input type="color" value={stop.color} onChange={e => {
-                  const newStops = [...stops];
+                  const newStops = [...gradient.stops];
                   newStops[i] = { ...newStops[i], color: e.target.value };
-                  setStops(newStops);
+                  apply({ ...gradient, stops: newStops });
                 }} style={{ ...colorInp, width: 22, height: 18 }} />
                 <input value={stop.color} onChange={e => {
-                  const newStops = [...stops];
-                  newStops[i] = { ...newStops[i], color: e.target.value };
-                  setStops(newStops);
+                  const newStops = [...gradient.stops];
+                  newStops[i] = { ...newStops[i], color: toHexColor(e.target.value, newStops[i].color) };
+                  apply({ ...gradient, stops: newStops });
                 }} style={{ ...inp, fontSize: 10, width: 64 }} />
                 <ScrubbyInput value={String(stop.pos)} onChange={v => {
-                  const newStops = [...stops];
+                  const newStops = [...gradient.stops];
                   newStops[i] = { ...newStops[i], pos: parseInt(v) || 0 };
-                  setStops(newStops);
+                  apply({ ...gradient, stops: newStops });
                 }} min={0} max={100} suffix="%" style={{ flex: 1 }} />
-                {stops.length > 2 && (
-                  <button type="button" onClick={() => setStops(stops.filter((_, j) => j !== i))}
+                {gradient.stops.length > 2 && (
+                  <button type="button" onClick={() => apply({ ...gradient, stops: gradient.stops.filter((_, j) => j !== i) })}
                     style={{ fontSize: 10, padding: "1px 4px", borderRadius: 2, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", cursor: "pointer" }}>
                     ×
                   </button>
                 )}
               </div>
             ))}
-            {stops.length < 4 && (
-              <button type="button" onClick={() => setStops([...stops, { color: "#A78BFA", pos: 50 }])}
+            {gradient.stops.length < 8 && (
+              <button type="button" onClick={() => apply({ ...gradient, stops: [...gradient.stops, { color: "#A78BFA", alpha: 1, pos: 50 }] })}
                 style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, border: "1px dashed rgba(200,184,152,0.2)", background: "none", color: "#c8b898", cursor: "pointer" }}>
                 + Add Stop
               </button>
             )}
           </div>
-          {/* Apply */}
-          <button type="button" onClick={() => onChange(buildGradient())}
-            style={{ padding: "4px 8px", borderRadius: 4, fontSize: 10, cursor: "pointer",
-              background: "rgba(200,184,152,0.1)", border: "1px solid rgba(200,184,152,0.3)", color: "#c8b898" }}>
-            Apply Gradient
-          </button>
         </div>
       )}
     </div>
