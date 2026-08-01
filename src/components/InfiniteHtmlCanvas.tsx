@@ -87,6 +87,12 @@ interface InfiniteHtmlCanvasProps {
   showRulers?: boolean;
   columnConfig?: ColumnConfig | null;
   smartGuides?: SmartGuide[];
+  /** Reserved space (px) for currently-docked left/right panels, so the
+   *  canvas — and the ruler measured from its own container — stops before
+   *  a docked panel instead of rendering underneath it. See EditorV2's
+   *  canvasLeftInset/canvasRightInset. */
+  leftInset?: number;
+  rightInset?: number;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -105,6 +111,7 @@ export function InfiniteHtmlCanvas({
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
+  leftInset = 0, rightInset = 0,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -729,10 +736,13 @@ export function InfiniteHtmlCanvas({
     <div
       ref={viewportRef}
       style={{
-        width: "100%", height: "100%",
+        width: leftInset || rightInset ? `calc(100% - ${leftInset + rightInset}px)` : "100%",
+        marginLeft: leftInset || undefined,
+        height: "100%",
         overflow: "hidden", position: "relative",
         background: CANVAS_BG,
         cursor,
+        transition: "margin-left 0.15s ease, width 0.15s ease",
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

@@ -616,6 +616,45 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [templateId, selectedFrameId, templateName]);
 
+  // AI/remote-authored content can arrive pre-grouped — an agent composing a
+  // few related elements (a photo + its caption, an icon + label) naturally
+  // wraps them in one group, the same shorthand a human would reach for. But
+  // this app's default is a flat layer list: every meaningful object
+  // independently selectable and movable. Whenever a frame's html changes
+  // from OUTSIDE this session (an MCP tool call, another collaborator), find
+  // any TOP-LEVEL group wrapper in the new html and dissolve it the exact
+  // same safe way the user's own "Ungroup" button does — bake each child's
+  // live RENDERED position onto it before removing the wrapper, so nothing
+  // shifts. Only top-level: a legitimately compound object (an icon built
+  // from nested paths) keeps its internal structure.
+  const autoUngroupIncomingFrame = useCallback((frameId: string) => {
+    // Two rAFs: the first commits the state update, the second waits for
+    // the browser to have actually painted the new html so getBoundingClientRect
+    // reflects it — measuring one frame too early reads the STALE layout.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const frame = (framesRef.current as FrameData[]).find(f => f.id === frameId);
+        if (!frame) return;
+        const doc = new DOMParser().parseFromString(frame.html, "text/html");
+        const topGroups = [...doc.body.children].filter(el => el.getAttribute("data-layer-kind") === "group");
+        if (topGroups.length === 0) return;
+        let html = frame.html;
+        for (const el of topGroups) {
+          const layerId = el.getAttribute("data-layer-id");
+          if (!layerId) continue;
+          const bake = measureContainerForBake(frameId, layerId);
+          if (!bake) continue; // not rendered yet / not found — leave it grouped rather than guess
+          const next = ungroupPreservingLayout(html, bake);
+          if (next) html = next;
+        }
+        if (html === frame.html) return;
+        const updated = (framesRef.current as FrameData[]).map(f => f.id === frameId ? { ...f, html } : f);
+        store.replaceAll(updated);
+        autoSave(updated);
+      });
+    });
+  }, [autoSave]);
+
   // ── Realtime sync ──
   const realtimeReadyRef = useRef(false);
   const lastBroadcastRef = useRef<{ html: string; css: string } | null>(null);
@@ -642,6 +681,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           ? { ...f, html: newHtml, css: newCss }
           : f
       ));
+      autoUngroupIncomingFrame(targetFrameId);
     });
     if (channel) {
       realtimeChannelRef.current = channel;
@@ -672,6 +712,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 const remoteJson = JSON.stringify(t.frames);
                 if (localJson !== remoteJson) {
                   store.replaceAll(t.frames as FrameData[]);
+                  for (const rf of t.frames as FrameData[]) autoUngroupIncomingFrame(rf.id);
                 }
               } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
                 // Remote has no frames but we do → re-save our frames as recovery
@@ -683,6 +724,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     ? { ...f, html: t.html || f.html, css: t.css || f.css }
                     : f
                 ));
+                if (selectedFrameId) autoUngroupIncomingFrame(selectedFrameId);
               }
             }
             lastRemoteUpdateRef.current = remoteUpdated;
@@ -3425,6 +3467,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const leftPanelsWidth = (codeIsDocked && codeDock.state.dockSide === "left" ? 380 : 0)
     + (layersIsDocked && layersDock.state.dockSide === "left" ? 260 : 0);
   const toolbarLeft = toolbarDock.state.isDocked ? leftPanelsWidth : undefined;
+  // Docked panels float via position:fixed (see useDockablePanel) so by
+  // default they render OVER the canvas instead of reserving space for it —
+  // the ruler, being sized to its own container, then draws its ticks
+  // straight through them. Insetting the canvas by each currently-docked
+  // panel's width makes the canvas (and therefore the ruler, which measures
+  // this same shrunken container) stop before the panel instead of running
+  // under it. Undocked/dragging panels are free-floating and don't reserve
+  // space; z-index ordering (see CanvasGuides) keeps them visually on top
+  // of the ruler in that case instead.
+  const canvasLeftInset = leftPanelsWidth + (toolbarDock.state.isDocked ? 56 : 0);
+  const canvasRightInset = (showRightPanel && rightDock.state.isDocked && rightDock.state.dockSide === "right") ? 260 : 0;
 
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
@@ -4330,6 +4383,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </div>
           )}
           <InfiniteHtmlCanvas
+            leftInset={canvasLeftInset}
+            rightInset={canvasRightInset}
             frames={frames}
             canvasObjects={canvasObjects}
             selectedFrameIds={selectedFrameIds}

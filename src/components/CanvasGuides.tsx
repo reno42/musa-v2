@@ -259,7 +259,12 @@ export function CanvasGuides({
       ref={containerRef}
       style={{
         position: "absolute", inset: 0,
-        pointerEvents: "none", zIndex: 5000,
+        // Below the dockable panels (z-index 15 docked / 25 dragging, see
+        // useDockablePanel) — the canvas is now inset to stop before a
+        // docked panel, but a panel being actively dragged floats freely
+        // and should always render on top of the ruler if it happens to
+        // pass over it, never the other way around.
+        pointerEvents: "none", zIndex: 10,
       }}
     >
       {/* ═══ Pixel Grid ═══ */}
