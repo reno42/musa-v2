@@ -262,78 +262,6 @@ p {
   margin: 0;
 }`;
 
-// ── Per-element Code view (the "Code" sub-tab of the contextual panel) ──
-// Shows the selected element's own HTML fragment and CSS rule, extracted
-// from the frame's full html/css by selector — a quick "what does this
-// layer actually look like" reference, matching what the existing
-// Copy-as-HTML/CSS toolbar buttons already extract, just inline. Editing a
-// SINGLE element's markup in isolation (detached from its siblings/parent)
-// isn't a well-formed operation the way editing the whole frame is — that
-// stays the job of the frame-level Code tab (the full CodePanel, reused
-// as-is), which this deliberately does not duplicate.
-function ElementCodeView({ html, css, selector }: { html: string; css: string; selector: string }) {
-  const [copied, setCopied] = useState<"html" | "css" | null>(null);
-
-  const elementHtml = useMemo(() => {
-    try {
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const el = doc.querySelector(selector);
-      return el ? el.outerHTML : "";
-    } catch { return ""; }
-  }, [html, selector]);
-
-  const elementCss = useMemo(() => {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`${escaped}\\s*\\{[^}]*\\}`, "g");
-    const matches = css.match(re);
-    return matches ? matches.join("\n\n") : "";
-  }, [css, selector]);
-
-  const copy = (which: "html" | "css", text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(which);
-    setTimeout(() => setCopied(null), 1500);
-  };
-
-  const blockStyle: React.CSSProperties = {
-    background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)",
-    borderRadius: 4, padding: 8, fontSize: 10.5, fontFamily: "monospace",
-    color: "#c8c4b4", whiteSpace: "pre-wrap", wordBreak: "break-all",
-    maxHeight: 260, overflow: "auto", margin: 0,
-  };
-  const copyBtnStyle: React.CSSProperties = {
-    fontSize: 9, padding: "2px 6px", borderRadius: 3,
-    border: "1px solid rgba(200,184,152,0.15)", background: "rgba(200,184,152,0.05)",
-    color: "#c8b898", cursor: "pointer",
-  };
-
-  return (
-    <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 10, overflow: "auto", flex: 1 }}>
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>HTML</span>
-          <button type="button" onClick={() => copy("html", elementHtml)} style={copyBtnStyle}>
-            {copied === "html" ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <pre style={blockStyle}>{elementHtml || "(sin markup)"}</pre>
-      </div>
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>CSS</span>
-          <button type="button" onClick={() => copy("css", elementCss)} style={copyBtnStyle}>
-            {copied === "css" ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <pre style={blockStyle}>{elementCss || "(sin reglas propias)"}</pre>
-      </div>
-      <div style={{ fontSize: 9, color: "#555", lineHeight: 1.5 }}>
-        Selector: <code style={{ color: "#7a7668" }}>{selector}</code>
-      </div>
-    </div>
-  );
-}
-
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
   // ── DocumentStore (transactional single source of truth, replaces 77 manual pushUndo calls) ──
@@ -4576,24 +4504,29 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               ))}
             </div>
           )}
-          {rightPanelTab === "contextual" && contextualSubTab === "properties" && (
-            selectedElement ? (
-              <HtmlContextualPanel
-                workspaceId={templateWorkspaceId}
-                element={selectedElement}
-                css={activeCss}
-                onCssChange={handleContextualCssChange}
-                onChangeTag={handleChangeTag}
-                onCopyStyle={handleCopyStyle}
-                onPasteStyle={handlePasteStyle}
-                hasClipboardStyle={!!clipboardStyle}
-                onConvertToPath={handleConvertToPath}
-                onOutlineStroke={handleOutlineStroke}
-                onOffsetPath={handleOffsetPath}
-                onShapeOptionsChange={handleShapeOptionsChange}
+          {rightPanelTab === "contextual" && selectedElement && (
+            <HtmlContextualPanel
+              workspaceId={templateWorkspaceId}
+              element={selectedElement}
+              html={activeHtml}
+              css={activeCss}
+              onCssChange={handleContextualCssChange}
+              onChangeTag={handleChangeTag}
+              onCopyStyle={handleCopyStyle}
+              onPasteStyle={handlePasteStyle}
+              hasClipboardStyle={!!clipboardStyle}
+              onConvertToPath={handleConvertToPath}
+              onOutlineStroke={handleOutlineStroke}
+              onOffsetPath={handleOffsetPath}
+              onShapeOptionsChange={handleShapeOptionsChange}
               onGroupModeChange={handleGroupModeChange}
-              />
-            ) : selectedFrame ? (
+              frameWidth={selectedFrame?.width || 0}
+              frameHeight={selectedFrame?.height || 0}
+              subTab={contextualSubTab}
+            />
+          )}
+          {rightPanelTab === "contextual" && !selectedElement && contextualSubTab === "properties" && (
+            selectedFrame ? (
               <div style={{ padding: "4px", display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1 }}>
                 {/* Frame Name */}
                 <div style={{ padding: "6px 10px", fontSize: 13, fontWeight: 600, color: "#f0ebe0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
@@ -4688,16 +4621,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               </div>
             ) : null
           )}
-          {rightPanelTab === "contextual" && contextualSubTab === "code" && (
-            selectedElement ? (
-              <ElementCodeView html={activeHtml} css={activeCss} selector={selectedElement.selector} />
-            ) : selectedFrame ? (
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: 8 }}>
-                <CodePanel html={activeHtml} css={activeCss} onHtmlChange={handleHtmlChange} onCssChange={handleCssChange} />
-              </div>
-            ) : null
+          {rightPanelTab === "contextual" && !selectedElement && selectedFrame && contextualSubTab === "code" && (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: 8 }}>
+              <CodePanel html={activeHtml} css={activeCss} onHtmlChange={handleHtmlChange} onCssChange={handleCssChange} />
+            </div>
           )}
-          {rightPanelTab === "contextual" && contextualSubTab === "animation" && (selectedElement || selectedFrame) && (
+          {rightPanelTab === "contextual" && !selectedElement && selectedFrame && contextualSubTab === "animation" && (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a7668", fontSize: 12, padding: 24, textAlign: "center", lineHeight: 1.6 }}>
               Sin herramientas de animación todavía.
             </div>

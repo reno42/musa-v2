@@ -105,6 +105,8 @@ export interface SelectedElementInfo {
   layerKind?: string;
   /** Number of element children with their own data-layer-id. */
   childLayerCount?: number;
+  /** `src` attribute for an <img> element — drives the Fill panel's image preview. */
+  src?: string;
   movableLayers: Array<{
     layerId: string;
     position: string;
@@ -180,6 +182,8 @@ const TRACKED_PROPS = [
   // Border
   "border", "border-top", "border-right", "border-bottom", "border-left",
   "border-radius", "border-width", "border-style", "border-color",
+  "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
+  "outline", "outline-color", "outline-width", "outline-style", "outline-offset",
   // Dimensions
   "width", "height", "max-width", "max-height", "min-width", "min-height",
   // Position
@@ -659,6 +663,7 @@ export function DesignFrame({
       shapeOptions,
       layerKind: element.getAttribute("data-layer-kind") || undefined,
       childLayerCount: [...element.children].filter(c => c.hasAttribute("data-layer-id")).length,
+      src: tag === "img" ? (element.getAttribute("src") || undefined) : undefined,
       movableLayers,
     });
   }
