@@ -4,7 +4,6 @@ import { apiFetch } from "../lib/supabase";
 interface Props {
   templateId: string;
   onHtmlUpdated: (html: string, css: string) => void;
-  onSvgImport?: () => void;
 }
 
 const barStyle: React.CSSProperties = {
@@ -30,7 +29,7 @@ const sectionStyle: React.CSSProperties = {
   paddingRight: 6, marginRight: 2,
 };
 
-export function InsertToolbar({ templateId, onHtmlUpdated, onSvgImport }: Props) {
+export function InsertToolbar({ templateId, onHtmlUpdated }: Props) {
   const addElement = useCallback(async (tag: string, html: string, css: string) => {
     try {
       const res = await apiFetch<any>("/mcp", {
@@ -65,15 +64,6 @@ export function InsertToolbar({ templateId, onHtmlUpdated, onSvgImport }: Props)
 
   return (
     <div style={barStyle}>
-      {/* SVG Import */}
-      {onSvgImport && (
-        <div style={sectionStyle}>
-          <button type="button" onClick={onSvgImport} style={{ ...btnStyle, background: "#8B5CF6", color: "#fff" }} title="Import SVG file or paste code">
-            + SVG
-          </button>
-        </div>
-      )}
-
       {/* Elements */}
       <div style={sectionStyle}>
         <button type="button" onClick={() => addElement("div", "", "")} style={btnStyle} title="Add Div">+ Div</button>

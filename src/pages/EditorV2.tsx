@@ -2763,16 +2763,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Unified Import router: one entry point that detects what was
   // dropped/picked and opens the right specialized tool (SVG editor,
-  // design-file import, or HTML/CSS import), pre-loaded with the file. ──
+  // design-file import, HTML/CSS import, or template restore), pre-loaded
+  // with the file. handleImportRoute is declared further down (after
+  // importTemplateFile exists) so it can list that as a dependency. ──
   const [showImportRouter, setShowImportRouter] = useState(false);
   const [routedImportFile, setRoutedImportFile] = useState<File | null>(null);
-  const handleImportRoute = useCallback((route: ImportRoute, file?: File) => {
-    setShowImportRouter(false);
-    setRoutedImportFile(file || null);
-    if (route === "svg") setShowSvgImport(true);
-    else if (route === "design") setShowDesignImport(true);
-    else if (route === "html") setShowPasteHtml(true);
-  }, []);
 
   // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
   const handleDesignImport = useCallback(async (result: ImportResult) => {
@@ -3392,9 +3387,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [templateId, callMcp, reloadFromServer]);
 
   // ── Import template ──
-  const handleImportTemplate = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const importTemplateFile = useCallback(async (file: File) => {
     try {
       const text = await file.text();
       const data = JSON.parse(text);
@@ -3402,8 +3395,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       setMcpMsg("✓ Template imported");
     } catch { setMcpMsg("✗ Import failed"); }
     setTimeout(() => setMcpMsg(""), 3000);
-    e.target.value = "";
   }, [callMcp, templateWorkspaceId]);
+
+  const handleImportRoute = useCallback((route: ImportRoute, file?: File) => {
+    setShowImportRouter(false);
+    if (route === "template") {
+      if (file) importTemplateFile(file);
+      return;
+    }
+    setRoutedImportFile(file || null);
+    if (route === "svg") setShowSvgImport(true);
+    else if (route === "design") setShowDesignImport(true);
+    else if (route === "html") setShowPasteHtml(true);
+  }, [importTemplateFile]);
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
@@ -3715,7 +3719,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           type="button"
           className="editor-v2-topbar-icon-btn"
           onClick={() => setShowImportRouter(true)}
-          title="Import (SVG, PSD, AI, FIG, HTML/CSS)"
+          title="Import (SVG, PSD, AI, FIG, HTML/CSS, Template JSON)"
           style={{ color: "var(--editor-accent, #6c5ce7)" }}
         >
           <IconUpload size={14} />
@@ -3776,12 +3780,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </button>
 
         <div className="editor-v2-topbar-sep" />
-
-        {/* Import template */}
-        <label className="editor-v2-topbar-icon-btn" title="Import Template JSON">
-          <IconUpload size={14} />
-          <input type="file" accept=".json" onChange={handleImportTemplate} style={{ display: "none" }} />
-        </label>
 
         {/* Lint design */}
         <button
@@ -4082,12 +4080,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
-              <button type="button" className="landing-menu-link" onClick={() => { document.querySelector<HTMLInputElement>('input[accept=".json"]')?.click(); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconUpload size={16} /> Import Template
-                </span>
-              </button>
               <button type="button" className="landing-menu-link" onClick={() => { handleLintDesign(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>

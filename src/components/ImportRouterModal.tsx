@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 
-export type ImportRoute = "svg" | "design" | "html";
+export type ImportRoute = "svg" | "design" | "html" | "template";
 
 interface ImportRouterModalProps {
   onClose: () => void;
@@ -17,6 +17,7 @@ const EXT_ROUTES: Record<string, ImportRoute> = {
   fig: "design",
   html: "html",
   htm: "html",
+  json: "template",
 };
 
 function detectRoute(file: File): ImportRoute | null {
@@ -27,15 +28,16 @@ function detectRoute(file: File): ImportRoute | null {
 /**
  * Single "Import" entry point. Drop or browse a file and it's routed to the
  * right specialized importer automatically (SVG editor, design-file import,
- * or HTML/CSS import) — the three tools underneath are unchanged, this is
- * just a thinner front door so the user only has to find one button.
- * Ambiguous/unrecognized files (e.g. PNG/JPG, which more than one tool can
- * handle) fall back to the manual picker below.
+ * HTML/CSS import, or template-JSON restore) — the tools underneath are
+ * unchanged, this is just a thinner front door so the user only has to find
+ * one button. Ambiguous/unrecognized files (e.g. PNG/JPG, which more than
+ * one tool can handle) fall back to the manual picker below.
  */
 export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [unrecognized, setUnrecognized] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const templateFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((file: File) => {
     const route = detectRoute(file);
@@ -59,6 +61,12 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
     if (file) handleFile(file);
     e.target.value = "";
   }, [handleFile]);
+
+  const handleTemplateFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onRoute("template", file);
+    e.target.value = "";
+  }, [onRoute]);
 
   const optionBtn = (icon: string, title: string, desc: string, onClick: () => void) => (
     <button
@@ -107,7 +115,7 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
             <input
               ref={fileInputRef}
               type="file"
-              accept=".svg,.psd,.ai,.fig,.html,.htm,.png,.jpg,.jpeg"
+              accept=".svg,.psd,.ai,.fig,.html,.htm,.json,.png,.jpg,.jpeg"
               style={{ display: "none" }}
               onChange={handleFileInputChange}
             />
@@ -116,7 +124,7 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
               Drop a file here, or click to browse
             </div>
             <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
-              We'll detect what it is — SVG, PSD, AI, FIG, or HTML/CSS
+              We'll detect what it is — SVG, PSD, AI, FIG, HTML/CSS, or a template JSON
             </div>
           </div>
 
@@ -137,6 +145,14 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
           {optionBtn("🎨", "SVG / Image", "Add vector shapes or an image into the current frame", () => onRoute("svg"))}
           {optionBtn("🖼", "Design file", "SVG, PSD, AI, FIG, PNG, or JPG → a new frame", () => onRoute("design"))}
           {optionBtn("📋", "HTML / CSS", "Paste, drop, or browse code into a frame", () => onRoute("html"))}
+          {optionBtn("📦", "Template JSON", "Restore a full template backup (.json) into this workspace", () => templateFileInputRef.current?.click())}
+          <input
+            ref={templateFileInputRef}
+            type="file"
+            accept=".json"
+            style={{ display: "none" }}
+            onChange={handleTemplateFileChange}
+          />
         </div>
       </div>
     </div>
