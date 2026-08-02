@@ -1,8 +1,13 @@
 import { useState, useCallback } from "react";
 import type { FrameData } from "./DesignFrame";
 
-export type ExportFormat = "png" | "jpg" | "svg" | "pdf";
+export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens";
 export type ExportScope = "current" | "all";
+
+// JSON (a full template backup) and Tokens (the extracted design system)
+// both operate on the WHOLE template, never a single frame — the
+// current/all-frames scope toggle doesn't mean anything for either.
+const WHOLE_TEMPLATE_FORMATS = new Set<ExportFormat>(["json", "tokens"]);
 
 interface ExportPanelProps {
   frames: FrameData[];
@@ -20,7 +25,7 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
   const [exporting, setExporting] = useState(false);
 
   const handleExport = useCallback(async () => {
-    if (scope === "current" && !selectedFrame) return;
+    if (!WHOLE_TEMPLATE_FORMATS.has(format) && scope === "current" && !selectedFrame) return;
     setExporting(true);
     try {
       await onExport(format, scope);
@@ -29,7 +34,8 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
     }
   }, [format, scope, selectedFrame, onExport]);
 
-  const hasSelection = scope === "current" ? !!selectedFrame : frames.length > 0;
+  const isWholeTemplate = WHOLE_TEMPLATE_FORMATS.has(format);
+  const hasSelection = isWholeTemplate ? true : (scope === "current" ? !!selectedFrame : frames.length > 0);
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -53,9 +59,14 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
         <option value="jpg">JPG</option>
         <option value="svg">SVG</option>
         <option value="pdf">PDF</option>
+        <option value="json">JSON (template)</option>
+        <option value="tokens">Design Tokens</option>
       </select>
 
-      {/* Scope toggle */}
+      {/* Scope toggle — meaningless for JSON/Tokens, which always export the
+          whole template, so it's hidden rather than left showing an option
+          that silently does nothing. */}
+      {!isWholeTemplate && (
       <select
         value={scope}
         onChange={e => setScope(e.target.value as ExportScope)}
@@ -74,6 +85,7 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
         <option value="current">Frame actual</option>
         <option value="all">Todos los frames</option>
       </select>
+      )}
 
       {/* Export button */}
       <button

@@ -2797,19 +2797,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showDesignImport, setShowDesignImport] = useState(false);
 
   // ── Unified export dispatcher (format + scope → existing handlers) ──
-  const handleUnifiedExport = useCallback(async (format: ExportFormat, scope: ExportScope) => {
-    if (scope === "current") {
-      if (format === "png" || format === "jpg") await handleExportFramePNG(format);
-      else if (format === "svg") await handleExportFrameSVG();
-      else if (format === "pdf") await handleExportFramePDF();
-    } else {
-      if (format === "png" || format === "jpg") await handleExportAllFramesPNG(format);
-      else if (format === "svg") await handleExportAllFramesSVG();
-      else if (format === "pdf") await handleExportAllFramesPDF();
-    }
-  }, [handleExportFramePNG, handleExportFrameSVG, handleExportFramePDF,
-      handleExportAllFramesPNG, handleExportAllFramesSVG, handleExportAllFramesPDF]);
-
   // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
   const handleDesignImport = useCallback(async (result: ImportResult) => {
     if (result.warning && !result.html) {
@@ -3380,6 +3367,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setTimeout(() => setMcpMsg(""), 3000);
   }, [templateId, templateName, callMcp]);
 
+  // JSON and Tokens ignore scope entirely — both always operate on the
+  // whole template, never a single frame (see ExportPanel's
+  // WHOLE_TEMPLATE_FORMATS). Declared after handleExportJSON/
+  // handleExportTokens so this can list them as dependencies.
+  const handleUnifiedExport = useCallback(async (format: ExportFormat, scope: ExportScope) => {
+    if (format === "json") { await handleExportJSON(); return; }
+    if (format === "tokens") { await handleExportTokens(); return; }
+    if (scope === "current") {
+      if (format === "png" || format === "jpg") await handleExportFramePNG(format);
+      else if (format === "svg") await handleExportFrameSVG();
+      else if (format === "pdf") await handleExportFramePDF();
+    } else {
+      if (format === "png" || format === "jpg") await handleExportAllFramesPNG(format);
+      else if (format === "svg") await handleExportAllFramesSVG();
+      else if (format === "pdf") await handleExportAllFramesPDF();
+    }
+  }, [handleExportFramePNG, handleExportFrameSVG, handleExportFramePDF,
+      handleExportAllFramesPNG, handleExportAllFramesSVG, handleExportAllFramesPDF,
+      handleExportJSON, handleExportTokens]);
+
   // ── Variable operations ──
   const handleExtractVars = useCallback(async () => {
     setMcpLoading("extract");
@@ -3760,16 +3767,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onExport={handleUnifiedExport}
         />
 
-        {/* JSON export (secondary) */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleExportJSON}
-          title="Export as JSON"
-        >
-          <IconDownload size={14} />
-        </button>
-
         <div className="editor-v2-topbar-sep" />
 
         {/* ── Import: designs from Illustrator, Photoshop, Figma, SVG ── */}
@@ -3900,18 +3897,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           title="Enhance — AI-suggested improvements"
         >
           <IconSparkle size={14} />
-        </button>
-
-        {/* Export design tokens */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleExportTokens}
-          disabled={mcpLoading === "tokens"}
-          title="Export Design Tokens as JSON"
-        >
-          <IconDna size={14} />
-          <span style={{ fontSize: 9, marginLeft: 1 }}>X</span>
         </button>
 
         {/* Extract variables */}
