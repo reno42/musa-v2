@@ -94,7 +94,7 @@ import {
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
-  IconHistory, IconWand, IconRefresh, IconGrid,
+  IconHistory, IconWand, IconGrid,
   IconUpload, IconSparkle, IconLink, IconCode,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -2859,6 +2859,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, templateName, addToast]);
 
+  // Every frame's own stylesheet, combined into one downloadable file —
+  // whole-template scope (see WHOLE_TEMPLATE_FORMATS), same as JSON/Tokens/
+  // Design.md, not the per-frame selection PNG/JPG/SVG/PDF use.
+  const handleExportCss = useCallback(() => {
+    const combined = frames.map(f => `/* ── ${f.name} ── */\n${f.css || ""}`).join("\n\n");
+    const blob = new Blob([combined], { type: "text/css" });
+    downloadBlob(blob, `${templateName.replace(/[<>:"/\\|?* ]/g, "_")}.css`);
+  }, [frames, templateName]);
+
   // ── Publish Style to Style Library (saves to brand_guidelines) ──
   const [publishingStyle, setPublishingStyle] = useState(false);
   const handlePublishStyle = useCallback(async () => {
@@ -3348,25 +3357,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleUnifiedExport = useCallback(async (format: ExportFormat) => {
     if (format === "json") { await handleExportJSON(); return; }
     if (format === "tokens") { await handleExportTokens(); return; }
+    if (format === "designSystem") { await handleExtractDesignSystem(); return; }
+    if (format === "css") { handleExportCss(); return; }
     if (exportTargetFrames.length === 0) return;
     if (format === "png" || format === "jpg") await handleExportFramesPNG(exportTargetFrames, format);
     else if (format === "svg") await handleExportFramesSVG(exportTargetFrames);
     else if (format === "pdf") await handleExportFramesPDF(exportTargetFrames);
   }, [exportTargetFrames, handleExportFramesPNG, handleExportFramesSVG, handleExportFramesPDF,
-      handleExportJSON, handleExportTokens]);
+      handleExportJSON, handleExportTokens, handleExtractDesignSystem, handleExportCss]);
 
   // ── Variable operations ──
-  const handleExtractVars = useCallback(async () => {
-    setMcpLoading("extract");
-    try {
-      await callMcp("extract_variables", { templateId });
-      await reloadFromServer();
-      setMcpMsg("✓ Variables extracted");
-    } catch { setMcpMsg("✗ Extract failed"); }
-    setMcpLoading(null);
-    setTimeout(() => setMcpMsg(""), 3000);
-  }, [templateId, callMcp, reloadFromServer]);
-
   const handleApplyVars = useCallback(async () => {
     setMcpLoading("applyvars");
     try {
@@ -3771,24 +3771,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={duplicateFrame} title="Duplicate frame (Ctrl+D)">
-          <IconCopy size={14} />
-        </button>
-
-        <div className="editor-v2-topbar-sep" />
-
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleExtractDesignSystem}
-          title="Extract Design System — downloads DESIGN.md, tokens.json, and shared.css"
-        >
-          <IconDownload size={14} />
-          <span style={{ fontSize: 9, marginLeft: 3 }}>DS</span>
-        </button>
-
-               <div className="editor-v2-topbar-sep" />
-
         {/* Insert toolbar toggle */}
         <button
           type="button"
@@ -3865,17 +3847,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           title="Enhance — AI-suggested improvements"
         >
           <IconSparkle size={14} />
-        </button>
-
-        {/* Extract variables */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleExtractVars}
-          disabled={mcpLoading === "extract"}
-          title="Extract CSS variables from template"
-        >
-          <IconRefresh size={14} />
         </button>
 
         {/* Apply variables */}

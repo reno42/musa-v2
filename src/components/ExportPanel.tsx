@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react";
 import type { FrameData } from "./DesignFrame";
 
-export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens";
+export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens" | "designSystem" | "css";
 
-// JSON (a full template backup) and Tokens (the extracted design system)
-// both operate on the WHOLE template, never a specific frame.
-const WHOLE_TEMPLATE_FORMATS = new Set<ExportFormat>(["json", "tokens"]);
+// JSON (a full template backup), Tokens, Design.md (DESIGN.md + tokens.json
+// + shared.css), and CSS (every frame's stylesheet, combined) all operate
+// on the WHOLE template, never a specific frame.
+const WHOLE_TEMPLATE_FORMATS = new Set<ExportFormat>(["json", "tokens", "designSystem", "css"]);
 
 interface ExportPanelProps {
   /** Every frame in the template — only used to gate JSON/Tokens (a template
@@ -68,6 +69,8 @@ export function ExportPanel({ frames, selectedFrames, onExport }: ExportPanelPro
         <option value="pdf">PDF</option>
         <option value="json">JSON (template)</option>
         <option value="tokens">Design Tokens</option>
+        <option value="designSystem">Design.md</option>
+        <option value="css">CSS</option>
       </select>
 
       {/* Export button — for PNG/JPG/SVG/PDF this exports every currently
