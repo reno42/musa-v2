@@ -11,7 +11,6 @@ import { StructurePanel } from "../components/StructurePanel";
 import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
 import { StyleLibraryModal } from "../components/StyleLibraryModal";
-import { FormatPanel } from "../components/FormatPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat, type ExportScope } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
@@ -90,7 +89,7 @@ import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
-  IconFile, IconBot, IconType, IconImage, IconCopy, IconTrash,
+  IconBot, IconType, IconImage, IconCopy, IconTrash,
   IconDownload, IconTag,
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
@@ -2172,6 +2171,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             break;
           case "p": setActiveTool("pen"); break;
           case "b": setActiveTool("pencil"); break;
+          case "z": handleZoomIn(); break;
           case "delete":
           case "backspace":
             if (selectedElement) {
@@ -3582,7 +3582,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     { id: "structure", icon: <IconLayout size={14} />, title: "Structure" },
     { id: "vars", icon: <IconDna size={14} />, title: "Variables" },
     { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
-    { id: "format", icon: <IconFile size={14} />, title: "Format" },
     { id: "history", icon: <IconHistory size={14} />, title: "History" },
     { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
     {
@@ -3743,9 +3742,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <span style={{ fontSize: 9, marginLeft: 3 }}>{publishingStyle ? "Pub" : "Publicar"}</span>
         </button>
 
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowFontPicker(!showFontPicker)} title="Fonts">
-          <IconType size={14} />
-        </button>
         {/* Export Dropdown */}
         <div className="editor-v2-topbar-sep" />
         {/* Capture Thumbnail */}
@@ -3812,15 +3808,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={duplicateFrame} title="Duplicate frame (Ctrl+D)">
           <IconCopy size={14} />
-        </button>
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${frames.length <= 1 ? "disabled" : ""}`}
-          onClick={deleteSelectedFrame}
-          disabled={frames.length <= 1}
-          title="Delete frame (Del)"
-        >
-          <IconTrash size={14} />
         </button>
 
         <div className="editor-v2-topbar-sep" />
@@ -4647,11 +4634,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           )}
           {rightPanelTab === "brand" && (
             <BrandPanel templateId={templateId} workspaceId={templateWorkspaceId} onCssUpdated={(c: string) => handleCssChange(c)} />
-          )}
-          {rightPanelTab === "format" && (
-            <FormatPanel templateId={templateId} width={selectedFrame?.width ?? 1080} height={selectedFrame?.height ?? 1080} onTemplateCreated={(id: string) => {
-              window.open(`/?template=${id}&v=2`, "_blank");
-            }} />
           )}
           {rightPanelTab === "history" && (
             <VersionHistoryPanel templateId={templateId} onRestore={reloadFromServer} />
