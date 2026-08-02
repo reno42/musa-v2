@@ -1,17 +1,20 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { importDesignFile, SUPPORTED_IMPORT_FORMATS, type ImportResult } from "../lib/designImport";
 
 interface DesignImportModalProps {
   open: boolean;
   onClose: () => void;
   onImport: (result: ImportResult) => void;
+  /** Pre-load files chosen elsewhere (e.g. the unified Import router) so
+   *  the user doesn't have to pick them again. */
+  initialFiles?: File[] | null;
 }
 
 /**
  * Design Import Modal — accepts .svg, .psd, .ai, .fig, .png, .jpg files
  * and converts them into Futuraria frames.
  */
-export function DesignImportModal({ open, onClose, onImport }: DesignImportModalProps) {
+export function DesignImportModal({ open, onClose, onImport, initialFiles }: DesignImportModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +37,11 @@ export function DesignImportModal({ open, onClose, onImport }: DesignImportModal
       setProcessing(false);
     }
   }, [onImport, onClose]);
+
+  useEffect(() => {
+    if (open && initialFiles && initialFiles.length > 0) handleFiles(initialFiles);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialFiles]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

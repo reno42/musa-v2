@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { apiFetch } from "../lib/supabase";
 import { imageStorageWarning } from "../lib/storageHealth";
 
@@ -14,6 +14,9 @@ interface Props {
   onImported: (templateId: string) => void;
   onRasterImported: (image: RasterImageImport) => void;
   onClose: () => void;
+  /** Pre-load a file chosen elsewhere (e.g. the unified Import router) so
+   *  the user doesn't have to pick it again. */
+  initialFile?: File | null;
 }
 
 const overlayStyle: React.CSSProperties = {
@@ -40,7 +43,7 @@ function isRasterFile(file: File): boolean {
     || file.type === "image/png";
 }
 
-export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onClose }: Props) {
+export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onClose, initialFile }: Props) {
   const [tab, setTab] = useState<"upload" | "paste">("upload");
   const [svgCode, setSvgCode] = useState("");
   const [fileName, setFileName] = useState("");
@@ -52,10 +55,7 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
   const [rasterDataUrl, setRasterDataUrl] = useState<string | null>(null);
   const [rasterDimensions, setRasterDimensions] = useState({ width: 0, height: 0 });
 
-  const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processFile = useCallback((file: File) => {
     if (isRasterFile(file)) {
       setStorageWarning(imageStorageWarning(file) || "");
       setRasterDimensions({ width: 0, height: 0 });
@@ -94,6 +94,16 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
       reader.readAsText(file);
     }
   }, []);
+
+  const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+  }, [processFile]);
+
+  useEffect(() => {
+    if (initialFile) processFile(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
 
   const handlePasteChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value;

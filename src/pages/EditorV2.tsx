@@ -14,6 +14,7 @@ import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
+import { ImportRouterModal, type ImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
@@ -1679,7 +1680,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave]);
 
   // ── Phase G: SVG Import ──
-  const handleSvgImportOpen = useCallback(() => setShowSvgImport(true), []);
   const handleSvgImported = useCallback(async (newTemplateId: string) => {
     setShowSvgImport(false);
     onBack();
@@ -2761,6 +2761,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [showDesignImport, setShowDesignImport] = useState(false);
 
+  // ── Unified Import router: one entry point that detects what was
+  // dropped/picked and opens the right specialized tool (SVG editor,
+  // design-file import, or HTML/CSS import), pre-loaded with the file. ──
+  const [showImportRouter, setShowImportRouter] = useState(false);
+  const [routedImportFile, setRoutedImportFile] = useState<File | null>(null);
+  const handleImportRoute = useCallback((route: ImportRoute, file?: File) => {
+    setShowImportRouter(false);
+    setRoutedImportFile(file || null);
+    if (route === "svg") setShowSvgImport(true);
+    else if (route === "design") setShowDesignImport(true);
+    else if (route === "html") setShowPasteHtml(true);
+  }, []);
+
   // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
   const handleDesignImport = useCallback(async (result: ImportResult) => {
     if (result.warning && !result.html) {
@@ -3695,16 +3708,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
-        {/* ── Import: designs from Illustrator, Photoshop, Figma, SVG ── */}
+        {/* ── Import: single entry point that routes to the right tool
+            (SVG editor, design-file import, or HTML/CSS import) based on
+            what's dropped or picked — see ImportRouterModal. ── */}
         <button
           type="button"
           className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowDesignImport(true)}
-          title="Importar diseño (SVG, PSD, AI, FIG)"
+          onClick={() => setShowImportRouter(true)}
+          title="Import (SVG, PSD, AI, FIG, HTML/CSS)"
           style={{ color: "var(--editor-accent, #6c5ce7)" }}
         >
           <IconUpload size={14} />
-          <span style={{ fontSize: 11, marginLeft: 4 }}>Importar</span>
+          <span style={{ fontSize: 11, marginLeft: 4 }}>Import</span>
         </button>
 
         <div className="editor-v2-topbar-sep" />
@@ -3737,18 +3752,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           title="Insert Elements Bar"
         >
           <IconPlus size={14} />
-        </button>
-
-        {/* Import / Paste HTML+CSS into selected frame — one modal handles
-            pasted code, drag-and-drop, and click-to-browse file import. */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowPasteHtml(true)}
-          title="Import / Paste HTML & CSS into Frame"
-        >
-          <IconCode size={14} />
-          <span style={{ fontSize: 9, marginLeft: 1 }}>✎</span>
         </button>
 
         {/* Image to Design */}
@@ -4015,13 +4018,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconImage size={16} /> Capture Thumbnail
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowDesignImport(true); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { setShowImportRouter(true); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconUpload size={16} /> Importar diseño
+                  <IconUpload size={16} /> Import
                 </span>
               </button>
-              
+
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
               <button type="button" className="landing-menu-link" onClick={() => { handleSaveRecipe(); setMobileMenuOpen(false); }}
@@ -4062,12 +4065,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <IconPlus size={16} /> Insert Elements
-                </span>
-              </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowPasteHtml(true); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconCode size={16} /> Import / Paste HTML & CSS
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { setShowImageToDesign(true); setMobileMenuOpen(false); }}
@@ -4186,7 +4183,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   handleFrameCssChange(selectedFrameId, css, html);
                 }
               }}
-              onSvgImport={() => setShowSvgImport(true)}
             />
             </div>
           )}
@@ -4325,7 +4321,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onRedo={handleRedo}
           multiSelectCount={multiSelectLayerIds.length}
           onPathfinder={handlePathfinder}
-          onSvgImport={handleSvgImportOpen}
           showCode={showCodePanel}
           showLayers={showLayersPanel}
           onToggleCode={() => setShowCodePanel(v => !v)}
@@ -4525,9 +4520,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showSvgImport && (
         <SvgImportDialog
           workspaceId={templateWorkspaceId}
+          initialFile={routedImportFile}
           onImported={handleSvgImported}
           onRasterImported={handleRasterImageImported}
-          onClose={() => setShowSvgImport(false)}
+          onClose={() => { setShowSvgImport(false); setRoutedImportFile(null); }}
         />
       )}
 
@@ -4554,7 +4550,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Paste HTML/CSS Modal ═══ */}
       {showPasteHtml && (
         <PasteHtmlModal
-          onClose={() => setShowPasteHtml(false)}
+          initialFile={routedImportFile}
+          onClose={() => { setShowPasteHtml(false); setRoutedImportFile(null); }}
           onApply={(result: PasteResult) => {
             const w = result.width || 1080;
             const h = result.height || 1080;
@@ -4611,9 +4608,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {/* ═══ Design Import Modal (SVG, PSD, AI, FIG) ═══ */}
       <DesignImportModal
         open={showDesignImport}
-        onClose={() => setShowDesignImport(false)}
+        initialFiles={routedImportFile ? [routedImportFile] : null}
+        onClose={() => { setShowDesignImport(false); setRoutedImportFile(null); }}
         onImport={handleDesignImport}
       />
+
+      {/* ═══ Unified Import router — one button, detects the file type ═══ */}
+      {showImportRouter && (
+        <ImportRouterModal
+          onClose={() => setShowImportRouter(false)}
+          onRoute={handleImportRoute}
+        />
+      )}
 
       {/* ═══ Icon Picker ═══ */}
       {showIconPicker && (

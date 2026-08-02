@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { parseHtmlDocument } from "../lib/htmlParser";
 
 export interface PasteResult {
@@ -13,6 +13,9 @@ export interface PasteResult {
 interface PasteHtmlModalProps {
   onClose: () => void;
   onApply: (result: PasteResult) => void;
+  /** Pre-load a file chosen elsewhere (e.g. the unified Import router) so
+   *  the user doesn't have to pick it again. */
+  initialFile?: File | null;
 }
 
 /**
@@ -22,7 +25,7 @@ interface PasteHtmlModalProps {
  * Default mode: one textarea for the complete document.
  * Advanced toggle: split into separate HTML + CSS fields.
  */
-export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
+export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModalProps) {
   const [raw, setRaw] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [htmlManual, setHtmlManual] = useState("");
@@ -79,6 +82,11 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
     if (file) loadFile(file);
     e.target.value = "";
   }, [loadFile]);
+
+  useEffect(() => {
+    if (initialFile) loadFile(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
