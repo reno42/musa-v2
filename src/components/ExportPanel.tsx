@@ -2,40 +2,47 @@ import { useState, useCallback } from "react";
 import type { FrameData } from "./DesignFrame";
 
 export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens";
-export type ExportScope = "current" | "all";
 
 // JSON (a full template backup) and Tokens (the extracted design system)
-// both operate on the WHOLE template, never a single frame — the
-// current/all-frames scope toggle doesn't mean anything for either.
+// both operate on the WHOLE template, never a specific frame.
 const WHOLE_TEMPLATE_FORMATS = new Set<ExportFormat>(["json", "tokens"]);
 
 interface ExportPanelProps {
+  /** Every frame in the template — only used to gate JSON/Tokens (a template
+   *  with zero frames has nothing to export either way). */
   frames: FrameData[];
-  selectedFrame: FrameData | null;
-  onExport: (format: ExportFormat, scope: ExportScope) => void;
+  /** The frames export will actually act on for PNG/JPG/SVG/PDF: the
+   *  current multi-select, or the single active frame if nothing is
+   *  multi-selected. There's no separate "all frames" mode — select what
+   *  you want exported. */
+  selectedFrames: FrameData[];
+  onExport: (format: ExportFormat) => void;
 }
 
 /**
- * Export Panel — format dropdown + scope toggle + export button.
- * Compact inline component for the editor toolbar.
+ * Export Panel — format dropdown + export button. Compact inline component
+ * for the editor toolbar.
  */
-export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProps) {
+export function ExportPanel({ frames, selectedFrames, onExport }: ExportPanelProps) {
   const [format, setFormat] = useState<ExportFormat>("png");
-  const [scope, setScope] = useState<ExportScope>("current");
   const [exporting, setExporting] = useState(false);
 
+  const isWholeTemplate = WHOLE_TEMPLATE_FORMATS.has(format);
+  const hasSelection = isWholeTemplate ? frames.length > 0 : selectedFrames.length > 0;
+
   const handleExport = useCallback(async () => {
-    if (!WHOLE_TEMPLATE_FORMATS.has(format) && scope === "current" && !selectedFrame) return;
+    if (!hasSelection) return;
     setExporting(true);
     try {
-      await onExport(format, scope);
+      await onExport(format);
     } finally {
       setExporting(false);
     }
-  }, [format, scope, selectedFrame, onExport]);
+  }, [format, hasSelection, onExport]);
 
-  const isWholeTemplate = WHOLE_TEMPLATE_FORMATS.has(format);
-  const hasSelection = isWholeTemplate ? true : (scope === "current" ? !!selectedFrame : frames.length > 0);
+  let buttonLabel = "Exportar";
+  if (exporting) buttonLabel = "Exportando...";
+  else if (!isWholeTemplate && selectedFrames.length > 1) buttonLabel = `Exportar (${selectedFrames.length})`;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -63,35 +70,14 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
         <option value="tokens">Design Tokens</option>
       </select>
 
-      {/* Scope toggle — meaningless for JSON/Tokens, which always export the
-          whole template, so it's hidden rather than left showing an option
-          that silently does nothing. */}
-      {!isWholeTemplate && (
-      <select
-        value={scope}
-        onChange={e => setScope(e.target.value as ExportScope)}
-        className="editor-v2-export-scope"
-        style={{
-          background: "var(--editor-bg-3, #1e1e2e)",
-          color: "var(--editor-text, #e0e0f0)",
-          border: "1px solid var(--editor-border, #333346)",
-          borderRadius: 6,
-          padding: "4px 8px",
-          fontSize: 12,
-          cursor: "pointer",
-          outline: "none",
-        }}
-      >
-        <option value="current">Frame actual</option>
-        <option value="all">Todos los frames</option>
-      </select>
-      )}
-
-      {/* Export button */}
+      {/* Export button — for PNG/JPG/SVG/PDF this exports every currently
+          selected frame (select 3 of 7 to hand off just those 3), so the
+          label surfaces the count once it's more than one. */}
       <button
         type="button"
         onClick={handleExport}
         disabled={!hasSelection || exporting}
+        title={!isWholeTemplate && selectedFrames.length === 0 ? "Select a frame to export" : undefined}
         className="editor-v2-export-btn"
         style={{
           background: hasSelection && !exporting
@@ -106,9 +92,10 @@ export function ExportPanel({ frames, selectedFrame, onExport }: ExportPanelProp
           cursor: hasSelection && !exporting ? "pointer" : "default",
           transition: "opacity 0.15s",
           opacity: exporting ? 0.6 : 1,
+          whiteSpace: "nowrap",
         }}
       >
-        {exporting ? "Exportando..." : "Exportar"}
+        {buttonLabel}
       </button>
     </div>
   );

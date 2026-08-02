@@ -12,7 +12,7 @@ import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
 import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FloatingToolbar } from "../components/FloatingToolbar";
-import { ExportPanel, type ExportFormat, type ExportScope } from "../components/ExportPanel";
+import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
 import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
@@ -2670,14 +2670,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, []);
 
-  const handleExportFramePNG = useCallback(async (format: "png" | "jpg" = "png") => {
-    if (!selectedFrame) return;
-    // Export menu no longer used — ExportPanel handles UI state
-    const blob = await captureFrameToPng(selectedFrame, 2, format);
-    if (!blob) return;
-    downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
-  }, [selectedFrame, captureFrameToPng]);
-
   /* Capture current frame as a thumbnail for the dashboard Cover Flow / grid */
   const handleCaptureThumbnail = useCallback(async () => {
     if (!selectedFrame) return;
@@ -2710,15 +2702,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } catch { return null; }
   }, [selectedFrame, captureFrameToPng]);
 
-  const handleExportAllFramesPNG = useCallback(async (format: "png" | "jpg" = "png") => {
-    // Export menu no longer used — ExportPanel handles UI state
-    for (const frame of frames) {
+  // Export operates on whichever frames are currently SELECTED (a multi-frame
+  // selection on the canvas — see exportTargetFrames below), not a "current
+  // frame vs literally every frame" toggle. A user with 7 frames who wants
+  // to hand a client only 3 selects those 3 and exports; there's no longer a
+  // separate "all frames" mode to reach for.
+  const handleExportFramesPNG = useCallback(async (targetFrames: FrameData[], format: "png" | "jpg" = "png") => {
+    for (const frame of targetFrames) {
       const blob = await captureFrameToPng(frame, 2, format);
       if (!blob) continue;
       downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.${format}`);
-      await new Promise(r => setTimeout(r, 300));
+      if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
     }
-  }, [frames, captureFrameToPng]);
+  }, [captureFrameToPng]);
 
   // SVG export bakes external images (Storage URLs) into data: URIs first —
   // a downloaded .svg opened directly in a browser tab CAN load external
@@ -2727,51 +2723,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // triggers the exact same "SVG-as-image skips external resources" browser
   // rule documented in frameCapture.ts. Inlining makes the file self-contained
   // everywhere, matching the PNG/JPG export's guarantee.
-  const handleExportFrameSVG = useCallback(async () => {
-    if (!selectedFrame) return;
-    const { html, css } = await inlineFrameImages(selectedFrame.html, selectedFrame.css);
-    const svgString = await buildFrameSvg({ ...selectedFrame, html, css });
-    const blob = new Blob([svgString], { type: "image/svg+xml" });
-    downloadBlob(blob, `${selectedFrame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
-  }, [selectedFrame, buildFrameSvg]);
-
-  const handleExportAllFramesSVG = useCallback(async () => {
-    for (const frame of frames) {
+  const handleExportFramesSVG = useCallback(async (targetFrames: FrameData[]) => {
+    for (const frame of targetFrames) {
       const { html, css } = await inlineFrameImages(frame.html, frame.css);
       const svgString = await buildFrameSvg({ ...frame, html, css });
       const blob = new Blob([svgString], { type: "image/svg+xml" });
       downloadBlob(blob, `${frame.name.replace(/[<>:"/\\|?*]/g, "_")}.svg`);
-      await new Promise(r => setTimeout(r, 200));
+      if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 200));
     }
-  }, [frames, buildFrameSvg]);
+  }, [buildFrameSvg]);
 
   // ── PDF export via jsPDF ──
-  const handleExportFramePDF = useCallback(async () => {
-    if (!selectedFrame) return;
-    // Export menu no longer used — ExportPanel handles UI state
-    const blob = await captureFrameToPng(selectedFrame, 2, "png");
-    if (!blob) return;
+  const handleExportFramesPDF = useCallback(async (targetFrames: FrameData[]) => {
     const { jsPDF } = await import("jspdf");
-    const reader = new FileReader();
-    const imgData = await new Promise<string>((resolve, reject) => {
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    const f = selectedFrame;
-    const pdf = new jsPDF({
-      orientation: (f.width || 1080) > (f.height || 1080) ? "landscape" : "portrait",
-      unit: "px",
-      format: [f.width || 1080, f.height || 1080],
-    });
-    pdf.addImage(imgData, "PNG", 0, 0, f.width || 1080, f.height || 1080);
-    pdf.save(`${f.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
-  }, [selectedFrame, captureFrameToPng]);
-
-  const handleExportAllFramesPDF = useCallback(async () => {
-    // Export menu no longer used — ExportPanel handles UI state
-    const { jsPDF } = await import("jspdf");
-    for (const frame of frames) {
+    for (const frame of targetFrames) {
       const blob = await captureFrameToPng(frame, 2, "png");
       if (!blob) continue;
       const reader = new FileReader();
@@ -2787,16 +2752,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       });
       pdf.addImage(imgData, "PNG", 0, 0, frame.width || 1080, frame.height || 1080);
       pdf.save(`${frame.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
-      await new Promise(r => setTimeout(r, 300));
+      if (targetFrames.length > 1) await new Promise(r => setTimeout(r, 300));
     }
-  }, [frames, captureFrameToPng]);
+  }, [captureFrameToPng]);
 
   const [showImageUpload, setShowImageUpload] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [showDesignImport, setShowDesignImport] = useState(false);
 
-  // ── Unified export dispatcher (format + scope → existing handlers) ──
   // ── Design import handler (SVG/PSD/AI/FIG → new frame) ──
   const handleDesignImport = useCallback(async (result: ImportResult) => {
     if (result.warning && !result.html) {
@@ -3367,24 +3331,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setTimeout(() => setMcpMsg(""), 3000);
   }, [templateId, templateName, callMcp]);
 
-  // JSON and Tokens ignore scope entirely — both always operate on the
-  // whole template, never a single frame (see ExportPanel's
-  // WHOLE_TEMPLATE_FORMATS). Declared after handleExportJSON/
-  // handleExportTokens so this can list them as dependencies.
-  const handleUnifiedExport = useCallback(async (format: ExportFormat, scope: ExportScope) => {
+  // The frames export actually acts on: the multi-select if there is one,
+  // else whichever single frame is active — same resolution rule already
+  // used for copy/paste (captureSelection above).
+  const exportTargetFrames = useMemo(() => {
+    const ids = selectedFrameIds.size > 0
+      ? selectedFrameIds
+      : new Set(selectedFrameId ? [selectedFrameId] : []);
+    return frames.filter(f => ids.has(f.id));
+  }, [frames, selectedFrameId, selectedFrameIds]);
+
+  // JSON and Tokens ignore the selection entirely — both always operate on
+  // the whole template (see ExportPanel's WHOLE_TEMPLATE_FORMATS). Declared
+  // after handleExportJSON/handleExportTokens so this can list them as
+  // dependencies.
+  const handleUnifiedExport = useCallback(async (format: ExportFormat) => {
     if (format === "json") { await handleExportJSON(); return; }
     if (format === "tokens") { await handleExportTokens(); return; }
-    if (scope === "current") {
-      if (format === "png" || format === "jpg") await handleExportFramePNG(format);
-      else if (format === "svg") await handleExportFrameSVG();
-      else if (format === "pdf") await handleExportFramePDF();
-    } else {
-      if (format === "png" || format === "jpg") await handleExportAllFramesPNG(format);
-      else if (format === "svg") await handleExportAllFramesSVG();
-      else if (format === "pdf") await handleExportAllFramesPDF();
-    }
-  }, [handleExportFramePNG, handleExportFrameSVG, handleExportFramePDF,
-      handleExportAllFramesPNG, handleExportAllFramesSVG, handleExportAllFramesPDF,
+    if (exportTargetFrames.length === 0) return;
+    if (format === "png" || format === "jpg") await handleExportFramesPNG(exportTargetFrames, format);
+    else if (format === "svg") await handleExportFramesSVG(exportTargetFrames);
+    else if (format === "pdf") await handleExportFramesPDF(exportTargetFrames);
+  }, [exportTargetFrames, handleExportFramesPNG, handleExportFramesSVG, handleExportFramesPDF,
       handleExportJSON, handleExportTokens]);
 
   // ── Variable operations ──
@@ -3763,7 +3731,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         {/* ── Export: format dropdown + scope toggle + export button ── */}
         <ExportPanel
           frames={frames}
-          selectedFrame={selectedFrame}
+          selectedFrames={exportTargetFrames}
           onExport={handleUnifiedExport}
         />
 
