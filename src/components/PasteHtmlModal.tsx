@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { parseHtmlDocument } from "../lib/htmlParser";
 
 export interface PasteResult {
@@ -27,8 +27,12 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
   const [advanced, setAdvanced] = useState(false);
   const [htmlManual, setHtmlManual] = useState("");
   const [cssManual, setCssManual] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [fileError, setFileError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Live-parse the pasted document for preview
+  // Live-parse the pasted (or imported) document for preview
   const parsed = useMemo(() => {
     if (advanced) return null;
     if (!raw.trim()) return null;
@@ -51,6 +55,38 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
     }
   }, [advanced, parsed, htmlManual, cssManual, onApply]);
 
+  // Load a dropped/picked file's text into the same `raw` state a paste
+  // would use, so the existing live-parse preview applies uniformly
+  // regardless of how the content arrived.
+  const loadFile = useCallback(async (file: File) => {
+    setFileError("");
+    if (!/\.(html?|htm)$/i.test(file.name)) {
+      setFileError(`"${file.name}" doesn't look like an HTML file — expected .html/.htm`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      setAdvanced(false);
+      setRaw(text);
+      setFileName(file.name);
+    } catch {
+      setFileError("Couldn't read that file");
+    }
+  }, []);
+
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+    e.target.value = "";
+  }, [loadFile]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) loadFile(file);
+  }, [loadFile]);
+
   return (
     <div
       className="image-upload-overlay"
@@ -58,7 +94,7 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
     >
       <div className="image-upload-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="image-upload-header">
-          <h2>📋 Paste HTML &amp; CSS</h2>
+          <h2>📋 Import / Paste HTML &amp; CSS</h2>
           <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
@@ -94,13 +130,45 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
           {!advanced ? (
             <>
               <div>
-                <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4, fontWeight: 600 }}>
-                  Paste the complete HTML document from Gemini, ChatGPT, Claude, etc.
-                </label>
-                <textarea
-                  value={raw}
-                  onChange={e => setRaw(e.target.value)}
-                  placeholder={`<!DOCTYPE html>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <label style={{ fontSize: 11, color: "#888", fontWeight: 600 }}>
+                    Paste a complete HTML document, or drag &amp; drop / browse an .html file
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{
+                      fontSize: 11, color: "#8B5CF6", background: "transparent",
+                      border: "1px solid rgba(139,92,246,0.4)", borderRadius: 6,
+                      padding: "3px 8px", cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    📁 Browse file…
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".html,.htm"
+                    style={{ display: "none" }}
+                    onChange={handleFileInputChange}
+                  />
+                </div>
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  style={{
+                    position: "relative",
+                    borderRadius: 8,
+                    outline: dragOver ? "2px dashed #8B5CF6" : "2px dashed transparent",
+                    outlineOffset: 2,
+                    transition: "outline-color 0.15s ease",
+                  }}
+                >
+                  <textarea
+                    value={raw}
+                    onChange={e => { setRaw(e.target.value); setFileName(""); }}
+                    placeholder={`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -114,17 +182,33 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
 <body>
   <div data-layer-id="hero" class="hero">Futuraria</div>
 </body>
-</html>`}
-                  style={{
-                    width: "100%", height: 260, background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 12,
-                    color: "#ccc", fontSize: 12, fontFamily: "'Fira Code', 'Cascadia Code', monospace",
-                    resize: "vertical", lineHeight: 1.5, boxSizing: "border-box",
-                  }}
-                />
+</html>
+
+…or drag & drop an .html file here`}
+                    style={{
+                      width: "100%", height: 260, background: dragOver ? "rgba(139,92,246,0.08)" : "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 12,
+                      color: "#ccc", fontSize: 12, fontFamily: "'Fira Code', 'Cascadia Code', monospace",
+                      resize: "vertical", lineHeight: 1.5, boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                {fileName && (
+                  <div style={{ fontSize: 11, color: "#4ade80", marginTop: 4 }}>
+                    📄 Loaded from <strong>{fileName}</strong>
+                  </div>
+                )}
+                {fileError && (
+                  <div style={{ fontSize: 11, color: "#f87171", marginTop: 4 }}>
+                    ✗ {fileError}
+                  </div>
+                )}
               </div>
 
-              {/* Live parse preview */}
+              {/* Live preview of what will be imported — lets the user
+                  catch mistakes before applying, and see at a glance that
+                  this is raw code (not a running program) they can hand
+                  off to the AI chat to fix if something looks off. */}
               {parsed && (
                 <div style={{
                   fontSize: 12, color: "#aaa", padding: "10px 12px",
@@ -182,9 +266,10 @@ export function PasteHtmlModal({ onClose, onApply }: PasteHtmlModalProps) {
           )}
 
           <div style={{ fontSize: 10, color: "#666", lineHeight: 1.5 }}>
-            💡 <strong>Tip:</strong> Paste the full HTML that Gemini/ChatGPT/Claude gave you.
-            The editor auto-extracts styles and body content.
-            {!advanced && " Use <strong>Advanced</strong> tab if you need separate HTML/CSS fields."}
+            💡 <strong>Tip:</strong> Paste, drop, or browse the full HTML that Gemini/ChatGPT/Claude gave you.
+            The editor auto-extracts styles and body content and previews it above before you apply —
+            if it looks like broken code rather than a finished design, copy it into the chat and ask the AI to fix it first.
+            {!advanced && " Use the Advanced tab if you need separate HTML/CSS fields."}
           </div>
 
           <button
