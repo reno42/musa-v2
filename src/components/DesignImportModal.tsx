@@ -143,7 +143,7 @@ export function DesignImportModal({ open, onClose, onImport, initialFiles, works
             textAlign: "center",
             cursor: "pointer",
             transition: "border-color 0.15s, background 0.15s",
-            background: dragOver ? "rgba(108,92,231,0.08)" : "transparent",
+            background: dragOver ? "rgba(200,184,152,0.08)" : "transparent",
           }}
         >
           <input

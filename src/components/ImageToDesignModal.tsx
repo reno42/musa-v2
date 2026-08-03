@@ -172,12 +172,12 @@ export function ImageToDesignModal({ templateId, frameId, onClose, onDesignReady
                   style={{
                     padding: "12px 28px",
                     background: loading
-                      ? "linear-gradient(135deg, rgba(139,92,246,0.4), rgba(99,102,241,0.4))"
-                      : "linear-gradient(135deg, #8B5CF6, #6366F1)",
-                    color: "#fff", border: "none", borderRadius: 10,
+                      ? "linear-gradient(135deg, rgba(200,184,152,0.4), rgba(168,146,106,0.4))"
+                      : "linear-gradient(135deg, #c8b898, #a8926a)",
+                    color: "#1a1a1a", border: "none", borderRadius: 10,
                     cursor: loading ? "wait" : "pointer",
                     fontSize: 15, fontWeight: 700, fontFamily: "inherit",
-                    boxShadow: "0 4px 20px rgba(139,92,246,0.3)",
+                    boxShadow: "0 4px 20px rgba(200,184,152,0.3)",
                     transition: "all 0.2s ease",
                   }}
                 >
@@ -218,7 +218,7 @@ export function ImageToDesignModal({ templateId, frameId, onClose, onDesignReady
             <div style={{ width: "100%", height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2, overflow: "hidden" }}>
               <div style={{
                 width: "100%", height: "100%",
-                background: "linear-gradient(90deg, #8B5CF6, #6366F1, #8B5CF6)",
+                background: "linear-gradient(90deg, #c8b898, #a8926a, #c8b898)",
                 backgroundSize: "200% 100%",
                 animation: "shimmer 1.5s infinite",
                 borderRadius: 2,

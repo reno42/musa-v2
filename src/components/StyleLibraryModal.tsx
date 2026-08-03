@@ -310,8 +310,8 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
 
   const tabBtnStyle = (active: boolean): React.CSSProperties => ({
     ...btnStyle,
-    background: active ? "rgba(99,102,241,0.3)" : "rgba(255,255,255,0.04)",
-    borderBottom: active ? "2px solid #6366f1" : "2px solid transparent",
+    background: active ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.04)",
+    borderBottom: active ? "2px solid #c8b898" : "2px solid transparent",
     borderRadius: 0,
   });
 
@@ -328,8 +328,8 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
             <span style={{ fontWeight: 700, fontSize: 16 }}>Style Library</span>
             {lockedIds.size > 0 && (
               <span style={{
-                background: "rgba(99,102,241,0.2)", color: "#a5b4fc",
-                border: "1px solid rgba(99,102,241,0.3)",
+                background: "rgba(200,184,152,0.2)", color: "#dcd0b5",
+                border: "1px solid rgba(200,184,152,0.3)",
                 borderRadius: 12, padding: "2px 10px", fontSize: 10, fontWeight: 600,
               }}>
                 {lockedIds.size} LOCKED
@@ -404,8 +404,8 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
                         key={style.id}
                         style={{
                           ...cardStyle,
-                          borderColor: isLocked ? "rgba(99,102,241,0.5)" : "rgba(255,255,255,0.08)",
-                          background: isLocked ? "rgba(99,102,241,0.05)" : "rgba(255,255,255,0.04)",
+                          borderColor: isLocked ? "rgba(200,184,152,0.5)" : "rgba(255,255,255,0.08)",
+                          background: isLocked ? "rgba(200,184,152,0.05)" : "rgba(255,255,255,0.04)",
                         }}
                       >
                         {/* Lock toggle */}
@@ -416,10 +416,10 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
                           <button
                             onClick={() => toggleLock(style.id, isLocked)}
                             style={{
-                              background: isLocked ? "rgba(99,102,241,0.3)" : "rgba(255,255,255,0.06)",
+                              background: isLocked ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)",
                               border: "1px solid rgba(255,255,255,0.1)",
                               borderRadius: 4, padding: "3px 8px",
-                              fontSize: 11, cursor: "pointer", color: isLocked ? "#a5b4fc" : "#888",
+                              fontSize: 11, cursor: "pointer", color: isLocked ? "#dcd0b5" : "#888",
                               fontFamily: "inherit", whiteSpace: "nowrap",
                             }}
                             title={isLocked ? "Click to unlock" : "Click to lock — AI must use this style"}
@@ -464,7 +464,7 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
           ) : tab === "upload" ? (
             /* ── Upload Tab ── */
             <div style={{ maxWidth: 600, margin: "0 auto" }}>
-              <div style={{ marginBottom: 16, padding: 12, background: "rgba(99,102,241,0.05)", borderRadius: 8, border: "1px solid rgba(99,102,241,0.15)" }}>
+              <div style={{ marginBottom: 16, padding: 12, background: "rgba(200,184,152,0.05)", borderRadius: 8, border: "1px solid rgba(200,184,152,0.15)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>💡 How it works</div>
                 <div style={{ fontSize: 11, color: "#999", lineHeight: 1.5 }}>
                   1. Download <code>tokens-template.json</code> below<br/>
@@ -485,7 +485,7 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
                   padding: 24, textAlign: "center", cursor: "pointer", marginBottom: 12,
                   transition: "border 0.15s",
                 }}
-                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#6366f1"; }}
+                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#c8b898"; }}
                 onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
                 onDrop={e => {
                   e.preventDefault();
@@ -603,8 +603,8 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
                 style={{
                   ...btnStyle,
                   opacity: !uploadData.name.trim() ? 0.4 : 1,
-                  background: "rgba(99,102,241,0.2)",
-                  borderColor: "rgba(99,102,241,0.3)",
+                  background: "rgba(200,184,152,0.2)",
+                  borderColor: "rgba(200,184,152,0.3)",
                   width: "100%", fontWeight: 600,
                 }}
               >
@@ -655,7 +655,7 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, pu
                           name={`group-${gi}`}
                           defaultChecked={bi === 0}
                           id={`brand-${b.id}`}
-                          style={{ accentColor: "#6366f1" }}
+                          style={{ accentColor: "#c8b898" }}
                         />
                         <label htmlFor={`brand-${b.id}`} style={{ fontSize: 12, flex: 1, cursor: "pointer" }}>
                           {b.name} <span style={{ color: "#666", fontSize: 10 }}>

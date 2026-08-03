@@ -26,9 +26,19 @@ function rowToBrand(row: SupabaseBrandRow): BrandGuideline {
   };
 }
 
-async function upsertSupabase(brand: BrandGuideline): Promise<boolean> {
+/**
+ * Returns null when Supabase isn't configured at all (expected in local/dev
+ * — the in-memory fallback is the intended behavior there). Returns an
+ * error message string when Supabase IS configured but the write failed
+ * (wrong schema, RLS, connection) — that case must NOT be swallowed:
+ * without Supabase, memoryStore is the only copy of this brand, and on
+ * serverless it does not survive past the current invocation, so a client
+ * that got "success" back would see the brand vanish on the next request
+ * with no indication why.
+ */
+async function upsertSupabase(brand: BrandGuideline): Promise<string | null> {
   const sb = getSupabase();
-  if (!sb) return false;
+  if (!sb) return null;
   try {
     const row: Record<string, any> = {
       id: brand.id,
@@ -40,12 +50,12 @@ async function upsertSupabase(brand: BrandGuideline): Promise<boolean> {
     const { error } = await sb.from("brand_guidelines").upsert(row);
     if (error) {
       console.warn("[brands] Supabase upsert failed:", error.message);
-      return false;
+      return error.message;
     }
-    return true;
+    return "ok";
   } catch (e) {
     console.warn("[brands] Supabase upsert failed:", (e as Error).message);
-    return false;
+    return (e as Error).message;
   }
 }
 
@@ -78,7 +88,10 @@ export async function createBrand(params: {
     updatedAt: now,
   };
   memoryStore.set(brand.id, brand);
-  await upsertSupabase(brand);
+  const result = await upsertSupabase(brand);
+  if (result !== null && result !== "ok") {
+    throw new Error(`Failed to save style to Supabase: ${result}`);
+  }
   return brand;
 }
 
@@ -132,7 +145,10 @@ export async function updateBrand(
   }
   Object.assign(brand, updates, { updatedAt: new Date().toISOString() });
   memoryStore.set(id, brand);
-  await upsertSupabase(brand);
+  const result = await upsertSupabase(brand);
+  if (result !== null && result !== "ok") {
+    throw new Error(`Failed to save style to Supabase: ${result}`);
+  }
   return brand;
 }
 

@@ -799,7 +799,7 @@ export function HtmlContextualPanel({
                 </>
               ) : isSvgShape ? (
                 <>
-                  <ColorRow label="Color" value={s["fill"] || s["color"] || "#8B5CF6"} onChange={v => update(selector, "fill", v)} />
+                  <ColorRow label="Color" value={s["fill"] || s["color"] || "#c8b898"} onChange={v => update(selector, "fill", v)} />
                   <OpacityRow label="Opacity" value={s["fill-opacity"] || "1"} onChange={v => update(selector, "fill-opacity", v)} />
                 </>
               ) : isSvgText ? (

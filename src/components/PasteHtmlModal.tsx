@@ -114,7 +114,7 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
               onClick={() => setAdvanced(false)}
               style={{
                 flex: 1, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-                background: !advanced ? "rgba(139,92,246,0.2)" : "transparent",
+                background: !advanced ? "rgba(200,184,152,0.2)" : "transparent",
                 color: !advanced ? "#fff" : "#888", fontSize: 12, cursor: "pointer",
                 fontFamily: "inherit", fontWeight: 500,
               }}
@@ -126,7 +126,7 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
               onClick={() => setAdvanced(true)}
               style={{
                 flex: 1, padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-                background: advanced ? "rgba(139,92,246,0.2)" : "transparent",
+                background: advanced ? "rgba(200,184,152,0.2)" : "transparent",
                 color: advanced ? "#fff" : "#888", fontSize: 12, cursor: "pointer",
                 fontFamily: "inherit", fontWeight: 500,
               }}
@@ -146,8 +146,8 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     style={{
-                      fontSize: 11, color: "#8B5CF6", background: "transparent",
-                      border: "1px solid rgba(139,92,246,0.4)", borderRadius: 6,
+                      fontSize: 11, color: "#c8b898", background: "transparent",
+                      border: "1px solid rgba(200,184,152,0.4)", borderRadius: 6,
                       padding: "3px 8px", cursor: "pointer", fontFamily: "inherit",
                     }}
                   >
@@ -168,7 +168,7 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
                   style={{
                     position: "relative",
                     borderRadius: 8,
-                    outline: dragOver ? "2px dashed #8B5CF6" : "2px dashed transparent",
+                    outline: dragOver ? "2px dashed #c8b898" : "2px dashed transparent",
                     outlineOffset: 2,
                     transition: "outline-color 0.15s ease",
                   }}
@@ -194,7 +194,7 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
 
 …or drag & drop an .html file here`}
                     style={{
-                      width: "100%", height: 260, background: dragOver ? "rgba(139,92,246,0.08)" : "rgba(255,255,255,0.04)",
+                      width: "100%", height: 260, background: dragOver ? "rgba(200,184,152,0.08)" : "rgba(255,255,255,0.04)",
                       border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 12,
                       color: "#ccc", fontSize: 12, fontFamily: "'Fira Code', 'Cascadia Code', monospace",
                       resize: "vertical", lineHeight: 1.5, boxSizing: "border-box",
@@ -229,7 +229,7 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
                   <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
                     <span>HTML: <strong style={{ color: "#ccc" }}>{parsed.html.length.toLocaleString()}</strong> chars</span>
                     <span>CSS: <strong style={{ color: "#ccc" }}>{parsed.css.length.toLocaleString()}</strong> chars</span>
-                    {parsed.width && <span>Size: <strong style={{ color: "#8B5CF6" }}>{parsed.width}×{parsed.height || parsed.width}px</strong></span>}
+                    {parsed.width && <span>Size: <strong style={{ color: "#c8b898" }}>{parsed.width}×{parsed.height || parsed.width}px</strong></span>}
                     {!parsed.width && <span style={{ color: "#fbbf24" }}>⚠ No body dimensions detected — defaults to 1080×1080</span>}
                   </div>
                 </div>
@@ -285,8 +285,8 @@ export function PasteHtmlModal({ onClose, onApply, initialFile }: PasteHtmlModal
             onClick={handleApply}
             disabled={!canApply}
             style={{
-              padding: "12px 24px", background: canApply ? "#8B5CF6" : "rgba(255,255,255,0.06)",
-              color: canApply ? "#fff" : "#555", border: "none", borderRadius: 8,
+              padding: "12px 24px", background: canApply ? "#c8b898" : "rgba(255,255,255,0.06)",
+              color: canApply ? "#1a1a1a" : "#555", border: "none", borderRadius: 8,
               cursor: canApply ? "pointer" : "not-allowed",
               fontSize: 14, fontWeight: 600, fontFamily: "inherit", alignSelf: "flex-end",
               transition: "background 0.15s ease",

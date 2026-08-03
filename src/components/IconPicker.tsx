@@ -221,9 +221,9 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
                     padding: "14px 6px", background: "rgba(255,255,255,0.03)",
                     border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10,
                     cursor: inserting ? "wait" : "pointer", transition: "all 0.15s ease",
-                    color: inserting === icon.name ? "#8B5CF6" : color,
+                    color: inserting === icon.name ? "#c8b898" : color,
                   }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(139,92,246,0.1)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(139,92,246,0.3)"; }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(200,184,152,0.1)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,184,152,0.3)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }}
                 >
                   <i className={`${previewCls} ph-${icon.name}`} style={{ fontSize: Math.min(size, 28), lineHeight: 1 }}></i>

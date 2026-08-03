@@ -24,7 +24,7 @@ function describeAuthor(author: string): { icon: string; name: string; color: st
     return { icon: "👤", name: who && who !== "local" ? `Humano (${who.slice(0, 12)})` : "Humano", color: "#7dd3fc" };
   }
   if (role === "agent") {
-    return { icon: "🤖", name: who ? who.replace(/-/g, " ") : "Agente", color: "#c4b5fd" };
+    return { icon: "🤖", name: who ? who.replace(/-/g, " ") : "Agente", color: "#dcd0b5" };
   }
   return { icon: "•", name: author || "desconocido", color: "#9ca3af" };
 }
@@ -129,8 +129,8 @@ export function VersionHistoryPanel({ templateId, onRestore }: Props) {
           <div key={v.id} style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
             padding: "7px 8px", marginBottom: 4, borderRadius: 6,
-            background: isMarked ? "rgba(139,92,246,0.10)" : "rgba(255,255,255,0.03)",
-            border: isMarked ? "1px solid rgba(139,92,246,0.25)" : "1px solid transparent",
+            background: isMarked ? "rgba(200,184,152,0.10)" : "rgba(255,255,255,0.03)",
+            border: isMarked ? "1px solid rgba(200,184,152,0.25)" : "1px solid transparent",
           }}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -175,8 +175,8 @@ const btnStyle: React.CSSProperties = {
 };
 
 const saveBtnStyle: React.CSSProperties = {
-  background: "rgba(139,92,246,0.2)", color: "#c4b5fd",
-  border: "1px solid rgba(139,92,246,0.4)", borderRadius: 100,
+  background: "rgba(200,184,152,0.2)", color: "#dcd0b5",
+  border: "1px solid rgba(200,184,152,0.4)", borderRadius: 100,
   padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit",
   fontWeight: 600, whiteSpace: "nowrap",
 };

@@ -5,9 +5,7 @@ import { CodePanel } from "../components/CodePanel";
 import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
-import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { FileInfoPanel } from "../components/FileInfoPanel";
-import { BrandPanel } from "../components/BrandPanel";
 import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
@@ -2668,24 +2666,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, []);
 
-  /* Capture current frame as a thumbnail for the dashboard Cover Flow / grid */
-  const handleCaptureThumbnail = useCallback(async () => {
-    if (!selectedFrame) return;
-    try {
-      const blob = await captureFrameToPng(selectedFrame, 1.5, "png");
-      if (!blob) { addToast("No se pudo capturar el thumbnail.", "error"); return; }
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
-      addToast("Thumbnail actualizado.", "success");
-    } catch (err: any) {
-      addToast(`Error al guardar thumbnail: ${err.message || "desconocido"}`, "error");
-    }
-  }, [selectedFrame, templateId, captureFrameToPng, addToast]);
-
   /* Capture first frame as PNG base64 — for FileInfoPanel cover */
   const handleCoverCapture = useCallback(async (): Promise<string | null> => {
     if (!selectedFrame) return null;
@@ -3518,25 +3498,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     );
   }
 
-  const RIGHT_PANEL_TABS = [
-    { id: "contextual", icon: <IconSliders size={14} />, title: "Properties" },
-    { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
-    { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
-    {
-      id: "meta",
-      icon: (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <circle cx="6" cy="6" r="2.4" />
-          <circle cx="18" cy="7" r="2.4" />
-          <circle cx="12" cy="18" r="2.4" />
-          <line x1="7.8" y1="7.4" x2="10.8" y2="16.2" />
-          <line x1="16.6" y1="8.6" x2="13.3" y2="16.3" />
-          <line x1="8.4" y1="6.2" x2="15.6" y2="6.9" />
-        </svg>
-      ),
-      title: "Obsidian — marca, campaña, tags y conexiones del grafo",
-    },
-  ];
+  const OBSIDIAN_ICON = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="18" cy="7" r="2.4" />
+      <circle cx="12" cy="18" r="2.4" />
+      <line x1="7.8" y1="7.4" x2="10.8" y2="16.2" />
+      <line x1="16.6" y1="8.6" x2="13.3" y2="16.3" />
+      <line x1="8.4" y1="6.2" x2="15.6" y2="6.9" />
+    </svg>
+  );
 
   return (
     <div className="editor-v2-root">
@@ -3670,32 +3641,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
-        {/* ═══ Zona: Paneles (contexto del diseño) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {RIGHT_PANEL_TABS.map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === tab.id ? "active" : ""}`}
-              onClick={() => {
-                if (showRightPanel && rightPanelTab === tab.id) {
-                  setShowRightPanel(false);
-                } else {
-                  setRightPanelTab(tab.id);
-                  setShowRightPanel(true);
-                }
-              }}
-              title={tab.title}
-            >
-              {tab.icon}
-            </button>
-          ))}
-        </div>
-
-        <div className="editor-v2-topbar-sep" />
-
         {/* ═══ Zona: Bibliotecas (recursos reusables que guardas y aplicas
-            a otros diseños — estilos, assets, iconos, key visuals) ═══ */}
+            a otros diseños — estilos, assets, iconos, key visuals, y el
+            contexto de marca/campaña de Obsidian) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-bibliotecas" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {/* Style Library: browsing AND capturing a design's style now
               live in the same panel — see StyleLibraryModal's "Capture" button. */}
@@ -3737,6 +3685,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           >
             <IconTag size={14} />
           </button>
+
+          {/* Obsidian: brand/campaign/tags metadata for this file — also
+              where the cover-image capture used to live as a separate
+              "Capture Thumbnail" button (Dashboard prefers this cover over
+              the auto thumbnail anyway, so nothing is lost). */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "meta") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("meta");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Obsidian — marca, campaña, tags y conexiones del grafo"
+          >
+            {OBSIDIAN_ICON}
+          </button>
         </div>
 
         <div className="editor-v2-topbar-sep" />
@@ -3757,15 +3725,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <span style={{ fontSize: 11, marginLeft: 4 }}>Import</span>
           </button>
 
-          {/* Capture Thumbnail */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={handleCaptureThumbnail}
-            title="Capture Thumbnail — Save a preview image for the dashboard"
-          >
-            <IconImage size={14} />
-          </button>
           {/* Export: format dropdown + scope toggle + export button */}
           <ExportPanel
             frames={frames}
@@ -3784,7 +3743,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             className="editor-v2-topbar-icon-btn"
             onClick={() => setShowImageToDesign(true)}
             title="Convert Image to Design (AI Vision)"
-            style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.15))" }}
+            style={{ background: "linear-gradient(135deg, rgba(200,184,152,0.15), rgba(168,146,106,0.15))" }}
           >
             <span style={{ fontSize: 14 }}>🪄</span>
           </button>
@@ -3825,8 +3784,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
-        {/* ═══ Zona: Guías del lienzo (visualizadores) ═══ */}
+        {/* ═══ Zona: Guías del lienzo (visualizadores / toggles) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-guias" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "contextual" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "contextual") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("contextual");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Toggle Properties"
+          >
+            <IconSliders size={14} />
+          </button>
           <button
             type="button"
             className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
@@ -3985,27 +3959,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconHistory size={16} /> History
                 </span>
               </button>
-              {RIGHT_PANEL_TABS.map(tab => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className="landing-menu-link"
-                  onClick={() => {
-                    if (showRightPanel && rightPanelTab === tab.id) {
-                      setShowRightPanel(false);
-                    } else {
-                      setRightPanelTab(tab.id);
-                      setShowRightPanel(true);
-                    }
-                    setMobileMenuOpen(false);
-                  }}
-                  style={{ fontSize: 13, padding: "10px 14px" }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    {tab.icon} {tab.title}
-                  </span>
-                </button>
-              ))}
+              <button type="button" className="landing-menu-link"
+                onClick={() => {
+                  if (showRightPanel && rightPanelTab === "contextual") setShowRightPanel(false);
+                  else { setRightPanelTab("contextual"); setShowRightPanel(true); }
+                  setMobileMenuOpen(false);
+                }}
+                style={{ fontSize: 13, padding: "10px 14px" }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconSliders size={16} /> Properties
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link"
+                onClick={() => {
+                  if (showRightPanel && rightPanelTab === "meta") setShowRightPanel(false);
+                  else { setRightPanelTab("meta"); setShowRightPanel(true); }
+                  setMobileMenuOpen(false);
+                }}
+                style={{ fontSize: 13, padding: "10px 14px" }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {OBSIDIAN_ICON} Obsidian
+                </span>
+              </button>
               
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
@@ -4019,12 +3996,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <IconType size={16} /> Font Picker
-                </span>
-              </button>
-              <button type="button" className="landing-menu-link" onClick={() => { handleCaptureThumbnail(); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconImage size={16} /> Capture Thumbnail
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { setShowImportRouter(true); setMobileMenuOpen(false); }}
@@ -4071,7 +4042,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { setShowImageToDesign(true); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px", background: "rgba(139,92,246,0.1)" }}>
+                style={{ fontSize: 13, padding: "10px 14px", background: "rgba(200,184,152,0.1)" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ fontSize: 16 }}>🪄</span> Image to Design
                 </span>
@@ -4229,7 +4200,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 title="Toggle smart vs fixed layout"
                 style={{
                   ...elemBtnStyle,
-                  background: layoutMode === "smart" ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.06)",
+                  background: layoutMode === "smart" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)",
                   color: layoutMode === "smart" ? "#a78bfa" : "#ccc",
                   fontWeight: 600,
                 }}>
@@ -4486,14 +4457,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               Select a frame or element<br />to edit its properties
             </div>
           )}
-          {rightPanelTab === "brand" && (
-            <BrandPanel templateId={templateId} workspaceId={templateWorkspaceId} onCssUpdated={(c: string) => handleCssChange(c)} />
-          )}
           {rightPanelTab === "history" && (
             <VersionHistoryPanel templateId={templateId} onRestore={reloadFromServer} />
-          )}
-          {rightPanelTab === "agents" && (
-            <ActiveAgentsPanel agents={activeAgents} />
           )}
           {rightPanelTab === "meta" && (
             <FileInfoPanel

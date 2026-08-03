@@ -106,9 +106,9 @@ export function ImportRouterModal({ onClose, onRoute }: ImportRouterModalProps) 
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
             style={{
-              border: `2px dashed ${dragOver ? "#8B5CF6" : "rgba(255,255,255,0.12)"}`,
+              border: `2px dashed ${dragOver ? "#c8b898" : "rgba(255,255,255,0.12)"}`,
               borderRadius: 8, padding: "24px 16px", textAlign: "center", cursor: "pointer",
-              background: dragOver ? "rgba(139,92,246,0.08)" : "transparent",
+              background: dragOver ? "rgba(200,184,152,0.08)" : "transparent",
               transition: "border-color 0.15s, background 0.15s",
             }}
           >

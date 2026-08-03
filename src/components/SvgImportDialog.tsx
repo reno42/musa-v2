@@ -31,7 +31,7 @@ const dialogStyle: React.CSSProperties = {
   color: "#e0e0e0", fontFamily: "Inter, system-ui, sans-serif",
 };
 const tabStyle = (active: boolean): React.CSSProperties => ({
-  padding: "8px 16px", cursor: "pointer", borderBottom: active ? "2px solid #8B5CF6" : "2px solid transparent",
+  padding: "8px 16px", cursor: "pointer", borderBottom: active ? "2px solid #c8b898" : "2px solid transparent",
   color: active ? "#fff" : "#888", fontSize: 13, fontWeight: 600,
 });
 
@@ -261,8 +261,8 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
             Cancel
           </button>
           <button onClick={handleImport} disabled={!canImport || loading}
-            style={{ flex: 1, padding: "10px 16px", background: canImport ? "#8B5CF6" : "rgba(255,255,255,0.04)",
-              border: "none", borderRadius: 6, color: "#fff", cursor: canImport ? "pointer" : "default",
+            style={{ flex: 1, padding: "10px 16px", background: canImport ? "#c8b898" : "rgba(255,255,255,0.04)",
+              border: "none", borderRadius: 6, color: canImport ? "#1a1a1a" : "#fff", cursor: canImport ? "pointer" : "default",
               fontSize: 13, fontWeight: 600, opacity: loading ? 0.6 : 1 }}>
             {loading ? "Importing..." : `Import ${importMode === "raster" ? "Image" : "SVG"}`}
           </button>

@@ -13,6 +13,20 @@
   --accent-dim: rgba(200, 184, 152, 0.1);
   --danger: #ef4444;
   --radius: 4px;
+  /* ─── Editor-scoped aliases: several editor components reference
+     --editor-* variables with hardcoded purple fallbacks (var(--editor-accent,
+     #6c5ce7) etc.) because these were never defined anywhere — every one of
+     those fallbacks was silently rendering. Defining them here maps every
+     such usage onto the real black+beige palette in one place, instead of
+     hunting down each hardcoded fallback individually. No purple anywhere
+     in this app's own chrome — that's a hard rule for this project. ─── */
+  --editor-accent: var(--accent);
+  --editor-bg-2: var(--bg-panel);
+  --editor-bg-3: #161616;
+  --editor-bg-4: #202020;
+  --editor-border: var(--border-color);
+  --editor-text: var(--text-main);
+  --editor-text-dim: var(--text-muted);
   /* ─── Aave Glass Tokens ─── */
   --glass-bg: rgba(12, 12, 12, 0.65);
   --glass-bg-hover: rgba(12, 12, 12, 0.82);
