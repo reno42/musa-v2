@@ -8073,7 +8073,7 @@ async function handleMethod(method, params, userId, auth) {
             // Link template to the merged brand
             tpl.brandId = brandRecord.id;
             await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
-          } else if (tpl.brandId) {
+          } else if (tpl.brandId && (await brands.getBrand(tpl.brandId))) {
             await brands.updateBrand(tpl.brandId, {
               name: params.brandName,
               tokensJson: artifacts.tokensJson,
@@ -8085,6 +8085,12 @@ async function handleMethod(method, params, userId, auth) {
             });
             brandRecord = await brands.getBrand(tpl.brandId);
           } else {
+            // tpl.brandId is either unset, or a dangling reference to a brand
+            // that no longer exists (e.g. created back when brand_guidelines
+            // had no table and everything only lived in serverless memory —
+            // updateBrand() on a missing id used to no-op silently, so the
+            // publish button looked successful forever while never actually
+            // writing anything). Either way: create fresh and re-link.
             brandRecord = await brands.createBrand({
               workspaceId: workspaceId,
               name: params.brandName,
