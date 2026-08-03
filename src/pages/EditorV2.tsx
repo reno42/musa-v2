@@ -2253,8 +2253,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (mod && e.key === "/") { e.preventDefault(); openCodeTab(); return; }
       if (mod && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        if (showRightPanel && rightPanelTab === "batch") setShowRightPanel(false);
-        else { setRightPanelTab("batch"); setShowRightPanel(true); }
+        if (showRightPanel && rightPanelTab === "batch") {
+          setShowRightPanel(false);
+        } else {
+          setBatchCheckedFrameIds(selectedFrameIds.size > 0 ? new Set(selectedFrameIds) : new Set(selectedFrameId ? [selectedFrameId] : []));
+          setRightPanelTab("batch");
+          setShowRightPanel(true);
+        }
         return;
       }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
@@ -2391,7 +2396,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2880,6 +2885,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [captureFrameToPng]);
 
   const [showPasteHtml, setShowPasteHtml] = useState(false);
+  const [batchCheckedFrameIds, setBatchCheckedFrameIds] = useState<Set<string>>(new Set());
+  const [batchHoveredFrameId, setBatchHoveredFrameId] = useState<string | null>(null);
   const [showDesignImport, setShowDesignImport] = useState(false);
 
   // ── Unified Import router: one entry point that detects what was
@@ -3292,6 +3299,47 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updatedFrames, "edit");
     autoSave(updatedFrames);
   }, [autoSave]);
+
+  // Opens the Batchamator panel, seeding its checklist from whatever's
+  // selected on canvas right now — but only when actually opening it (not
+  // when it's already the active tab), so re-clicking doesn't clobber a
+  // checklist the user built up manually.
+  const openBatchPanel = useCallback(() => {
+    if (showRightPanel && rightPanelTab === "batch") {
+      setShowRightPanel(false);
+      return;
+    }
+    setBatchCheckedFrameIds(selectedFrameIds.size > 0 ? new Set(selectedFrameIds) : new Set(selectedFrameId ? [selectedFrameId] : []));
+    setRightPanelTab("batch");
+    setShowRightPanel(true);
+  }, [showRightPanel, rightPanelTab, selectedFrameIds, selectedFrameId]);
+
+  // While the Batchamator panel is open, outline the canvas frame under the
+  // mouse (light) and every checked frame (stronger) — a direct DOM effect
+  // rather than new InfiniteHtmlCanvas props, since frame wrapper nodes are
+  // keyed by frame.id and stable across re-renders.
+  useEffect(() => {
+    const active = showRightPanel && rightPanelTab === "batch";
+    const wrappers = document.querySelectorAll<HTMLElement>("[data-frame-id]");
+    wrappers.forEach(el => {
+      const id = el.getAttribute("data-frame-id");
+      if (!active || !id) {
+        el.style.outline = "";
+        el.style.outlineOffset = "";
+        return;
+      }
+      if (id === batchHoveredFrameId) {
+        el.style.outline = "2px solid rgba(200,184,152,0.55)";
+        el.style.outlineOffset = "-2px";
+      } else if (batchCheckedFrameIds.has(id)) {
+        el.style.outline = "2px solid rgba(200,184,152,0.95)";
+        el.style.outlineOffset = "-2px";
+      } else {
+        el.style.outline = "";
+        el.style.outlineOffset = "";
+      }
+    });
+  }, [showRightPanel, rightPanelTab, batchHoveredFrameId, batchCheckedFrameIds, frames]);
 
   // ── Element operations (align/group/reorder/copy-as) ──
   const handleAlign = useCallback(async (alignment: string) => {
@@ -4158,14 +4206,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <button
             type="button"
             className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "batch" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "batch") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("batch");
-                setShowRightPanel(true);
-              }
-            }}
+            onClick={openBatchPanel}
             title="Batchamator — Generate designs from CSV"
           >
             <IconGrid size={14} />
@@ -4465,7 +4506,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconWand size={16} /> Lint Design
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setRightPanelTab("batch"); setShowRightPanel(true); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { openBatchPanel(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <IconGrid size={16} /> Batchamator
@@ -4877,7 +4918,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {rightPanelTab === "batch" && (
             <BatchAMator
               frames={frames}
-              initialSelectedFrameIds={selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : [])}
+              checkedFrameIds={batchCheckedFrameIds}
+              onCheckedFrameIdsChange={setBatchCheckedFrameIds}
+              onFrameHover={setBatchHoveredFrameId}
               onGenerate={handleBatchGenerate}
             />
           )}

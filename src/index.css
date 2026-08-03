@@ -2978,6 +2978,17 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .editor-v2-right-panel::-webkit-scrollbar { display: none; }
 
+/* Batchamator's frame checklist needs a visibly-scrollable list (unlike the
+   panel shell above, which deliberately hides its own scrollbar). */
+.batch-frame-list {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200,184,152,0.35) transparent;
+}
+.batch-frame-list::-webkit-scrollbar { display: block; width: 8px; }
+.batch-frame-list::-webkit-scrollbar-track { background: transparent; }
+.batch-frame-list::-webkit-scrollbar-thumb { background: rgba(200,184,152,0.35); border-radius: 4px; }
+.batch-frame-list::-webkit-scrollbar-thumb:hover { background: rgba(200,184,152,0.55); }
+
 /* ── Font Picker Dropdown ── */
 .editor-v2-font-picker-dropdown {
   position: fixed;

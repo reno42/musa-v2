@@ -4,13 +4,17 @@ import type { FrameData } from "./DesignFrame";
 
 interface BatchAMatorProps {
   frames: FrameData[];
-  /** Frame ids the user already has selected on canvas — preselected in the list. */
-  initialSelectedFrameIds: Set<string>;
+  /** Controlled by the parent so the canvas can highlight checked frames. */
+  checkedFrameIds: Set<string>;
+  onCheckedFrameIdsChange: (ids: Set<string>) => void;
+  /** Reports which frame (if any) the mouse is hovering in the list, so the parent can highlight it on canvas. */
+  onFrameHover?: (frameId: string | null) => void;
   /** Called with the full new frames array (existing + generated duplicates) to commit. */
   onGenerate: (newFrames: FrameData[]) => void;
 }
 
 const FRAME_GAP = 100;
+const MAX_ROWS = 30;
 let generatedFrameSeq = 0;
 function createFrameId(): string {
   generatedFrameSeq++;
@@ -97,55 +101,60 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   return { headers: h, rows: dataRows };
 }
 
-/** Detect {{slot}} and data-slot="name" placeholders across a set of frames. */
-function detectSlots(frames: FrameData[]): string[] {
-  const slots = new Set<string>();
-  const mustacheRe = /\{\{(\w+)\}\}/g;
-  const dataSlotRe = /data-slot=["'](\w+)["']/g;
+interface TextLayerRef {
+  frameId: string;
+  layerId: string;
+}
+
+interface CsvColumn {
+  column: string;
+  sample: string;
+  refs: TextLayerRef[];
+}
+
+/**
+ * Auto-detects every `data-layer-kind="text"` element inside the given
+ * frames — no manual `{{slot}}`/`data-slot` markup required. Layers sharing
+ * the same `data-layer-name` are grouped into one CSV column, so one value
+ * fills every same-named text layer across every checked frame (handy when
+ * duplicated frames share layer names like "Headline").
+ */
+function detectTextColumns(frames: FrameData[]): CsvColumn[] {
+  const byLabel = new Map<string, CsvColumn>();
+  const wrapper = document.createElement("div");
   for (const f of frames) {
-    for (const text of [f.html, f.css]) {
-      if (!text) continue;
-      let m;
-      mustacheRe.lastIndex = 0;
-      while ((m = mustacheRe.exec(text))) slots.add(m[1]);
-      dataSlotRe.lastIndex = 0;
-      while ((m = dataSlotRe.exec(text))) slots.add(m[1]);
-    }
+    if (!f.html) continue;
+    wrapper.innerHTML = f.html;
+    wrapper.querySelectorAll('[data-layer-kind="text"]').forEach(el => {
+      const layerId = el.getAttribute("data-layer-id");
+      if (!layerId) return;
+      const label = (el.getAttribute("data-layer-name") || "Text").trim() || "Text";
+      const sample = (el.textContent || "").trim();
+      const existing = byLabel.get(label);
+      if (existing) {
+        existing.refs.push({ frameId: f.id, layerId });
+      } else {
+        byLabel.set(label, { column: label, sample, refs: [{ frameId: f.id, layerId }] });
+      }
+    });
   }
-  return [...slots];
+  return [...byLabel.values()];
 }
 
-function substituteMustache(text: string, row: Record<string, string>): string {
-  let result = text;
-  for (const [key, value] of Object.entries(row)) {
-    result = result.split(`{{${key}}}`).join(value || "");
+/** Sets the text content of every `data-layer-id` match found in `html`. */
+function applyTextReplacements(html: string, valuesByLayerId: Record<string, string>): string {
+  if (Object.keys(valuesByLayerId).length === 0) return html;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html;
+  let changed = false;
+  for (const [layerId, value] of Object.entries(valuesByLayerId)) {
+    const el = wrapper.querySelector(`[data-layer-id="${CSS.escape(layerId)}"]`);
+    if (el) { el.textContent = value; changed = true; }
   }
-  return result;
+  return changed ? wrapper.innerHTML : html;
 }
 
-function substituteDataSlots(html: string, row: Record<string, string>): string {
-  let result = html;
-  for (const [key, value] of Object.entries(row)) {
-    if (!value) continue;
-    const re = new RegExp(
-      `(<[^>]*data-slot=["']${key}["'][^>]*>)([^<]*)(<\\/(?:div|span|p|h[1-6]|a|button|li|td|th|label|em|strong|b|i|small|sub|sup)>|<\\/[^>]+>)`,
-      "gi"
-    );
-    result = result.replace(re, `$1${value}$3`);
-    const imgRe = new RegExp(`(<img[^>]*data-slot=["']${key}["'][^>]*src=["'])([^"']*)(["'])`, "gi");
-    result = result.replace(imgRe, `$1${value}$3`);
-  }
-  return result;
-}
-
-function substituteUnified(text: string, row: Record<string, string>, isCss = false): string {
-  let result = substituteMustache(text, row);
-  if (!isCss) result = substituteDataSlots(result, row);
-  return result;
-}
-
-export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: BatchAMatorProps) {
-  const [checkedFrameIds, setCheckedFrameIds] = useState<Set<string>>(new Set(initialSelectedFrameIds));
+export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, onFrameHover, onGenerate }: BatchAMatorProps) {
   const [csvText, setCsvText] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, string>[]>([]);
@@ -155,22 +164,23 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
   const fileRef = useRef<HTMLInputElement>(null);
 
   const checkedFrames = useMemo(() => frames.filter(f => checkedFrameIds.has(f.id)), [frames, checkedFrameIds]);
-  const slots = useMemo(() => detectSlots(checkedFrames), [checkedFrames]);
+  const columns = useMemo(() => detectTextColumns(checkedFrames), [checkedFrames]);
 
   const toggleFrame = useCallback((id: string) => {
-    setCheckedFrameIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
+    const next = new Set(checkedFrameIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    onCheckedFrameIdsChange(next);
+  }, [checkedFrameIds, onCheckedFrameIdsChange]);
 
   const applyCsvText = useCallback((text: string) => {
     const { headers: h, rows: r } = parseCSV(text);
+    const capped = r.length > MAX_ROWS;
+    const finalRows = capped ? r.slice(0, MAX_ROWS) : r;
     setCsvText(text);
     setHeaders(h);
-    setRows(r);
-    setPreview(r.slice(0, 5));
+    setRows(finalRows);
+    setPreview(finalRows.slice(0, 5));
+    setMessage(capped ? { text: `Se usarán solo las primeras ${MAX_ROWS} filas (máximo soportado).`, kind: "error" } : null);
   }, []);
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -182,12 +192,12 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
   }
 
   function handleDownloadCsvTemplate() {
-    if (slots.length === 0) {
-      setMessage({ text: "Los frames seleccionados no tienen slots ({{slot}} o data-slot). Nada que exportar.", kind: "error" });
+    if (columns.length === 0) {
+      setMessage({ text: "Los frames seleccionados no tienen texto detectable. Nada que exportar.", kind: "error" });
       return;
     }
-    const header = slots.map(s => `"${s}"`).join(",");
-    const example = slots.map(s => `"Ejemplo ${s}"`).join(",");
+    const header = columns.map(c => `"${c.column}"`).join(",");
+    const example = columns.map(c => `"${(c.sample || `Ejemplo ${c.column}`).replace(/"/g, '""')}"`).join(",");
     const csv = `${header}\n${example}\n`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -217,19 +227,29 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
     const startX = Math.max(...frames.map(f => f.x + f.width), 0) + FRAME_GAP;
     const dx = startX - groupMinX;
 
+    // For each row, resolve column values → per-frame {layerId: value} maps.
     const newFrames: FrameData[] = [];
     rows.forEach((row, rowIdx) => {
       const dy = rowIdx * (groupHeight + FRAME_GAP);
-      const label = row.name || row.title || row.headline || `Fila ${rowIdx + 1}`;
+      const label = row.name || row.title || row.headline || columns[0]?.column && row[columns[0].column] || `Fila ${rowIdx + 1}`;
+      const valuesByFrame = new Map<string, Record<string, string>>();
+      for (const col of columns) {
+        const value = row[col.column];
+        if (value === undefined) continue;
+        for (const ref of col.refs) {
+          if (!valuesByFrame.has(ref.frameId)) valuesByFrame.set(ref.frameId, {});
+          valuesByFrame.get(ref.frameId)![ref.layerId] = value;
+        }
+      }
       for (const f of checkedFrames) {
+        const replacements = valuesByFrame.get(f.id) || {};
         newFrames.push({
           ...f,
           id: createFrameId(),
           name: `${f.name} — ${label}`,
           x: f.x + dx,
           y: f.y + dy,
-          html: f.html ? substituteUnified(f.html, row) : f.html,
-          css: f.css ? substituteUnified(f.css, row, true) : f.css,
+          html: applyTextReplacements(f.html, replacements),
         });
       }
     });
@@ -241,25 +261,44 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12, overflow: "auto", flex: 1 }}>
+      <div style={{ fontSize: 11.5, color: "#9a9484", lineHeight: 1.5 }}>
+        Selecciona frames, exporta sus textos a un CSV (hasta {MAX_ROWS} filas), edítalo y vuelve a subirlo para generar tus variantes al instante.
+      </div>
+
       {/* Frame selection */}
       <div>
-        <div style={batchSectionLabelStyle}>Frames a duplicar ({checkedFrameIds.size} seleccionados)</div>
+        <div style={batchSectionLabelStyle}>Frames a duplicar ({checkedFrameIds.size} de {frames.length} seleccionados)</div>
         {frames.length === 0 ? (
           <div style={{ fontSize: 12, color: "#7a7668" }}>Este template no tiene frames todavía.</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 4 }}>
-            {frames.map(f => (
-              <label key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px", fontSize: 12, color: "#f0ebe0", cursor: "pointer", borderRadius: 4 }}>
-                <input type="checkbox" checked={checkedFrameIds.has(f.id)} onChange={() => toggleFrame(f.id)} />
-                <span style={{ flex: 1 }}>{f.name}</span>
-                <span style={{ color: "#7a7668", fontSize: 10 }}>{f.width}×{f.height}</span>
-              </label>
-            ))}
+          <div className="batch-frame-list" style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 240, overflowY: "auto", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 4 }}>
+            {frames.map(f => {
+              const checked = checkedFrameIds.has(f.id);
+              return (
+                <label
+                  key={f.id}
+                  onMouseEnter={() => onFrameHover?.(f.id)}
+                  onMouseLeave={() => onFrameHover?.(null)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", fontSize: 12,
+                    color: "#f0ebe0", cursor: "pointer", borderRadius: 4,
+                    background: checked ? "rgba(200,184,152,0.16)" : "transparent",
+                    transition: "background 0.1s ease",
+                  }}
+                  onMouseOver={e => { if (!checked) e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                  onMouseOut={e => { e.currentTarget.style.background = checked ? "rgba(200,184,152,0.16)" : "transparent"; }}
+                >
+                  <input type="checkbox" checked={checked} onChange={() => toggleFrame(f.id)} />
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                  <span style={{ color: "#7a7668", fontSize: 10, flexShrink: 0 }}>{f.width}×{f.height}</span>
+                </label>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Detected slots */}
+      {/* Detected text columns */}
       {checkedFrameIds.size > 0 && (
         <div style={{
           padding: "8px 12px", borderRadius: 6,
@@ -267,13 +306,13 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
           fontSize: 11, lineHeight: 1.6,
         }}>
           <div style={{ color: "#c8b898", fontWeight: 600, marginBottom: 4 }}>
-            {slots.length > 0 ? `Slots detectados (${slots.length}):` : "No se detectaron slots en estos frames."}
+            {columns.length > 0 ? `Textos detectados (${columns.length}):` : "No se detectó texto editable en estos frames."}
           </div>
-          {slots.length > 0 && (
+          {columns.length > 0 && (
             <div style={{ color: "#7a7668" }}>
-              {slots.map(s => (
-                <span key={s} style={{ display: "inline-block", marginRight: 4, marginBottom: 2, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.03)", color: "#f0ebe0" }}>
-                  {s}
+              {columns.map(c => (
+                <span key={c.column} style={{ display: "inline-block", marginRight: 4, marginBottom: 2, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.03)", color: "#f0ebe0" }}>
+                  {c.column}
                 </span>
               ))}
             </div>
@@ -285,11 +324,11 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
       <button
         type="button"
         onClick={handleDownloadCsvTemplate}
-        disabled={slots.length === 0}
+        disabled={columns.length === 0}
         style={{
           padding: "8px 0", border: "1px solid rgba(200,184,152,0.2)", borderRadius: 6,
-          background: "rgba(200,184,152,0.06)", color: slots.length === 0 ? "#5a5648" : "#c8b898",
-          fontSize: 12, fontWeight: 500, cursor: slots.length === 0 ? "not-allowed" : "pointer",
+          background: "rgba(200,184,152,0.06)", color: columns.length === 0 ? "#5a5648" : "#c8b898",
+          fontSize: 12, fontWeight: 500, cursor: columns.length === 0 ? "not-allowed" : "pointer",
         }}
       >
         ⇩ Generar CSV de ejemplo
@@ -321,7 +360,7 @@ export function BatchAMator({ frames, initialSelectedFrameIds, onGenerate }: Bat
           aria-label="CSV data"
           value={csvText}
           onChange={e => applyCsvText(e.target.value)}
-          placeholder={"O pega los datos CSV aquí…\nName,Title,Subtitle\nPost 1,Hello World,Welcome"}
+          placeholder={"O pega los datos CSV aquí…\nHeadline,Subtitle\nHello World,Welcome"}
           style={batchTextareaStyle}
         />
       </div>
