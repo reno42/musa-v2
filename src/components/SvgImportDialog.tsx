@@ -54,6 +54,7 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
   const [importMode, setImportMode] = useState<ImportMode>("svg");
   const [rasterDataUrl, setRasterDataUrl] = useState<string | null>(null);
   const [rasterDimensions, setRasterDimensions] = useState({ width: 0, height: 0 });
+  const [saveAsAsset, setSaveAsAsset] = useState(false);
 
   const processFile = useCallback((file: File) => {
     if (isRasterFile(file)) {
@@ -115,6 +116,19 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
     if (nameMatch) setFileName(nameMatch[1].replace(/\.[^.]+$/, ""));
   }, []);
 
+  // Also save the imported file into the workspace's Asset library — same
+  // /assets/upload endpoint the Assets modal uses, so it shows up there too.
+  const saveToAssetLibrary = useCallback(async (dataUrl: string, name: string) => {
+    try {
+      await apiFetch("/assets/upload", {
+        method: "POST",
+        body: JSON.stringify({ name, data: dataUrl, workspaceId }),
+      });
+    } catch (e) {
+      console.error("[Import] Save as asset failed:", e);
+    }
+  }, [workspaceId]);
+
   const handleImport = useCallback(async () => {
     // For raster mode, require rasterDataUrl; for SVG mode, require svgCode
     if (importMode === "svg" && !svgCode.trim()) return;
@@ -124,6 +138,13 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
     setError("");
     try {
       const name = fileName || (importMode === "raster" ? "Imported Image" : "Imported SVG");
+
+      if (saveAsAsset) {
+        const assetDataUrl = importMode === "raster" && rasterDataUrl
+          ? rasterDataUrl
+          : `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgCode)))}`;
+        await saveToAssetLibrary(assetDataUrl, name);
+      }
 
       if (importMode === "raster" && rasterDataUrl) {
         onRasterImported({
@@ -156,7 +177,7 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
       setError(err.message || "Import failed");
     }
     setLoading(false);
-  }, [svgCode, rasterDataUrl, rasterDimensions, importMode, fileName, workspaceId, onImported, onRasterImported, onClose]);
+  }, [svgCode, rasterDataUrl, rasterDimensions, importMode, fileName, workspaceId, onImported, onRasterImported, onClose, saveAsAsset, saveToAssetLibrary]);
 
   const canImport = importMode === "raster"
     ? Boolean(rasterDataUrl && rasterDimensions.width > 0 && rasterDimensions.height > 0)
@@ -224,6 +245,13 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
             {storageWarning}
           </div>
         )}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={saveAsAsset} onChange={e => setSaveAsAsset(e.target.checked)} />
+          <span style={{ fontSize: 11, color: "#aaa" }}>
+            💾 Guardar también como Asset (recomendado para logos y patrones de marca)
+          </span>
+        </label>
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose}

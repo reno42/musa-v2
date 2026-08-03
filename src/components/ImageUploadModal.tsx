@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { imageStorageWarning } from "../lib/storageHealth";
 import { getApiHeaders } from "../lib/apiKey";
 
@@ -16,10 +16,20 @@ interface Asset {
   createdAt?: string;
 }
 
+interface StorageSummary {
+  totalBytes: number;
+  totalFiles: number;
+  buckets: Array<{ name: string; label: string; sizeBytes: number }>;
+  trash: { templates: number; assets: number; total: number };
+}
+
 interface ImageUploadModalProps {
   workspaceId: string;
   onClose: () => void;
   onAssetUploaded?: (asset: Asset) => void;
+  /** Opens Dashboard → Storage (quota + trash management) — the editor has
+   *  no room for a full trash UI, so this just routes there. */
+  onManageStorage?: () => void;
 }
 
 const API_BASE = "/api";
@@ -39,7 +49,7 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
   return res.json();
 }
 
-export function ImageUploadModal({ workspaceId, onClose, onAssetUploaded }: ImageUploadModalProps) {
+export function ImageUploadModal({ workspaceId, onClose, onAssetUploaded, onManageStorage }: ImageUploadModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<Asset[]>([]);
@@ -49,7 +59,14 @@ export function ImageUploadModal({ workspaceId, onClose, onAssetUploaded }: Imag
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [showAssets, setShowAssets] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    apiFetch<{ success: boolean; data: StorageSummary }>(`/storage/summary?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then(res => { if (res.success) setStorageSummary(res.data); })
+      .catch(() => { /* quota display is best-effort */ });
+  }, [workspaceId]);
 
   const loadAssets = useCallback(async () => {
     setLoadingAssets(true);
@@ -157,9 +174,30 @@ export function ImageUploadModal({ workspaceId, onClose, onAssetUploaded }: Imag
     >
       <div className="image-upload-modal" onClick={e => e.stopPropagation()}>
         <div className="image-upload-header">
-          <h2>📷 Upload Images</h2>
-          <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close image upload">✕</button>
+          <h2>📦 Assets</h2>
+          <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close assets">✕</button>
         </div>
+
+        {storageSummary && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            fontSize: 11, color: "rgba(255,255,255,0.4)", padding: "0 0 10px",
+          }}>
+            <span>{formatSize(storageSummary.totalBytes)} usados · {storageSummary.totalFiles} archivos en tu workspace</span>
+            {onManageStorage && (
+              <button
+                type="button"
+                onClick={onManageStorage}
+                style={{
+                  background: "none", border: "none", color: "rgba(255,255,255,0.5)",
+                  fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0,
+                }}
+              >
+                🗑️ Gestionar espacio / papelera
+              </button>
+            )}
+          </div>
+        )}
 
         <div
           className={`image-upload-dropzone ${dragOver ? "drag-over" : ""}`}

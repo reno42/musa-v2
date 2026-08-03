@@ -3637,201 +3637,219 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         )}
         <div style={{ flex: 1 }} />
 
-        {/* Explicit save → permanent version in the history */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleSaveVersion}
-          disabled={savingVersion}
-          title="Guardar versión (Ctrl/⌘+S) — queda permanente en el historial"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-            <polyline points="17 21 17 13 7 13 7 21" />
-            <polyline points="7 3 7 8 15 8" />
-          </svg>
-          <span style={{ fontSize: 9, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
-        </button>
-
-        {/* Right panel tab icons */}
-        {RIGHT_PANEL_TABS.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === tab.id ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === tab.id) {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab(tab.id);
-                setShowRightPanel(true);
-              }
-            }}
-            title={tab.title}
-          >
-            {tab.icon}
-          </button>
-        ))}
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* Style Library: browsing AND capturing a design's style now live
-            in the same panel — see StyleLibraryModal's "Capture" button. */}
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
-          <IconPalette size={14} />
-          <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
-        </button>
-
-        {/* Export Dropdown */}
-        <div className="editor-v2-topbar-sep" />
-        {/* Capture Thumbnail */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleCaptureThumbnail}
-          title="Capture Thumbnail — Save a preview image for the dashboard"
-        >
-          <IconImage size={14} />
-        </button>
-        {/* ── Export: format dropdown + scope toggle + export button ── */}
-        <ExportPanel
-          frames={frames}
-          selectedFrames={exportTargetFrames}
-          onExport={handleUnifiedExport}
-        />
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* ── Import: single entry point that routes to the right tool
-            (SVG editor, design-file import, or HTML/CSS import) based on
-            what's dropped or picked — see ImportRouterModal. ── */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowImportRouter(true)}
-          title="Import (SVG, PSD, AI, FIG, HTML/CSS, Template JSON)"
-          style={{ color: "var(--editor-accent, #6c5ce7)" }}
-        >
-          <IconUpload size={14} />
-          <span style={{ fontSize: 11, marginLeft: 4 }}>Import</span>
-        </button>
-
-        <div className="editor-v2-topbar-sep" />
-
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleSaveRecipe}
-          title="Save as Key Visual (Recipe)"
-        >
-          <IconTag size={14} />
-        </button>
-
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowImageUpload(true)}
-          title="Upload Images"
-        >
-          <IconImage size={14} />
-        </button>
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* Image to Design */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowImageToDesign(true)}
-          title="Convert Image to Design (AI Vision)"
-          style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.15))" }}
-        >
-          <span style={{ fontSize: 14 }}>🪄</span>
-        </button>
-
-        {/* Icon Picker */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowIconPicker(true)}
-          title="Icons (Phosphor)"
-        >
-          <IconShapes size={14} />
-        </button>
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* Lint design */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleLintDesign}
-          disabled={mcpLoading === "lint"}
-          title="Lint Design — check for issues"
-        >
-          <IconWand size={14} />
-        </button>
-
-        {/* Enhance template */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleEnhance}
-          disabled={mcpLoading === "enhance"}
-          title="Enhance — AI-suggested improvements"
-        >
-          <IconSparkle size={14} />
-        </button>
-
-        {/* Batch-a-mator */}
-        <div className="editor-v2-topbar-sep" />
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={() => setShowBatch(true)}
-          title="Batch-a-mator — Generate designs from CSV"
-        >
-          <IconGrid size={14} />
-          <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
-        </button>
-
-        {/* ═══ Canvas Guides toggles ═══ */}
-        <div className="editor-v2-topbar-sep" />
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
-          onClick={() => setShowRulers(v => !v)}
-          title="Toggle Rulers (Ctrl+R)"
-        >
-          <IconRuler size={14} />
-        </button>
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${showGrid ? "active" : ""}`}
-          onClick={() => setShowGrid(v => !v)}
-          title="Toggle Pixel Grid (Ctrl+')"
-        >
-          <IconGrid size={14} />
-        </button>
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${showColumnPanel ? "active" : ""}`}
-          onClick={() => setShowColumnPanel(v => !v)}
-          title="Column Guides — configure layout columns"
-        >
-          <IconColumns size={14} />
-          <span style={{ fontSize: 9, marginLeft: 1 }}>C</span>
-        </button>
-        {guides.length > 0 && (
+        {/* ═══ Zona: Documento (guardado de versión) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
             type="button"
             className="editor-v2-topbar-icon-btn"
-            onClick={() => setGuides([])}
-            title="Clear all guides"
+            onClick={handleSaveVersion}
+            disabled={savingVersion}
+            title="Guardar versión (Ctrl/⌘+S) — queda permanente en el historial"
           >
-            <IconEraser size={14} />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            <span style={{ fontSize: 9, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
           </button>
-        )}
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Paneles (contexto del diseño) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {RIGHT_PANEL_TABS.map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === tab.id ? "active" : ""}`}
+              onClick={() => {
+                if (showRightPanel && rightPanelTab === tab.id) {
+                  setShowRightPanel(false);
+                } else {
+                  setRightPanelTab(tab.id);
+                  setShowRightPanel(true);
+                }
+              }}
+              title={tab.title}
+            >
+              {tab.icon}
+            </button>
+          ))}
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Bibliotecas (recursos reusables que guardas y aplicas
+            a otros diseños — estilos, assets, iconos, key visuals) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-bibliotecas" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Style Library: browsing AND capturing a design's style now
+              live in the same panel — see StyleLibraryModal's "Capture" button. */}
+          <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
+            <IconPalette size={14} />
+            <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
+          </button>
+
+          {/* Assets: the reusable file library (uploaded images/logos) —
+              deliberately labeled apart from "Import" so it doesn't read as
+              the same action. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setShowImageUpload(true)}
+            title="Assets — biblioteca de archivos subidos"
+          >
+            <IconImage size={14} />
+            <span style={{ fontSize: 9, marginLeft: 3 }}>Assets</span>
+          </button>
+
+          {/* Icon Picker */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setShowIconPicker(true)}
+            title="Icons (Phosphor)"
+          >
+            <IconShapes size={14} />
+          </button>
+
+          {/* Save as Key Visual: a reusable full-design template (different
+              from Style Library, which only saves colors/typography). */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleSaveRecipe}
+            title="Save as Key Visual (Recipe)"
+          >
+            <IconTag size={14} />
+          </button>
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Import / Export (mover contenido dentro y fuera) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-import-export" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Import: single entry point that routes to the right tool (SVG
+              editor, design-file import, or HTML/CSS import) based on
+              what's dropped or picked — see ImportRouterModal. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setShowImportRouter(true)}
+            title="Import (SVG, PSD, AI, FIG, HTML/CSS, Template JSON)"
+            style={{ color: "var(--editor-accent, #6c5ce7)" }}
+          >
+            <IconUpload size={14} />
+            <span style={{ fontSize: 11, marginLeft: 4 }}>Import</span>
+          </button>
+
+          {/* Capture Thumbnail */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleCaptureThumbnail}
+            title="Capture Thumbnail — Save a preview image for the dashboard"
+          >
+            <IconImage size={14} />
+          </button>
+          {/* Export: format dropdown + scope toggle + export button */}
+          <ExportPanel
+            frames={frames}
+            selectedFrames={exportTargetFrames}
+            onExport={handleUnifiedExport}
+          />
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Image to Design */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setShowImageToDesign(true)}
+            title="Convert Image to Design (AI Vision)"
+            style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.15))" }}
+          >
+            <span style={{ fontSize: 14 }}>🪄</span>
+          </button>
+
+          {/* Lint design */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleLintDesign}
+            disabled={mcpLoading === "lint"}
+            title="Lint Design — check for issues"
+          >
+            <IconWand size={14} />
+          </button>
+
+          {/* Enhance template */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleEnhance}
+            disabled={mcpLoading === "enhance"}
+            title="Enhance — AI-suggested improvements"
+          >
+            <IconSparkle size={14} />
+          </button>
+
+          {/* Batch-a-mator */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => setShowBatch(true)}
+            title="Batch-a-mator — Generate designs from CSV"
+          >
+            <IconGrid size={14} />
+            <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
+          </button>
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Guías del lienzo (visualizadores) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-guias" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
+            onClick={() => setShowRulers(v => !v)}
+            title="Toggle Rulers (Ctrl+R)"
+          >
+            <IconRuler size={14} />
+          </button>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showGrid ? "active" : ""}`}
+            onClick={() => setShowGrid(v => !v)}
+            title="Toggle Pixel Grid (Ctrl+')"
+          >
+            <IconGrid size={14} />
+          </button>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showColumnPanel ? "active" : ""}`}
+            onClick={() => setShowColumnPanel(v => !v)}
+            title="Column Guides — configure layout columns"
+          >
+            <IconColumns size={14} />
+            <span style={{ fontSize: 9, marginLeft: 1 }}>C</span>
+          </button>
+          {guides.length > 0 && (
+            <button
+              type="button"
+              className="editor-v2-topbar-icon-btn"
+              onClick={() => setGuides([])}
+              title="Clear all guides"
+            >
+              <IconEraser size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ═══ Column Config Panel ═══ */}
@@ -4482,12 +4500,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         />
       )}
 
-      {/* ═══ Image Upload Modal ═══ */}
+      {/* ═══ Assets Modal (formerly "Upload Images") ═══ */}
       {showImageUpload && (
         <ImageUploadModal
           workspaceId={templateWorkspaceId}
           onClose={() => setShowImageUpload(false)}
           onAssetUploaded={handleAssetUploaded}
+          onManageStorage={() => {
+            sessionStorage.setItem("dashboardInitialTab", "storage");
+            setShowImageUpload(false);
+            onBack();
+          }}
         />
       )}
 
@@ -4566,6 +4589,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         initialFiles={routedImportFile ? [routedImportFile] : null}
         onClose={() => { setShowDesignImport(false); setRoutedImportFile(null); }}
         onImport={handleDesignImport}
+        workspaceId={templateWorkspaceId}
       />
 
       {/* ═══ Unified Import router — one button, detects the file type ═══ */}

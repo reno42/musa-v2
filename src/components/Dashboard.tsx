@@ -128,6 +128,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [activeTab, setActiveTab] = useState<"templates" | "kanban" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
+
+  // A view like the editor can request landing on a specific tab (e.g. "go
+  // manage your storage/trash") via sessionStorage. This has to run as an
+  // effect (not a useState initializer) and specifically AFTER mount: the
+  // child <OnboardingTour> below can force activeTab back to "templates" via
+  // its own mount effect when a tour step is active, and child effects
+  // always commit before the parent's — so this effect, running here in the
+  // parent, reliably wins that race and applies last.
+  useEffect(() => {
+    const pending = sessionStorage.getItem("dashboardInitialTab");
+    if (pending) {
+      sessionStorage.removeItem("dashboardInitialTab");
+      setActiveTab(pending as any);
+    }
+  }, []);
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
