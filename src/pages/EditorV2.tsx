@@ -2230,6 +2230,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
       if (isEditingInShadowDOM(e)) return;
+      // The floating chat panel lives outside the editor's own DOM tree, so
+      // isEditableTarget (input/textarea/contenteditable only) doesn't catch
+      // plain text selections inside its message bubbles — without this,
+      // Ctrl+C in the chat was hijacked into "copy the selected frame".
+      if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const mod = e.metaKey || e.ctrlKey;
       // Ctrl/⌘+Alt combos: wrap in frame + boolean operations (Figma-style)
       if (mod && e.altKey) {
@@ -2352,6 +2357,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
     const handleNativeCopy = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target)) return;
+      if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
         || selectedFrameIds.size > 0
         || Boolean(selectedFrameId);
@@ -2362,6 +2368,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
     const handleNativePaste = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target)) return;
+      if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       if (readDesignClipboard()) {
         e.preventDefault();
         pasteSelection();
@@ -2378,6 +2385,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     };
     const handleNativeCut = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target)) return;
+      if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
         || selectedFrameIds.size > 0
         || Boolean(selectedFrameId);

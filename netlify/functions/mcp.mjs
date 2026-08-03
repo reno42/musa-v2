@@ -10846,6 +10846,15 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const sbCard = getSupabaseAdmin();
       if (!sbCard) throw { code: -32000, message: "Studio Board requires Supabase. The kanban table design_kanban_tasks must exist." };
       const cardId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      // The UI (and other tools) always expect acceptance as string[]. LLM
+      // callers are told "one line per criterion" (a single string is the
+      // natural format for a model to produce) — normalize either shape into
+      // an array here so it's never stored wrong at the source.
+      const acceptanceArr = Array.isArray(params.acceptance)
+        ? params.acceptance
+        : typeof params.acceptance === "string"
+          ? params.acceptance.split("\n").map(s => s.trim()).filter(Boolean)
+          : [];
       const newCard = {
         id: cardId,
         title: params.title,
@@ -10864,7 +10873,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         assigned_to: params.assignedTo || null,
         created_by: "mcp",
         tags: params.tags || [],
-        acceptance: params.acceptance || [],
+        acceptance: acceptanceArr,
       };
       const { data: created, error: createErr } = await sbCard.from("design_kanban_tasks").insert(newCard).select().single();
       if (createErr) throw { code: -32000, message: "Failed to create card: " + createErr.message, detail: createErr };

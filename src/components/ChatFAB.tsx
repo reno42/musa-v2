@@ -14,7 +14,11 @@ import { mcpCall } from "../lib/mcpClient";
  */
 
 type Role = "user" | "assistant" | "system";
-interface Message { role: Role; content: string; ts?: number }
+/** "step" messages are the leader narrating in-progress work ("voy a crear
+ *  la tarjeta...", verification confirmations) — real, but not what a human
+ *  wants scrolling through in full size. They render collapsed by default,
+ *  muted, grouped between the actual conversational turns. */
+interface Message { role: Role; content: string; ts?: number; kind?: "step" }
 
 /**
  * fetchWithRetry — wraps fetch with AbortController timeout AND exponential backoff retry.
@@ -26,13 +30,16 @@ interface Message { role: Role; content: string; ts?: number }
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  opts: { timeoutMs?: number; maxRetries?: number } = {},
+  opts: { timeoutMs?: number; maxRetries?: number; signal?: AbortSignal } = {},
 ): Promise<Response> {
   const timeoutMs = opts.timeoutMs ?? 90_000;
   const maxRetries = opts.maxRetries ?? 2;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (opts.signal?.aborted) throw new DOMException("Stopped by user", "AbortError");
     const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    opts.signal?.addEventListener("abort", onExternalAbort);
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const resp = await fetch(url, { ...options, signal: controller.signal });
@@ -47,6 +54,8 @@ async function fetchWithRetry(
       return resp;
     } catch (err: any) {
       clearTimeout(timeoutId);
+      // A deliberate user stop should never be retried.
+      if (opts.signal?.aborted) throw new DOMException("Stopped by user", "AbortError");
       const isAbort = err?.name === "AbortError";
       const isNetwork = !isAbort;
       if (attempt < maxRetries && (isNetwork || isAbort)) {
@@ -54,6 +63,8 @@ async function fetchWithRetry(
         continue;
       }
       throw err;
+    } finally {
+      opts.signal?.removeEventListener("abort", onExternalAbort);
     }
   }
   throw new Error("fetchWithRetry: unreachable");
@@ -83,17 +94,19 @@ const MAX_STORED_MESSAGES = 50;
  */
 let currentContext: { workspaceId?: string; templateId?: string } = {};
 
-/** Auto-fill workspaceId/templateId when the model's tool call omits them
- *  but the tool schema accepts them and we know the current value. */
+/** Auto-fill workspaceId when the model's tool call omits it but the tool
+ *  schema accepts it and we know the current value. Only workspaceId — it's
+ *  always safe (just affects where things get filed). templateId is NOT
+ *  auto-filled: it means "edit this exact file", and silently attaching
+ *  "whatever's open in the editor" to a tool call the model didn't intend
+ *  to scope that way is how an unrelated frame got overwritten. templateId
+ *  must always come from the model's own explicit choice. */
 function resolveArgs(name: string, args: Record<string, any>): Record<string, any> {
   const def = HARNESS_TOOLS.find(t => t.function.name === name);
   const props = def?.function?.parameters?.properties || {};
   const resolved = { ...args };
   if (resolved.workspaceId === undefined && "workspaceId" in props && currentContext.workspaceId) {
     resolved.workspaceId = currentContext.workspaceId;
-  }
-  if (resolved.templateId === undefined && "templateId" in props && currentContext.templateId) {
-    resolved.templateId = currentContext.templateId;
   }
   return resolved;
 }
@@ -129,11 +142,19 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
 7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
 
+REGLA DE "NUNCA TOQUES TRABAJO AJENO" (CRÍTICA — el humano ya perdió trabajo por esto):
+- Solo pasa un templateId a harness_delegate_task cuando el humano pidió explícitamente modificar/editar algo que YA EXISTE (dijo "esto", "el diseño actual", nombró un template/frame específico, o está claramente continuando una conversación sobre ese archivo).
+- Si el humano pide algo NUEVO ("crea un archivo", "haz un nuevo post", "diseña X") — NUNCA pases templateId, aunque haya uno abierto en el editor. El implementer debe crear un template nuevo.
+- El templateId "abierto en el editor ahora mismo" (ver CONTEXTO ACTUAL arriba) NO es lo mismo que "el humano quiere que edites esto". Es solo información de dónde está parado — la decisión de tocarlo es tuya, explícita, nunca automática.
+- Si tienes dudas sobre si el humano quiere crear algo nuevo o modificar lo existente, PREGUNTA antes de delegar.
+
 INSTRUCCIONES PARA DELEGAR:
 - Implementer: Sé ESPECÍFICO. Incluye dimensiones, texto exacto, colores hex, estilo visual.
-  Si hay un templateId existente, pásalo en la instrucción: "Modifica el template tpl_xxx: ..."
+  Si hay un templateId existente Y el humano pidió modificarlo, pásalo en la instrucción: "Modifica el template tpl_xxx: ..."
   Ej crear: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7."
   Ej modificar: "Modifica el template tpl_xxx. Cambia el texto a 'Nuevo texto' y el fondo a #FF0000."
+- Si el humano menciona un estilo o marca por NOMBRE (ej: "estilo Futuraria"), instruye al implementer:
+  "Antes de diseñar, busca el estilo '<nombre>' en list_brand_guidelines/get_active_styles. Si no existe, NO inventes uno — responde 'blocked -> no encontré el estilo <nombre> guardado' y espera instrucciones."
 - Reviewer: Lista los criterios a verificar y los checkpoints C1-C5.
   Ej: "Verifica C1 (dimensiones 1080x1080), C2 (texto legible), C3 (paleta consistente), C4 (estructura HTML válida), C5 (sin CSS roto)."
 
@@ -450,28 +471,39 @@ const HARNESS_TOOLS = [
 
 const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea de diseño.
 
-PRIMERO DETERMINA EL MODO leyendo el contexto:
+PASO 0 — Si la instrucción menciona un estilo/marca POR NOMBRE (ej: "estilo Futuraria"):
+  Llama list_brand_guidelines y/o get_active_styles PRIMERO. Si el nombre no aparece en los resultados,
+  NO inventes tu propia interpretación del estilo. Tu respuesta final debe ser:
+  "blocked -> no encontré el estilo '<nombre>' guardado en la biblioteca. ¿De qué template lo extraigo, o sigo con mi propia interpretación?"
+  y detente ahí — no generes el diseño todavía.
 
-MODO A — Crear diseño nuevo (si NO hay templateId en el contexto):
-  PASO 1: Si el contexto de abajo incluye "workspaceId=...", úsalo directamente — NO llames list_workspaces.
+DETERMINA EL MODO leyendo el contexto:
+
+MODO A — Crear diseño nuevo (si el contexto dice "No se pasó templateId: esto es un diseño NUEVO"):
+  PASO 1: Si el contexto incluye "workspaceId=...", úsalo directamente — NO llames list_workspaces.
     Solo si NO hay workspaceId en el contexto, llama list_workspaces y toma el primero.
   PASO 2: Llama create_html_template con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
     ⚠️ CRÍTICO: El html y css deben estar COMPLETOS. No dejes placeholders ni vacíos.
     Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
+    ⚠️ El contenido debe caber DENTRO de width×height. Nada puede desbordar el frame.
   PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
 
-MODO B — Modificar diseño existente (si HAY templateId en el contexto):
-  PASO 1: Llama get_template con el templateId para ver el estado actual.
-  PASO 2: Llama list_frames para ver los frames del template.
-  PASO 3: Llama set_html y/o set_css con los cambios solicitados para cada frame que necesite edición.
-    ⚠️ CRÍTICO: No borres contenido existente vigente. Solo aplica los cambios pedidos.
-  PASO 4: Llama harness_submit_for_review con tu sessionId y un resumen breve.
+MODO B — Trabajar sobre un template existente (si el contexto incluye "templateId=..."):
+  PASO 1: Llama get_template con el templateId para ver el estado actual, y list_frames para ver qué frames ya existen.
+  PASO 2: ¿La instrucción nombra un frame específico a editar (por nombre o descripción inequívoca)?
+    SÍ → Llama set_html y/o set_css SOLO sobre ese frame.
+      ⚠️ CRÍTICO: No borres contenido existente vigente. Solo aplica los cambios pedidos.
+    NO (la instrucción pide agregar/crear algo nuevo, sin nombrar un frame existente) →
+      Llama create_frame/create_html_frame para un FRAME NUEVO dentro de este template.
+      ⚠️ NUNCA sobrescribas un frame existente cuando lo que se pidió es agregar algo — el humano
+      puede tener trabajo propio en esos frames que no es tuyo para reemplazar.
+  PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
 
 REGLAS GENERALES:
 - NO expliques lo que vas a hacer. Ejecuta directamente con tools.
 - NO pierdas rondas explorando. Identifica el modo y ejecuta los pasos.
 - Si una tool falla, intenta de nuevo con datos corregidos.
-- Tu respuesta final es UNA línea: "done -> implementado" o "blocked -> [razón]".
+- Tu respuesta final es UNA línea: "done -> implementado", "blocked -> [razón]", o la pregunta del PASO 0.
 
 TU SESSION ID: {SESSION_ID}
 
@@ -492,12 +524,20 @@ PASO 2 — Verifica contenido ACTIVAMENTE (no asumas, INSPECCIONA):
   - ¿Las dimensiones del template coinciden con lo solicitado? (ej: width=1080 height=1080)
   - ¿El texto solicitado aparece en el HTML del frame?
   - ¿El CSS tiene colores, fuentes y layout definidos (no está vacío)?
+  - ¿Hay elementos posicionados o dimensionados fuera de los límites del frame (left/top/width/height que
+    excedan el width/height del frame), o overflow visible que corte contenido? Eso es un defecto real, no un detalle menor.
+  - Si la instrucción original pedía un estilo/marca por NOMBRE: ¿el implementer reportó "blocked" porque no
+    lo encontró, o dice haberlo usado? Si dice haberlo usado, llama list_brand_guidelines/get_active_styles y
+    confirma que ese estilo con ESE nombre realmente existe y que el CSS del frame coincide con sus tokens
+    (colores/fuentes). Si el implementer improvisó un estilo bajo un nombre que no existe en la biblioteca,
+    eso es un FAIL — no es lo que se pidió, aunque el resultado se vea bien.
+  - Llama lint_design si está disponible y trata sus errores como fallas reales, no sugerencias.
 
 PASO 3 — Evalúa TODOS los checkpoints C1-C5 con harness_evaluate_checkpoint:
   Llama harness_evaluate_checkpoint UNA VEZ por cada checkpoint:
-    - C1: Dimensiones correctas. passed=true si width y height coinciden con lo solicitado.
+    - C1: Dimensiones correctas Y contenido dentro de los límites del frame (sin overflow/desborde). passed=true solo si ambas cosas se cumplen.
     - C2: Contenido HTML no vacío. passed=true si los frames tienen HTML con texto real.
-    - C3: Paleta de colores aplicada. passed=true si el CSS contiene los colores solicitados.
+    - C3: Paleta/estilo solicitado aplicado — y si se pidió un estilo con NOMBRE, que ese estilo exista de verdad en la biblioteca (ver PASO 2). passed=false si se improvisó un estilo que no está guardado bajo ese nombre.
     - C4: Estructura HTML válida. passed=true si las etiquetas están balanceadas.
     - C5: CSS funcional. passed=true si no hay propiedades rotas y el layout es coherente.
   Argumentos: harness_evaluate_checkpoint({ taskId: "<taskId>", checkpointId: "C1", description: "...", passed: true/false, notes: "..." })
@@ -695,10 +735,10 @@ const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
   input_schema: t.function.parameters,
 }));
 
-async function executeToolCall(name: string, args: Record<string, any>): Promise<string> {
+async function executeToolCall(name: string, args: Record<string, any>, signal?: AbortSignal): Promise<string> {
   try {
     if (name === "harness_delegate_task") {
-      return await spawnSubagent(args as any);
+      return await spawnSubagent(args as any, signal);
     }
     const result = await mcpCall(name, resolveArgs(name, args));
     return JSON.stringify(result, null, 2).slice(0, 4000);
@@ -717,7 +757,7 @@ async function spawnSubagent(params: {
   taskId?: string;
   instruction: string;
   templateId?: string;
-}): Promise<string> {
+}, signal?: AbortSignal): Promise<string> {
   const llmKey = localStorage.getItem(LS_LLM_KEY_KEY) || "";
   const providerId = localStorage.getItem(LS_PROVIDER_KEY) || "deepseek";
   const model = localStorage.getItem(LS_MODEL_KEY) || "";
@@ -728,14 +768,25 @@ async function spawnSubagent(params: {
     return JSON.stringify({ error: "No LLM API key found for subagent. Set your API key in chat settings." });
   }
 
-  // Carry the known workspace/template into the delegated instruction so the
-  // subagent doesn't have to blindly call list_workspaces and guess — same
-  // fix as resolveArgs, but for the free-text instruction the leader writes.
-  const contextSuffix = [
-    currentContext.workspaceId ? `workspaceId=${currentContext.workspaceId}` : null,
-    (params.templateId || currentContext.templateId) ? `templateId=${params.templateId || currentContext.templateId}` : null,
-  ].filter(Boolean).join(", ");
-  const instruction = contextSuffix ? `${params.instruction}\n\n[Contexto: ${contextSuffix}]` : params.instruction;
+  // Carry the known WORKSPACE into the delegated instruction so the subagent
+  // doesn't have to blindly call list_workspaces and guess — same fix as
+  // resolveArgs, but for the free-text instruction the leader writes.
+  //
+  // templateId is deliberately NOT auto-forwarded here. Unlike workspaceId
+  // (always safe — it only affects where things get filed), silently
+  // attaching "the template currently open in the editor" told the
+  // implementer to treat unrelated, human-authored work as the thing to
+  // edit — it overwrote an existing frame the user never asked to touch,
+  // and it wasn't undoable (MCP edits don't go through the editor's local
+  // undo stack). templateId only travels here when the Leader explicitly
+  // decided to pass it — that's its one signal for "yes, edit THIS".
+  const contextNote = [
+    currentContext.workspaceId ? `[Contexto: workspaceId=${currentContext.workspaceId}]` : "",
+    params.templateId
+      ? `[templateId=${params.templateId} — el Leader decidió explícitamente que esto es sobre este template existente. Si tu tarea es agregar algo nuevo, crea un FRAME NUEVO dentro de él con create_frame/create_html_frame — nunca sobrescribas frames existentes salvo que la instrucción nombre ese frame específico.]`
+      : `[No se pasó templateId: esto es un diseño NUEVO. Crea un template nuevo — nunca reutilices ni modifiques uno existente.]`,
+  ].filter(Boolean).join("\n");
+  const instruction = `${params.instruction}\n\n${contextNote}`;
 
   // 1. Start session in Supabase
   let sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -749,7 +800,7 @@ async function spawnSubagent(params: {
     });
     sessionId = sessResult?.session?.id || sessionId;
     if (sessResult?.session?.context_summary) {
-      taskContext = contextSuffix ? `${sessResult.session.context_summary}\n\n[Contexto: ${contextSuffix}]` : sessResult.session.context_summary;
+      taskContext = `${sessResult.session.context_summary}\n\n${contextNote}`;
     }
   } catch { /* non-fatal */ }
 
@@ -773,6 +824,7 @@ async function spawnSubagent(params: {
   let capturedTemplateId: string | null = null;
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
+    if (signal?.aborted) return JSON.stringify({ delegated: true, role: params.role, sessionId, result: "(detenido por el usuario)", stopped: true, rounds: round });
     let data: any;
 
     if (isAnthropic) {
@@ -780,7 +832,7 @@ async function spawnSubagent(params: {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools) }),
-      });
+      }, { signal });
       if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
       data = await resp.json();
     } else {
@@ -788,7 +840,7 @@ async function spawnSubagent(params: {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
         body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools }),
-      });
+      }, { signal });
       if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
       data = await resp.json();
     }
@@ -828,7 +880,7 @@ async function spawnSubagent(params: {
 
     // Execute each tool call within the subagent's own loop
     for (const tc of toolCalls) {
-      const resultStr = await executeToolCall(tc.name, tc.args);
+      const resultStr = await executeToolCall(tc.name, tc.args, signal);
       // Gap 4: Robust templateId capture from any design tool
       if (!capturedTemplateId) {
         // From create_html_template / create_template result: { id: "tpl_xxx", ... }
@@ -944,6 +996,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
+  const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
   const [provider, setProvider] = useState<string>(() => {
     try { return localStorage.getItem(LS_PROVIDER_KEY) || "openai"; } catch { return "openai"; }
   });
@@ -956,6 +1009,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   const [showSettings, setShowSettings] = useState(!llmKey);
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Persist settings
   useEffect(() => { try { localStorage.setItem(LS_PROVIDER_KEY, provider); } catch {} }, [provider]);
@@ -984,12 +1038,20 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
     setSending(true);
     setToolEvents([]);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const { signal } = controller;
+
     const prov = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
     const isAnthropic = provider === "anthropic";
     const MAX_TOOL_ROUNDS = 12;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        if (signal.aborted) {
+          setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
+          break;
+        }
         let data: any;
 
         if (isAnthropic) {
@@ -997,7 +1059,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
             body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS) }),
-          });
+          }, { signal });
           if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
         } else {
@@ -1005,7 +1067,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
             body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS }),
-          });
+          }, { signal });
           if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
         }
@@ -1034,9 +1096,11 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           break;
         }
 
-        // Emit intermediate text BEFORE executing tools (multi-message UX)
+        // Emit intermediate text BEFORE executing tools (multi-message UX) —
+        // this is the leader narrating what it's about to do, not a real
+        // conversational turn, so it's tagged as a collapsible step.
         if (textContent.trim()) {
-          setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now() }]);
+          setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now(), kind: "step" }]);
         }
 
         if (isAnthropic) { conversation.push(data.content); }
@@ -1048,9 +1112,10 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         // reserved for the model's own natural-language turns, so it reads
         // like talking to the leader instead of watching raw JSON scroll by.
         for (let ti = 0; ti < toolCalls.length; ti++) {
+          if (signal.aborted) break;
           const tc = toolCalls[ti];
           setToolEvents(prev => [...prev, { tool: tc.name, status: "running" }]);
-          const resultStr = await executeToolCall(tc.name, tc.args);
+          const resultStr = await executeToolCall(tc.name, tc.args, signal);
           const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
           setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr.slice(0, 200) } : e));
 
@@ -1085,7 +1150,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
                   finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr });
                   setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                 } else {
-                  setMessages(prev => [...prev, { role: "assistant", content: `✓ get_template (verify) → Template confirmed: ${delegateTemplateId}`, ts: Date.now() }]);
+                  setMessages(prev => [...prev, { role: "assistant", content: `✓ get_template (verify) → Template confirmed: ${delegateTemplateId}`, ts: Date.now(), kind: "step" }]);
                 }
               }
             } catch { /* resultStr was not JSON — skip verification */ }
@@ -1100,12 +1165,40 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         }
       }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e?.message || "no se pudo contactar al proveedor"}. Verifica tu API key.`, ts: Date.now() }]);
+      if (e?.name === "AbortError") {
+        setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
+      } else {
+        setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e?.message || "no se pudo contactar al proveedor"}. Verifica tu API key.`, ts: Date.now() }]);
+      }
     } finally {
       setSending(false);
       setToolEvents([]);
+      abortRef.current = null;
     }
   }, [input, sending, llmKey, messages, model, provider, systemPrompt]);
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  // Group consecutive "step" (narration/verification) messages so they
+  // render as one collapsed "N pasos ▸" line instead of cluttering the
+  // transcript — expand on click to see each one, muted, in place.
+  type RenderItem = { type: "message"; message: Message; index: number } | { type: "stepGroup"; messages: Message[]; startIndex: number };
+  const renderItems: RenderItem[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.kind === "step") {
+      const last = renderItems[renderItems.length - 1];
+      if (last && last.type === "stepGroup") {
+        last.messages.push(m);
+      } else {
+        renderItems.push({ type: "stepGroup", messages: [m], startIndex: i });
+      }
+    } else {
+      renderItems.push({ type: "message", message: m, index: i });
+    }
+  }
 
   const panelWidth = 420;
 
@@ -1137,7 +1230,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
       )}
 
       {/* Slide-in panel */}
-      <div style={{
+      <div data-chat-fab-panel="true" style={{
         position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 9050,
         width: open ? panelWidth : 0,
         background: "rgba(10,10,15,0.97)",
@@ -1192,18 +1285,55 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           flex: 1, overflowY: "auto", padding: "14px 18px",
           display: "flex", flexDirection: "column", gap: 10,
         }}>
-          {messages.map((m, i) => (
-            <div key={i} style={{
-              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "85%",
-              background: m.role === "user" ? "rgba(200,184,152,0.15)" : "rgba(255,255,255,0.04)",
-              border: `1px solid ${m.role === "user" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)"}`,
-              borderRadius: 12, padding: "10px 14px",
-              fontSize: 12.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)",
-              whiteSpace: "pre-wrap", wordBreak: "break-word",
-              userSelect: "text", cursor: "text",
-            }}>{renderWithLinks(m.content)}</div>
-          ))}
+          {renderItems.map(item => {
+            if (item.type === "message") {
+              const m = item.message;
+              return (
+                <div key={item.index} style={{
+                  alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                  maxWidth: "85%",
+                  background: m.role === "user" ? "rgba(200,184,152,0.15)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${m.role === "user" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)"}`,
+                  borderRadius: 12, padding: "10px 14px",
+                  fontSize: 12.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)",
+                  whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  userSelect: "text", cursor: "text",
+                }}>{renderWithLinks(m.content)}</div>
+              );
+            }
+            // Collapsed step group — muted narration/verification trail,
+            // like Claude Code's "ran a command, click for detail".
+            const isExpanded = expandedStepGroups.has(item.startIndex);
+            return (
+              <div key={`steps-${item.startIndex}`} style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedStepGroups(prev => {
+                    const next = new Set(prev);
+                    if (next.has(item.startIndex)) next.delete(item.startIndex); else next.add(item.startIndex);
+                    return next;
+                  })}
+                  style={{
+                    background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
+                    color: "rgba(255,255,255,0.3)", fontSize: 11, padding: "2px 0",
+                    display: "flex", alignItems: "center", gap: 5,
+                  }}
+                >
+                  <span style={{ display: "inline-block", transition: "transform 0.15s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>▸</span>
+                  {item.messages.length} paso{item.messages.length === 1 ? "" : "s"}
+                </button>
+                {isExpanded && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2, paddingLeft: 14, borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
+                    {item.messages.map((m, gi) => (
+                      <div key={gi} style={{ fontSize: 11.5, lineHeight: 1.4, color: "rgba(255,255,255,0.4)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text" }}>
+                        {renderWithLinks(m.content)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {sending && (
             <div style={{ alignSelf: "flex-start", fontSize: 12, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
               {toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
@@ -1235,13 +1365,22 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
               disabled={sending}
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />
-            <button type="button" onClick={send} disabled={!input.trim() || sending || !llmKey} style={{
-              background: input.trim() && !sending && llmKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
-              color: input.trim() && !sending && llmKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
-              border: `1px solid ${input.trim() && !sending && llmKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
-              borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
-              cursor: input.trim() && !sending && llmKey ? "pointer" : "not-allowed", fontFamily: "inherit",
-            }}>Enviar</button>
+            {sending ? (
+              <button type="button" onClick={stop} title="Detener al Leader" style={{
+                background: "rgba(248,113,113,0.15)", color: "#fca5a5",
+                border: "1px solid rgba(248,113,113,0.4)",
+                borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>■ Detener</button>
+            ) : (
+              <button type="button" onClick={send} disabled={!input.trim() || !llmKey} style={{
+                background: input.trim() && llmKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
+                color: input.trim() && llmKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
+                border: `1px solid ${input.trim() && llmKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
+                borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+                cursor: input.trim() && llmKey ? "pointer" : "not-allowed", fontFamily: "inherit",
+              }}>Enviar</button>
+            )}
           </div>
         </div>
       </div>

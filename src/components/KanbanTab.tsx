@@ -152,8 +152,26 @@ export function KanbanTab({ workspaceId }: Props) {
       // MCP wraps result in content[0].text (JSON string)
       const text = json?.result?.content?.[0]?.text;
       const data = text ? JSON.parse(text) : (json?.result || {});
-      setTasks(data.cards || []);
-      setColumns(data.columns || {});
+      // acceptance is stored as JSONB and is normally string[], but rows
+      // created before the backend enforced that (or by callers that sent a
+      // single string) can still have a bare string — guard here so a stray
+      // legacy card can't crash the whole detail view with "$.acceptance.map
+      // is not a function".
+      const normalizeTask = (t: KanbanTask): KanbanTask => ({
+        ...t,
+        acceptance: Array.isArray(t.acceptance)
+          ? t.acceptance
+          : typeof t.acceptance === "string"
+            ? (t.acceptance as string).split("\n").map(s => s.trim()).filter(Boolean)
+            : [],
+      });
+      const cards: KanbanTask[] = (data.cards || []).map(normalizeTask);
+      const normalizedColumns: KanbanColumns = {};
+      for (const [status, list] of Object.entries((data.columns || {}) as KanbanColumns)) {
+        normalizedColumns[status] = (list || []).map(normalizeTask);
+      }
+      setTasks(cards);
+      setColumns(normalizedColumns);
     } catch (cause: unknown) {
       const msg = cause instanceof Error ? cause.message : "Error al cargar el Kanban.";
       if (msg.includes("does not exist") || msg.includes("42P01")) {
