@@ -350,7 +350,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
     try {
-      const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/recipes");
+      const res = await apiFetch<{ success: boolean; data: Recipe[] }>("/api/recipes");
       setRecipes(res.data || []);
     } catch {
       setRecipes([]);
@@ -570,7 +570,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleDeleteRecipe = async (id: string) => {
     try {
-      await apiFetch(`/recipes/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/recipes/${id}`, { method: "DELETE" });
       setRecipes(prev => prev.filter(r => r.id !== id));
     } catch {
       addToast("Error al eliminar el Key Visual.", "error");
@@ -579,7 +579,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   const handleCreateFromRecipe = async (recipeId: string, recipeName: string) => {
     try {
-      const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/recipes/${recipeId}/execute`, {
+      const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/api/recipes/${recipeId}/execute`, {
         method: "POST",
         body: JSON.stringify({ variables: {}, workspaceId: DEFAULT_WORKSPACE_ID }),
       });

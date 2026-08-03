@@ -6,7 +6,7 @@ import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { FileInfoPanel } from "../components/FileInfoPanel";
-import { StyleLibraryModal } from "../components/StyleLibraryModal";
+import { StyleLibraryPanel } from "../components/StyleLibraryPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
@@ -19,7 +19,7 @@ import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
-import { ImageUploadModal } from "../components/ImageUploadModal";
+import { AssetsPanel } from "../components/AssetsPanel";
 import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
@@ -339,7 +339,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const canvasObjectsRef = useRef(canvasObjects);
   canvasObjectsRef.current = canvasObjects;
   const [showSvgImport, setShowSvgImport] = useState(false);
-  const [showStyleLibrary, setShowStyleLibrary] = useState(false);
 
   // ── Figma-style selection state ──
   const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
@@ -2734,7 +2733,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [captureFrameToPng]);
 
-  const [showImageUpload, setShowImageUpload] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [showDesignImport, setShowDesignImport] = useState(false);
@@ -2783,19 +2781,32 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
+  // Saves whichever frame(s) are currently selected — same selection
+  // resolution rule used by Export (multi-select if there is one, else the
+  // single active frame) — as a reusable Key Visual. Multi-frame recipes
+  // store every frame in structure.frames; template_html/css keep the
+  // first frame for older readers.
   const handleSaveRecipe = useCallback(async () => {
+    const ids = selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : []);
+    const targetFrames = frames.filter(f => ids.has(f.id));
+    if (targetFrames.length === 0) {
+      setSaveRecipeMsg("✗ Select one or more frames first");
+      setTimeout(() => setSaveRecipeMsg(""), 3000);
+      return;
+    }
     setSaveRecipeMsg("");
     try {
-      const res = await apiFetch<{ recipeId: string; name: string }>("/recipes", {
+      const res = await apiFetch<{ recipeId: string; name: string }>("/api/recipes", {
         method: "POST",
         body: JSON.stringify({
           name: templateName || "Untitled Key Visual",
           description: `${templateName} - saved ${new Date().toLocaleDateString()}`,
           workspaceId: templateWorkspaceId,
-          templateHtml: selectedFrame?.html || "",
-          templateCss: selectedFrame?.css || "",
+          templateHtml: targetFrames[0].html || "",
+          templateCss: targetFrames[0].css || "",
           structure: {
-            layout: { width: selectedFrame?.width || 1080, height: selectedFrame?.height || 1080 },
+            layout: { width: targetFrames[0].width || 1080, height: targetFrames[0].height || 1080 },
+            frames: targetFrames.map(f => ({ name: f.name, html: f.html || "", css: f.css || "", width: f.width, height: f.height })),
             colors: [],
             typography: [],
           },
@@ -2807,7 +2818,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       setSaveRecipeMsg(`✗ Failed: ${e.message}`);
       setTimeout(() => setSaveRecipeMsg(""), 4000);
     }
-  }, [templateName, templateWorkspaceId, selectedFrame]);
+  }, [templateName, templateWorkspaceId, frames, selectedFrameId, selectedFrameIds]);
 
   // ── Extract Design System (R6: Human UI path) ──
   const handleExtractDesignSystem = useCallback(async () => {
@@ -3509,6 +3520,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     </svg>
   );
 
+  const RIGHT_PANEL_TITLES: Record<string, string> = {
+    contextual: "Properties",
+    history: "History",
+    meta: "Obsidian",
+    styleLibrary: "Style Library",
+    assets: "Assets",
+  };
+
   return (
     <div className="editor-v2-root">
       {/* ═══ Top Bar ═══ */}
@@ -3645,9 +3664,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             a otros diseños — estilos, assets, iconos, key visuals, y el
             contexto de marca/campaña de Obsidian) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-bibliotecas" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Style Library: browsing AND capturing a design's style now
-              live in the same panel — see StyleLibraryModal's "Capture" button. */}
-          <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
+          {/* Style Library: opens as a right-side panel (like Properties/
+              History/Obsidian) — browsing, capturing, uploading styles, and
+              Key Visuals all live in its internal tabs. */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "styleLibrary" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "styleLibrary") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("styleLibrary");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Style Library"
+          >
             <IconPalette size={14} />
             <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
           </button>
@@ -3657,8 +3689,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               the same action. */}
           <button
             type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => setShowImageUpload(true)}
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "assets" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "assets") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("assets");
+                setShowRightPanel(true);
+              }
+            }}
             title="Assets — biblioteca de archivos subidos"
           >
             <IconImage size={14} />
@@ -3673,17 +3712,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             title="Icons (Phosphor)"
           >
             <IconShapes size={14} />
-          </button>
-
-          {/* Save as Key Visual: a reusable full-design template (different
-              from Style Library, which only saves colors/typography). */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={handleSaveRecipe}
-            title="Save as Key Visual (Recipe)"
-          >
-            <IconTag size={14} />
           </button>
 
           {/* Obsidian: brand/campaign/tags metadata for this file — also
@@ -3986,7 +4014,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
-              <button type="button" className="landing-menu-link" onClick={() => { setShowStyleLibrary(true); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link"
+                onClick={() => {
+                  if (showRightPanel && rightPanelTab === "styleLibrary") setShowRightPanel(false);
+                  else { setRightPanelTab("styleLibrary"); setShowRightPanel(true); }
+                  setMobileMenuOpen(false);
+                }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <IconPalette size={16} /> Style Library
@@ -4007,16 +4040,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
-              <button type="button" className="landing-menu-link" onClick={() => { handleSaveRecipe(); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link"
+                onClick={() => {
+                  if (showRightPanel && rightPanelTab === "assets") setShowRightPanel(false);
+                  else { setRightPanelTab("assets"); setShowRightPanel(true); }
+                  setMobileMenuOpen(false);
+                }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconTag size={16} /> Save Key Visual
-                </span>
-              </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowImageUpload(true); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconImage size={16} /> Upload Images
+                  <IconImage size={16} /> Assets
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { duplicateFrame(); setMobileMenuOpen(false); }}
@@ -4304,7 +4336,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showRightPanel && (
         <div className="editor-v2-right-panel" data-tour="editor-props" style={rightDock.panelStyle(260)}>
           <div className="dock-handle" {...rightDock.handleProps}>
-            <span>Properties</span>
+            <span>{RIGHT_PANEL_TITLES[rightPanelTab] || "Properties"}</span>
             <button type="button" onClick={() => rightDock.toggleDock("right")} className="dock-pin-btn" title={rightDock.state.isDocked ? "Undock" : "Dock right"}>
               {rightDock.state.isDocked ? "📌" : "📍"}
             </button>
@@ -4466,6 +4498,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onCoverCapture={handleCoverCapture}
             />
           )}
+          {rightPanelTab === "styleLibrary" && (
+            <StyleLibraryPanel
+              workspaceId={templateWorkspaceId || "default"}
+              onToast={(msg, type) => addToast(msg, type || "info")}
+              onPublish={handlePublishStyle}
+              publishing={publishingStyle}
+              onSaveKeyVisual={handleSaveRecipe}
+              saveRecipeMsg={saveRecipeMsg}
+              selectedFrameCount={selectedFrameIds.size > 0 ? selectedFrameIds.size : (selectedFrameId ? 1 : 0)}
+              onOpenTemplate={onOpenTemplate}
+            />
+          )}
+          {rightPanelTab === "assets" && (
+            <AssetsPanel
+              workspaceId={templateWorkspaceId}
+              onAssetUploaded={handleAssetUploaded}
+              selectedImageSrc={selectedElement?.src}
+              onManageStorage={() => {
+                sessionStorage.setItem("dashboardInitialTab", "storage");
+                setShowRightPanel(false);
+                onBack();
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -4480,19 +4536,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         />
       )}
 
-      {/* ═══ Assets Modal (formerly "Upload Images") ═══ */}
-      {showImageUpload && (
-        <ImageUploadModal
-          workspaceId={templateWorkspaceId}
-          onClose={() => setShowImageUpload(false)}
-          onAssetUploaded={handleAssetUploaded}
-          onManageStorage={() => {
-            sessionStorage.setItem("dashboardInitialTab", "storage");
-            setShowImageUpload(false);
-            onBack();
-          }}
-        />
-      )}
 
       {/* ═══ Batch-a-mator ═══ */}
       {showBatch && (
@@ -4620,16 +4663,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         </div>
       )}
 
-      {/* ═══ Style Library Modal ═══ */}
-      {showStyleLibrary && (
-        <StyleLibraryModal
-          workspaceId={templateWorkspaceId || "default"}
-          onClose={() => setShowStyleLibrary(false)}
-          onToast={(msg, type) => addToast(msg, type || "info")}
-          onPublish={handlePublishStyle}
-          publishing={publishingStyle}
-        />
-      )}
 
       {/* ═══ Guided onboarding tour (editor steps) ═══ */}
       <OnboardingTour
