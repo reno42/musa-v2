@@ -91,7 +91,8 @@ import {
   IconRectangle, IconCircleOutline, IconPen, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
-  IconUpload, IconSparkle, IconCode,
+  IconSearch, IconLayers,
+  IconUpload, IconCode,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -274,6 +275,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [zoom, setZoom] = useState(0.5);
   const [editingZoomTopbar, setEditingZoomTopbar] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(270);
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const handleRightPanelResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizeStateRef.current = { startX: e.clientX, startWidth: rightPanelWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!resizeStateRef.current) return;
+      const delta = resizeStateRef.current.startX - ev.clientX;
+      const next = Math.min(560, Math.max(220, resizeStateRef.current.startWidth + delta));
+      setRightPanelWidth(next);
+    };
+    const onUp = () => {
+      resizeStateRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [rightPanelWidth]);
   // Sprint 3.5: auto-edit newly created text layers
   const [autoEditLayerId, setAutoEditLayerId] = useState<string | null>(null);
 
@@ -1646,7 +1666,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           id: 0,
         }),
       });
-      if (res.result) {
+      // MCP errors come back as HTTP 200 with a jsonrpc `error` field, not a
+      // thrown fetch error — res.result silently being absent used to fail
+      // this completely quietly (no toast, no console). Surface it now.
+      if (res.error) {
+        addToast(`Pathfinder falló: ${res.error.message || "error desconocido"}`, "error");
+      } else if (res.result) {
         const tpl = await getTemplate(templateId);
         const t = tpl as any;
         if (t?.frames && Array.isArray(t.frames)) {
@@ -1661,9 +1686,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           }
         }
       }
-    } catch (err) { console.warn("[Pathfinder] Failed:", err); }
+    } catch (err: any) {
+      addToast(`Pathfinder falló: ${err?.message || "error desconocido"}`, "error");
+    }
     setMultiSelectLayerIds([]);
-  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave]);
+  }, [selectedFrameId, multiSelectLayerIds, templateId, frames, autoSave, addToast]);
 
   // ── Phase G: SVG Import ──
   const handleSvgImported = useCallback(async (newTemplateId: string) => {
@@ -3307,17 +3334,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setTimeout(() => setMcpMsg(""), 3000);
   }, [templateId, callMcp]);
 
-  const handleEnhance = useCallback(async () => {
-    setMcpLoading("enhance");
-    try {
-      await callMcp("enhance_template", { templateId });
-      await reloadFromServer();
-      setMcpMsg("✓ Template enhanced");
-    } catch { setMcpMsg("✗ Enhance failed"); }
-    setMcpLoading(null);
-    setTimeout(() => setMcpMsg(""), 3000);
-  }, [templateId, callMcp, reloadFromServer]);
-
   const handleExportTokens = useCallback(async () => {
     setMcpLoading("tokens");
     try {
@@ -3399,7 +3415,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // space; z-index ordering (see CanvasGuides) keeps them visually on top
   // of the ruler in that case instead.
   const canvasLeftInset = leftPanelsWidth + (toolbarDock.state.isDocked ? 56 : 0);
-  const canvasRightInset = (showRightPanel && rightDock.state.isDocked && rightDock.state.dockSide === "right") ? 260 : 0;
+  const canvasRightInset = (showRightPanel && rightDock.state.isDocked && rightDock.state.dockSide === "right") ? rightPanelWidth : 0;
 
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
@@ -3477,14 +3493,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Loading / Error ──
   if (loading) {
     return (
-      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0d0d1a", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#080808", alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: "#888", fontSize: 16 }}>Loading template...</div>
       </div>
     );
   }
   if (error) {
     return (
-      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0d0d1a", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#080808", alignItems: "center", justifyContent: "center" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ color: "#f87171", fontSize: 16, marginBottom: 12 }}>{error}</div>
           <button type="button" onClick={onBack} className="glass-btn">
@@ -3599,8 +3615,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ Zona: Documento (zoom + guardado de versión) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Zoom: live level, click to type an exact %. Moved here from the
-              floating left toolbar so it's always visible next to Guardar. */}
+          {/* Zoom: magnifying glass first (so it reads as "this is zoom"),
+              then -, live level (click to type an exact %), then +. Moved
+              here from the floating left toolbar so it's always visible
+              next to Guardar. */}
+          <span className="editor-v2-topbar-icon-btn" style={{ cursor: "default", opacity: 0.6 }} title="Zoom">
+            <IconSearch size={13} />
+          </span>
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleZoomOut}
+            title="Zoom Out"
+          >
+            <IconZoomOut size={13} />
+          </button>
           {editingZoomTopbar ? (
             <input
               type="number"
@@ -3640,6 +3669,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               {Math.round(zoom * 100)}%
             </button>
           )}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleZoomIn}
+            title="Zoom In"
+          >
+            <IconZoomIn size={13} />
+          </button>
 
           <button
             type="button"
@@ -3797,16 +3834,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           </button>
 
           {/* Enhance template */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={handleEnhance}
-            disabled={mcpLoading === "enhance"}
-            title="Enhance — AI-suggested improvements"
-          >
-            <IconSparkle size={14} />
-          </button>
-
           {/* Batch-a-mator */}
           <button
             type="button"
@@ -3837,6 +3864,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             title="Toggle Properties"
           >
             <IconSliders size={14} />
+          </button>
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showLayersPanel ? "active" : ""}`}
+            onClick={() => setShowLayersPanel(v => !v)}
+            title="Toggle Layers"
+          >
+            <IconLayers size={14} />
           </button>
           <button
             type="button"
@@ -4305,8 +4340,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onRedo={handleRedo}
           multiSelectCount={multiSelectLayerIds.length}
           onPathfinder={handlePathfinder}
-          showLayers={showLayersPanel}
-          onToggleLayers={() => setShowLayersPanel(v => !v)}
           onIconPicker={() => setShowIconPicker(true)}
           onGroup={handleGroup}
           onUngroup={handleUngroup}
@@ -4317,7 +4350,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
       {/* ═══ Floating Right Properties Panel ═══ */}
       {showRightPanel && (
-        <div className="editor-v2-right-panel" data-tour="editor-props" style={rightDock.panelStyle(260)}>
+        <div className="editor-v2-right-panel" data-tour="editor-props" style={{ ...rightDock.panelStyle(rightPanelWidth), width: rightPanelWidth }}>
+          {/* Drag the left edge to resize */}
+          <div
+            onMouseDown={handleRightPanelResizeStart}
+            title="Arrastra para cambiar el ancho"
+            style={{
+              position: "absolute", left: -3, top: 0, bottom: 0, width: 6,
+              cursor: "ew-resize", zIndex: 5,
+            }}
+          />
           <div className="dock-handle" {...rightDock.handleProps}>
             <span>{RIGHT_PANEL_TITLES[rightPanelTab] || "Properties"}</span>
             <button type="button" onClick={() => rightDock.toggleDock("right")} className="dock-pin-btn" title={rightDock.state.isDocked ? "Undock" : "Dock right"}>

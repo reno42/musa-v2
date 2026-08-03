@@ -22,7 +22,7 @@ const panelStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   height: "100%",
-  background: "rgba(18,18,36,0.85)",
+  background: "transparent",
   borderRadius: 8,
   border: "1px solid rgba(255,255,255,0.06)",
   overflow: "hidden",
@@ -48,6 +48,7 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
   { html, css, onHtmlChange, onCssChange }, ref
 ) {
   const [tab, setTab] = useState<Tab>("html");
+  const [copied, setCopied] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const htmlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const cssEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
@@ -105,6 +106,14 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
     });
   };
 
+  const handleCopy = useCallback(() => {
+    const text = tab === "html" ? html : css;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => { /* clipboard permission denied — no-op */ });
+  }, [tab, html, css]);
+
   const handleCssEditorMount: OnMount = (editor) => {
     cssEditorRef.current = editor;
     editor.updateOptions({
@@ -123,6 +132,9 @@ export const CodePanel = forwardRef<CodePanelRef, CodePanelProps>(function CodeP
         <button type="button" onClick={() => setTab("html")} style={tabStyle(tab === "html")}>HTML</button>
         <button type="button" onClick={() => setTab("css")} style={tabStyle(tab === "css")}>CSS</button>
         <div style={{ flex: 1 }} />
+        <button type="button" onClick={handleCopy} style={{ ...tabStyle(false), padding: "8px 10px", fontSize: 12 }} title={`Copy ${tab.toUpperCase()}`}>
+          {copied ? "✓ Copied" : "⧉ Copy"}
+        </button>
         <button type="button" onClick={() => { const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current; ed?.trigger("keyboard", "undo", null); }} style={{ ...tabStyle(false), padding: "8px 10px", fontSize: 16, lineHeight: 1 }} title="Undo (Ctrl+Z)">&#x21A9;</button>
         <button type="button" onClick={() => { const ed = tab === "html" ? htmlEditorRef.current : cssEditorRef.current; ed?.trigger("keyboard", "redo", null); }} style={{ ...tabStyle(false), padding: "8px 10px", fontSize: 16, lineHeight: 1 }} title="Redo (Ctrl+Shift+Z)">&#x21AA;</button>
       </div>

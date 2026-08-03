@@ -1054,15 +1054,15 @@ export function ChatFAB() {
           style={{
             position: "fixed", bottom: 24, right: 88, zIndex: 9100,
             width: 52, height: 52, borderRadius: "50%",
-            background: "linear-gradient(135deg, rgba(108,92,231,0.85), rgba(167,139,250,0.85))",
-            border: "1px solid rgba(167,139,250,0.4)",
-            boxShadow: "0 4px 24px rgba(108,92,231,0.35)",
-            color: "#fff", cursor: "pointer",
+            background: "#0c0c0c",
+            border: "1px solid rgba(200,184,152,0.35)",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+            color: "#c8b898", cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 22, transition: "all 0.2s ease",
           }}
-          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 32px rgba(108,92,231,0.5)"; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 4px 24px rgba(108,92,231,0.35)"; }}
+          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 32px rgba(0,0,0,0.6)"; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5)"; }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -1130,8 +1130,8 @@ export function ChatFAB() {
             <div key={i} style={{
               alignSelf: m.role === "user" ? "flex-end" : "flex-start",
               maxWidth: "85%",
-              background: m.role === "user" ? "rgba(108,92,231,0.18)" : "rgba(255,255,255,0.04)",
-              border: `1px solid ${m.role === "user" ? "rgba(108,92,231,0.3)" : "rgba(255,255,255,0.06)"}`,
+              background: m.role === "user" ? "rgba(200,184,152,0.15)" : "rgba(255,255,255,0.04)",
+              border: `1px solid ${m.role === "user" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)"}`,
               borderRadius: 12, padding: "10px 14px",
               fontSize: 12.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)",
               whiteSpace: "pre-wrap", wordBreak: "break-word",
@@ -1170,9 +1170,9 @@ export function ChatFAB() {
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />
             <button type="button" onClick={send} disabled={!input.trim() || sending || !llmKey} style={{
-              background: input.trim() && !sending && llmKey ? "rgba(108,92,231,0.25)" : "rgba(255,255,255,0.04)",
+              background: input.trim() && !sending && llmKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
               color: input.trim() && !sending && llmKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
-              border: `1px solid ${input.trim() && !sending && llmKey ? "rgba(108,92,231,0.4)" : "rgba(255,255,255,0.05)"}`,
+              border: `1px solid ${input.trim() && !sending && llmKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
               borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
               cursor: input.trim() && !sending && llmKey ? "pointer" : "not-allowed", fontFamily: "inherit",
             }}>Enviar</button>

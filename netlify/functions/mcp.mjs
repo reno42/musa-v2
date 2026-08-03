@@ -7303,7 +7303,7 @@ async function handleMethod(method, params, userId, auth) {
       if (!$elA.length) throw { code: -32000, message: `Element A not found: ${params.elementIdA}` };
       if (!$elB.length) throw { code: -32000, message: `Element B not found: ${params.elementIdB}` };
 
-      // Extract path data from both elements
+      // Extract path data from an <svg><path>/<polygon> shape.
       function extractPathData($svg) {
         const $path = $svg.find("path").first();
         if ($path.length) return { d: $path.attr("d") || "", fill: $path.attr("fill") || "#8B5CF6", stroke: $path.attr("stroke") || "none", strokeWidth: $path.attr("stroke-width") || "0" };
@@ -7337,12 +7337,53 @@ async function handleMethod(method, params, userId, auth) {
         };
       }
 
-      const pathA = extractPathData($elA);
-      const pathB = extractPathData($elB);
-      if (!pathA || !pathB) throw { code: -32000, message: "One or both elements have no path data" };
+      // Rect/Circle tools create plain <div data-layer-kind="shape"> elements
+      // sized via a CSS rule (not inline style, not SVG) — extractPathData
+      // always returned null for these, so Pathfinder silently failed on the
+      // two most commonly used shapes. Synthesize an equivalent path from
+      // the div's resolved box (border-radius:50% degenerates the rounded-
+      // rect formula below into a circle/ellipse outline correctly).
+      const cssRules = parseCssRules(frame.css || "");
+      function geometryFromDiv($el) {
+        const resolved = resolveStyles($el, cssRules);
+        const w = parseFloat(resolved["width"]) || 0;
+        const h = parseFloat(resolved["height"]) || 0;
+        if (!w || !h) return null;
+        const x = parseFloat(resolved["left"]) || 0;
+        const y = parseFloat(resolved["top"]) || 0;
+        let rx = 0, ry = 0;
+        const br = (resolved["border-radius"] || "").trim();
+        if (br.endsWith("%")) {
+          const pct = Math.min(50, parseFloat(br) || 0) / 100;
+          rx = w * pct; ry = h * pct;
+        } else if (br) {
+          const px = parseFloat(br) || 0;
+          rx = Math.min(px, w / 2); ry = Math.min(px, h / 2);
+        }
+        const d = (rx > 0 || ry > 0)
+          ? `M${rx},0 H${w - rx} A${rx},${ry} 0 0 1 ${w},${ry} V${h - ry} A${rx},${ry} 0 0 1 ${w - rx},${h} H${rx} A${rx},${ry} 0 0 1 0,${h - ry} V${ry} A${rx},${ry} 0 0 1 ${rx},0 Z`
+          : `M0,0 H${w} V${h} H0 Z`;
+        return {
+          path: { d, fill: resolved["background"] || resolved["background-color"] || "#8B5CF6", stroke: "none", strokeWidth: "0" },
+          bbox: { x, y, w, h },
+        };
+      }
 
-      const bboxA = extractBBox($elA);
-      const bboxB = extractBBox($elB);
+      function getShapeGeometry($el) {
+        const isSvg = $el.is("svg") || $el.is("path");
+        if (isSvg) {
+          const path = extractPathData($el);
+          if (!path) return null;
+          return { path, bbox: extractBBox($el) };
+        }
+        return geometryFromDiv($el);
+      }
+
+      const geomA = getShapeGeometry($elA);
+      const geomB = getShapeGeometry($elB);
+      if (!geomA || !geomB) throw { code: -32000, message: "One or both elements have no usable shape geometry" };
+      const pathA = geomA.path, pathB = geomB.path;
+      const bboxA = geomA.bbox, bboxB = geomB.bbox;
 
       // Compute union bounding box
       const minX = Math.min(bboxA.x, bboxB.x);
@@ -11761,3 +11802,4 @@ export const handler = async (event) => {
     };
   }
 };
+

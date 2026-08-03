@@ -451,3 +451,12 @@ export const IconInfo = (p: React.ComponentProps<typeof Icon>) => (
     <circle cx="12" cy="7.7" r="0.9" fill="currentColor" stroke="none" />
   </Icon>
 );
+
+// ── Layers (stacked planes) ────────────────────────────
+export const IconLayers = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <polygon points="12,2 22,8 12,14 2,8" />
+    <polyline points="2,13 12,19 22,13" />
+    <polyline points="2,18 12,22 22,18" />
+  </Icon>
+);

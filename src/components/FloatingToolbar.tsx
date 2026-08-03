@@ -4,7 +4,7 @@ import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
   IconFrame,
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
-  IconIntersect, IconShapes, IconLayout,
+  IconIntersect, IconShapes,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
 } from "../shared/icons";
@@ -19,8 +19,6 @@ interface Props {
   multiSelectCount?: number;
   onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
   onSvgImport?: () => void;
-  showLayers?: boolean;
-  onToggleLayers?: () => void;
   onIconPicker?: () => void;
   onGroup?: () => void;
   onUngroup?: () => void;
@@ -63,7 +61,7 @@ export function FloatingToolbar({
   tool, onToolChange,
   canUndo, canRedo, onUndo, onRedo,
   multiSelectCount, onPathfinder, onSvgImport,
-  showLayers, onToggleLayers, onIconPicker,
+  onIconPicker,
   onGroup, onUngroup, canGroup, canUngroup,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
@@ -537,45 +535,24 @@ export function FloatingToolbar({
         onRedo, "Redo (Ctrl+Shift+Z)", !canRedo,
       )}
 
-      {(onToggleLayers || onIconPicker) && <>
+      {onIconPicker && <>
         {divider}
         {/* ── Icons Toggle ── */}
-        {onIconPicker && (
-          <button
-            type="button"
-            onClick={onIconPicker}
-            title="Icons (Phosphor)"
-            style={{
-              width: 46, height: 36,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              borderRadius: 8, cursor: "pointer",
-              background: "transparent", border: "1px solid transparent",
-              color: "var(--text-muted, #7a7668)",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <IconShapes size={16} />
-          </button>
-        )}
-        {/* ── Layers Panel Toggle ── */}
-        {onToggleLayers && (
-          <button
-            type="button"
-            onClick={onToggleLayers}
-            title={showLayers ? "Hide Layers" : "Show Layers"}
-            style={{
-              width: 46, height: 36,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              borderRadius: 8, cursor: "pointer",
-              background: showLayers ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-              border: showLayers ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-              color: showLayers ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <IconLayout size={14} />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onIconPicker}
+          title="Icons (Phosphor)"
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 8, cursor: "pointer",
+            background: "transparent", border: "1px solid transparent",
+            color: "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          <IconShapes size={16} />
+        </button>
       </>}
 
     </div>
