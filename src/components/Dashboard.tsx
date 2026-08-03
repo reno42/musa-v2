@@ -56,7 +56,7 @@ interface Brand {
   relationship_status?: string;
 }
 
-const DEFAULT_WORKSPACE_ID = "ws_user_8e9f031817184e0ab205";
+export const DEFAULT_WORKSPACE_ID = "ws_user_8e9f031817184e0ab205";
 
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;

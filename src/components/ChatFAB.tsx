@@ -72,17 +72,50 @@ const LS_MODEL_KEY = "futuraria-chat-model";
 const LS_MESSAGES_KEY = "futuraria-chat-messages";
 const MAX_STORED_MESSAGES = 50;
 
+/**
+ * Which workspace/template the human is actually looking at right now.
+ * executeToolCall/spawnSubagent are module-level functions (not hooks), so
+ * the component writes here via an effect instead of threading props
+ * through every call. Without this, the model has to call list_workspaces
+ * and guess — which silently lands created cards/templates in whichever
+ * workspace happens to come back first, invisible to whoever's watching
+ * the real Kanban/dashboard.
+ */
+let currentContext: { workspaceId?: string; templateId?: string } = {};
+
+/** Auto-fill workspaceId/templateId when the model's tool call omits them
+ *  but the tool schema accepts them and we know the current value. */
+function resolveArgs(name: string, args: Record<string, any>): Record<string, any> {
+  const def = HARNESS_TOOLS.find(t => t.function.name === name);
+  const props = def?.function?.parameters?.properties || {};
+  const resolved = { ...args };
+  if (resolved.workspaceId === undefined && "workspaceId" in props && currentContext.workspaceId) {
+    resolved.workspaceId = currentContext.workspaceId;
+  }
+  if (resolved.templateId === undefined && "templateId" in props && currentContext.templateId) {
+    resolved.templateId = currentContext.templateId;
+  }
+  return resolved;
+}
+
 const HARNESS_SYSTEM_PROMPT = `Eres el Leader del Harness de Futuraria Design. NUNCA haces diseño tú mismo. Las únicas tools que tienes son de ORQUESTACIÓN — NO tienes set_html, set_css, create_frame ni ninguna tool de diseño. Esto es ESTRUCTURAL, no una sugerencia: simplemente no existen en tu ambiente.
+
+{CURRENT_CONTEXT}
+
+REGLA DE WORKSPACE (CRÍTICA):
+- SIEMPRE usa el workspaceId del contexto actual arriba para studio_create_card, create_html_template, etc.
+- NUNCA llames list_workspaces para "adivinar" cuál usar — el humano ya te dijo cuál está mirando. Si no hay workspaceId en el contexto, ahí sí llama list_workspaces.
+- Si el usuario pide explícitamente trabajar en otro workspace, ahí sí ignora esta regla.
 
 REGLAS DE RESPUESTA:
 - NO describas lo que vas a hacer. Simplemente hazlo llamando la tool.
 - NO escribas nombres de tools en el chat. Ejecútalos directamente.
 - Solo respondes con texto cuando: (a) saludas, (b) necesitas aclaración, (c) reportas resultado final.
-- Tu respuesta final incluye el link del editor: "done → https://design.futuraria.com/#editor/<templateId>"
+- Tu respuesta final incluye el link del editor: "done → https://design.futuraria.com/?template=<templateId>"
 
 FLUJO OBLIGATORIO (NO TE LO SALTES):
 0. (OPCIONAL, solo primera vez) harness_get_context({ agentType: "leader" }) → obtén convenciones del proyecto.
-1. studio_create_card → crea la tarjeta en backlog
+1. studio_create_card (con el workspaceId del contexto actual) → crea la tarjeta en backlog
 2. studio_move_card → mueve a "design"
 3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer: dimensiones, texto, colores, estilo, y si es crear nuevo o modificar existente con templateId>" })
    - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
@@ -110,13 +143,24 @@ PROTOCOLO DE ERRORES:
 
 LINK DEL EDITOR:
 - Cuando el implementer crea un template, el ID (tpl_xxx) viene en el resultado de harness_delegate_task.
-- El link del editor es: https://design.futuraria.com/#editor/<templateId>
+- El link del editor es: https://design.futuraria.com/?template=<templateId>
 - Si necesitas encontrar el templateId, llama list_templates o studio_get_card.
 
 PRINCIPIO CRÍTICO:
 - Tú ORQUESTAS. No implementas. No diseñas. No escribes HTML/CSS.
 - harness_delegate_task es tu tool principal. Úsala SIEMPRE para diseño y review.
 - El implementer hace el trabajo. El reviewer verifica. Tú coordinas.`;
+
+/** Fills in the {CURRENT_CONTEXT} block with what the human is actually looking at. */
+function buildSystemPrompt(): string {
+  const ctxLines: string[] = [];
+  if (currentContext.workspaceId) ctxLines.push(`- workspaceId actual: ${currentContext.workspaceId}`);
+  if (currentContext.templateId) ctxLines.push(`- templateId actualmente abierto en el editor: ${currentContext.templateId} (si el pedido es sobre "esto"/"este diseño", es este)`);
+  const block = ctxLines.length > 0
+    ? `CONTEXTO ACTUAL (lo que el humano está mirando ahora mismo):\n${ctxLines.join("\n")}`
+    : `CONTEXTO ACTUAL: no se detectó un workspace específico. Llama list_workspaces si necesitas uno.`;
+  return HARNESS_SYSTEM_PROMPT.replace("{CURRENT_CONTEXT}", block);
+}
 
 const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
@@ -282,8 +326,8 @@ const HARNESS_TOOLS = [
   // ═══════════════════════════════════════════════
   //  Kanban
   // ═══════════════════════════════════════════════
-  { type: "function", function: { name: "studio_create_card", description: "Crea una nueva tarjeta en el Kanban con tipo, prioridad, brief, acceptance criteria y deadline.", parameters: { type: "object", required: ["title"], properties: { title: { type: "string" }, type: { type: "string", enum: ["banner", "post", "deck", "template", "landing", "factura", "cotizacion", "other"] }, priority: { type: "number", description: "1=urgente, 2=normal, 3=baja" }, brief: { type: "string" }, acceptance: { type: "string", description: "Una línea por criterio, separadas por newline" }, deadline: { type: "string" }, format: { type: "string" }, templateId: { type: "string" }, tags: { type: "array", items: { type: "string" } } } } } },
-  { type: "function", function: { name: "studio_list_cards", description: "Lista todas las tarjetas del Kanban con joins a workspace/brand/template.", parameters: { type: "object", properties: { status: { type: "string" } } } } },
+  { type: "function", function: { name: "studio_create_card", description: "Crea una nueva tarjeta en el Kanban con tipo, prioridad, brief, acceptance criteria y deadline.", parameters: { type: "object", required: ["title"], properties: { title: { type: "string" }, workspaceId: { type: "string", description: "CRÍTICO: usa el workspaceId del contexto actual. Sin esto la tarjeta no aparecerá en el Kanban que el usuario está mirando." }, type: { type: "string", enum: ["banner", "post", "deck", "template", "landing", "factura", "cotizacion", "other"] }, priority: { type: "number", description: "1=urgente, 2=normal, 3=baja" }, brief: { type: "string" }, acceptance: { type: "string", description: "Una línea por criterio, separadas por newline" }, deadline: { type: "string" }, format: { type: "string" }, templateId: { type: "string" }, tags: { type: "array", items: { type: "string" } } } } } },
+  { type: "function", function: { name: "studio_list_cards", description: "Lista todas las tarjetas del Kanban con joins a workspace/brand/template.", parameters: { type: "object", properties: { workspaceId: { type: "string", description: "Filtra por el workspace del contexto actual." }, status: { type: "string" } } } } },
   { type: "function", function: { name: "studio_move_card", description: "Mueve una tarjeta a otro estado del Kanban.", parameters: { type: "object", required: ["cardId", "status"], properties: { cardId: { type: "string" }, status: { type: "string", enum: ["backlog", "research", "draft", "design", "review", "feedback", "done"] } } } } },
   { type: "function", function: { name: "studio_get_card", description: "Obtiene el detalle completo de una tarjeta incluyendo actividad y checkpoints.", parameters: { type: "object", required: ["cardId"], properties: { cardId: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
@@ -409,7 +453,8 @@ const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design.
 PRIMERO DETERMINA EL MODO leyendo el contexto:
 
 MODO A — Crear diseño nuevo (si NO hay templateId en el contexto):
-  PASO 1: Llama list_workspaces. Toma el ID del primer workspace.
+  PASO 1: Si el contexto de abajo incluye "workspaceId=...", úsalo directamente — NO llames list_workspaces.
+    Solo si NO hay workspaceId en el contexto, llama list_workspaces y toma el primero.
   PASO 2: Llama create_html_template con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
     ⚠️ CRÍTICO: El html y css deben estar COMPLETOS. No dejes placeholders ni vacíos.
     Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
@@ -655,7 +700,7 @@ async function executeToolCall(name: string, args: Record<string, any>): Promise
     if (name === "harness_delegate_task") {
       return await spawnSubagent(args as any);
     }
-    const result = await mcpCall(name, args);
+    const result = await mcpCall(name, resolveArgs(name, args));
     return JSON.stringify(result, null, 2).slice(0, 4000);
   } catch (e: any) {
     return JSON.stringify({ error: e?.message || "tool call failed" });
@@ -683,19 +728,28 @@ async function spawnSubagent(params: {
     return JSON.stringify({ error: "No LLM API key found for subagent. Set your API key in chat settings." });
   }
 
+  // Carry the known workspace/template into the delegated instruction so the
+  // subagent doesn't have to blindly call list_workspaces and guess — same
+  // fix as resolveArgs, but for the free-text instruction the leader writes.
+  const contextSuffix = [
+    currentContext.workspaceId ? `workspaceId=${currentContext.workspaceId}` : null,
+    (params.templateId || currentContext.templateId) ? `templateId=${params.templateId || currentContext.templateId}` : null,
+  ].filter(Boolean).join(", ");
+  const instruction = contextSuffix ? `${params.instruction}\n\n[Contexto: ${contextSuffix}]` : params.instruction;
+
   // 1. Start session in Supabase
   let sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-  let taskContext = params.instruction;
+  let taskContext = instruction;
   try {
     const sessResult = await mcpCall("harness_start_session", {
       taskId: params.taskId || "standalone",
       role: params.role,
       agentName: params.role,
-      plan: params.instruction,
+      plan: instruction,
     });
     sessionId = sessResult?.session?.id || sessionId;
     if (sessResult?.session?.context_summary) {
-      taskContext = sessResult.session.context_summary;
+      taskContext = contextSuffix ? `${sessResult.session.context_summary}\n\n[Contexto: ${contextSuffix}]` : sessResult.session.context_summary;
     }
   } catch { /* non-fatal */ }
 
@@ -714,7 +768,7 @@ async function spawnSubagent(params: {
 
   // 3. Subagent conversation — fresh, no Leader history
   // Include sessionId in the first message so the subagent can use it immediately
-  const subConv: any[] = [{ role: "user", content: `${params.instruction}\n\n[Tu sessionId: ${sessionId}]` }];
+  const subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
   const MAX_SUB_ROUNDS = 15;
   let capturedTemplateId: string | null = null;
 
@@ -861,7 +915,30 @@ async function appendErrorReport(report: any) {
   } catch {}
 }
 
-export function ChatFAB() {
+/** Turns bare https:// URLs in a message into clickable links — the leader's
+ *  "done -> link" is only a trust signal if you can actually click through
+ *  and verify it, instead of copy-pasting text out of a chat bubble. */
+const URL_RE = /(https?:\/\/[^\s)]+)/g;
+function renderWithLinks(content: string): React.ReactNode {
+  const parts = content.split(URL_RE);
+  if (parts.length === 1) return content;
+  // .split() with a single capturing group interleaves [text, match, text, match, ...] —
+  // odd indices are always the captured URLs.
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd", textDecoration: "underline" }}>{part}</a>
+      : <span key={i}>{part}</span>
+  );
+}
+
+interface ChatFABProps {
+  /** The workspace the human is currently looking at (dashboard or editor). */
+  workspaceId?: string;
+  /** The template currently open in the editor, if any. */
+  templateId?: string;
+}
+
+export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [input, setInput] = useState("");
@@ -890,7 +967,11 @@ export function ChatFAB() {
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, toolEvents]);
 
-  const systemPrompt = HARNESS_SYSTEM_PROMPT;
+  // Keep the module-level context in sync with what the human is actually
+  // looking at, so tool calls and delegated subagents stop guessing.
+  useEffect(() => { currentContext = { workspaceId, templateId }; }, [workspaceId, templateId]);
+
+  const systemPrompt = buildSystemPrompt();
 
   const send = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -961,35 +1042,26 @@ export function ChatFAB() {
         if (isAnthropic) { conversation.push(data.content); }
         else { conversation.push(data.choices[0].message); }
 
-        const errorReports: any[] = [];
-
+        // Tool activity (running/done/error, with a short result preview) lives
+        // exclusively in the toolEvents strip between the transcript and the
+        // input box — NOT as chat bubbles. The visible conversation is
+        // reserved for the model's own natural-language turns, so it reads
+        // like talking to the leader instead of watching raw JSON scroll by.
         for (let ti = 0; ti < toolCalls.length; ti++) {
           const tc = toolCalls[ti];
           setToolEvents(prev => [...prev, { tool: tc.name, status: "running" }]);
-          setAccordion("tools");
           const resultStr = await executeToolCall(tc.name, tc.args);
           const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
           setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr.slice(0, 200) } : e));
 
-          // Multi-message: brief tool result
           if (isError) {
-            const errReport = {
+            appendErrorReport({
               tool: tc.name, args: tc.args,
               result: resultStr.slice(0, 500),
               step: ti + 1, totalSteps: toolCalls.length,
               round, timestamp: new Date().toISOString(),
               provider,
-            };
-            errorReports.push(errReport);
-            // Save to errors.json in localStorage for internal tracking
-            appendErrorReport(errReport);
-            const errSummary = `✕ ${tc.name} falló en paso ${ti + 1}/${toolCalls.length} (ronda ${round + 1})
-→ ${resultStr.slice(0, 300)}`;
-            setMessages(prev => [...prev, { role: "assistant", content: errSummary, ts: Date.now() }]);
-          } else {
-            // Brief success note
-            const short = resultStr.slice(0, 120).replace(/\n/g, " ");
-            setMessages(prev => [...prev, { role: "assistant", content: `✓ ${tc.name} → ${short || "ok"}`, ts: Date.now() }]);
+            });
           }
 
           // ── Post-delegate verification: confirm template exists in DB ──
@@ -1021,12 +1093,6 @@ export function ChatFAB() {
 
           if (isAnthropic) { conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }] }); }
           else { conversation.push({ role: "tool", tool_call_id: tc.id, content: finalResultStr }); }
-        }
-
-        // If errors occurred, emit a structured error summary to the user
-        if (errorReports.length > 0) {
-          const summary = `⚠️ Reporte de errores (ronda ${round + 1}):\n${errorReports.map((er, i) => `${i + 1}. ${er.tool} — paso ${er.step}/${er.totalSteps}\n   args: ${JSON.stringify(er.args).slice(0, 150)}\n   ${er.result.slice(0, 200)}`).join("\n")}\n\nEstos errores quedaron registrados en el sistema para análisis.`;
-          setMessages(prev => [...prev, { role: "assistant", content: summary, ts: Date.now() }]);
         }
 
         if (round === MAX_TOOL_ROUNDS) {
@@ -1136,7 +1202,7 @@ export function ChatFAB() {
               fontSize: 12.5, lineHeight: 1.5, color: "rgba(255,255,255,0.85)",
               whiteSpace: "pre-wrap", wordBreak: "break-word",
               userSelect: "text", cursor: "text",
-            }}>{m.content}</div>
+            }}>{renderWithLinks(m.content)}</div>
           ))}
           {sending && (
             <div style={{ alignSelf: "flex-start", fontSize: 12, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
