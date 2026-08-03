@@ -6,6 +6,11 @@ interface Props {
   workspaceId: string;
   onClose: () => void;
   onToast?: (msg: string, type?: "info" | "success" | "error") => void;
+  /** Extracts colors/typography/CSS from every frame in the CURRENT
+   *  template (not a canvas selection — there is no per-frame scoping)
+   *  and creates or merges a Style Library entry from it. */
+  onPublish?: () => Promise<boolean>;
+  publishing?: boolean;
 }
 
 interface BrandStyle {
@@ -47,7 +52,7 @@ const btnStyle: React.CSSProperties = {
   padding: "8px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
 };
 
-export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
+export function StyleLibraryModal({ workspaceId, onClose, onToast, onPublish, publishing }: Props) {
   const [styles, setStyles] = useState<BrandStyle[]>([]);
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -94,6 +99,13 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
   }, [workspaceId, onToast]);
 
   useEffect(() => { loadStyles(); }, [loadStyles]);
+
+  // ── Capture the current template's style into the library ──
+  const handleCapture = useCallback(async () => {
+    if (!onPublish) return;
+    const ok = await onPublish();
+    if (ok) loadStyles();
+  }, [onPublish, loadStyles]);
 
   // ── Toggle lock ──
   const toggleLock = useCallback(async (brandId: string, currentlyLocked: boolean) => {
@@ -350,19 +362,31 @@ export function StyleLibraryModal({ workspaceId, onClose, onToast }: Props) {
           ) : tab === "library" ? (
             /* ── Library Tab ── */
             <div>
-              {/* Download template button */}
-              <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
+              {/* Capture current design + download template buttons */}
+              <div style={{ marginBottom: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {onPublish && (
+                  <button onClick={handleCapture} disabled={publishing} style={{ ...btnStyle, opacity: publishing ? 0.6 : 1 }}>
+                    {publishing ? "⏳ Capturando..." : "📸 Capturar estilo de este diseño"}
+                  </button>
+                )}
                 <button onClick={downloadTemplate} style={btnStyle}>
                   📄 Download tokens-template.json
                 </button>
               </div>
+              {onPublish && (
+                <div style={{ fontSize: 10, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>
+                  Extrae colores, tipografía y CSS de <strong>todos los frames del template actual</strong> (no
+                  solo el frame seleccionado en el lienzo) y crea una entrada nueva aquí — o la fusiona
+                  automáticamente con una existente si el estilo coincide.
+                </div>
+              )}
 
               {styles.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 40, color: "#666" }}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🎨</div>
-                  <div>No styles yet. Upload one or extract from a design.</div>
+                  <div>No styles yet. Capture one from the current design, or upload one.</div>
                   <div style={{ fontSize: 11, marginTop: 4 }}>
-                    Use "Upload Style" tab or publish a design with <code>generate_design_artifacts</code>
+                    Use "📸 Capturar estilo de este diseño" above, or the "Upload Style" tab.
                   </div>
                 </div>
               ) : (

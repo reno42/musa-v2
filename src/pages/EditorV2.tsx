@@ -93,10 +93,10 @@ import {
   IconBot, IconType, IconImage, IconCopy, IconTrash,
   IconDownload, IconTag,
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
-  IconRectangle, IconCircleOutline, IconPen, IconPlus, IconChevronDown,
+  IconRectangle, IconCircleOutline, IconPen, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
-  IconHistory, IconWand, IconGrid,
-  IconUpload, IconSparkle, IconLink, IconCode,
+  IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX,
+  IconUpload, IconSparkle, IconCode,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -2877,8 +2877,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, templateName]);
 
   // ── Publish Style to Style Library (saves to brand_guidelines) ──
+  // Extracts colors/typography/CSS from EVERY frame in this template (not
+  // just the one selected in the canvas — generate_design_artifacts always
+  // reads tpl.frames in full) and either creates a new Style Library entry
+  // or auto-merges into an existing one with a matching "fingerprint".
   const [publishingStyle, setPublishingStyle] = useState(false);
-  const handlePublishStyle = useCallback(async () => {
+  const handlePublishStyle = useCallback(async (): Promise<boolean> => {
     setPublishingStyle(true);
     try {
       const mcpRes = await fetch("/mcp", {
@@ -2901,12 +2905,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           ? `Estilo fusionado con "${data.mergedIntoBrand}" — auto-merge por fingerprint coincidente`
           : `Estilo publicado en Style Library como "${templateName}"`;
         addToast(msg + (data.brandId ? ` (brandId: ${data.brandId})` : ""), "success");
-      } else {
-        throw new Error("Publish did not complete");
+        return true;
       }
+      throw new Error("Publish did not complete");
     } catch (e: any) {
       console.error("[Publish Style]", e);
       addToast("Error al publicar estilo: " + (e?.message || "Error desconocido"), "error");
+      return false;
     } finally {
       setPublishingStyle(false);
     }
@@ -3374,18 +3379,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [exportTargetFrames, handleExportFramesPNG, handleExportFramesSVG, handleExportFramesPDF,
       handleExportJSON, handleExportTokens, handleExtractDesignSystem, handleExportCss]);
 
-  // ── Variable operations ──
-  const handleApplyVars = useCallback(async () => {
-    setMcpLoading("applyvars");
-    try {
-      await callMcp("apply_variables", { templateId });
-      await reloadFromServer();
-      setMcpMsg("✓ Variables applied");
-    } catch { setMcpMsg("✗ Apply failed"); }
-    setMcpLoading(null);
-    setTimeout(() => setMcpMsg(""), 3000);
-  }, [templateId, callMcp, reloadFromServer]);
-
   // ── Import template ──
   const importTemplateFile = useCallback(async (file: File) => {
     try {
@@ -3682,14 +3675,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
+        {/* Style Library: browsing AND capturing a design's style now live
+            in the same panel — see StyleLibraryModal's "Capture" button. */}
         <button type="button" className="editor-v2-topbar-icon-btn" onClick={() => setShowStyleLibrary(true)} title="Style Library">
           <IconPalette size={14} />
           <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
-        </button>
-
-        <button type="button" className="editor-v2-topbar-icon-btn" onClick={handlePublishStyle} disabled={publishingStyle} title="Extraer y guardar este diseño como estilo en la Style Library" style={{ opacity: publishingStyle ? 0.5 : 1 }}>
-          {publishingStyle ? <span style={{ fontSize: 10 }}>...</span> : <IconPalette size={14} />}
-          <span style={{ fontSize: 9, marginLeft: 3 }}>{publishingStyle ? "Pub" : "Publicar"}</span>
         </button>
 
         {/* Export Dropdown */}
@@ -3748,16 +3738,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         <div className="editor-v2-topbar-sep" />
 
-        {/* Insert toolbar toggle */}
-        <button
-          type="button"
-          className={`editor-v2-topbar-icon-btn ${showInsertBar ? "active" : ""}`}
-          onClick={() => setShowInsertBar(!showInsertBar)}
-          title="Insert Elements Bar"
-        >
-          <IconPlus size={14} />
-        </button>
-
         {/* Image to Design */}
         <button
           type="button"
@@ -3776,7 +3756,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClick={() => setShowIconPicker(true)}
           title="Icons (Phosphor)"
         >
-          <i className="ph ph-shapes" style={{ fontSize: 14 }}></i>
+          <IconShapes size={14} />
         </button>
 
         <div className="editor-v2-topbar-sep" />
@@ -3803,17 +3783,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <IconSparkle size={14} />
         </button>
 
-        {/* Apply variables */}
-        <button
-          type="button"
-          className="editor-v2-topbar-icon-btn"
-          onClick={handleApplyVars}
-          disabled={mcpLoading === "applyvars"}
-          title="Replace hardcoded values with CSS variables"
-        >
-          <IconLink size={14} />
-        </button>
-
         {/* Batch-a-mator */}
         <div className="editor-v2-topbar-sep" />
         <button
@@ -3834,7 +3803,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClick={() => setShowRulers(v => !v)}
           title="Toggle Rulers (Ctrl+R)"
         >
-          <i className="ph ph-ruler" style={{ fontSize: 14 }}></i>
+          <IconRuler size={14} />
         </button>
         <button
           type="button"
@@ -3842,7 +3811,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClick={() => setShowGrid(v => !v)}
           title="Toggle Pixel Grid (Ctrl+')"
         >
-          <i className="ph ph-grid-nine" style={{ fontSize: 14 }}></i>
+          <IconGrid size={14} />
         </button>
         <button
           type="button"
@@ -3850,7 +3819,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onClick={() => setShowColumnPanel(v => !v)}
           title="Column Guides — configure layout columns"
         >
-          <i className="ph ph-rows" style={{ fontSize: 14 }}></i>
+          <IconColumns size={14} />
           <span style={{ fontSize: 9, marginLeft: 1 }}>C</span>
         </button>
         {guides.length > 0 && (
@@ -3860,7 +3829,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onClick={() => setGuides([])}
             title="Clear all guides"
           >
-            <i className="ph ph-eraser" style={{ fontSize: 14 }}></i>
+            <IconEraser size={14} />
           </button>
         )}
       </div>
@@ -3881,7 +3850,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onClick={() => setShowColumnPanel(false)}
               style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: 2 }}
             >
-              <i className="ph ph-x" style={{ fontSize: 14 }}></i>
+              <IconX size={14} />
             </button>
           </div>
 
@@ -4059,12 +4028,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconDownload size={16} /> Extract Design System
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowInsertBar(!showInsertBar); setMobileMenuOpen(false); }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconPlus size={16} /> Insert Elements
-                </span>
-              </button>
               <button type="button" className="landing-menu-link" onClick={() => { setShowImageToDesign(true); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px", background: "rgba(139,92,246,0.1)" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -4074,7 +4037,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <button type="button" className="landing-menu-link" onClick={() => { setShowIconPicker(true); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <i className="ph ph-shapes" style={{ fontSize: 16 }}></i> Icons
+                  <IconShapes size={16} /> Icons
                 </span>
               </button>
               
@@ -4659,6 +4622,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           workspaceId={templateWorkspaceId || "default"}
           onClose={() => setShowStyleLibrary(false)}
           onToast={(msg, type) => addToast(msg, type || "info")}
+          onPublish={handlePublishStyle}
+          publishing={publishingStyle}
         />
       )}
 

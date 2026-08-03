@@ -417,3 +417,20 @@ export const IconTextPath = (p: React.ComponentProps<typeof Icon>) => (
     <path d="M9 4v6M15 4v6M7 4h10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </Icon>
 );
+
+// ── Shapes (circle + square + triangle) ───────────────────
+export const IconShapes = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <circle cx="8.5" cy="8.5" r="4.5" />
+    <rect x="12.5" y="12.5" width="8" height="8" rx="1" />
+    <path d="M6 21l4-7 4 7z" />
+  </Icon>
+);
+
+// ── Eraser ──────────────────────────────────────────────
+export const IconEraser = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <path d="M20 20H9L4.6 15.6a2 2 0 010-2.8l8.6-8.6a2 2 0 012.8 0l5.4 5.4a2 2 0 010 2.8L15 19" />
+    <path d="M9 20l-4-4" />
+  </Icon>
+);
