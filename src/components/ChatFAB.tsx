@@ -153,10 +153,23 @@ INSTRUCCIONES PARA DELEGAR:
   Si hay un templateId existente Y el humano pidió modificarlo, pásalo en la instrucción: "Modifica el template tpl_xxx: ..."
   Ej crear: "Crea un post 1080x1080. Texto principal: 'Hola Ren'. Colores: fondo #0A0A1A, texto #F0F0FF, acento #7B2FF7."
   Ej modificar: "Modifica el template tpl_xxx. Cambia el texto a 'Nuevo texto' y el fondo a #FF0000."
-- Si el humano menciona un estilo o marca por NOMBRE (ej: "estilo Futuraria"), instruye al implementer:
-  "Antes de diseñar, busca el estilo '<nombre>' en list_brand_guidelines/get_active_styles. Si no existe, NO inventes uno — responde 'blocked -> no encontré el estilo <nombre> guardado' y espera instrucciones."
+- Si el humano menciona un estilo o marca por NOMBRE (ej: "estilo Futuraria"), no necesitas instruir nada
+  especial — el implementer SIEMPRE busca por nombre antes de diseñar (biblioteca → archivos → marcas CRM)
+  y nunca inventa un estilo con nombre que no existe. Solo menciona el nombre tal cual en la instrucción.
 - Reviewer: Lista los criterios a verificar y los checkpoints C1-C5.
   Ej: "Verifica C1 (dimensiones 1080x1080), C2 (texto legible), C3 (paleta consistente), C4 (estructura HTML válida), C5 (sin CSS roto)."
+
+CUANDO EL IMPLEMENTER DEVUELVE "blocked -> style_not_found: ...":
+- Esto significa que buscó el estilo por nombre en la biblioteca, en los archivos y en las marcas del CRM,
+  y no encontró nada seguro. Trae contigo lo que sí encontró (candidatos parciales) y una sugerencia.
+- NO le devuelvas ese texto crudo al humano. Tradúcelo a una pregunta clara y breve, usando lo que el
+  implementer encontró. Ej: "No tengo un estilo guardado como 'Futuraria'. Encontré un template llamado
+  'Post Futuraria - Hola Ren 3' — ¿extraigo el estilo de ahí, o prefieres que lo cree desde cero con
+  colores/tipografía que tú me des?"
+- Espera la respuesta del humano. Con eso, re-delega al implementer con instrucciones concretas y explícitas
+  (ej: "extrae el estilo del template tpl_xxx y guárdalo como Futuraria_SocialMedia" o "crea el estilo
+  Futuraria_SocialMedia con estos colores: ...").
+- Una vez creado, ese nombre queda en la biblioteca — no vuelve a pasar para pedidos futuros con el mismo nombre.
 
 PROTOCOLO DE ERRORES:
 - Si una tool falla, llama harness_report_error y informa al usuario en una línea.
@@ -471,11 +484,32 @@ const HARNESS_TOOLS = [
 
 const IMPLEMENTER_PROMPT = `Eres un Implementer del Harness de Futuraria Design. El Leader te delegó UNA tarea de diseño.
 
-PASO 0 — Si la instrucción menciona un estilo/marca POR NOMBRE (ej: "estilo Futuraria"):
-  Llama list_brand_guidelines y/o get_active_styles PRIMERO. Si el nombre no aparece en los resultados,
-  NO inventes tu propia interpretación del estilo. Tu respuesta final debe ser:
-  "blocked -> no encontré el estilo '<nombre>' guardado en la biblioteca. ¿De qué template lo extraigo, o sigo con mi propia interpretación?"
-  y detente ahí — no generes el diseño todavía.
+PASO 0 — Si la instrucción menciona un estilo/marca POR NOMBRE (ej: "estilo Futuraria"), resuélvelo en cascada
+ANTES de tocar ninguna tool de diseño. Tú NO hablas con el humano — el Leader sí. Tu trabajo es investigar
+todo lo que puedas y devolverle hallazgos + tu mejor suposición, nunca inventar el estilo por tu cuenta:
+
+  1. BIBLIOTECA — list_brand_guidelines({workspaceId}) y/o get_active_styles({workspaceId}).
+     Compara el nombre sin importar mayúsculas/espacios ni sufijos: "futuraria" debe hacer match con
+     "Futuraria_SocialMedia" o "Futuraria_BrandGuidelines". Si hay match → úsalo directamente y sigue
+     con tu tarea normal (MODO A/B más abajo). No hace falta seguir buscando.
+  2. ARCHIVOS — si NO hubo match en la biblioteca, llama list_templates({workspaceId, search: "<nombre>"})
+     por si existe un template/archivo con ese nombre del cual se pueda extraer un estilo.
+  3. MARCAS CRM — si tampoco hubo match, llama get_brands({workspaceId}) por si el CRM tiene una marca
+     registrada con ese nombre.
+  4. Si NINGUNO de los tres dio match: reúne lo que sí encontraste (aunque sea parcial o ningún resultado
+     en algún paso) y DETENTE — no inventes el estilo ni generes el diseño todavía. Tu respuesta final
+     (una sola vez, en este formato exacto) debe ser:
+     "blocked -> style_not_found: '<nombre>' | biblioteca: sin match | archivos: [<templates candidatos:
+     id y nombre, o 'ninguno'>] | marcas CRM: [<marcas candidatas: id y nombre, o 'ninguna'>] | sugerencia:
+     <tu mejor propuesta concreta — ej: crear desde cero con qué paleta, o usar tal candidato>"
+  5. El Leader va a hablar con el humano usando tus hallazgos y te va a re-delegar con la resolución
+     (crear nuevo, usar un candidato, o instrucciones directas). Cuando ese estilo quede guardado en la
+     biblioteca con ese nombre, el PASO 1 de esta misma búsqueda lo encontrará directo la próxima vez —
+     no vuelvas a preguntar por el mismo nombre.
+
+Si en algún momento TÚ mismo creas o actualizas un estilo (register_brand / create_brand_guideline), nómbralo
+SIEMPRE como Marca_Propósito (ej: "Futuraria_SocialMedia", no "Futuraria" ni el nombre del frame/template) y
+pasa el workspaceId del contexto explícitamente — nunca lo omitas.
 
 DETERMINA EL MODO leyendo el contexto:
 

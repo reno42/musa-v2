@@ -3030,7 +3030,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // reads tpl.frames in full) and either creates a new Style Library entry
   // or auto-merges into an existing one with a matching "fingerprint".
   const [publishingStyle, setPublishingStyle] = useState(false);
-  const handlePublishStyle = useCallback(async (): Promise<boolean> => {
+  // Captures a style from whichever frame(s) are currently selected (not
+  // "every frame in the template" — a template can hold several unrelated
+  // designs) under an explicit name the caller supplies. Naming is on
+  // purpose never inferred from the frame or template name: that's what was
+  // silently colliding different captures into the same Style Library
+  // entry.
+  const handlePublishStyle = useCallback(async (name: string): Promise<boolean> => {
+    const ids = selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : []);
+    if (ids.size === 0) {
+      addToast("Selecciona uno o varios frames primero.", "error");
+      return false;
+    }
+    if (!name.trim()) {
+      addToast("El estilo necesita un nombre.", "error");
+      return false;
+    }
     setPublishingStyle(true);
     try {
       const mcpRes = await fetch("/mcp", {
@@ -3039,7 +3054,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "tools/call",
-          params: { name: "generate_design_artifacts", arguments: { templateId, action: "publish", brandName: templateName } },
+          params: { name: "generate_design_artifacts", arguments: { templateId, action: "publish", brandName: name.trim(), frameIds: [...ids] } },
           id: 1,
         }),
       });
@@ -3050,8 +3065,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const data = JSON.parse(text);
       if (data._published) {
         const msg = data.autoMerged
-          ? `Estilo fusionado con "${data.mergedIntoBrand}" — auto-merge por fingerprint coincidente`
-          : `Estilo publicado en Style Library como "${templateName}"`;
+          ? `Estilo "${name.trim()}" actualizado (ya existía con ese nombre)`
+          : `Estilo publicado en Style Library como "${name.trim()}"`;
         addToast(msg + (data.brandId ? ` (brandId: ${data.brandId})` : ""), "success");
         return true;
       }
@@ -3063,7 +3078,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } finally {
       setPublishingStyle(false);
     }
-  }, [templateId, templateName, addToast]);
+  }, [templateId, selectedFrameId, selectedFrameIds, addToast]);
 
   // ── Frame rename (double-click in top bar) ──
   const commitFrameRename = useCallback(() => {

@@ -5,10 +5,12 @@ import { downloadBlob } from "../lib/download";
 interface Props {
   workspaceId: string;
   onToast?: (msg: string, type?: "info" | "success" | "error") => void;
-  /** Extracts colors/typography/CSS from every frame in the CURRENT
-   *  template (not a canvas selection — there is no per-frame scoping)
-   *  and creates or merges a Style Library entry from it. */
-  onPublish?: () => Promise<boolean>;
+  /** Extracts colors/typography/CSS from whichever frame(s) are currently
+   *  selected on the canvas and creates or updates a Style Library entry
+   *  under the given name. Naming is always explicit — never inferred from
+   *  the frame or template name, since that's what caused unrelated
+   *  captures to silently collide into the same entry. */
+  onPublish?: (name: string) => Promise<boolean>;
   publishing?: boolean;
   /** Saves whichever frame(s) are currently selected as a Key Visual. */
   onSaveKeyVisual: () => Promise<void>;
@@ -66,6 +68,8 @@ export function StyleLibraryPanel({
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [dupGroups, setDupGroups] = useState<any[]>([]);
   const [dupLoading, setDupLoading] = useState(false);
+  const [capturingName, setCapturingName] = useState(false);
+  const [captureName, setCaptureName] = useState("");
   const [uploadData, setUploadData] = useState({
     name: "", tokensJson: "", designMd: "", sharedCss: "",
   });
@@ -396,9 +400,14 @@ export function StyleLibraryPanel({
           ) : (
           <div>
             <div style={{ marginBottom: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {onPublish && (
-                <button onClick={onPublish} disabled={publishing} style={{ ...btnStyle, opacity: publishing ? 0.6 : 1 }}>
-                  {publishing ? "⏳ Capturando..." : "📸 Capturar estilo de este diseño"}
+              {onPublish && !capturingName && (
+                <button
+                  onClick={() => setCapturingName(true)}
+                  disabled={publishing || selectedFrameCount === 0}
+                  title={selectedFrameCount === 0 ? "Selecciona uno o varios frames en el lienzo primero" : undefined}
+                  style={{ ...btnStyle, opacity: publishing || selectedFrameCount === 0 ? 0.5 : 1, cursor: selectedFrameCount === 0 ? "not-allowed" : "pointer" }}
+                >
+                  {publishing ? "⏳ Capturando..." : `📸 Capturar estilo${selectedFrameCount > 0 ? ` (${selectedFrameCount} frame${selectedFrameCount > 1 ? "s" : ""})` : ""}`}
                 </button>
               )}
               <button onClick={downloadTemplate} style={btnStyle}>
@@ -413,11 +422,52 @@ export function StyleLibraryPanel({
                 </button>
               )}
             </div>
-            {onPublish && (
+
+            {onPublish && capturingName && (
+              <div style={{
+                marginBottom: 12, padding: 10, borderRadius: 8,
+                background: "rgba(200,184,152,0.06)", border: "1px solid rgba(200,184,152,0.2)",
+              }}>
+                <div style={{ fontSize: 11, color: "#999", marginBottom: 6 }}>
+                  Nombre del estilo — usa <code>Marca_Propósito</code> (ej: <code>Futuraria_SocialMedia</code>,{" "}
+                  <code>Futuraria_BrandGuidelines</code>). No uses el nombre del frame ni del archivo: si ya existe
+                  un estilo con este nombre exacto, se actualiza; si no, se crea uno nuevo.
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    autoFocus
+                    value={captureName}
+                    onChange={e => setCaptureName(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") document.getElementById("style-capture-confirm")?.click(); if (e.key === "Escape") { setCapturingName(false); setCaptureName(""); } }}
+                    placeholder="Marca_Propósito"
+                    style={{
+                      flex: 1, padding: "6px 10px", background: "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
+                      color: "#e0e0e0", fontSize: 12, outline: "none", fontFamily: "inherit",
+                    }}
+                  />
+                  <button
+                    id="style-capture-confirm"
+                    disabled={!captureName.trim() || publishing}
+                    onClick={async () => {
+                      const ok = await onPublish!(captureName.trim());
+                      if (ok) { setCapturingName(false); setCaptureName(""); loadStyles(); }
+                    }}
+                    style={{ ...btnStyle, background: "rgba(200,184,152,0.2)", borderColor: "rgba(200,184,152,0.3)", opacity: !captureName.trim() || publishing ? 0.5 : 1 }}
+                  >
+                    {publishing ? "…" : "Guardar"}
+                  </button>
+                  <button onClick={() => { setCapturingName(false); setCaptureName(""); }} style={btnStyle}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+            {onPublish && !capturingName && (
               <div style={{ fontSize: 10, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>
-                Extrae colores, tipografía y CSS de <strong>todos los frames del template actual</strong> (no
-                solo el frame seleccionado en el lienzo) y crea una entrada nueva aquí — o la fusiona
-                automáticamente con una existente si el estilo coincide.
+                Extrae colores, tipografía y CSS de <strong>los frames que tengas seleccionados en el lienzo</strong> y
+                los guarda con el nombre que elijas — un nombre nuevo crea una entrada nueva; un nombre que ya existe
+                actualiza esa misma entrada.
               </div>
             )}
 

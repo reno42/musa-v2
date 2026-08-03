@@ -1490,13 +1490,13 @@ const MCP_TOOLS = [
   },
   {
     name: "get_brands",
-    description: "List all saved brands with colors, fonts, and metadata",
-    inputSchema: { type: "object", properties: {}, required: [] },
+    description: "List all saved brands with colors, fonts, and metadata, scoped to one workspace",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
   },
   {
     name: "apply_brand",
     description: "Apply a saved brand's colors and fonts as CSS custom properties to a template",
-    inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" } }, required: ["templateId", "brandId"] },
+    inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" }, workspaceId: { type: "string" } }, required: ["templateId", "brandId", "workspaceId"] },
   },
   // ── Fase 6: Format Adaptation ──
   {
@@ -1586,7 +1586,8 @@ const MCP_TOOLS = [
       properties: {
         templateId: { type: "string", description: "Template ID" },
         action: { type: "string", enum: ["extract", "generate", "publish"], description: "extract=raw data only, generate=full artifacts (DESIGN.md+tokens.json+shared.css), publish=generate+store on template AND brand_guidelines (default: generate)" },
-        brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name (creates/updates brand_guidelines row)" },
+        brandName: { type: "string", description: "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Futuraria_SocialMedia, Futuraria_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures." },
+        frameIds: { type: "array", items: { type: "string" }, description: "Optional: scope extraction to just these frame IDs instead of every frame in the template. Use this when the user selected specific frame(s) to capture a style from." },
       },
       required: ["templateId"],
     },
@@ -2099,6 +2100,7 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         id: { type: "string", description: "Recipe ID (rec_xxx)" },
+        workspaceId: { type: "string", description: "If provided, the recipe must belong to this workspace or the call fails — prevents cross-tenant reads." },
       },
       required: ["id"],
     },
@@ -5892,6 +5894,9 @@ async function handleMethod(method, params, userId, auth) {
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       const { data, error } = await sb.from("recipes").select("*").eq("id", params.id).single();
       if (error || !data) throw { code: -32000, message: `Recipe not found: ${params.id}` };
+      if (params.workspaceId && data.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Recipe not found: ${params.id}` };
+      }
       return {
         id: data.id, name: data.name, description: data.description,
         workspaceId: data.workspace_id,
@@ -5913,6 +5918,9 @@ async function handleMethod(method, params, userId, auth) {
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       const { data: recipe, error } = await sb.from("recipes").select("*").eq("id", params.recipeId).single();
       if (error || !recipe) throw { code: -32000, message: `Recipe not found: ${params.recipeId}` };
+      if (params.workspaceId && recipe.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Recipe not found: ${params.recipeId}` };
+      }
 
       let html = recipe.template_html || "";
       let css = recipe.template_css || "";
@@ -6102,8 +6110,11 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "get_brands": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const supabase = getSupabase();
-      const { data } = await supabase.from("recipes").select("id, name, structure, created_at").order("created_at", { ascending: false }).limit(20);
+      const { data } = await supabase.from("recipes").select("id, name, structure, created_at")
+        .eq("workspace_id", params.workspaceId)
+        .order("created_at", { ascending: false }).limit(20);
       const brands = (data || []).map(r => ({
         id: r.id, name: r.name, colors: r.structure?.colors || [], fonts: r.structure?.fonts || [], createdAt: r.created_at,
       }));
@@ -6111,8 +6122,10 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "apply_brand": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const supabase = getSupabase();
-      const { data: brand } = await supabase.from("recipes").select("*").eq("id", params.brandId).single();
+      const { data: brand } = await supabase.from("recipes").select("*")
+        .eq("id", params.brandId).eq("workspace_id", params.workspaceId).single();
       if (!brand) throw { code: -32000, message: "Brand not found" };
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found" };
@@ -7989,8 +8002,14 @@ async function handleMethod(method, params, userId, auth) {
       const tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found" };
 
-      // Collect frames with html+css
-      var extFrames = (tpl.frames || []).map(function (f) {
+      // Collect frames with html+css — scoped to params.frameIds when given,
+      // so capturing a style reflects the frame(s) the user actually
+      // selected instead of every frame in the template (a template can mix
+      // several unrelated designs; "capture everything" over-broadens it).
+      var frameIdFilter = Array.isArray(params.frameIds) && params.frameIds.length > 0 ? new Set(params.frameIds) : null;
+      var extFrames = (tpl.frames || [])
+        .filter(function (f) { return !frameIdFilter || frameIdFilter.has(f.id); })
+        .map(function (f) {
         return {
           id: f.id,
           name: f.name,
@@ -8002,7 +8021,7 @@ async function handleMethod(method, params, userId, auth) {
         };
       }).filter(function (f) { return f.html || f.css; });
 
-      if (extFrames.length === 0) throw { code: -32000, message: "No frames with HTML/CSS content found" };
+      if (extFrames.length === 0) throw { code: -32000, message: frameIdFilter ? "None of the selected frames have HTML/CSS content" : "No frames with HTML/CSS content found" };
 
       var action = params.action || "generate";
 
@@ -8031,37 +8050,36 @@ async function handleMethod(method, params, userId, auth) {
           metadata: tpl.metadata,
         });
 
-        // Publish to brand_guidelines table if brandName provided
+        // Publish to brand_guidelines table if brandName provided.
+        //
+        // Matching is NAME-FIRST, not tpl.brandId-first: the name the human
+        // (or the AI, using the Brand_Purpose convention) chose is the real
+        // signal of intent — "Futuraria_SocialMedia" and
+        // "Futuraria_BrandGuidelines" from the same template must stay two
+        // separate entries, not collapse into one just because they share a
+        // source template or a similar color palette. tpl.brandId is still
+        // updated after the fact (useful elsewhere as "this template's most
+        // recent style"), but it no longer decides create-vs-update.
         var brandRecord = null;
         var autoMerged = false;
         if (params.brandName) {
           var workspaceId = tpl.workspaceId || "default";
+          var wantedName = String(params.brandName).trim().toLowerCase();
 
-          // AUTO-MERGE: Check if a brand with the same fingerprint already exists
           var existingBrands = await brands.listBrandsByWorkspace(workspaceId);
-          var fingerprintMatch = null;
-          for (var bi = 0; bi < existingBrands.length; bi++) {
-            var eb = existingBrands[bi];
-            // Compare fingerprints if available
-            var ebFp = eb.styleFingerprint;
-            if (!ebFp && eb.tokensJson) {
-              // Backwards-compat: compute fingerprint from stored tokens (handles v1 and v2)
-              ebFp = computeFingerprintFromTokensJson(eb.tokensJson);
-            }
-            if (ebFp && ebFp === artifacts.styleFingerprint && eb.id !== tpl.brandId) {
-              fingerprintMatch = eb;
-              break;
-            }
-          }
+          var nameMatch = existingBrands.find(function (eb) {
+            return (eb.name || "").trim().toLowerCase() === wantedName;
+          }) || null;
 
-          if (fingerprintMatch) {
-            // Auto-merge: add this template to the existing brand's sourceTemplateIds
+          if (nameMatch) {
+            // Same name already exists in this workspace — this is a
+            // deliberate re-capture/refinement of that exact style.
             autoMerged = true;
-            var mergedIds = (fingerprintMatch.sourceTemplateIds || []).slice();
+            var mergedIds = (nameMatch.sourceTemplateIds || []).slice();
             if (mergedIds.indexOf(params.templateId) === -1) {
               mergedIds.push(params.templateId);
             }
-            await brands.updateBrand(fingerprintMatch.id, {
+            await brands.updateBrand(nameMatch.id, {
               sourceTemplateIds: mergedIds,
               tokensJson: artifacts.tokensJson,
               designMd: artifacts.designMd,
@@ -8069,28 +8087,8 @@ async function handleMethod(method, params, userId, auth) {
               sourceHash: artifacts.sourceHash,
               styleFingerprint: artifacts.styleFingerprint,
             });
-            brandRecord = await brands.getBrand(fingerprintMatch.id);
-            // Link template to the merged brand
-            tpl.brandId = brandRecord.id;
-            await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
-          } else if (tpl.brandId && (await brands.getBrand(tpl.brandId))) {
-            await brands.updateBrand(tpl.brandId, {
-              name: params.brandName,
-              tokensJson: artifacts.tokensJson,
-              designMd: artifacts.designMd,
-              sharedCss: artifacts.sharedCss,
-              sourceHash: artifacts.sourceHash,
-              styleFingerprint: artifacts.styleFingerprint,
-              sourceTemplateIds: [params.templateId],
-            });
-            brandRecord = await brands.getBrand(tpl.brandId);
+            brandRecord = await brands.getBrand(nameMatch.id);
           } else {
-            // tpl.brandId is either unset, or a dangling reference to a brand
-            // that no longer exists (e.g. created back when brand_guidelines
-            // had no table and everything only lived in serverless memory —
-            // updateBrand() on a missing id used to no-op silently, so the
-            // publish button looked successful forever while never actually
-            // writing anything). Either way: create fresh and re-link.
             brandRecord = await brands.createBrand({
               workspaceId: workspaceId,
               name: params.brandName,
@@ -8101,10 +8099,12 @@ async function handleMethod(method, params, userId, auth) {
               styleFingerprint: artifacts.styleFingerprint,
               sourceTemplateIds: [params.templateId],
             });
-            // Link template to the brand
-            tpl.brandId = brandRecord.id;
-            await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
           }
+          // Link template to whichever brand this publish resolved to —
+          // informational only (e.g. "what style did this template last
+          // capture"), never used to pick which brand to write to.
+          tpl.brandId = brandRecord.id;
+          await templates.updateTemplate(params.templateId, { brandId: brandRecord.id });
         }
 
         return {
