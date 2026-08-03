@@ -2251,7 +2251,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return;
       }
       if (mod && e.key === "/") { e.preventDefault(); openCodeTab(); return; }
-      if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); setShowBatch(v => !v); return; }
+      if (mod && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (showRightPanel && rightPanelTab === "batch") setShowRightPanel(false);
+        else { setRightPanelTab("batch"); setShowRightPanel(true); }
+        return;
+      }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
       if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
       if (mod && e.key.toLowerCase() === "v" && !e.shiftKey) { e.preventDefault(); pasteSelection(); return; }
@@ -2874,7 +2879,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [captureFrameToPng]);
 
-  const [showBatch, setShowBatch] = useState(false);
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [showDesignImport, setShowDesignImport] = useState(false);
 
@@ -3281,6 +3285,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     setMcpLoading(null);
   }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast]);
+
+  // Batchamator commits its generated duplicates the same way any other
+  // frame-adding action does — append + undo-tracked + autosaved.
+  const handleBatchGenerate = useCallback((updatedFrames: FrameData[]) => {
+    store.replaceAllWithUndo(updatedFrames, "edit");
+    autoSave(updatedFrames);
+  }, [autoSave]);
 
   // ── Element operations (align/group/reorder/copy-as) ──
   const handleAlign = useCallback(async (alignment: string) => {
@@ -3805,6 +3816,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     meta: "Information",
     styleLibrary: "Style Library",
     assets: "Assets",
+    batch: "Batchamator",
   };
 
   return (
@@ -4142,13 +4154,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <IconWand size={14} />
           </button>
 
-          {/* Enhance template */}
-          {/* Batch-a-mator */}
+          {/* Batchamator — duplicates selected frames per CSV row, right panel */}
           <button
             type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => setShowBatch(true)}
-            title="Batch-a-mator — Generate designs from CSV"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "batch" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "batch") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("batch");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Batchamator — Generate designs from CSV"
           >
             <IconGrid size={14} />
             <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
@@ -4447,10 +4465,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconWand size={16} /> Lint Design
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowBatch(true); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { setRightPanelTab("batch"); setShowRightPanel(true); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconGrid size={16} /> Batch-a-mator
+                  <IconGrid size={16} /> Batchamator
                 </span>
               </button>
             </div>
@@ -4856,6 +4874,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               }}
             />
           )}
+          {rightPanelTab === "batch" && (
+            <BatchAMator
+              frames={frames}
+              initialSelectedFrameIds={selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : [])}
+              onGenerate={handleBatchGenerate}
+            />
+          )}
         </div>
       )}
 
@@ -4871,16 +4896,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       )}
 
 
-      {/* ═══ Batch-a-mator ═══ */}
-      {showBatch && (
-        <BatchAMator
-          templateId={templateId}
-          workspaceId={templateWorkspaceId}
-          onClose={() => setShowBatch(false)}
-          onOpenTemplate={onOpenTemplate}
-          onBackToDashboard={onBack}
-        />
-      )}
 
       {/* ═══ Paste HTML/CSS Modal ═══ */}
       {showPasteHtml && (
