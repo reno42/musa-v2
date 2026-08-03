@@ -2545,8 +2545,9 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .editor-v2-topbar-icon-btn {
-  width: 32px;
+  min-width: 32px;
   height: 32px;
+  padding: 0 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2555,6 +2556,7 @@ html, body, #root { height: 100%; width: 100%; }
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
+  white-space: nowrap;
   transition: all 0.15s;
 }
 .editor-v2-topbar-icon-btn:hover {
@@ -2579,9 +2581,10 @@ html, body, #root { height: 100%; width: 100%; }
 
 .editor-v2-topbar-sep {
   width: 1px;
-  height: 20px;
-  background: var(--border-color);
-  margin: 0 4px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 8px;
+  flex-shrink: 0;
 }
 
 .editor-v2-dropdown-menu {

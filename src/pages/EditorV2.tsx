@@ -7,8 +7,6 @@ import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { FileInfoPanel } from "../components/FileInfoPanel";
-import { StructurePanel } from "../components/StructurePanel";
-import { VariablesPanel } from "../components/VariablesPanel";
 import { BrandPanel } from "../components/BrandPanel";
 import { StyleLibraryModal } from "../components/StyleLibraryModal";
 import { FloatingToolbar } from "../components/FloatingToolbar";
@@ -89,7 +87,7 @@ import { measureContainerForBake, convertContainerToGroup, convertGroupToContain
 import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
 import {
-  IconArrowLeft, IconSliders, IconLayout, IconDna, IconPalette,
+  IconArrowLeft, IconSliders, IconPalette,
   IconBot, IconType, IconImage, IconCopy, IconTrash,
   IconDownload, IconTag,
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
@@ -3522,10 +3520,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const RIGHT_PANEL_TABS = [
     { id: "contextual", icon: <IconSliders size={14} />, title: "Properties" },
-    { id: "structure", icon: <IconLayout size={14} />, title: "Structure" },
-    { id: "vars", icon: <IconDna size={14} />, title: "Variables" },
     { id: "brand", icon: <IconPalette size={14} />, title: "Brand" },
-    { id: "history", icon: <IconHistory size={14} />, title: "History" },
     { id: "agents", icon: <IconBot size={14} />, title: "Agents" },
     {
       id: "meta",
@@ -3652,6 +3647,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <polyline points="7 3 7 8 15 8" />
             </svg>
             <span style={{ fontSize: 9, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
+          </button>
+
+          {/* History sits right next to Guardar — it's the record of what
+              that button produces, not a design-context panel. */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "history" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "history") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("history");
+                setShowRightPanel(true);
+              }
+            }}
+            title="History"
+          >
+            <IconHistory size={14} />
           </button>
         </div>
 
@@ -3837,7 +3850,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             title="Column Guides — configure layout columns"
           >
             <IconColumns size={14} />
-            <span style={{ fontSize: 9, marginLeft: 1 }}>C</span>
           </button>
           {guides.length > 0 && (
             <button
@@ -3961,6 +3973,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               
               {/* Properties tabs */}
               <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, color: "rgba(255,255,255,0.3)", padding: "8px 12px 4px" }}>Panels</div>
+              <button type="button" className="landing-menu-link"
+                onClick={() => {
+                  if (showRightPanel && rightPanelTab === "history") setShowRightPanel(false);
+                  else { setRightPanelTab("history"); setShowRightPanel(true); }
+                  setMobileMenuOpen(false);
+                }}
+                style={{ fontSize: 13, padding: "10px 14px" }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconHistory size={16} /> History
+                </span>
+              </button>
               {RIGHT_PANEL_TABS.map(tab => (
                 <button
                   key={tab.id}
@@ -4461,15 +4485,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a7668", fontSize: 12, padding: 24, textAlign: "center", lineHeight: 1.6 }}>
               Select a frame or element<br />to edit its properties
             </div>
-          )}
-          {rightPanelTab === "structure" && (
-            <StructurePanel templateId={templateId} onSelectElement={(id: string) => {
-              const el = document.querySelector(`[data-layer-id="${id}"]`);
-              if (el) (el as HTMLElement).click();
-            }} />
-          )}
-          {rightPanelTab === "vars" && (
-            <VariablesPanel templateId={templateId} onCssUpdated={(c: string) => handleCssChange(c)} />
           )}
           {rightPanelTab === "brand" && (
             <BrandPanel templateId={templateId} workspaceId={templateWorkspaceId} onCssUpdated={(c: string) => handleCssChange(c)} />
