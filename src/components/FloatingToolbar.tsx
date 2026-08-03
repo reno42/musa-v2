@@ -2,22 +2,16 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
-  IconFrame, IconZoomIn, IconZoomOut, IconMaximize,
+  IconFrame,
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
-  IconLayout,
+  IconIntersect, IconShapes, IconLayout,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
-  IconTextPath, IconCode,
+  IconTextPath,
 } from "../shared/icons";
 
 interface Props {
   tool: HtmlToolName;
   onToolChange: (t: HtmlToolName) => void;
-  onAddFrame: (preset: { name: string; width: number; height: number }) => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomToFit: () => void;
-  onZoomSet?: (val: number) => void;
-  zoom: number;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -25,23 +19,14 @@ interface Props {
   multiSelectCount?: number;
   onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
   onSvgImport?: () => void;
-  showCode?: boolean;
   showLayers?: boolean;
-  onToggleCode?: () => void;
   onToggleLayers?: () => void;
+  onIconPicker?: () => void;
   onGroup?: () => void;
   onUngroup?: () => void;
   canGroup?: boolean;
   canUngroup?: boolean;
 }
-
-const FRAME_PRESETS = [
-  { name: "IG Square", width: 1080, height: 1080, label: "1080²" },
-  { name: "IG Story", width: 1080, height: 1920, label: "1080×1920" },
-  { name: "IG Feed", width: 1080, height: 1350, label: "1080×1350" },
-  { name: "Banner", width: 1920, height: 1080, label: "1920×1080" },
-  { name: "Twitter", width: 1200, height: 628, label: "1200×628" },
-];
 
 const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
   { key: "rect",     icon: <IconRectangle size={16} />,    shortcut: "R", title: "Rectangle" },
@@ -75,20 +60,17 @@ const shortcutLabel: React.CSSProperties = {
 };
 
 export function FloatingToolbar({
-  tool, onToolChange, onAddFrame,
-  onZoomIn, onZoomOut, onZoomToFit, onZoomSet, zoom,
+  tool, onToolChange,
   canUndo, canRedo, onUndo, onRedo,
   multiSelectCount, onPathfinder, onSvgImport,
-  showCode, showLayers, onToggleCode, onToggleLayers,
+  showLayers, onToggleLayers, onIconPicker,
   onGroup, onUngroup, canGroup, canUngroup,
 }: Props) {
-  const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [showPathfinder, setShowPathfinder] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "zoom" | "pen" | "text" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
   const [defaultText, setDefaultText] = useState<string>("text");
-  const [editingZoom, setEditingZoom] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -99,7 +81,6 @@ export function FloatingToolbar({
       const t = e.target as Node;
       if (rootRef.current && !rootRef.current.contains(t)) {
         setOpenFlyout(null);
-        setShowFrameMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -118,7 +99,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "zoom" | "pen" | "text") => {
+  const hoverOpen = useCallback((which: "shapes" | "pen" | "text") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -129,7 +110,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "zoom" | "pen" | "text") => {
+  const chevronToggle = useCallback((which: "shapes" | "pen" | "text") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -245,7 +226,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "zoom" | "pen" | "text";
+    which: "shapes" | "pen" | "text";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -453,67 +434,28 @@ export function FloatingToolbar({
 
       {divider}
 
-      {/* ── Frame presets ── */}
-      <div style={{ position: "relative" }}>
-        <button
-          type="button"
-          onClick={() => setShowFrameMenu(!showFrameMenu)}
-          title="Add Frame"
-          style={{
-            width: 46, height: 36,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: 8, cursor: "pointer",
-            background: showFrameMenu ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-            border: showFrameMenu ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-            color: "var(--text-muted, #7a7668)",
-            transition: "all 0.15s ease",
-          }}
-        >
-          <IconFrame size={16} />
-          <IconChevronDown size={8} style={{ position: "absolute", bottom: 2, right: 2, opacity: 0.5 }} />
-        </button>
-        {showFrameMenu && (
-          <div style={{ ...flyoutStyle, minWidth: 180, padding: 6, gap: 0 }}>
-            {FRAME_PRESETS.map(p => (
-              <button
-                key={p.name}
-                type="button"
-                onClick={() => { onAddFrame(p); setShowFrameMenu(false); }}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  width: "100%", padding: "6px 10px",
-                  background: "transparent", border: "1px solid transparent",
-                  borderRadius: 6, color: "var(--text-main, #c4c0b4)",
-                  cursor: "pointer", fontSize: 12, fontFamily: "inherit",
-                  transition: "all 0.1s",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-              >
-                <span>{p.name}</span>
-                <span style={{ fontSize: 10, color: "var(--text-muted, #7a7668)", fontFamily: "SF Mono, monospace" }}>{p.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {divider}
-
       {/* ── Pathfinder ── */}
       {onPathfinder && (
         <>
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              title={`Pathfinder (${(multiSelectCount || 0)} selected)`}
+              title={`Pathfinder — boolean ops on 2+ selected shapes (${(multiSelectCount || 0)} selected)`}
               disabled={(multiSelectCount || 0) < 2}
               onClick={() => setShowPathfinder(!showPathfinder)}
               style={{
                 width: 46, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 8,
+                cursor: (multiSelectCount || 0) < 2 ? "not-allowed" : "pointer",
+                background: showPathfinder ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+                border: showPathfinder ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+                color: (multiSelectCount || 0) < 2 ? "rgba(122,118,104,0.3)" : (showPathfinder ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)"),
+                opacity: (multiSelectCount || 0) < 2 ? 0.4 : 1,
+                transition: "all 0.15s ease",
               }}
             >
-              <IconLayout size={14} />
+              <IconIntersect size={16} />
             </button>
             {showPathfinder && (
               <>
@@ -595,26 +537,24 @@ export function FloatingToolbar({
         onRedo, "Redo (Ctrl+Shift+Z)", !canRedo,
       )}
 
-      {(onToggleCode || onToggleLayers) && <>
+      {(onToggleLayers || onIconPicker) && <>
         {divider}
-        {/* ── Code Panel Toggle ── */}
-        {onToggleCode && (
+        {/* ── Icons Toggle ── */}
+        {onIconPicker && (
           <button
             type="button"
-            onClick={onToggleCode}
-            title={showCode ? "Hide Code (Ctrl+/)" : "Show Code (Ctrl+/)"}
+            onClick={onIconPicker}
+            title="Icons (Phosphor)"
             style={{
               width: 46, height: 36,
               display: "flex", alignItems: "center", justifyContent: "center",
               borderRadius: 8, cursor: "pointer",
-              background: showCode ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-              border: showCode ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-              color: showCode ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+              background: "transparent", border: "1px solid transparent",
+              color: "var(--text-muted, #7a7668)",
               transition: "all 0.15s ease",
             }}
           >
-            <IconCode size={14} />
-            <span style={{ ...shortcutLabel, fontSize: 7 }}>⌘/</span>
+            <IconShapes size={16} />
           </button>
         )}
         {/* ── Layers Panel Toggle ── */}
@@ -638,94 +578,6 @@ export function FloatingToolbar({
         )}
       </>}
 
-      {divider}
-
-      {/* ── Zoom split button + flyout ── */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-        <SplitButton
-          which="zoom"
-          mainIcon={<IconZoomIn size={16} />}
-          mainShortcut={null}
-          mainTitle="Zoom In"
-          onMainClick={onZoomIn}
-          isActive={false}
-        >
-          {[
-            { icon: <IconZoomIn size={16} />,   title: "Zoom In",  action: onZoomIn },
-            { icon: <IconZoomOut size={16} />,  title: "Zoom Out", action: onZoomOut },
-            { icon: <IconMaximize size={14} />, title: "Fit All",  action: onZoomToFit },
-          ].map((item, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => { item.action(); setOpenFlyout(null); }}
-              title={item.title}
-              style={flyoutItem(false)}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-            >
-              {item.icon}
-            </button>
-          ))}
-        </SplitButton>
-
-        {/* Zoom % label / editable input */}
-        {editingZoom ? (
-          <input
-            type="number"
-            step={5}
-            min={5}
-            max={500}
-            autoFocus
-            defaultValue={Math.round(zoom * 100)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const v = parseInt((e.target as HTMLInputElement).value) || 100;
-                const pct = Math.min(500, Math.max(5, v));
-                onZoomSet?.(pct / 100);
-                setEditingZoom(false);
-              }
-              if (e.key === "Escape") {
-                setEditingZoom(false);
-              }
-            }}
-            onBlur={(e) => {
-              const raw = parseInt((e.target as HTMLInputElement).value);
-              if (!isNaN(raw)) {
-                const pct = Math.min(500, Math.max(5, raw));
-                onZoomSet?.(pct / 100);
-              }
-              setEditingZoom(false);
-            }}
-            style={{
-              width: 46, height: 16,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              borderRadius: 4, cursor: "text",
-              background: "var(--accent-dim, rgba(200,184,152,0.08))",
-              border: "1px solid var(--accent, #c8b898)",
-              color: "var(--accent, #c8b898)", fontSize: 9,
-              fontFamily: "SF Mono, monospace",
-              textAlign: "center", padding: 0, outline: "none",
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setEditingZoom(true)}
-            title="Click to edit zoom %"
-            style={{
-              width: 46, height: 16,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              borderRadius: 4, cursor: "pointer",
-              background: "transparent", border: "1px solid transparent",
-              color: "var(--text-muted, #7a7668)", fontSize: 9,
-              fontFamily: "SF Mono, monospace",
-            }}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-        )}
-      </div>
     </div>
   );
 }

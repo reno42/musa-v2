@@ -434,3 +434,20 @@ export const IconEraser = (p: React.ComponentProps<typeof Icon>) => (
     <path d="M9 20l-4-4" />
   </Icon>
 );
+
+// ── Intersect (two overlapping circles — Pathfinder/boolean ops) ──
+export const IconIntersect = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <circle cx="9" cy="12" r="7" />
+    <circle cx="15" cy="12" r="7" />
+  </Icon>
+);
+
+// ── Info (circled "i") ─────────────────────────────────
+export const IconInfo = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <line x1="12" y1="11" x2="12" y2="16" />
+    <circle cx="12" cy="7.7" r="0.9" fill="currentColor" stroke="none" />
+  </Icon>
+);

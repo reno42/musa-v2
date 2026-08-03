@@ -268,7 +268,7 @@ export function AssetsPanel({ workspaceId, onAssetUploaded, onManageStorage, sel
               Drag & drop images here or click to browse
             </div>
             <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>
-              PNG, JPG, SVG, WebP — max 10MB each. Ctrl+V to paste.
+              PNG, JPG, SVG, WebP — max 5MB each. Ctrl+V to paste.
             </div>
           </div>
         )}

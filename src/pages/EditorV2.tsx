@@ -2,7 +2,6 @@ import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExtern
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
-import type { CodePanelRef } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { FileInfoPanel } from "../components/FileInfoPanel";
@@ -91,7 +90,7 @@ import {
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconChevronDown,
   IconAlignLeft, IconAlignCenter, IconAlignRight,
-  IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX,
+  IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
   IconUpload, IconSparkle, IconCode,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -274,6 +273,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [zoom, setZoom] = useState(0.5);
+  const [editingZoomTopbar, setEditingZoomTopbar] = useState(false);
   // Sprint 3.5: auto-edit newly created text layers
   const [autoEditLayerId, setAutoEditLayerId] = useState<string | null>(null);
 
@@ -299,7 +299,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const lastPushTimeRef = useRef(0);
-  const codePanelRef = useRef<CodePanelRef>(null);
   const [selectedFont, setSelectedFont] = useState("");
   const [showFontPicker, setShowFontPicker] = useState(false);
   const [editingFrameName, setEditingFrameName] = useState<string | null>(null);
@@ -334,6 +333,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // selected (an element or a frame), Properties/Code/Animation all inspect
   // THAT same selection, just from a different angle.
   const [contextualSubTab, setContextualSubTab] = useState<"properties" | "code" | "animation">("properties");
+  // Opens the Properties panel's Code sub-tab — the single place code now
+  // lives (the old left-docked Code Panel toolbar button showed the exact
+  // same html/css/handlers as this tab, so it was removed as a duplicate).
+  const openCodeTab = useCallback(() => {
+    if (showRightPanel && rightPanelTab === "contextual" && contextualSubTab === "code") {
+      setShowRightPanel(false);
+      return;
+    }
+    setRightPanelTab("contextual");
+    setContextualSubTab("code");
+    setShowRightPanel(true);
+  }, [showRightPanel, rightPanelTab, contextualSubTab]);
   const [multiSelectLayerIds, setMultiSelectLayerIds] = useState<string[]>([]);
   const [canvasObjects, setCanvasObjects] = useState<HtmlCanvasObject[]>([]);
   const canvasObjectsRef = useRef(canvasObjects);
@@ -1004,26 +1015,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, autoSave]);
 
   // ── Frame operations ──
-  const addFrame = useCallback((preset: { name: string; width: number; height: number }) => {
-    const lastFrame = frames[frames.length - 1];
-    const newX = lastFrame ? lastFrame.x + lastFrame.width + FRAME_GAP : 0;
-    const newY = lastFrame ? lastFrame.y : 0;
-    const newFrame: FrameData = {
-      id: createFrameId(),
-      name: `Frame ${nextFrameNumber(frames)}`,
-      x: newX, y: newY,
-      width: preset.width, height: preset.height,
-      html: `<div class="card" data-layer-id="card">\n  <h1 data-layer-id="title">${preset.name}</h1>\n  <p data-layer-id="desc">Start designing...</p>\n</div>`,
-      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${preset.width}px;\n  height: ${preset.height}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n.card {\n  position: absolute;\n  left: 50%;\n  top: 50%;\n  transform: translate(-50%, -50%);\n  text-align: center;\n  padding: 40px;\n}\nh1 {\n  font-size: 48px;\n  font-weight: 700;\n  color: #1a1a2e;\n  margin: 0 0 16px;\n}\np {\n  font-size: 20px;\n  color: #666;\n  margin: 0;\n}`,
-      background: "#ffffff",
-    };
-        const updated = [...frames, newFrame];
-    store.replaceAllWithUndo(updated, "edit");
-    setSelectedFrameId(newFrame.id);
-    setSelectedFrameIds(new Set([newFrame.id]));
-    autoSave(updated);
-  }, [frames, autoSave]);
-
   const handleFrameMove = useCallback((id: string, x: number, y: number) => {
     const updated = frames.map(f =>
       f.id === id ? { ...f, x: Math.round(x), y: Math.round(y) } : f
@@ -2120,7 +2111,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         handleSaveVersion();
         return;
       }
-      if (mod && e.key === "/") { e.preventDefault(); setShowCodePanel(p => !p); return; }
+      if (mod && e.key === "/") { e.preventDefault(); openCodeTab(); return; }
       if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); setShowBatch(v => !v); return; }
       if (mod && e.key.toLowerCase() === "c" && !e.shiftKey) { e.preventDefault(); copySelection(); return; }
       if (mod && e.key.toLowerCase() === "x" && !e.shiftKey) { e.preventDefault(); cutSelection(); return; }
@@ -2245,7 +2236,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2946,8 +2937,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, templateName, frames]);
 
-  // ── Code panel visibility ──
-  const [showCodePanel, setShowCodePanel] = useState(false);
   const [showLayersPanel, setShowLayersPanel] = useState(false);
   const [showInsertBar, setShowInsertBar] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -3393,15 +3382,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
-  const codeDock = useDockablePanel(0, 56, "left");
   const layersDock = useDockablePanel(380, 56, "left");
   const toolbarDock = useDockablePanel(20, 80, "left");
 
-  const codeIsDocked = showCodePanel && codeDock.state.isDocked;
   const layersIsDocked = showLayersPanel && layersDock.state.isDocked;
-  const layersDockOffset = codeIsDocked && codeDock.state.dockSide === layersDock.state.dockSide ? 380 : 0;
-  const leftPanelsWidth = (codeIsDocked && codeDock.state.dockSide === "left" ? 380 : 0)
-    + (layersIsDocked && layersDock.state.dockSide === "left" ? 260 : 0);
+  const layersDockOffset = 0;
+  const leftPanelsWidth = (layersIsDocked && layersDock.state.dockSide === "left" ? 260 : 0);
   const toolbarLeft = toolbarDock.state.isDocked ? leftPanelsWidth : undefined;
   // Docked panels float via position:fixed (see useDockablePanel) so by
   // default they render OVER the canvas instead of reserving space for it —
@@ -3509,21 +3495,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     );
   }
 
-  const OBSIDIAN_ICON = (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <circle cx="6" cy="6" r="2.4" />
-      <circle cx="18" cy="7" r="2.4" />
-      <circle cx="12" cy="18" r="2.4" />
-      <line x1="7.8" y1="7.4" x2="10.8" y2="16.2" />
-      <line x1="16.6" y1="8.6" x2="13.3" y2="16.3" />
-      <line x1="8.4" y1="6.2" x2="15.6" y2="6.9" />
-    </svg>
-  );
-
   const RIGHT_PANEL_TITLES: Record<string, string> = {
     contextual: "Properties",
     history: "History",
-    meta: "Obsidian",
+    meta: "Information",
     styleLibrary: "Style Library",
     assets: "Assets",
   };
@@ -3622,8 +3597,50 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         )}
         <div style={{ flex: 1 }} />
 
-        {/* ═══ Zona: Documento (guardado de versión) ═══ */}
+        {/* ═══ Zona: Documento (zoom + guardado de versión) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Zoom: live level, click to type an exact %. Moved here from the
+              floating left toolbar so it's always visible next to Guardar. */}
+          {editingZoomTopbar ? (
+            <input
+              type="number"
+              step={5}
+              min={5}
+              max={500}
+              autoFocus
+              defaultValue={Math.round(zoom * 100)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const v = parseInt((e.target as HTMLInputElement).value) || 100;
+                  handleZoomSet(Math.min(500, Math.max(5, v)) / 100);
+                  setEditingZoomTopbar(false);
+                }
+                if (e.key === "Escape") setEditingZoomTopbar(false);
+              }}
+              onBlur={(e) => {
+                const raw = parseInt((e.target as HTMLInputElement).value);
+                if (!isNaN(raw)) handleZoomSet(Math.min(500, Math.max(5, raw)) / 100);
+                setEditingZoomTopbar(false);
+              }}
+              style={{
+                width: 46, height: 24, borderRadius: 6, textAlign: "center",
+                background: "rgba(200,184,152,0.12)", border: "1px solid #c8b898",
+                color: "#c8b898", fontSize: 11, fontFamily: "SF Mono, monospace",
+                outline: "none", padding: 0,
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="editor-v2-topbar-icon-btn"
+              onClick={() => setEditingZoomTopbar(true)}
+              title="Click to edit zoom %"
+              style={{ fontSize: 11, fontFamily: "SF Mono, monospace" }}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+          )}
+
           <button
             type="button"
             className="editor-v2-topbar-icon-btn"
@@ -3655,6 +3672,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             title="History"
           >
             <IconHistory size={14} />
+          </button>
+
+          {/* Information: brand/campaign/tags metadata for this file
+              (formerly labeled "Obsidian") — also where the cover-image
+              capture lives (Dashboard prefers this cover over the auto
+              thumbnail, so the old separate "Capture Thumbnail" button
+              was redundant). */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "meta") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("meta");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Information — marca, campaña, tags y conexiones del grafo"
+          >
+            <IconInfo size={14} />
           </button>
         </div>
 
@@ -3704,35 +3742,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <span style={{ fontSize: 9, marginLeft: 3 }}>Assets</span>
           </button>
 
-          {/* Icon Picker */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => setShowIconPicker(true)}
-            title="Icons (Phosphor)"
-          >
-            <IconShapes size={14} />
-          </button>
-
-          {/* Obsidian: brand/campaign/tags metadata for this file — also
-              where the cover-image capture used to live as a separate
-              "Capture Thumbnail" button (Dashboard prefers this cover over
-              the auto thumbnail anyway, so nothing is lost). */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "meta") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("meta");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Obsidian — marca, campaña, tags y conexiones del grafo"
-          >
-            {OBSIDIAN_ICON}
-          </button>
         </div>
 
         <div className="editor-v2-topbar-sep" />
@@ -4008,7 +4017,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 style={{ fontSize: 13, padding: "10px 14px" }}
               >
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {OBSIDIAN_ICON} Obsidian
+                  <IconInfo size={16} /> Information
                 </span>
               </button>
               
@@ -4114,26 +4123,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
       {/* ═══ Main Area ═══ */}
       <div className="editor-v2-main" data-tour="editor-canvas">
-        {/* ── Code Panel (slide-in from left) ── */}
-        {showCodePanel && (
-          <div className="editor-v2-code-panel" style={codeDock.panelStyle(380, 0)}>
-            <div className="dock-handle" {...codeDock.handleProps}>
-              <span>Code</span>
-              <button type="button" onClick={() => codeDock.toggleDock("left")} className="dock-pin-btn" title={codeDock.state.isDocked ? "Undock" : "Dock left"}>
-                {codeDock.state.isDocked ? "📌" : "📍"}
-              </button>
-            </div>
-            <CodePanel
-              ref={codePanelRef}
-              html={activeHtml}
-              css={activeCss}
-              onHtmlChange={handleHtmlChange}
-              onCssChange={handleCssChange}
-            />
-          </div>
-        )}
-
-        {/* ── Layers Panel (slide-in from left, next to Code Panel) ── */}
+        {/* ── Layers Panel (slide-in from left) ── */}
         {showLayersPanel && (
           <div className="editor-v2-layers-panel" data-tour="editor-layers" style={layersDock.panelStyle(260, layersDockOffset)}>
             <div className="dock-handle" {...layersDock.handleProps}>
@@ -4309,22 +4299,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <FloatingToolbar
           tool={activeTool}
           onToolChange={setActiveTool}
-          onAddFrame={addFrame}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onZoomToFit={handleZoomToFit}
-          onZoomSet={handleZoomSet}
-          zoom={zoom}
           canUndo={canUndo}
           canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
           multiSelectCount={multiSelectLayerIds.length}
           onPathfinder={handlePathfinder}
-          showCode={showCodePanel}
           showLayers={showLayersPanel}
-          onToggleCode={() => setShowCodePanel(v => !v)}
           onToggleLayers={() => setShowLayersPanel(v => !v)}
+          onIconPicker={() => setShowIconPicker(true)}
           onGroup={handleGroup}
           onUngroup={handleUngroup}
           canGroup={multiSelectLayerIds.length >= 2 || selectedOrphanIds.size >= 2}
@@ -4563,7 +4546,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               );
               store.replaceAllWithUndo(updated, "edit");
               autoSave(updated);
-              setShowCodePanel(true);
+              openCodeTab();
             } else {
               // Auto-create a new frame
               const pos = (() => {
@@ -4585,7 +4568,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               setSelectedFrameId(newFrame.id);
               setSelectedFrameIds(new Set([newFrame.id]));
               autoSave(updated);
-              setShowCodePanel(true);
+              openCodeTab();
             }
             addToast("✓ HTML/CSS applied", "success");
             setShowPasteHtml(false);
