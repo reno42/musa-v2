@@ -20,7 +20,7 @@ const EXT_ROUTES: Record<string, ImportRoute> = {
   json: "template",
 };
 
-function detectRoute(file: File): ImportRoute | null {
+export function detectRoute(file: File): ImportRoute | null {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
   return EXT_ROUTES[ext] || null;
 }

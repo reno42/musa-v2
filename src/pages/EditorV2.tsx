@@ -9,7 +9,7 @@ import { StyleLibraryPanel } from "../components/StyleLibraryPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
-import { ImportRouterModal, type ImportRoute } from "../components/ImportRouterModal";
+import { ImportRouterModal, type ImportRoute, detectRoute as detectImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
@@ -23,7 +23,7 @@ import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
 import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
-import { ImageToDesignModal } from "../components/ImageToDesignModal";
+import { parseHtmlDocument } from "../lib/htmlParser";
 import { IconPicker } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 
@@ -1511,10 +1511,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [frames, autoSave]);
 
   // ── Text tool drag: fixed-size text box (click creates auto-width text) ──
-  const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number) => {
+  const handleAddTextBox = useCallback((x: number, y: number, w: number, h: number, initialText?: string) => {
     if (!selectedFrameId) return;
     const layerId = createLayerId();
-    const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">Type something</div>`;
+    const text = (initialText ?? "Type something")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" data-text-resizing="fixed" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;">${text}</div>`;
     const css = `[data-layer-id="${layerId}"] {\n  font-size: 24px;\n  color: #333;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: hidden;\n}\n`;
     const updated = frames.map(f =>
       f.id === selectedFrameId
@@ -1526,6 +1528,116 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setAutoEditLayerId(layerId); // Sprint 3.5: auto-edit new text
     setActiveTool("select");
   }, [selectedFrameId, frames, autoSave]);
+
+  // Pasting plain OS-clipboard text (not something copied from inside this
+  // editor) creates a new text block with that content, dropped near the
+  // center of whichever frame is selected.
+  const handlePasteTextAsBlock = useCallback((text: string) => {
+    if (!selectedFrameId) { addToast("Selecciona un frame primero.", "error"); return; }
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+    const w = Math.min(400, Math.max(160, frame.width - 80));
+    const h = 120;
+    const x = Math.max(20, Math.round((frame.width - w) / 2));
+    const y = Math.max(20, Math.round((frame.height - h) / 2));
+    handleAddTextBox(x, y, w, h, text);
+  }, [selectedFrameId, frames, handleAddTextBox, addToast]);
+
+  // Shared "apply parsed HTML/CSS as a frame" logic — used by both the
+  // PasteHtmlModal (manual import) and the native-paste "paste as image" path.
+  const applyPastedHtmlAsFrame = useCallback((result: PasteResult) => {
+    const w = result.width || 1080;
+    const h = result.height || 1080;
+    if (selectedFrameId) {
+      const updated = frames.map(f =>
+        f.id === selectedFrameId ? { ...f, html: result.html, css: result.css } : f
+      );
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      openCodeTab();
+    } else {
+      const pos = (() => {
+        if (frames.length === 0) return { x: 100, y: 100 };
+        const last = frames[frames.length - 1];
+        return { x: last.x + last.width + FRAME_GAP, y: last.y };
+      })();
+      const newFrame: FrameData = {
+        id: createFrameId(),
+        name: `Frame ${nextFrameNumber(frames)}`,
+        x: pos.x, y: pos.y,
+        width: w, height: h,
+        html: result.html,
+        css: result.css,
+        background: "#ffffff",
+      };
+      const updated = [...frames, newFrame];
+      store.replaceAllWithUndo(updated, "edit");
+      setSelectedFrameId(newFrame.id);
+      setSelectedFrameIds(new Set([newFrame.id]));
+      autoSave(updated);
+      openCodeTab();
+    }
+  }, [selectedFrameId, frames, autoSave, openCodeTab]);
+
+  // Detects clipboard text that's plausibly a renderable design (HTML doc/fragment
+  // or a JSON template) rather than plain prose — used to trigger the paste-choice dialog.
+  const looksLikeRenderableCode = useCallback((text: string): boolean => {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    if (/^<!doctype html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) return true;
+    // A handful of real HTML tags (not just one stray "<" in prose)
+    const tagMatches = trimmed.match(/<\/?(div|span|section|header|footer|nav|button|img|a|p|h[1-6]|ul|li|table|style)\b/gi);
+    if (tagMatches && tagMatches.length >= 2) return true;
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && (parsed.html || parsed.frames || parsed.css)) return true;
+      } catch { /* not valid JSON — fall through */ }
+    }
+    return false;
+  }, []);
+
+  const PASTE_SNOOZE_KEY = "futuraria:pasteImagePromptSnoozeUntil";
+  const isPasteImagePromptSnoozed = useCallback((): boolean => {
+    const raw = localStorage.getItem(PASTE_SNOOZE_KEY);
+    if (!raw) return false;
+    const until = parseInt(raw, 10);
+    return Number.isFinite(until) && Date.now() < until;
+  }, []);
+  const snoozePasteImagePrompt = useCallback((days: number) => {
+    const until = Date.now() + days * 24 * 60 * 60 * 1000;
+    localStorage.setItem(PASTE_SNOOZE_KEY, String(until));
+  }, []);
+
+  const [pasteChoiceText, setPasteChoiceText] = useState<string | null>(null);
+  const [pasteChoiceSnoozeDays, setPasteChoiceSnoozeDays] = useState(7);
+  const [pasteChoiceSnoozeEnabled, setPasteChoiceSnoozeEnabled] = useState(false);
+
+  const resolvePasteAsImage = useCallback(async (text: string) => {
+    try {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{")) {
+        const parsed = JSON.parse(trimmed);
+        applyPastedHtmlAsFrame({ html: parsed.html || "", css: parsed.css || "", width: parsed.width, height: parsed.height });
+      } else {
+        const parsed = parseHtmlDocument(trimmed);
+        applyPastedHtmlAsFrame({ html: parsed.html, css: parsed.css, width: parsed.width, height: parsed.height });
+      }
+      addToast("✓ Pegado como diseño", "success");
+    } catch {
+      addToast("No se pudo interpretar el contenido pegado, se pegó como texto.", "error");
+      handlePasteTextAsBlock(text);
+    }
+  }, [applyPastedHtmlAsFrame, handlePasteTextAsBlock, addToast]);
+
+  const handlePasteChoiceConfirm = useCallback((asImage: boolean) => {
+    const text = pasteChoiceText;
+    if (pasteChoiceSnoozeEnabled) snoozePasteImagePrompt(pasteChoiceSnoozeDays);
+    setPasteChoiceText(null);
+    if (!text) return;
+    if (asImage) resolvePasteAsImage(text);
+    else handlePasteTextAsBlock(text);
+  }, [pasteChoiceText, pasteChoiceSnoozeEnabled, pasteChoiceSnoozeDays, snoozePasteImagePrompt, resolvePasteAsImage, handlePasteTextAsBlock]);
 
   // ── Wrap selection in a frame (Ctrl+Alt+G) — Figma-style "frame selection" ──
   // Measures rendered layer bounds through the frame's shadow DOM, then nests
@@ -2239,9 +2351,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       copySelection();
     };
     const handleNativePaste = (e: ClipboardEvent) => {
-      if (isEditableTarget(e.target) || !readDesignClipboard()) return;
+      if (isEditableTarget(e.target)) return;
+      if (readDesignClipboard()) {
+        e.preventDefault();
+        pasteSelection();
+        return;
+      }
+      const text = e.clipboardData?.getData("text/plain") || "";
+      if (!text.trim()) return;
       e.preventDefault();
-      pasteSelection();
+      if (looksLikeRenderableCode(text) && !isPasteImagePromptSnoozed()) {
+        setPasteChoiceText(text);
+      } else {
+        handlePasteTextAsBlock(text);
+      }
     };
     const handleNativeCut = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target)) return;
@@ -2263,7 +2386,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -2795,7 +2918,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [gridSize] = useState(8);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [columnConfig, setColumnConfig] = useState<ColumnConfig | null>(null);
-  const [showImageToDesign, setShowImageToDesign] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
@@ -3069,6 +3191,96 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
   }, [templateId]);
+
+  // Convert the currently-selected image (frame-based <img> layer or an
+  // orphan canvas image object) into an AI-replicated editable design.
+  // Works the same whether the image lives on our own Supabase bucket or is
+  // a remote/hyperlinked URL — either way it's just a fetchable src. The
+  // result lands in a brand-new frame placed to the right of the source
+  // image, so selecting-and-clicking feels like "make this editable" rather
+  // than "upload something".
+  const handleConvertSelectedImageToDesign = useCallback(async () => {
+    let srcUrl: string | null = null;
+    let srcX = 0, srcY = 0, srcW = 1080, srcH = 1080;
+
+    if (selectedElement?.src) {
+      const frame = frames.find(f => f.id === selectedElement.frameId);
+      if (!frame) { addToast("Selecciona una imagen primero.", "error"); return; }
+      srcUrl = selectedElement.src;
+      const left = parseFloat(selectedElement.computedStyles.left) || 0;
+      const top = parseFloat(selectedElement.computedStyles.top) || 0;
+      srcW = parseFloat(selectedElement.computedStyles.width) || srcW;
+      srcH = parseFloat(selectedElement.computedStyles.height) || srcH;
+      srcX = frame.x + left;
+      srcY = frame.y + top;
+    } else if (selectedOrphanIds.size === 1) {
+      const obj = canvasObjects.find(o => selectedOrphanIds.has(o.id));
+      if (!obj || obj.kind !== "image") { addToast("Selecciona una imagen primero.", "error"); return; }
+      srcUrl = obj.html.match(/src="([^"]+)"/)?.[1] || null;
+      srcX = obj.x; srcY = obj.y; srcW = obj.width || srcW; srcH = obj.height || srcH;
+    } else {
+      addToast("Selecciona una imagen en el editor primero.", "error");
+      return;
+    }
+    if (!srcUrl) { addToast("La imagen seleccionada no tiene una fuente válida.", "error"); return; }
+
+    setMcpLoading("imageToDesign");
+    try {
+      const resp = await fetch(srcUrl);
+      if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status})`);
+      const blob = await resp.blob();
+      const imageBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("No se pudo leer la imagen"));
+        reader.readAsDataURL(blob);
+      });
+
+      const newFrame: FrameData = {
+        id: createFrameId(),
+        name: `Frame ${nextFrameNumber(frames)}`,
+        x: Math.round(srcX + srcW + FRAME_GAP), y: Math.round(srcY),
+        width: Math.round(srcW) || 1080, height: Math.round(srcH) || 1080,
+        html: "", css: "",
+        background: "#ffffff",
+      };
+      const updated = [...frames, newFrame];
+      store.replaceAllWithUndo(updated, "edit");
+      setSelectedFrameId(newFrame.id);
+      setSelectedFrameIds(new Set([newFrame.id]));
+
+      // Persist synchronously (bypassing the 2s-debounced autoSave) so the
+      // server-side template already has this frame when image_to_design
+      // looks it up by id.
+      await apiFetch(`/api/templates/${templateId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          frames: updated,
+          canvasObjects: canvasObjectsRef.current,
+          html: newFrame.html,
+          css: newFrame.css,
+          name: templateName,
+        }),
+      });
+
+      addToast("🤖 Analizando imagen con IA...", "info");
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "image_to_design",
+          params: { templateId, imageBase64, frameId: newFrame.id, width: newFrame.width, height: newFrame.height },
+          id: 0,
+        }),
+      });
+      if (res.error) throw new Error(res.error.message || "image_to_design falló");
+      await reloadFromServer();
+      addToast("✓ Diseño generado junto a la imagen original.", "success");
+    } catch (err: any) {
+      addToast(`No se pudo convertir la imagen: ${err?.message || "error desconocido"}`, "error");
+    }
+    setMcpLoading(null);
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast]);
 
   // ── Element operations (align/group/reorder/copy-as) ──
   const handleAlign = useCallback(async (alignment: string) => {
@@ -3396,6 +3608,82 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     else if (route === "html") setShowPasteHtml(true);
   }, [importTemplateFile]);
 
+  // Editor-wide file drop: dropping anywhere in the editor (not just inside
+  // the Import modal) inserts the file immediately. Images are uploaded to
+  // the Supabase bucket via upload-file (no assetId returned — it does NOT
+  // become a reusable asset until the user explicitly adds it as one via the
+  // Assets panel). Other recognized file types (svg/psd/ai/fig/html/json) are
+  // routed to their existing specialized importer, pre-loaded with the file.
+  const handleAppDroppedImage = useCallback(async (file: File) => {
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
+      });
+      const res = await apiFetch<{ url: string }>("/api/assets/upload-file", {
+        method: "POST",
+        body: JSON.stringify({
+          name: file.name,
+          data: b64,
+          filename: file.name,
+          mimeType: file.type,
+          workspaceId: templateWorkspaceId || undefined,
+        }),
+      });
+      await handleAssetUploaded({ name: file.name, url: res.url });
+    } catch (err: any) {
+      console.error("[APP_DROP] Image upload failed:", err);
+      addToast("No se pudo subir la imagen.", "error");
+    }
+  }, [templateWorkspaceId, addToast, handleAssetUploaded]);
+
+  const [isAppDragOver, setIsAppDragOver] = useState(false);
+  const appDragCounterRef = useRef(0);
+
+  const handleAppDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  }, []);
+
+  const handleAppDragEnter = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    appDragCounterRef.current += 1;
+    setIsAppDragOver(true);
+  }, []);
+
+  const handleAppDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    appDragCounterRef.current = Math.max(0, appDragCounterRef.current - 1);
+    if (appDragCounterRef.current === 0) setIsAppDragOver(false);
+  }, []);
+
+  const handleAppDrop = useCallback((e: React.DragEvent) => {
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    e.preventDefault();
+    appDragCounterRef.current = 0;
+    setIsAppDragOver(false);
+    // A file-related modal is already open with its own drop zone — let it
+    // handle this drop instead of double-processing the file.
+    if (showImportRouter || showSvgImport || showDesignImport || showPasteHtml) return;
+    Array.from(files).forEach(file => {
+      const isImage = file.type.startsWith("image/") && !/\.svg$/i.test(file.name);
+      if (isImage) {
+        handleAppDroppedImage(file);
+        return;
+      }
+      const route = detectImportRoute(file);
+      if (route) {
+        handleImportRoute(route, file);
+      } else {
+        addToast(`No se reconoce el tipo de archivo "${file.name}".`, "error");
+      }
+    });
+  }, [showImportRouter, showSvgImport, showDesignImport, showPasteHtml, handleAppDroppedImage, handleImportRoute, addToast]);
+
   // ── Dockable panels ──
   const rightDock = useDockablePanel(window.innerWidth - 290, 56, "right");
   const layersDock = useDockablePanel(380, 56, "left");
@@ -3520,7 +3808,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   };
 
   return (
-    <div className="editor-v2-root">
+    <div
+      className="editor-v2-root"
+      onDragEnter={handleAppDragEnter}
+      onDragOver={handleAppDragOver}
+      onDragLeave={handleAppDragLeave}
+      onDrop={handleAppDrop}
+    >
+      {isAppDragOver && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999, pointerEvents: "none",
+          border: "3px dashed #c8b898", background: "rgba(200,184,152,0.06)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#111", color: "#e0e0e0", padding: "10px 18px", borderRadius: 8,
+            fontSize: 14, border: "1px solid rgba(200,184,152,0.4)",
+          }}>
+            Suelta el archivo para agregarlo
+          </div>
+        </div>
+      )}
       {/* ═══ Top Bar ═══ */}
       <div className="editor-v2-topbar">
         <button type="button" onClick={onBack} className="editor-v2-topbar-btn" title="Back to Dashboard">
@@ -3811,15 +4119,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Image to Design */}
+          {/* Image to Design — acts on the selected image, no upload popup */}
           <button
             type="button"
             className="editor-v2-topbar-icon-btn"
-            onClick={() => setShowImageToDesign(true)}
-            title="Convert Image to Design (AI Vision)"
+            onClick={handleConvertSelectedImageToDesign}
+            disabled={mcpLoading === "imageToDesign"}
+            title="Convert selected image to Design (AI Vision)"
             style={{ background: "linear-gradient(135deg, rgba(200,184,152,0.15), rgba(168,146,106,0.15))" }}
           >
-            <span style={{ fontSize: 14 }}>🪄</span>
+            <span style={{ fontSize: 14 }}>{mcpLoading === "imageToDesign" ? "⏳" : "🪄"}</span>
           </button>
 
           {/* Lint design */}
@@ -4117,7 +4426,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconDownload size={16} /> Extract Design System
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { setShowImageToDesign(true); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { handleConvertSelectedImageToDesign(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px", background: "rgba(200,184,152,0.1)" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ fontSize: 16 }}>🪄</span> Image to Design
@@ -4579,56 +4888,40 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           initialFile={routedImportFile}
           onClose={() => { setShowPasteHtml(false); setRoutedImportFile(null); }}
           onApply={(result: PasteResult) => {
-            const w = result.width || 1080;
-            const h = result.height || 1080;
-            if (selectedFrameId) {
-              // Apply to existing frame
-              const updated = frames.map(f =>
-                f.id === selectedFrameId ? { ...f, html: result.html, css: result.css } : f
-              );
-              store.replaceAllWithUndo(updated, "edit");
-              autoSave(updated);
-              openCodeTab();
-            } else {
-              // Auto-create a new frame
-              const pos = (() => {
-                if (frames.length === 0) return { x: 100, y: 100 };
-                const last = frames[frames.length - 1];
-                return { x: last.x + last.width + FRAME_GAP, y: last.y };
-              })();
-              const newFrame: FrameData = {
-                id: createFrameId(),
-                name: `Frame ${nextFrameNumber(frames)}`,
-                x: pos.x, y: pos.y,
-                width: w, height: h,
-                html: result.html,
-                css: result.css,
-                background: "#ffffff",
-              };
-              const updated = [...frames, newFrame];
-              store.replaceAllWithUndo(updated, "edit");
-              setSelectedFrameId(newFrame.id);
-              setSelectedFrameIds(new Set([newFrame.id]));
-              autoSave(updated);
-              openCodeTab();
-            }
+            applyPastedHtmlAsFrame(result);
             addToast("✓ HTML/CSS applied", "success");
             setShowPasteHtml(false);
           }}
         />
       )}
 
-      {/* ═══ Image to Design Modal ═══ */}
-      {showImageToDesign && (
-        <ImageToDesignModal
-          templateId={templateId}
-          frameId={selectedFrameId}
-          onClose={() => setShowImageToDesign(false)}
-          onDesignReady={() => {
-            addToast("✓ Design generated! Reloading...", "success");
-            reloadFromServer();
-          }}
-        />
+      {/* ═══ Paste-as-image detection dialog ═══ */}
+      {pasteChoiceText !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#111", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 20, width: 360, color: "#e0e0e0" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>¿Cómo quieres pegar esto?</div>
+            <div style={{ fontSize: 12, color: "#999", marginBottom: 16 }}>
+              El contenido copiado parece ser código (HTML/JSON). Puedes pegarlo como un diseño editable o como texto plano.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <button type="button" onClick={() => handlePasteChoiceConfirm(true)} style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: "1px solid rgba(200,184,152,0.4)", background: "rgba(200,184,152,0.15)", color: "#e0e0e0", cursor: "pointer", fontSize: 13 }}>Pegar como imagen</button>
+              <button type="button" onClick={() => handlePasteChoiceConfirm(false)} style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "#e0e0e0", cursor: "pointer", fontSize: 13 }}>Pegar como texto</button>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#aaa" }}>
+              <input type="checkbox" checked={pasteChoiceSnoozeEnabled} onChange={e => setPasteChoiceSnoozeEnabled(e.target.checked)} />
+              No preguntar durante
+              <input
+                type="number"
+                min={1}
+                max={90}
+                value={pasteChoiceSnoozeDays}
+                onChange={e => setPasteChoiceSnoozeDays(Math.max(1, Math.min(90, parseInt(e.target.value, 10) || 1)))}
+                style={{ width: 48, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 4, color: "#e0e0e0", padding: "2px 4px" }}
+              />
+              días
+            </label>
+          </div>
+        </div>
       )}
 
       {/* ═══ Design Import Modal (SVG, PSD, AI, FIG) ═══ */}
