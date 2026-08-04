@@ -23,7 +23,7 @@ import { SvgImportDialog, type RasterImageImport } from "../components/SvgImport
 import { InsertToolbar } from "../components/InsertToolbar";
 import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
 import { parseHtmlDocument } from "../lib/htmlParser";
-import { IconPicker } from "../components/IconPicker";
+import { IconPicker, type IconPayload } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 
 import { useDockablePanel } from "../hooks/useDockablePanel";
@@ -2959,6 +2959,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [columnConfig, setColumnConfig] = useState<ColumnConfig | null>(null);
   const [showIconPicker, setShowIconPicker] = useState(false);
+  const [iconPickerAnchor, setIconPickerAnchor] = useState<DOMRect | null>(null);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   // Saves whichever frame(s) are currently selected — same selection
@@ -3246,6 +3247,81 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
   }, [templateId]);
+
+  // ── Icon Picker: insert into a frame, or as a canvas object outside any
+  // frame — either is fine per spec, always appended last so it paints
+  // above every existing layer. ──
+  const [iconInsertError, setIconInsertError] = useState("");
+
+  const insertIconIntoFrame = useCallback(async (icon: IconPayload, frameId: string, x: number, y: number) => {
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "insert_icon",
+          params: { templateId, frameId, icon: icon.name, library: icon.library, style: icon.style, size: icon.size, color: icon.color, x, y },
+          id: 1,
+        }),
+      });
+      if (res?.error) throw new Error(res.error.message);
+      setIconInsertError("");
+      addToast("✓ Icono insertado", "success");
+      reloadFromServer();
+    } catch (e: any) {
+      setIconInsertError(e?.message || "No se pudo insertar el icono.");
+    }
+  }, [templateId, addToast, reloadFromServer]);
+
+  const insertIconAsOrphan = useCallback(async (icon: IconPayload, worldPos?: { x: number; y: number }) => {
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "get_icon_svg",
+          params: { name: icon.name, library: icon.library, style: icon.style, color: icon.color },
+          id: 1,
+        }),
+      });
+      if (res?.error) throw new Error(res.error.message);
+      const content = res?.result?.content?.[0];
+      const data = content?.type === "text" && content.text ? JSON.parse(content.text) : null;
+      const bareSvg: string | undefined = data?.svg;
+      if (!bareSvg) throw new Error("No se pudo obtener el icono.");
+
+      const orphanId = createOrphanId();
+      const html = bareSvg.replace(/^<svg /, `<svg data-layer-id="${orphanId}" data-layer-name="${icon.name}" `);
+      const css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${icon.size}px;\n  height: ${icon.size}px;\n  overflow: visible;\n}`;
+      const position = worldPos || findCanvasObjectPosition(frames, canvasObjectsRef.current);
+      const newOrphan: HtmlCanvasObject = {
+        id: orphanId, name: icon.name, kind: "shape", frameId: null,
+        html, css,
+        x: Math.round(position.x), y: Math.round(position.y),
+        width: icon.size, height: icon.size,
+        zIndex: canvasObjectsRef.current.length + frames.length,
+      };
+      commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
+      setSelectedOrphanIds(new Set([orphanId]));
+      setIconInsertError("");
+      addToast("✓ Icono insertado", "success");
+    } catch (e: any) {
+      setIconInsertError(e?.message || "No se pudo insertar el icono.");
+    }
+  }, [frames, commitCanvasObjects, addToast]);
+
+  // Click (no explicit canvas position): into the selected frame at a fixed
+  // default offset, or as an orphan wherever findCanvasObjectPosition finds
+  // free space if nothing's selected.
+  const handleInsertIconClick = useCallback((icon: IconPayload) => {
+    if (selectedFrameId) insertIconIntoFrame(icon, selectedFrameId, 50, 50);
+    else insertIconAsOrphan(icon);
+  }, [selectedFrameId, insertIconIntoFrame, insertIconAsOrphan]);
+
+  // Drag-and-drop: InfiniteHtmlCanvas already resolved the drop point
+  // through its own pan/zoom transform and frame hit-test.
+  const handleIconDropOnCanvas = useCallback((icon: IconPayload, x: number, y: number, frameId: string | null) => {
+    if (frameId) insertIconIntoFrame(icon, frameId, x, y);
+    else insertIconAsOrphan(icon, { x, y });
+  }, [insertIconIntoFrame, insertIconAsOrphan]);
 
   // Convert the currently-selected image (frame-based <img> layer or an
   // orphan canvas image object) into an AI-replicated editable design.
@@ -4796,6 +4872,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <InfiniteHtmlCanvas
             leftInset={canvasLeftInset}
             rightInset={canvasRightInset}
+            onIconDrop={handleIconDropOnCanvas}
             frames={frames}
             canvasObjects={canvasObjects}
             selectedFrameIds={selectedFrameIds}
@@ -4868,7 +4945,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onRedo={handleRedo}
           multiSelectCount={multiSelectLayerIds.length}
           onPathfinder={handlePathfinder}
-          onIconPicker={() => setShowIconPicker(true)}
+          onIconPicker={rect => {
+            if (showIconPicker) { setShowIconPicker(false); return; }
+            setIconPickerAnchor(rect);
+            setIconInsertError("");
+            setShowIconPicker(true);
+          }}
           onGroup={handleGroup}
           onUngroup={handleUngroup}
           canGroup={multiSelectLayerIds.length >= 2 || selectedOrphanIds.size >= 2}
@@ -5154,19 +5236,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         />
       )}
 
-      {/* ═══ Icon Picker ═══ */}
+      {/* ═══ Icon Picker — anchored panel, not a modal: click or drag an
+          icon onto the canvas while still seeing it live. ═══ */}
       {showIconPicker && (
         <IconPicker
-          templateId={templateId}
-          // Fall back to the only frame when nothing's explicitly selected —
-          // the overwhelmingly common single-canvas case — instead of making
-          // the user click into the frame first just to open this picker.
-          frameId={selectedFrameId || (frames.length === 1 ? frames[0].id : null)}
+          anchorRect={iconPickerAnchor}
           onClose={() => setShowIconPicker(false)}
-          onInsert={() => {
-            addToast("✓ Icon inserted", "success");
-            reloadFromServer();
-          }}
+          onInsertIcon={handleInsertIconClick}
+          insertError={iconInsertError}
         />
       )}
 

@@ -1,20 +1,33 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { apiFetch } from "../lib/supabase";
 
+export interface IconPayload {
+  library: string;
+  name: string;
+  style: string;
+  color: string;
+  size: number;
+}
+
 interface IconPickerProps {
-  templateId: string;
-  frameId: string | null;
+  /** Screen position of the trigger button — the panel anchors beside it
+   *  instead of covering the editor like the old full-screen modal did. */
+  anchorRect: DOMRect | null;
   onClose: () => void;
-  onInsert?: (layerId: string) => void;
+  /** Click-to-insert. The caller (EditorV2) owns placement: into the
+   *  selected frame, or as a canvas object if nothing is selected — this
+   *  component only ever hands back "which icon, what color/size". */
+  onInsertIcon: (icon: IconPayload) => void;
+  insertError?: string;
 }
 
 interface IconResult {
   name: string;
   category: string;
   tags: string[];
-  styles: string[];
-  className: string;
-  html: string;
+  library: string;
+  style: string;
+  svgPreview: string;
 }
 
 const CATEGORIES = [
@@ -23,79 +36,66 @@ const CATEGORIES = [
   "people", "photography", "shopping", "system", "text", "time", "weather",
 ];
 
-const STYLE_OPTIONS = [
-  { value: "regular", label: "Regular", cls: "ph" },
-  { value: "bold", label: "Bold", cls: "ph-bold" },
-  { value: "fill", label: "Fill", cls: "ph-fill" },
-  { value: "light", label: "Light", cls: "ph-light" },
-  { value: "thin", label: "Thin", cls: "ph-thin" },
-  { value: "duotone", label: "Duotone", cls: "ph-duotone" },
+const LIBRARIES: { value: string; label: string; styles: { value: string; label: string }[] }[] = [
+  {
+    value: "phosphor", label: "Phosphor",
+    styles: [
+      { value: "regular", label: "Regular" }, { value: "bold", label: "Bold" }, { value: "fill", label: "Fill" },
+      { value: "light", label: "Light" }, { value: "thin", label: "Thin" }, { value: "duotone", label: "Duotone" },
+    ],
+  },
+  { value: "lucide", label: "Lucide", styles: [{ value: "regular", label: "Regular" }] },
+  { value: "tabler", label: "Tabler", styles: [{ value: "outline", label: "Outline" }, { value: "filled", label: "Filled" }] },
+  { value: "simple-icons", label: "Marcas", styles: [{ value: "regular", label: "Regular" }] },
 ];
 
-export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPickerProps) {
+/** Relative luminance (0=black, 1=white) — decides whether an icon's own
+ *  swatch card needs a light or dark backing so it never disappears into
+ *  it (a black icon on a white card, a white icon on a near-black card). */
+function luminanceOf(hex: string): number {
+  const m = hex.replace("#", "");
+  const full = m.length === 3 ? m.split("").map(c => c + c).join("") : m;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  if ([r, g, b].some(Number.isNaN)) return 0;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const ICON_DRAG_MIME = "application/x-futuraria-icon";
+
+export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: IconPickerProps) {
+  const [tab, setTab] = useState<"icons" | "illustrations">("icons");
+  const [library, setLibrary] = useState("phosphor");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [style, setStyle] = useState("regular");
   const [icons, setIcons] = useState<IconResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [inserting, setInserting] = useState<string | null>(null);
-  const [color, setColor] = useState("#000000");
+  const [color, setColor] = useState("#111111");
   const [size, setSize] = useState(48);
-  const [insertError, setInsertError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load Phosphor CSS once for live preview — one stylesheet per weight,
-  // loaded up front so switching the style dropdown doesn't need a refetch.
-  // NOTE: the bare package URL (https://unpkg.com/@phosphor-icons/web@2.1.1)
-  // resolves to that package's "unpkg" field, which is a JS loader script
-  // meant for a <script> tag — loading it via <link rel="stylesheet"> (as
-  // this used to) silently produces zero usable CSS rules, so no icon ever
-  // rendered in this grid. The per-weight path below is the real stylesheet.
-  useEffect(() => {
-    STYLE_OPTIONS.forEach(s => {
-      const id = `phosphor-preview-css-${s.value}`;
-      if (!document.getElementById(id)) {
-        const link = document.createElement("link");
-        link.id = id;
-        link.rel = "stylesheet";
-        link.href = `https://unpkg.com/@phosphor-icons/web@2.1.1/src/${s.value}/style.css`;
-        document.head.appendChild(link);
-      }
-    });
-  }, []);
+  const libDef = useMemo(() => LIBRARIES.find(l => l.value === library) || LIBRARIES[0], [library]);
 
-  // Debounced search
+  // Style must stay valid for whichever library is active (Lucide/Marcas
+  // only have one; Tabler uses outline/filled, not Phosphor's 6 weights).
   useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(doSearch, 200);
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, [search, category, style]);
+    if (!libDef.styles.some(s => s.value === style)) setStyle(libDef.styles[0].value);
+  }, [libDef, style]);
 
-  const doSearch = async () => {
+  const doSearch = async (lib: string, q: string, cat: string, sty: string) => {
     setLoading(true);
     try {
-      const params: Record<string, string> = {};
-      if (search.trim()) params.search = search.trim();
-      if (category !== "all") params.category = category;
-      params.style = style;
-      params.limit = "60";
-      const qs = new URLSearchParams(params).toString();
+      const params: Record<string, string> = { library: lib, style: sty, limit: "40" };
+      if (q.trim()) params.search = q.trim();
+      if (cat !== "all" && lib !== "simple-icons") params.category = cat;
       const res = await apiFetch<any>(`/mcp`, {
         method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "search_icons",
-          params: Object.fromEntries(new URLSearchParams(qs)),
-          id: 1,
-        }),
+        body: JSON.stringify({ jsonrpc: "2.0", method: "search_icons", params, id: 1 }),
       });
-
-      // Unwrap MCP response
       const content = res?.result?.content?.[0];
-      let data = res?.result;
-      if (content?.type === "text" && content.text) {
-        try { data = JSON.parse(content.text); } catch { /* keep raw */ }
-      }
+      const data = content?.type === "text" && content.text ? JSON.parse(content.text) : null;
       setIcons(data?.icons || []);
     } catch {
       setIcons([]);
@@ -103,185 +103,186 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
     setLoading(false);
   };
 
-  // Initial load
-  useEffect(() => { doSearch(); }, []);
+  // Debounced search — re-fires on library/category/style change too, not
+  // just typing, since those change which CDN/catalog is being queried.
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => doSearch(library, search, category, style), 200);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library, search, category, style]);
 
-  const handleInsert = async (icon: IconResult) => {
-    setInsertError("");
-    if (!frameId) {
-      // Silently doing nothing here is the exact bug this fixes: a click
-      // with no visible feedback reads as "the button is broken".
-      setInsertError("Selecciona un frame en el lienzo antes de insertar un icono.");
-      return;
+  const currentPayload = (icon: IconResult): IconPayload => ({
+    library: icon.library, name: icon.name, style: icon.style, color, size,
+  });
+
+  const swatchBg = luminanceOf(color) > 0.6 ? "#1a1a1a" : "#ffffff";
+
+  const panelStyle: React.CSSProperties = (() => {
+    const width = 340;
+    const maxHeight = Math.min(600, window.innerHeight - 32);
+    if (!anchorRect) {
+      return { position: "fixed", top: 60, left: 60, width, maxHeight, zIndex: 1000 };
     }
-    setInserting(icon.name);
-    try {
-      const res = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "insert_icon",
-          params: {
-            templateId,
-            frameId,
-            icon: icon.name,
-            style,
-            size,
-            color,
-          },
-          id: 1,
-        }),
-      });
-
-      if (res?.error) {
-        setInsertError(res.error.message || "No se pudo insertar el icono.");
-        setInserting(null);
-        return;
-      }
-
-      const content = res?.result?.content?.[0];
-      let data = res?.result;
-      if (content?.type === "text" && content.text) {
-        try { data = JSON.parse(content.text); } catch { /* keep raw */ }
-      }
-
-      if (data?.success) {
-        onInsert?.(data.layerId);
-      } else {
-        setInsertError(data?.error?.message || "No se pudo insertar el icono.");
-      }
-    } catch (e: any) {
-      setInsertError(e?.message || "No se pudo insertar el icono.");
-    }
-    setInserting(null);
-  };
-
-  const previewCls = useMemo(() => {
-    return STYLE_OPTIONS.find(s => s.value === style)?.cls || "ph";
-  }, [style]);
+    const spaceRight = window.innerWidth - anchorRect.right;
+    const openLeft = spaceRight < width + 16 && anchorRect.left > width + 16;
+    const left = openLeft ? anchorRect.left - width - 8 : anchorRect.right + 8;
+    const top = Math.min(Math.max(8, anchorRect.top), window.innerHeight - maxHeight - 8);
+    return { position: "fixed", top, left, width, maxHeight, zIndex: 1000 };
+  })();
 
   return (
-    <div
-      className="image-upload-overlay"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="image-upload-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-        <div className="image-upload-header">
-          <h2>Icons</h2>
-          <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close">✕</button>
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 999 }} />
+      <div
+        style={{
+          ...panelStyle,
+          display: "flex", flexDirection: "column",
+          background: "var(--glass-bg, rgba(20,20,26,0.97))",
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          border: "1px solid var(--glass-border, rgba(255,255,255,0.1))",
+          borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.4)", overflow: "hidden",
+        }}
+      >
+        {/* Header + tabs */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px 0" }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button type="button" onClick={() => setTab("icons")} style={tabBtnStyle(tab === "icons")}>🔷 Iconos</button>
+            <button type="button" onClick={() => setTab("illustrations")} style={tabBtnStyle(tab === "illustrations")}>🎨 Ilustraciones</button>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "transparent", border: "none", color: "#888", cursor: "pointer", fontSize: 16, padding: 4 }}>✕</button>
         </div>
 
-        {!frameId && (
-          <div style={{
-            padding: "8px 12px", marginBottom: 12, borderRadius: 8,
-            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)",
-            color: "#f87171", fontSize: 12,
-          }}>
-            Selecciona un frame en el lienzo primero — los iconos se insertan dentro de un frame.
-          </div>
-        )}
-        {insertError && (
-          <div style={{
-            padding: "8px 12px", marginBottom: 12, borderRadius: 8,
-            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)",
-            color: "#f87171", fontSize: 12,
-          }}>
-            {insertError}
-          </div>
-        )}
+        {tab === "icons" ? (
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
+            {insertError && (
+              <div style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171", fontSize: 11.5 }}>
+                {insertError}
+              </div>
+            )}
 
-        {/* Controls */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <input
-            type="text"
-            placeholder="Search icons..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              flex: 1, minWidth: 180, padding: "8px 12px",
-              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none",
-            }}
-          />
-          <select
-            value={category}
-            onChange={e => setCategory(e.target.value)}
-            style={{
-              padding: "8px 12px", background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8,
-              color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none", cursor: "pointer",
-            }}
-          >
-            {CATEGORIES.map(c => <option key={c} value={c} style={{ textTransform: "capitalize" }}>{c}</option>)}
-          </select>
-          <select
-            value={style}
-            onChange={e => setStyle(e.target.value)}
-            style={{
-              padding: "8px 12px", background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8,
-              color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none", cursor: "pointer",
-            }}
-          >
-            {STYLE_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <label style={{ fontSize: 11, color: "#666" }}>Size</label>
-            <input
-              type="number" value={size} min={12} max={200}
-              onChange={e => setSize(parseInt(e.target.value) || 48)}
-              style={{ width: 50, padding: "6px 8px", background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
-                color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none", textAlign: "center" }}
-            />
-          </div>
-          <input
-            type="color" value={color}
-            onChange={e => setColor(e.target.value)}
-            style={{ width: 36, height: 36, border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8, cursor: "pointer", background: "transparent", padding: 2 }}
-          />
-        </div>
-
-        {/* Icon Grid */}
-        <div style={{ flex: 1, overflowY: "auto", minHeight: 200 }}>
-          {loading ? (
-            <div style={{ textAlign: "center", color: "#555", padding: 40 }}>Loading...</div>
-          ) : icons.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#555", padding: 40 }}>No icons found</div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
-              {icons.map(icon => (
+            {/* Library pills */}
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {LIBRARIES.map(l => (
                 <button
-                  key={icon.name}
-                  type="button"
-                  onClick={() => handleInsert(icon)}
-                  disabled={inserting !== null}
-                  title={icon.name}
+                  key={l.value} type="button" onClick={() => setLibrary(l.value)}
                   style={{
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                    padding: "14px 6px", background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10,
-                    cursor: inserting ? "wait" : "pointer", transition: "all 0.15s ease",
-                    color: inserting === icon.name ? "#c8b898" : color,
+                    padding: "4px 10px", borderRadius: 999, fontSize: 11, cursor: "pointer",
+                    border: "1px solid " + (library === l.value ? "rgba(200,184,152,0.5)" : "rgba(255,255,255,0.1)"),
+                    background: library === l.value ? "rgba(200,184,152,0.15)" : "rgba(255,255,255,0.04)",
+                    color: library === l.value ? "#c8b898" : "#999",
                   }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(200,184,152,0.1)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,184,152,0.3)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }}
                 >
-                  <i className={`${previewCls} ph-${icon.name}`} style={{ fontSize: Math.min(size, 28), lineHeight: 1 }}></i>
-                  <span style={{ fontSize: 9, color: "#555", textAlign: "center", wordBreak: "break-all", lineHeight: 1.2 }}>
-                    {icon.name.length > 14 ? icon.name.slice(0, 12) + "…" : icon.name}
-                  </span>
+                  {l.label}
                 </button>
               ))}
             </div>
-          )}
-        </div>
 
-        <div style={{ fontSize: 10, color: "#444", textAlign: "center", marginTop: 8 }}>
-          Powered by Phosphor Icons (MIT) · Click any icon to insert into frame
-        </div>
+            <input
+              type="text" placeholder="Buscar iconos…" value={search} onChange={e => setSearch(e.target.value)}
+              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+            />
+
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {library !== "simple-icons" && (
+                <select value={category} onChange={e => setCategory(e.target.value)} style={selectStyle}>
+                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
+              {libDef.styles.length > 1 && (
+                <select value={style} onChange={e => setStyle(e.target.value)} style={selectStyle}>
+                  {libDef.styles.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <label style={{ fontSize: 10.5, color: "#666" }}>Tamaño</label>
+                <input
+                  type="number" value={size} min={12} max={300}
+                  onChange={e => setSize(parseInt(e.target.value) || 48)}
+                  style={{ width: 46, padding: "6px 6px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none", textAlign: "center" }}
+                />
+              </div>
+              <input
+                type="color" value={color} onChange={e => setColor(e.target.value)}
+                style={{ width: 32, height: 32, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, cursor: "pointer", background: "transparent", padding: 2 }}
+              />
+            </div>
+
+            {/* Icon Grid */}
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 200 }}>
+              {loading ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Cargando…</div>
+              ) : icons.length === 0 ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Sin resultados</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))", gap: 8 }}>
+                  {icons.map(icon => (
+                    <button
+                      key={`${icon.library}-${icon.style}-${icon.name}`}
+                      type="button"
+                      draggable
+                      onDragStart={e => {
+                        e.dataTransfer.setData(ICON_DRAG_MIME, JSON.stringify(currentPayload(icon)));
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onClick={() => onInsertIcon(currentPayload(icon))}
+                      title={icon.name}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                        padding: "8px 4px", background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10,
+                        cursor: "grab", transition: "background 0.15s ease, border-color 0.15s ease",
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(200,184,152,0.1)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(200,184,152,0.3)"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }}
+                    >
+                      {/* Contrast swatch: the icon is always rendered in the
+                          user's chosen color, so a dark icon on this app's
+                          dark panel (or a white icon picked deliberately)
+                          would otherwise vanish — the card flips light/dark
+                          based on the color's own luminance. */}
+                      <div
+                        style={{
+                          width: 44, height: 44, borderRadius: 8, background: swatchBg,
+                          display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+                        }}
+                        dangerouslySetInnerHTML={{ __html: icon.svgPreview.replace("<svg ", `<svg width="28" height="28" style="color:${color}" `) }}
+                      />
+                      <span style={{ fontSize: 8.5, color: "#666", textAlign: "center", wordBreak: "break-all", lineHeight: 1.2 }}>
+                        {icon.name.length > 13 ? icon.name.slice(0, 11) + "…" : icon.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 9.5, color: "#555", textAlign: "center" }}>
+              Click para insertar · arrastrá al lienzo · {libDef.label} (MIT)
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: 24, textAlign: "center", color: "#777", fontSize: 12, lineHeight: 1.6 }}>
+            🎨<br />Ilustraciones — todavía no hay una fuente conectada acá.
+            <br />Avisale a Renzo cuál librería de ilustraciones querés (con licencia libre de verdad) y la conectamos.
+          </div>
+        )}
       </div>
-    </div>
+    </>
   );
 }
+
+function tabBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: "6px 10px", borderRadius: "8px 8px 0 0", fontSize: 12, fontWeight: 600,
+    cursor: "pointer", border: "none", borderBottom: active ? "2px solid #c8b898" : "2px solid transparent",
+    background: active ? "rgba(200,184,152,0.08)" : "transparent",
+    color: active ? "#c8b898" : "#888",
+  };
+}
+
+const selectStyle: React.CSSProperties = {
+  padding: "6px 8px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 6, color: "#ccc", fontSize: 11, fontFamily: "inherit", outline: "none", cursor: "pointer",
+};

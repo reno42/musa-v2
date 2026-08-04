@@ -93,6 +93,12 @@ interface InfiniteHtmlCanvasProps {
    *  canvasLeftInset/canvasRightInset. */
   leftInset?: number;
   rightInset?: number;
+  /** Icon panel drag-and-drop: resolves the drop point through the canvas's
+   *  own pan/zoom transform (which EditorV2 doesn't have access to) and
+   *  reports back frame-local coordinates when the drop lands inside a
+   *  frame, or world coordinates for an orphan — the caller never needs to
+   *  know about pan/zoom itself. */
+  onIconDrop?: (payload: { library: string; name: string; style: string; color: string; size: number }, x: number, y: number, frameId: string | null) => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -112,6 +118,7 @@ export function InfiniteHtmlCanvas({
   autoEditLayerId, onAutoEditHandled,
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
   leftInset = 0, rightInset = 0,
+  onIconDrop,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -180,6 +187,32 @@ export function InfiniteHtmlCanvas({
       y: (clientY - rect.top - panRef.current.y) / zoom,
     };
   }, [zoom]);
+
+  const ICON_DRAG_MIME = "application/x-futuraria-icon";
+  const handleIconDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes(ICON_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+  const handleIconDrop = useCallback((e: React.DragEvent) => {
+    if (!onIconDrop || !e.dataTransfer?.types?.includes(ICON_DRAG_MIME)) return;
+    const raw = e.dataTransfer.getData(ICON_DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let payload: { library: string; name: string; style: string; color: string; size: number };
+    try { payload = JSON.parse(raw); } catch { return; }
+    const pt = screenToCanvas(e.clientX, e.clientY);
+    // Topmost frame containing the drop point wins (last in array = drawn
+    // last = on top, same convention the rest of this canvas uses).
+    const target = [...frames].reverse().find(f =>
+      pt.x >= f.x && pt.x <= f.x + f.width && pt.y >= f.y && pt.y <= f.y + f.height
+    );
+    if (target) {
+      onIconDrop(payload, pt.x - target.x - payload.size / 2, pt.y - target.y - payload.size / 2, target.id);
+    } else {
+      onIconDrop(payload, pt.x - payload.size / 2, pt.y - payload.size / 2, null);
+    }
+  }, [frames, onIconDrop, screenToCanvas]);
 
   // Start frame drag — multi-frame aware (Phase 4)
   const startFrameDrag = useCallback((frameId: string, e: React.MouseEvent) => {
@@ -748,6 +781,8 @@ export function InfiniteHtmlCanvas({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onDragOver={handleIconDragOver}
+      onDrop={handleIconDrop}
     >
       {/* Transform layer */}
       <div style={{

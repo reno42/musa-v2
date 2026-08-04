@@ -323,17 +323,71 @@ const ICON_CATALOG = [
   { n: "umbrella", c: "weather", t: ["rain", "protect"] },
 ];
 
+/** Simple Icons (CC0) brand/social logos — a different vocabulary than the
+ * generic UI catalog above, all names verified live against the real CDN. */
+const SIMPLE_ICONS_CATALOG = [
+  "airbnb", "android", "apple", "appstore", "behance", "discord", "dribbble", "dropbox",
+  "facebook", "figma", "github", "google", "googleplay", "instagram", "medium", "meta",
+  "netflix", "notion", "patreon", "paypal", "pinterest", "reddit", "shopify", "snapchat",
+  "soundcloud", "spotify", "stripe", "telegram", "threads", "tiktok", "twitch", "uber",
+  "vimeo", "whatsapp", "wordpress", "x", "youtube", "zoom",
+].map(n => ({ n, c: "brands", t: [n] }));
 
 /**
- * Fetches an icon's real SVG source from Phosphor Icons' core asset CDN
- * (MIT licensed, actual vector path data — not the webfont) and rewrites the
- * root <svg> into this app's own shape-layer convention (data-layer-kind=
- * "svg", same as the Star/Triangle/Polygon shape tools), so an inserted icon
- * is a first-class editable vector layer with zero external dependency at
- * export/render time. Returns null if the name/style has no matching asset.
+ * Icon library registry — every entry here is a real, MIT-licensed, raw-SVG
+ * CDN (verified live, not the icon FONT — a font glyph depends on an
+ * external stylesheet staying reachable at export/render time, which is
+ * exactly the bug this whole pipeline exists to avoid). "variedad" per the
+ * user: Phosphor (regular/bold/fill/etc), Lucide (feather-style strokes),
+ * Tabler (outline/filled), Simple Icons (brand/social logos — a different
+ * vocabulary, single-color marks).
  */
-async function fetchPhosphorIconSvg(name, style, opts = {}) {
-  const svgUrl = `https://unpkg.com/@phosphor-icons/core@2.1.1/assets/${style}/${name}.svg`;
+const ICON_LIBRARIES = {
+  phosphor: {
+    label: "Phosphor",
+    styles: ["thin", "light", "regular", "bold", "fill", "duotone"],
+    defaultStyle: "regular",
+    urlFor: (name, style) => `https://unpkg.com/@phosphor-icons/core@2.1.1/assets/${style}/${name}.svg`,
+  },
+  lucide: {
+    label: "Lucide",
+    styles: ["regular"],
+    defaultStyle: "regular",
+    urlFor: (name) => `https://unpkg.com/lucide-static@latest/icons/${name}.svg`,
+  },
+  tabler: {
+    label: "Tabler",
+    styles: ["outline", "filled"],
+    defaultStyle: "outline",
+    urlFor: (name, style) => `https://unpkg.com/@tabler/icons@latest/icons/${style}/${name}.svg`,
+  },
+  "simple-icons": {
+    label: "Marcas",
+    styles: ["regular"],
+    defaultStyle: "regular",
+    urlFor: (name) => `https://unpkg.com/simple-icons@latest/icons/${name}.svg`,
+  },
+};
+
+/**
+ * Fetches an icon's real SVG source from its library's raw-asset CDN (actual
+ * vector path data — never the webfont) and rewrites the root <svg> into
+ * this app's own shape-layer convention (data-layer-kind="svg", same as the
+ * Star/Triangle/Polygon shape tools), so an inserted icon is a first-class
+ * editable vector layer with zero external dependency at export/render
+ * time. Auto-detects stroke-based icons (Lucide, Tabler outline — root has
+ * stroke="currentColor" fill="none") vs fill-based ones (Phosphor, Tabler
+ * filled, Simple Icons) and recolors the right attribute, preserving
+ * stroke-width/linecap/linejoin so line-icon proportions stay correct.
+ * `opts.bare: true` skips position/size/data-layer-id entirely — used for
+ * orphan (out-of-frame) placement, where the caller owns positioning via
+ * its own wrapper object instead of an inline style on the element.
+ * Returns null if the name/style/library has no matching asset.
+ */
+async function fetchIconSvg(name, library, style, opts = {}) {
+  const def = ICON_LIBRARIES[library] || ICON_LIBRARIES.phosphor;
+  const useStyle = def.styles.includes(style) ? style : def.defaultStyle;
+  const svgUrl = def.urlFor(name, useStyle);
   let resp;
   try {
     resp = await fetch(svgUrl);
@@ -342,19 +396,43 @@ async function fetchPhosphorIconSvg(name, style, opts = {}) {
   }
   if (!resp.ok) return null;
   const raw = await resp.text();
-  const openMatch = raw.match(/^<svg\s+([^>]*)>/);
+  const openMatch = raw.match(/<svg\s+([^>]*)>/);
   if (!openMatch) return null;
-  const viewBoxMatch = openMatch[1].match(/viewBox="([^"]+)"/);
-  const viewBox = viewBoxMatch ? viewBoxMatch[1] : "0 0 256 256";
+  const attrs = openMatch[1];
+  const viewBoxMatch = attrs.match(/viewBox="([^"]+)"/);
+  const viewBox = viewBoxMatch ? viewBoxMatch[1] : "0 0 24 24";
   const closeIdx = raw.lastIndexOf("</svg>");
   if (closeIdx === -1) return null;
-  const inner = raw.slice(openMatch[0].length, closeIdx);
+  // openMatch.index is NOT 0 for every library — Lucide's raw source has a
+  // leading "<!-- @license ... -->" comment before the <svg> tag, so slicing
+  // by openMatch[0].length alone (correct only when the match starts at 0)
+  // silently corrupted the inner content for every library except Phosphor.
+  const inner = raw.slice(openMatch.index + openMatch[0].length, closeIdx);
+
   const {
     layerId = `icon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     layerName = name,
     x = 0, y = 0, size = 48, color = "#000000",
+    bare = false,
   } = opts;
-  return `<svg data-layer-id="${layerId}" data-layer-name="${layerName}" data-layer-kind="svg" viewBox="${viewBox}" style="position:absolute;left:${x}px;top:${y}px;width:${size}px;height:${size}px;overflow:visible;" fill="${color}">${inner}</svg>`;
+
+  const usesStroke = /stroke="currentColor"/.test(attrs);
+  const colorAttr = usesStroke ? `stroke="${color}" fill="none"` : `fill="${color}"`;
+  const preserved = ["stroke-width", "stroke-linecap", "stroke-linejoin"]
+    .map(a => { const m = attrs.match(new RegExp(`${a}="([^"]+)"`)); return m ? `${a}="${m[1]}"` : ""; })
+    .filter(Boolean).join(" ");
+  const preservedAttr = preserved ? ` ${preserved}` : "";
+
+  if (bare) {
+    return `<svg data-layer-kind="svg" viewBox="${viewBox}" ${colorAttr}${preservedAttr}>${inner}</svg>`;
+  }
+  return `<svg data-layer-id="${layerId}" data-layer-name="${layerName}" data-layer-kind="svg" viewBox="${viewBox}" style="position:absolute;left:${x}px;top:${y}px;width:${size}px;height:${size}px;overflow:visible;" ${colorAttr}${preservedAttr}>${inner}</svg>`;
+}
+
+/** Back-compat alias — existing callers (resolveIconHintsInHtml, image_to_design
+ *  icon-hints) only ever needed Phosphor; kept as a thin wrapper. */
+async function fetchPhosphorIconSvg(name, style, opts = {}) {
+  return fetchIconSvg(name, "phosphor", style, opts);
 }
 
 /**
@@ -2107,16 +2185,17 @@ const MCP_TOOLS = [
     description: "Get font metadata including variants, subsets, and CSS import URL",
     inputSchema: { type: "object", properties: { family: { type: "string" } }, required: ["family"] },
   },
-  // ── Shared: Phosphor Icons ──
+  // ── Shared: Icons (multiple libraries) ──
   {
     name: "search_icons",
-    description: "Search Phosphor Icons (MIT-licensed, 6 weight styles) by name/keyword/category. NEVER use an emoji character as a substitute for an icon in a design — always search here first and insert the real result with insert_icon. Returns icon names to pass to insert_icon (not raw HTML — insert_icon embeds it as a real inline <svg>, which is the only reliable way to ship an icon in an exported design).",
+    description: "Search icons by name/keyword/category across multiple MIT-licensed libraries (Phosphor, Lucide, Tabler, plus Simple Icons for brand/social logos) for variety. NEVER use an emoji character as a substitute for an icon in a design — always search here first and insert the real result with insert_icon. Returns icon names to pass to insert_icon (not raw HTML — insert_icon embeds it as a real inline <svg>, which is the only reliable way to ship an icon in an exported design).",
     inputSchema: {
       type: "object",
       properties: {
         search: { type: "string", description: "Search by icon name or keyword (e.g. 'heart', 'arrow', 'settings')" },
-        category: { type: "string", enum: ["arrows", "communication", "computers", "design", "education", "finance", "food", "gaming", "health", "maps", "media", "nature", "people", "photography", "shopping", "system", "text", "time", "transportation", "weather"], description: "Filter by category" },
-        style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone"], description: "Icon weight style (default: regular)" },
+        category: { type: "string", enum: ["arrows", "communication", "computers", "design", "education", "finance", "food", "gaming", "health", "maps", "media", "nature", "people", "photography", "shopping", "system", "text", "time", "transportation", "weather", "brands"], description: "Filter by category ('brands' only applies to library: simple-icons)" },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor). simple-icons is brand/social logos, not general UI icons." },
+        style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style — valid values depend on the library (default: each library's default)" },
         limit: { type: "number", description: "Max results (default 20, max 50)" },
       },
       required: [],
@@ -2124,20 +2203,35 @@ const MCP_TOOLS = [
   },
   {
     name: "insert_icon",
-    description: "Insert a Phosphor icon into a frame as a real inline <svg> layer (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.",
+    description: "Insert an icon into a frame as a real inline <svg> layer (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Target frame ID" },
-        icon: { type: "string", description: "Phosphor icon name without prefix (e.g. 'heart', 'rocket-launch'). Use search_icons to find names." },
-        style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone"], description: "Icon weight (default: regular)" },
+        icon: { type: "string", description: "Icon name without prefix (e.g. 'heart', 'rocket-launch'). Use search_icons to find names." },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor)" },
+        style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style — valid values depend on the library" },
         x: { type: "number", description: "Absolute X position in px (default: 50)" },
         y: { type: "number", description: "Absolute Y position in px (default: 50)" },
         size: { type: "number", description: "Font size in px (default: 48)" },
         color: { type: "string", description: "CSS color (default: #000000)" },
       },
       required: ["templateId", "frameId", "icon"],
+    },
+  },
+  {
+    name: "get_icon_svg",
+    description: "Returns a single icon's real SVG source (same pipeline as insert_icon) WITHOUT writing it into any template — for a caller that needs the raw markup itself, e.g. to place it as a standalone canvas object outside any frame.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Icon name. Use search_icons to find names." },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor)" },
+        style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style" },
+        color: { type: "string", description: "CSS color (default: #000000)" },
+      },
+      required: ["name"],
     },
   },
   {
@@ -6940,16 +7034,16 @@ async function handleMethod(method, params, userId, auth) {
       };
     }
 
-    // ── Phosphor Icons ──
+    // ── Icons (multiple libraries) ──
     case "search_icons": {
-      const PHOSPHOR_STYLE_MAP = {
-        thin: "ph-thin", light: "ph-light", regular: "ph", bold: "ph-bold", fill: "ph-fill", duotone: "ph-duotone",
-      };
-      const iconStyle = PHOSPHOR_STYLE_MAP[params.style] || "ph";
+      const library = ICON_LIBRARIES[params.library] ? params.library : "phosphor";
+      const libDef = ICON_LIBRARIES[library];
+      const style = libDef.styles.includes(params.style) ? params.style : libDef.defaultStyle;
       const q = (params.search || "").toLowerCase().trim();
       const limit = Math.min(params.limit || 20, 50);
+      const catalog = library === "simple-icons" ? SIMPLE_ICONS_CATALOG : ICON_CATALOG;
 
-      let results = ICON_CATALOG;
+      let results = catalog;
       if (q) {
         results = results.filter(icon =>
           icon.n.includes(q) || icon.t.some(tag => tag.includes(q))
@@ -6959,20 +7053,32 @@ async function handleMethod(method, params, userId, auth) {
         results = results.filter(icon => icon.c === params.category);
       }
 
-      const limited = results.slice(0, limit).map(icon => ({
+      const limited = results.slice(0, limit);
+      // Batch-fetch real SVG previews server-side (in parallel) — a live,
+      // WYSIWYG grid, not a webfont glyph guess that may or may not render.
+      // color: "currentColor" (not a literal hex) so the client can recolor
+      // every tile live via a wrapping element's CSS `color`, matching
+      // whatever the user has picked, without refetching on every change.
+      const previews = await Promise.all(limited.map(icon =>
+        fetchIconSvg(icon.n, library, style, { bare: true, color: "currentColor" })
+      ));
+
+      const icons = limited.map((icon, i) => ({
         name: icon.n,
         category: icon.c,
         tags: icon.t,
-        styles: ["thin", "light", "regular", "bold", "fill", "duotone"],
-        className: `${iconStyle} ph-${icon.n}`,
-      }));
+        library,
+        style,
+        svgPreview: previews[i] || null,
+      })).filter(icon => icon.svgPreview); // drop any that failed to resolve rather than show a broken tile
 
       return {
         total: results.length,
-        showing: limited.length,
-        style: params.style || "regular",
-        icons: limited,
-        note: "Pass one of these `name` values to insert_icon to embed the real vector artwork as an inline <svg> layer. Do NOT hand-write <i class=\"ph ph-...\"> or an <svg><path> from memory — insert_icon fetches the actual SVG source, which is the only reliable way to ship an icon.",
+        showing: icons.length,
+        library,
+        style,
+        icons,
+        note: "Pass `name` + `library` to insert_icon to embed the real vector artwork as an inline <svg> layer. Do NOT hand-write <i class=\"ph ph-...\"> or an <svg><path> from memory — insert_icon fetches the actual SVG source, which is the only reliable way to ship an icon.",
       };
     }
 
@@ -6983,8 +7089,8 @@ async function handleMethod(method, params, userId, auth) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
 
-      const VALID_STYLES = ["thin", "light", "regular", "bold", "fill", "duotone"];
-      const style = VALID_STYLES.includes(params.style) ? params.style : "regular";
+      const library = ICON_LIBRARIES[params.library] ? params.library : "phosphor";
+      const style = ICON_LIBRARIES[library].styles.includes(params.style) ? params.style : ICON_LIBRARIES[library].defaultStyle;
       const rawIcon = params.iconName || params.icon;
       if (!rawIcon) throw { code: -32602, message: "icon (or iconName) is required" };
       const iconName = rawIcon.replace(/^(ph[-\w]*\s+)?ph-/, "");
@@ -6994,11 +7100,11 @@ async function handleMethod(method, params, userId, auth) {
       const color = params.color || "#000000";
       const layerId = `icon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-      // Real inline SVG, not a webfont glyph — see fetchPhosphorIconSvg for why
+      // Real inline SVG, not a webfont glyph — see fetchIconSvg for why
       // (export reliability, editability, no external CDN dependency at render time).
-      const svgMarkup = await fetchPhosphorIconSvg(iconName, style, { layerId, layerName: iconName, x, y, size, color });
+      const svgMarkup = await fetchIconSvg(iconName, library, style, { layerId, layerName: iconName, x, y, size, color });
       if (!svgMarkup) {
-        throw { code: -32000, message: `Icon "${iconName}" (style: ${style}) was not found. Use search_icons to find a valid name.` };
+        throw { code: -32000, message: `Icon "${iconName}" (style: ${style}, library: ${library}) was not found. Use search_icons to find a valid name.` };
       }
 
       frame.html = (frame.html || "") + svgMarkup;
@@ -7022,6 +7128,17 @@ async function handleMethod(method, params, userId, auth) {
         svg: svgMarkup,
         note: "Inserted as a real inline SVG (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph.",
       };
+    }
+
+    case "get_icon_svg": {
+      const name = params.name || params.icon;
+      if (!name) throw { code: -32602, message: "name is required" };
+      const library = ICON_LIBRARIES[params.library] ? params.library : "phosphor";
+      const style = ICON_LIBRARIES[library].styles.includes(params.style) ? params.style : ICON_LIBRARIES[library].defaultStyle;
+      const color = params.color || "#000000";
+      const svg = await fetchIconSvg(name.replace(/^(ph[-\w]*\s+)?ph-/, ""), library, style, { bare: true, color });
+      if (!svg) throw { code: -32000, message: `Icon "${name}" (style: ${style}, library: ${library}) was not found. Use search_icons to find a valid name.` };
+      return { svg, library, style };
     }
 
     case "resolve_icon_hints": {

@@ -19,7 +19,7 @@ interface Props {
   multiSelectCount?: number;
   onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
   onSvgImport?: () => void;
-  onIconPicker?: () => void;
+  onIconPicker?: (anchorRect: DOMRect) => void;
   onGroup?: () => void;
   onUngroup?: () => void;
   canGroup?: boolean;
@@ -540,8 +540,8 @@ export function FloatingToolbar({
         {/* ── Icons Toggle ── */}
         <button
           type="button"
-          onClick={onIconPicker}
-          title="Icons (Phosphor)"
+          onClick={e => onIconPicker(e.currentTarget.getBoundingClientRect())}
+          title="Icons — click to open, drag onto the canvas to place"
           style={{
             width: 46, height: 36,
             display: "flex", alignItems: "center", justifyContent: "center",
