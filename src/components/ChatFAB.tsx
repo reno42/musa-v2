@@ -553,6 +553,10 @@ REGLAS GENERALES:
 - NO pierdas rondas explorando. Identifica el modo y ejecuta los pasos.
 - Si una tool falla, intenta de nuevo con datos corregidos.
 - Tu respuesta final es UNA línea: "done -> implementado", "blocked -> [razón]", o la pregunta del PASO 0.
+- ICONOS: si el diseño necesita iconografía (flechas, checks, redes sociales, iconos de UI, bullets de
+  infografía, etc.), NUNCA uses un emoji como sustituto. Llama search_icons para encontrar el nombre real
+  y luego insert_icon para incrustarlo — insert_icon lo embebe como <svg> real (data-layer-kind="svg"),
+  editable y sin dependencia de fuentes externas. No escribas tú mismo un <svg><path> de memoria.
 
 TU SESSION ID: {SESSION_ID}
 

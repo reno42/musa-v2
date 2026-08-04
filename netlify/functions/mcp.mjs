@@ -54,6 +54,355 @@ function darkenHex(hex, amount = 0.15) {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
+
+/**
+ * Curated catalog of ~200 useful Phosphor icons (MIT licensed), used by
+ * search_icons and by image_to_design's icon-hint post-processing (fuzzy
+ * name matching against real catalog entries, never trusting an LLM to
+ * invent an icon name that does not exist).
+ */
+const ICON_CATALOG = [
+  // Arrows
+  { n: "arrow-up", c: "arrows", t: ["up", "direction", "north"] },
+  { n: "arrow-down", c: "arrows", t: ["down", "direction", "south"] },
+  { n: "arrow-left", c: "arrows", t: ["left", "back", "direction", "west"] },
+  { n: "arrow-right", c: "arrows", t: ["right", "forward", "direction", "east"] },
+  { n: "arrow-up-right", c: "arrows", t: ["diagonal", "northeast"] },
+  { n: "arrow-down-right", c: "arrows", t: ["diagonal", "southeast"] },
+  { n: "arrow-up-left", c: "arrows", t: ["diagonal", "northwest"] },
+  { n: "arrow-down-left", c: "arrows", t: ["diagonal", "southwest"] },
+  { n: "arrows-clockwise", c: "arrows", t: ["refresh", "rotate", "sync", "reload"] },
+  { n: "arrows-counter-clockwise", c: "arrows", t: ["undo", "rotate", "reverse"] },
+  { n: "arrow-bend-up-right", c: "arrows", t: ["turn", "curve"] },
+  { n: "arrow-bend-down-right", c: "arrows", t: ["turn", "curve"] },
+  { n: "arrow-bend-up-left", c: "arrows", t: ["turn", "back", "curve"] },
+  { n: "arrow-bend-down-left", c: "arrows", t: ["turn", "curve"] },
+  { n: "caret-up", c: "arrows", t: ["expand", "collapse", "chevron"] },
+  { n: "caret-down", c: "arrows", t: ["expand", "collapse", "chevron"] },
+  { n: "caret-left", c: "arrows", t: ["back", "chevron"] },
+  { n: "caret-right", c: "arrows", t: ["forward", "chevron"] },
+  { n: "caret-double-up", c: "arrows", t: ["chevron", "sort"] },
+  { n: "caret-double-down", c: "arrows", t: ["chevron", "sort"] },
+  { n: "corner-up-left", c: "arrows", t: ["undo", "reply"] },
+  { n: "corner-up-right", c: "arrows", t: ["redo", "share"] },
+  // Communication
+  { n: "chat-circle", c: "communication", t: ["message", "chat", "bubble", "comment"] },
+  { n: "chat-circle-dots", c: "communication", t: ["typing", "message", "chat"] },
+  { n: "chat-teardrop", c: "communication", t: ["message", "chat", "bubble"] },
+  { n: "envelope", c: "communication", t: ["mail", "email", "letter"] },
+  { n: "envelope-open", c: "communication", t: ["mail", "email", "read"] },
+  { n: "paper-plane-tilt", c: "communication", t: ["send", "submit", "share"] },
+  { n: "phone", c: "communication", t: ["call", "telephone", "contact"] },
+  { n: "phone-call", c: "communication", t: ["call", "ringing"] },
+  { n: "bell", c: "communication", t: ["notification", "alert", "alarm"] },
+  { n: "bell-ringing", c: "communication", t: ["notification", "alert", "active"] },
+  { n: "megaphone", c: "communication", t: ["announce", "broadcast", "marketing"] },
+  { n: "at", c: "communication", t: ["mention", "email", "symbol"] },
+  // Computers
+  { n: "desktop", c: "computers", t: ["computer", "monitor", "screen", "imac"] },
+  { n: "laptop", c: "computers", t: ["computer", "notebook", "macbook"] },
+  { n: "device-mobile", c: "computers", t: ["phone", "smartphone", "cellphone"] },
+  { n: "device-tablet", c: "computers", t: ["ipad", "tablet"] },
+  { n: "keyboard", c: "computers", t: ["type", "input", "keys"] },
+  { n: "mouse", c: "computers", t: ["click", "pointer", "input"] },
+  { n: "cpu", c: "computers", t: ["processor", "chip", "hardware"] },
+  { n: "hard-drive", c: "computers", t: ["storage", "disk", "save"] },
+  { n: "monitor", c: "computers", t: ["screen", "display"] },
+  { n: "printer", c: "computers", t: ["print", "paper"] },
+  // Design
+  { n: "paint-brush", c: "design", t: ["brush", "paint", "draw", "art"] },
+  { n: "paint-brush-broad", c: "design", t: ["brush", "paint", "draw"] },
+  { n: "paint-roller", c: "design", t: ["paint", "wall", "color"] },
+  { n: "palette", c: "design", t: ["color", "colors", "swatch", "art"] },
+  { n: "eyedropper", c: "design", t: ["color", "pick", "sample"] },
+  { n: "pencil", c: "design", t: ["edit", "write", "draw"] },
+  { n: "pencil-simple", c: "design", t: ["edit", "write"] },
+  { n: "eraser", c: "design", t: ["delete", "remove", "clean"] },
+  { n: "ruler", c: "design", t: ["measure", "straight"] },
+  { n: "square", c: "design", t: ["shape", "box", "rectangle"] },
+  { n: "circle", c: "design", t: ["shape", "round", "dot"] },
+  { n: "triangle", c: "design", t: ["shape", "polygon"] },
+  { n: "squares-four", c: "design", t: ["grid", "layout", "columns"] },
+  { n: "magic-wand", c: "design", t: ["ai", "magic", "sparkle", "wand"] },
+  { n: "spray-can", c: "design", t: ["paint", "graffiti", "street"] },
+  // Education
+  { n: "graduation-cap", c: "education", t: ["school", "university", "degree", "study"] },
+  { n: "book", c: "education", t: ["read", "reading", "library"] },
+  { n: "book-open", c: "education", t: ["read", "reading", "study"] },
+  { n: "books", c: "education", t: ["library", "study", "stack"] },
+  { n: "lightbulb", c: "education", t: ["idea", "tip", "bright", "innovation"] },
+  { n: "puzzle-piece", c: "education", t: ["game", "piece", "solution"] },
+  { n: "globe", c: "education", t: ["world", "earth", "planet", "international"] },
+  { n: "globe-hemisphere-west", c: "education", t: ["world", "earth", "americas"] },
+  // Finance
+  { n: "currency-dollar", c: "finance", t: ["money", "usd", "cash", "price"] },
+  { n: "currency-euro", c: "finance", t: ["money", "eur", "cash"] },
+  { n: "currency-btc", c: "finance", t: ["bitcoin", "crypto", "btc"] },
+  { n: "credit-card", c: "finance", t: ["pay", "payment", "card"] },
+  { n: "wallet", c: "finance", t: ["money", "pay", "purse"] },
+  { n: "bank", c: "finance", t: ["building", "finance", "institution"] },
+  { n: "chart-line", c: "finance", t: ["graph", "trend", "analytics", "growth"] },
+  { n: "chart-bar", c: "finance", t: ["graph", "stats", "analytics"] },
+  { n: "chart-pie", c: "finance", t: ["graph", "stats", "percentage"] },
+  { n: "chart-line-up", c: "finance", t: ["growth", "trend", "positive", "analytics"] },
+  { n: "trending-up", c: "finance", t: ["growth", "increase", "positive"] },
+  { n: "trending-down", c: "finance", t: ["decrease", "negative", "loss"] },
+  { n: "percent", c: "finance", t: ["discount", "sale", "percentage"] },
+  { n: "receipt", c: "finance", t: ["invoice", "bill", "transaction"] },
+  // Food
+  { n: "coffee", c: "food", t: ["drink", "cup", "cafe", "morning"] },
+  { n: "cup-soda", c: "food", t: ["drink", "glass", "beverage"] },
+  { n: "fork-knife", c: "food", t: ["restaurant", "eat", "dining", "meal"] },
+  { n: "pizza", c: "food", t: ["food", "slice", "italian"] },
+  { n: "hamburger", c: "food", t: ["burger", "food", "fast"] },
+  { n: "ice-cream", c: "food", t: ["dessert", "sweet", "cone"] },
+  { n: "cake", c: "food", t: ["birthday", "dessert", "party"] },
+  { n: "wine", c: "food", t: ["drink", "alcohol", "glass"] },
+  { n: "beer-stein", c: "food", t: ["drink", "alcohol", "mug"] },
+  // Gaming
+  { n: "game-controller", c: "gaming", t: ["game", "play", "joystick"] },
+  { n: "dice-five", c: "gaming", t: ["roll", "random", "chance"] },
+  { n: "chess-knight", c: "gaming", t: ["strategy", "board", "piece"] },
+  { n: "trophy", c: "gaming", t: ["award", "win", "champion", "prize"] },
+  { n: "medal", c: "gaming", t: ["award", "win", "achievement"] },
+  { n: "target", c: "gaming", t: ["goal", "aim", "bullseye"] },
+  // Health
+  { n: "heart", c: "health", t: ["love", "like", "favorite", "health"] },
+  { n: "heart-straight", c: "health", t: ["love", "like", "favorite"] },
+  { n: "first-aid-kit", c: "health", t: ["medical", "emergency", "health"] },
+  { n: "pill", c: "health", t: ["medicine", "drug", "pharmacy"] },
+  { n: "stethoscope", c: "health", t: ["doctor", "medical", "health"] },
+  { n: "heartbeat", c: "health", t: ["pulse", "health", "vital"] },
+  { n: "brain", c: "health", t: ["mind", "intelligence", "ai", "thinking"] },
+  { n: "tooth", c: "health", t: ["dental", "dentist"] },
+  // Maps & Travel
+  { n: "map-pin", c: "maps", t: ["location", "place", "marker", "address"] },
+  { n: "map-trifold", c: "maps", t: ["map", "direction", "navigation"] },
+  { n: "navigation-arrow", c: "maps", t: ["gps", "direction", "navigate"] },
+  { n: "compass", c: "maps", t: ["direction", "north", "navigate"] },
+  { n: "airplane", c: "maps", t: ["flight", "travel", "fly"] },
+  { n: "airplane-takeoff", c: "maps", t: ["depart", "flight"] },
+  { n: "airplane-landing", c: "maps", t: ["arrive", "flight"] },
+  { n: "car", c: "maps", t: ["vehicle", "auto", "drive"] },
+  { n: "truck", c: "maps", t: ["delivery", "vehicle", "cargo"] },
+  { n: "bus", c: "maps", t: ["transport", "public", "vehicle"] },
+  { n: "train", c: "maps", t: ["transport", "rail", "subway"] },
+  { n: "bicycle", c: "maps", t: ["bike", "cycle", "transport"] },
+  // Media
+  { n: "play", c: "media", t: ["video", "start", "media"] },
+  { n: "pause", c: "media", t: ["video", "hold", "media"] },
+  { n: "stop", c: "media", t: ["video", "end", "media"] },
+  { n: "skip-forward", c: "media", t: ["next", "forward", "track"] },
+  { n: "skip-back", c: "media", t: ["previous", "backward", "track"] },
+  { n: "fast-forward", c: "media", t: ["forward", "speed"] },
+  { n: "rewind", c: "media", t: ["backward", "speed"] },
+  { n: "shuffle", c: "media", t: ["random", "mix"] },
+  { n: "repeat", c: "media", t: ["loop", "again"] },
+  { n: "microphone", c: "media", t: ["record", "voice", "audio", "mic"] },
+  { n: "speaker-high", c: "media", t: ["volume", "sound", "audio", "loud"] },
+  { n: "speaker-none", c: "media", t: ["mute", "silent", "volume"] },
+  { n: "headphones", c: "media", t: ["audio", "music", "listen"] },
+  { n: "camera", c: "media", t: ["photo", "picture", "capture"] },
+  { n: "video-camera", c: "media", t: ["film", "record", "video"] },
+  { n: "film-reel", c: "media", t: ["movie", "cinema", "film"] },
+  { n: "youtube-logo", c: "media", t: ["video", "social", "platform"] },
+  { n: "spotify-logo", c: "media", t: ["music", "audio", "platform"] },
+  // Nature
+  { n: "sun", c: "nature", t: ["weather", "bright", "day", "light"] },
+  { n: "moon", c: "nature", t: ["night", "dark", "sleep"] },
+  { n: "cloud", c: "nature", t: ["weather", "sky", "overcast"] },
+  { n: "drop", c: "nature", t: ["water", "liquid", "rain"] },
+  { n: "fire", c: "nature", t: ["flame", "hot", "burn"] },
+  { n: "leaf", c: "nature", t: ["plant", "green", "eco", "nature"] },
+  { n: "tree", c: "nature", t: ["plant", "forest", "nature"] },
+  { n: "mountains", c: "nature", t: ["landscape", "peak", "hiking"] },
+  { n: "flower", c: "nature", t: ["plant", "bloom", "garden"] },
+  { n: "plant", c: "nature", t: ["grow", "green", "garden"] },
+  // People
+  { n: "user", c: "people", t: ["person", "account", "profile", "avatar"] },
+  { n: "users", c: "people", t: ["group", "team", "community"] },
+  { n: "users-three", c: "people", t: ["group", "team", "crowd"] },
+  { n: "user-circle", c: "people", t: ["avatar", "profile", "account"] },
+  { n: "user-plus", c: "people", t: ["add", "register", "invite"] },
+  { n: "handshake", c: "people", t: ["deal", "agreement", "partnership"] },
+  { n: "smiley", c: "people", t: ["emoji", "face", "happy"] },
+  { n: "smiley-melting", c: "people", t: ["emoji", "face", "melt"] },
+  { n: "thumbs-up", c: "people", t: ["like", "approve", "good"] },
+  { n: "thumbs-down", c: "people", t: ["dislike", "reject", "bad"] },
+  { n: "hand-pointing", c: "people", t: ["point", "click", "finger"] },
+  { n: "waving-hand", c: "people", t: ["hello", "hi", "wave", "greeting"] },
+  { n: "clapping-hands", c: "people", t: ["applaud", "praise", "celebrate"] },
+  // Photography
+  { n: "aperture", c: "photography", t: ["camera", "lens", "photography"] },
+  { n: "image", c: "photography", t: ["photo", "picture", "gallery"] },
+  { n: "images", c: "photography", t: ["photos", "gallery", "pictures"] },
+  { n: "squares-four", c: "photography", t: ["grid", "gallery"] },
+  { n: "crop", c: "photography", t: ["edit", "trim", "cut"] },
+  { n: "flip-horizontal", c: "photography", t: ["mirror", "reflect"] },
+  // Shopping
+  { n: "shopping-cart", c: "shopping", t: ["cart", "buy", "basket"] },
+  { n: "shopping-bag", c: "shopping", t: ["bag", "store", "buy"] },
+  { n: "storefront", c: "shopping", t: ["shop", "store", "business"] },
+  { n: "tag", c: "shopping", t: ["label", "price", "sale"] },
+  { n: "gift", c: "shopping", t: ["present", "birthday", "box"] },
+  { n: "barcode", c: "shopping", t: ["scan", "product", "code"] },
+  // System
+  { n: "gear", c: "system", t: ["settings", "config", "preferences", "cog"] },
+  { n: "gear-six", c: "system", t: ["settings", "config", "preferences"] },
+  { n: "sliders", c: "system", t: ["adjust", "controls", "settings"] },
+  { n: "toggle-left", c: "system", t: ["switch", "on", "off"] },
+  { n: "toggle-right", c: "system", t: ["switch", "on", "off"] },
+  { n: "power", c: "system", t: ["on", "off", "shutdown"] },
+  { n: "info", c: "system", t: ["information", "help", "details"] },
+  { n: "warning", c: "system", t: ["alert", "caution", "danger", "triangle"] },
+  { n: "check-circle", c: "system", t: ["done", "success", "complete", "ok"] },
+  { n: "x-circle", c: "system", t: ["close", "cancel", "error", "delete"] },
+  { n: "x", c: "system", t: ["close", "cancel", "remove"] },
+  { n: "check", c: "system", t: ["done", "confirm", "yes"] },
+  { n: "plus", c: "system", t: ["add", "new", "create"] },
+  { n: "minus", c: "system", t: ["remove", "subtract", "less"] },
+  { n: "magnifying-glass", c: "system", t: ["search", "find", "zoom", "lookup"] },
+  { n: "magnifying-glass-plus", c: "system", t: ["zoom", "in", "enlarge"] },
+  { n: "magnifying-glass-minus", c: "system", t: ["zoom", "out", "shrink"] },
+  { n: "funnel", c: "system", t: ["filter", "sort", "narrow"] },
+  { n: "list", c: "system", t: ["bullet", "items", "menu"] },
+  { n: "list-bullets", c: "system", t: ["bullet", "items"] },
+  { n: "dots-three", c: "system", t: ["more", "menu", "options"] },
+  { n: "dots-three-vertical", c: "system", t: ["more", "menu"] },
+  { n: "dots-six-vertical", c: "system", t: ["drag", "handle", "reorder"] },
+  { n: "eye", c: "system", t: ["view", "show", "visible", "watch"] },
+  { n: "eye-slash", c: "system", t: ["hide", "invisible", "private"] },
+  { n: "lock", c: "system", t: ["secure", "password", "closed"] },
+  { n: "lock-open", c: "system", t: ["unlock", "open", "access"] },
+  { n: "key", c: "system", t: ["password", "access", "secure"] },
+  { n: "shield-check", c: "system", t: ["security", "verified", "protection", "safe"] },
+  { n: "shield-warning", c: "system", t: ["security", "alert", "vulnerable"] },
+  { n: "download-simple", c: "system", t: ["save", "export", "file"] },
+  { n: "upload-simple", c: "system", t: ["import", "file", "share"] },
+  { n: "trash", c: "system", t: ["delete", "remove", "bin"] },
+  { n: "copy", c: "system", t: ["duplicate", "clone", "paste"] },
+  { n: "clipboard", c: "system", t: ["copy", "paste", "notes"] },
+  { n: "folder", c: "system", t: ["directory", "files", "project"] },
+  { n: "folder-open", c: "system", t: ["directory", "browse"] },
+  { n: "file", c: "system", t: ["document", "page"] },
+  { n: "file-text", c: "system", t: ["document", "read", "page"] },
+  { n: "link", c: "system", t: ["url", "chain", "connect"] },
+  { n: "link-simple", c: "system", t: ["url", "chain"] },
+  { n: "share-network", c: "system", t: ["share", "distribute", "social"] },
+  // Text
+  { n: "text-aa", c: "text", t: ["font", "typography", "size"] },
+  { n: "text-align-left", c: "text", t: ["align", "format", "paragraph"] },
+  { n: "text-align-center", c: "text", t: ["align", "format", "center"] },
+  { n: "text-align-right", c: "text", t: ["align", "format", "right"] },
+  { n: "text-bolder", c: "text", t: ["bold", "strong", "weight"] },
+  { n: "text-italic", c: "text", t: ["italic", "emphasis"] },
+  { n: "text-underline", c: "text", t: ["underline", "emphasis"] },
+  { n: "text-strikethrough", c: "text", t: ["strike", "delete", "line"] },
+  { n: "quotes", c: "text", t: ["quote", "citation", "speech"] },
+  // Time
+  { n: "clock", c: "time", t: ["time", "watch", "hour"] },
+  { n: "clock-afternoon", c: "time", t: ["time", "pm", "afternoon"] },
+  { n: "timer", c: "time", t: ["stopwatch", "countdown"] },
+  { n: "alarm", c: "time", t: ["wake", "morning", "alert"] },
+  { n: "calendar", c: "time", t: ["date", "schedule", "event", "day"] },
+  { n: "calendar-blank", c: "time", t: ["date", "schedule", "empty"] },
+  { n: "calendar-check", c: "time", t: ["date", "confirmed", "event"] },
+  { n: "sand-timer", c: "time", t: ["hourglass", "waiting", "countdown"] },
+  // Transportation
+  { n: "airplane", c: "transportation", t: ["fly", "travel", "flight"] },
+  { n: "car", c: "transportation", t: ["vehicle", "auto", "drive"] },
+  { n: "truck", c: "transportation", t: ["delivery", "cargo", "vehicle"] },
+  // Weather
+  { n: "sun", c: "weather", t: ["bright", "day", "clear"] },
+  { n: "cloud-rain", c: "weather", t: ["rain", "wet", "drizzle"] },
+  { n: "cloud-sun", c: "weather", t: ["partly", "cloudy"] },
+  { n: "cloud-lightning", c: "weather", t: ["storm", "thunder", "bolt"] },
+  { n: "snowflake", c: "weather", t: ["cold", "winter", "freeze"] },
+  { n: "thermometer", c: "weather", t: ["temperature", "hot", "cold"] },
+  { n: "wind", c: "weather", t: ["breeze", "air", "blow"] },
+  { n: "umbrella", c: "weather", t: ["rain", "protect"] },
+];
+
+
+/**
+ * Fetches an icon's real SVG source from Phosphor Icons' core asset CDN
+ * (MIT licensed, actual vector path data — not the webfont) and rewrites the
+ * root <svg> into this app's own shape-layer convention (data-layer-kind=
+ * "svg", same as the Star/Triangle/Polygon shape tools), so an inserted icon
+ * is a first-class editable vector layer with zero external dependency at
+ * export/render time. Returns null if the name/style has no matching asset.
+ */
+async function fetchPhosphorIconSvg(name, style, opts = {}) {
+  const svgUrl = `https://unpkg.com/@phosphor-icons/core@2.1.1/assets/${style}/${name}.svg`;
+  let resp;
+  try {
+    resp = await fetch(svgUrl);
+  } catch {
+    return null;
+  }
+  if (!resp.ok) return null;
+  const raw = await resp.text();
+  const openMatch = raw.match(/^<svg\s+([^>]*)>/);
+  if (!openMatch) return null;
+  const viewBoxMatch = openMatch[1].match(/viewBox="([^"]+)"/);
+  const viewBox = viewBoxMatch ? viewBoxMatch[1] : "0 0 256 256";
+  const closeIdx = raw.lastIndexOf("</svg>");
+  if (closeIdx === -1) return null;
+  const inner = raw.slice(openMatch[0].length, closeIdx);
+  const {
+    layerId = `icon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    layerName = name,
+    x = 0, y = 0, size = 48, color = "#000000",
+  } = opts;
+  return `<svg data-layer-id="${layerId}" data-layer-name="${layerName}" data-layer-kind="svg" viewBox="${viewBox}" style="position:absolute;left:${x}px;top:${y}px;width:${size}px;height:${size}px;overflow:visible;" fill="${color}">${inner}</svg>`;
+}
+
+/**
+ * Post-processes AI-generated HTML (image_to_design) that used the icon-hint
+ * convention: <div data-icon-hint="heart" data-icon-color="#hex" style="
+ * position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;"></div>. Never
+ * trusts the vision model to draw an icon itself (emoji, or a hand-typed
+ * <svg><path> — both are exactly the kind of precise structured data LLMs
+ * get subtly wrong) — instead fuzzy-matches the hint against the real
+ * ICON_CATALOG and swaps in the actual Phosphor SVG via fetchPhosphorIconSvg.
+ * Any hint that can't be matched to a real icon is dropped rather than left
+ * as a broken empty placeholder.
+ */
+async function resolveIconHintsInHtml(html) {
+  const hintRegex = /<div\s+([^>]*data-icon-hint="([^"]+)"[^>]*)>\s*<\/div>/gi;
+  const matches = [...html.matchAll(hintRegex)];
+  if (matches.length === 0) return html;
+
+  let result = "";
+  let cursor = 0;
+  for (const match of matches) {
+    const [fullTag, attrs, hintRaw] = match;
+    result += html.slice(cursor, match.index);
+    cursor = match.index + fullTag.length;
+
+    const hint = hintRaw.toLowerCase().trim();
+    const catalogEntry = ICON_CATALOG.find(i => i.n === hint)
+      || ICON_CATALOG.find(i => i.t.includes(hint))
+      || ICON_CATALOG.find(i => i.n.includes(hint) || hint.includes(i.n));
+    if (!catalogEntry) continue; // no safe match — drop the placeholder entirely
+
+    const styleMatch = attrs.match(/style="([^"]*)"/);
+    const style = styleMatch ? styleMatch[1] : "";
+    const left = parseFloat((style.match(/left:\s*([\d.]+)px/) || [])[1]) || 0;
+    const top = parseFloat((style.match(/top:\s*([\d.]+)px/) || [])[1]) || 0;
+    const width = parseFloat((style.match(/width:\s*([\d.]+)px/) || [])[1]) || 32;
+    const colorMatch = attrs.match(/data-icon-color="([^"]+)"/);
+    const color = colorMatch ? colorMatch[1] : "#000000";
+
+    const svg = await fetchPhosphorIconSvg(catalogEntry.n, "regular", {
+      layerName: catalogEntry.n, x: left, y: top, size: width, color,
+    });
+    if (svg) result += svg;
+  }
+  result += html.slice(cursor);
+  return result;
+}
+
 /** Match a CSS selector against a cheerio element (simple: tag, .class, #id, compound) */
 function matchesSelector($el, selector) {
   if ($el.length === 0) return false;
@@ -1756,7 +2105,7 @@ const MCP_TOOLS = [
   // ── Shared: Phosphor Icons ──
   {
     name: "search_icons",
-    description: "Search Phosphor Icons (1,300+ MIT-licensed icons, 6 weight styles). Returns icon name, category, available styles, and ready-to-use HTML snippet.",
+    description: "Search Phosphor Icons (MIT-licensed, 6 weight styles) by name/keyword/category. NEVER use an emoji character as a substitute for an icon in a design — always search here first and insert the real result with insert_icon. Returns icon names to pass to insert_icon (not raw HTML — insert_icon embeds it as a real inline <svg>, which is the only reliable way to ship an icon in an exported design).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1770,7 +2119,7 @@ const MCP_TOOLS = [
   },
   {
     name: "insert_icon",
-    description: "Insert a Phosphor icon into a frame. Auto-injects the Phosphor Icons CDN CSS if not present. Returns the layerId of the inserted icon element.",
+    description: "Insert a Phosphor icon into a frame as a real inline <svg> layer (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6444,6 +6793,7 @@ async function handleMethod(method, params, userId, auth) {
 - Include all Google Fonts as @import url(...) at the very top of the CSS.
 - Do NOT include any @media queries.
 - Do NOT use position: fixed.
+- ICONS: when you see an icon/pictogram/symbol (arrow, heart, star, check, gear, social logo, UI glyph, etc — anything that is NOT decorative photography or a text glyph), do NOT draw it yourself and do NOT use an emoji character. Instead emit a placeholder in its exact place: <div data-icon-hint="lowercase-icon-name" data-icon-color="#hex" style="position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;"></div> — use a short generic English name for the icon concept (e.g. "heart", "arrow-right", "star", "check", "gear", "user"), sized/positioned to match what you see. This placeholder gets swapped for the real vector icon automatically after generation — never invent your own SVG path data.
 - Return ONLY the complete HTML code. No markdown, no explanations, no code fences. Start directly with <html> or the first element.`;
 
       try {
@@ -6509,6 +6859,11 @@ async function handleMethod(method, params, userId, auth) {
         }
 
         if (!html && !css) throw { code: -32000, message: "Could not extract HTML/CSS from AI response" };
+
+        // Swap any data-icon-hint placeholders Gemini left behind for real
+        // Phosphor SVGs — see resolveIconHintsInHtml for why this can't just
+        // trust whatever the vision model drew for an icon.
+        if (html) html = await resolveIconHintsInHtml(html);
 
         // Inject into frame (or template)
         if (targetFrame) {
@@ -6578,269 +6933,6 @@ async function handleMethod(method, params, userId, auth) {
       const q = (params.search || "").toLowerCase().trim();
       const limit = Math.min(params.limit || 20, 50);
 
-      // Curated catalog of 200+ most useful Phosphor icons
-      const ICON_CATALOG = [
-        // Arrows
-        { n: "arrow-up", c: "arrows", t: ["up", "direction", "north"] },
-        { n: "arrow-down", c: "arrows", t: ["down", "direction", "south"] },
-        { n: "arrow-left", c: "arrows", t: ["left", "back", "direction", "west"] },
-        { n: "arrow-right", c: "arrows", t: ["right", "forward", "direction", "east"] },
-        { n: "arrow-up-right", c: "arrows", t: ["diagonal", "northeast"] },
-        { n: "arrow-down-right", c: "arrows", t: ["diagonal", "southeast"] },
-        { n: "arrow-up-left", c: "arrows", t: ["diagonal", "northwest"] },
-        { n: "arrow-down-left", c: "arrows", t: ["diagonal", "southwest"] },
-        { n: "arrows-clockwise", c: "arrows", t: ["refresh", "rotate", "sync", "reload"] },
-        { n: "arrows-counter-clockwise", c: "arrows", t: ["undo", "rotate", "reverse"] },
-        { n: "arrow-bend-up-right", c: "arrows", t: ["turn", "curve"] },
-        { n: "arrow-bend-down-right", c: "arrows", t: ["turn", "curve"] },
-        { n: "arrow-bend-up-left", c: "arrows", t: ["turn", "back", "curve"] },
-        { n: "arrow-bend-down-left", c: "arrows", t: ["turn", "curve"] },
-        { n: "caret-up", c: "arrows", t: ["expand", "collapse", "chevron"] },
-        { n: "caret-down", c: "arrows", t: ["expand", "collapse", "chevron"] },
-        { n: "caret-left", c: "arrows", t: ["back", "chevron"] },
-        { n: "caret-right", c: "arrows", t: ["forward", "chevron"] },
-        { n: "caret-double-up", c: "arrows", t: ["chevron", "sort"] },
-        { n: "caret-double-down", c: "arrows", t: ["chevron", "sort"] },
-        { n: "corner-up-left", c: "arrows", t: ["undo", "reply"] },
-        { n: "corner-up-right", c: "arrows", t: ["redo", "share"] },
-        // Communication
-        { n: "chat-circle", c: "communication", t: ["message", "chat", "bubble", "comment"] },
-        { n: "chat-circle-dots", c: "communication", t: ["typing", "message", "chat"] },
-        { n: "chat-teardrop", c: "communication", t: ["message", "chat", "bubble"] },
-        { n: "envelope", c: "communication", t: ["mail", "email", "letter"] },
-        { n: "envelope-open", c: "communication", t: ["mail", "email", "read"] },
-        { n: "paper-plane-tilt", c: "communication", t: ["send", "submit", "share"] },
-        { n: "phone", c: "communication", t: ["call", "telephone", "contact"] },
-        { n: "phone-call", c: "communication", t: ["call", "ringing"] },
-        { n: "bell", c: "communication", t: ["notification", "alert", "alarm"] },
-        { n: "bell-ringing", c: "communication", t: ["notification", "alert", "active"] },
-        { n: "megaphone", c: "communication", t: ["announce", "broadcast", "marketing"] },
-        { n: "at", c: "communication", t: ["mention", "email", "symbol"] },
-        // Computers
-        { n: "desktop", c: "computers", t: ["computer", "monitor", "screen", "imac"] },
-        { n: "laptop", c: "computers", t: ["computer", "notebook", "macbook"] },
-        { n: "device-mobile", c: "computers", t: ["phone", "smartphone", "cellphone"] },
-        { n: "device-tablet", c: "computers", t: ["ipad", "tablet"] },
-        { n: "keyboard", c: "computers", t: ["type", "input", "keys"] },
-        { n: "mouse", c: "computers", t: ["click", "pointer", "input"] },
-        { n: "cpu", c: "computers", t: ["processor", "chip", "hardware"] },
-        { n: "hard-drive", c: "computers", t: ["storage", "disk", "save"] },
-        { n: "monitor", c: "computers", t: ["screen", "display"] },
-        { n: "printer", c: "computers", t: ["print", "paper"] },
-        // Design
-        { n: "paint-brush", c: "design", t: ["brush", "paint", "draw", "art"] },
-        { n: "paint-brush-broad", c: "design", t: ["brush", "paint", "draw"] },
-        { n: "paint-roller", c: "design", t: ["paint", "wall", "color"] },
-        { n: "palette", c: "design", t: ["color", "colors", "swatch", "art"] },
-        { n: "eyedropper", c: "design", t: ["color", "pick", "sample"] },
-        { n: "pencil", c: "design", t: ["edit", "write", "draw"] },
-        { n: "pencil-simple", c: "design", t: ["edit", "write"] },
-        { n: "eraser", c: "design", t: ["delete", "remove", "clean"] },
-        { n: "ruler", c: "design", t: ["measure", "straight"] },
-        { n: "square", c: "design", t: ["shape", "box", "rectangle"] },
-        { n: "circle", c: "design", t: ["shape", "round", "dot"] },
-        { n: "triangle", c: "design", t: ["shape", "polygon"] },
-        { n: "squares-four", c: "design", t: ["grid", "layout", "columns"] },
-        { n: "magic-wand", c: "design", t: ["ai", "magic", "sparkle", "wand"] },
-        { n: "spray-can", c: "design", t: ["paint", "graffiti", "street"] },
-        // Education
-        { n: "graduation-cap", c: "education", t: ["school", "university", "degree", "study"] },
-        { n: "book", c: "education", t: ["read", "reading", "library"] },
-        { n: "book-open", c: "education", t: ["read", "reading", "study"] },
-        { n: "books", c: "education", t: ["library", "study", "stack"] },
-        { n: "lightbulb", c: "education", t: ["idea", "tip", "bright", "innovation"] },
-        { n: "puzzle-piece", c: "education", t: ["game", "piece", "solution"] },
-        { n: "globe", c: "education", t: ["world", "earth", "planet", "international"] },
-        { n: "globe-hemisphere-west", c: "education", t: ["world", "earth", "americas"] },
-        // Finance
-        { n: "currency-dollar", c: "finance", t: ["money", "usd", "cash", "price"] },
-        { n: "currency-euro", c: "finance", t: ["money", "eur", "cash"] },
-        { n: "currency-btc", c: "finance", t: ["bitcoin", "crypto", "btc"] },
-        { n: "credit-card", c: "finance", t: ["pay", "payment", "card"] },
-        { n: "wallet", c: "finance", t: ["money", "pay", "purse"] },
-        { n: "bank", c: "finance", t: ["building", "finance", "institution"] },
-        { n: "chart-line", c: "finance", t: ["graph", "trend", "analytics", "growth"] },
-        { n: "chart-bar", c: "finance", t: ["graph", "stats", "analytics"] },
-        { n: "chart-pie", c: "finance", t: ["graph", "stats", "percentage"] },
-        { n: "chart-line-up", c: "finance", t: ["growth", "trend", "positive", "analytics"] },
-        { n: "trending-up", c: "finance", t: ["growth", "increase", "positive"] },
-        { n: "trending-down", c: "finance", t: ["decrease", "negative", "loss"] },
-        { n: "percent", c: "finance", t: ["discount", "sale", "percentage"] },
-        { n: "receipt", c: "finance", t: ["invoice", "bill", "transaction"] },
-        // Food
-        { n: "coffee", c: "food", t: ["drink", "cup", "cafe", "morning"] },
-        { n: "cup-soda", c: "food", t: ["drink", "glass", "beverage"] },
-        { n: "fork-knife", c: "food", t: ["restaurant", "eat", "dining", "meal"] },
-        { n: "pizza", c: "food", t: ["food", "slice", "italian"] },
-        { n: "hamburger", c: "food", t: ["burger", "food", "fast"] },
-        { n: "ice-cream", c: "food", t: ["dessert", "sweet", "cone"] },
-        { n: "cake", c: "food", t: ["birthday", "dessert", "party"] },
-        { n: "wine", c: "food", t: ["drink", "alcohol", "glass"] },
-        { n: "beer-stein", c: "food", t: ["drink", "alcohol", "mug"] },
-        // Gaming
-        { n: "game-controller", c: "gaming", t: ["game", "play", "joystick"] },
-        { n: "dice-five", c: "gaming", t: ["roll", "random", "chance"] },
-        { n: "chess-knight", c: "gaming", t: ["strategy", "board", "piece"] },
-        { n: "trophy", c: "gaming", t: ["award", "win", "champion", "prize"] },
-        { n: "medal", c: "gaming", t: ["award", "win", "achievement"] },
-        { n: "target", c: "gaming", t: ["goal", "aim", "bullseye"] },
-        // Health
-        { n: "heart", c: "health", t: ["love", "like", "favorite", "health"] },
-        { n: "heart-straight", c: "health", t: ["love", "like", "favorite"] },
-        { n: "first-aid-kit", c: "health", t: ["medical", "emergency", "health"] },
-        { n: "pill", c: "health", t: ["medicine", "drug", "pharmacy"] },
-        { n: "stethoscope", c: "health", t: ["doctor", "medical", "health"] },
-        { n: "heartbeat", c: "health", t: ["pulse", "health", "vital"] },
-        { n: "brain", c: "health", t: ["mind", "intelligence", "ai", "thinking"] },
-        { n: "tooth", c: "health", t: ["dental", "dentist"] },
-        // Maps & Travel
-        { n: "map-pin", c: "maps", t: ["location", "place", "marker", "address"] },
-        { n: "map-trifold", c: "maps", t: ["map", "direction", "navigation"] },
-        { n: "navigation-arrow", c: "maps", t: ["gps", "direction", "navigate"] },
-        { n: "compass", c: "maps", t: ["direction", "north", "navigate"] },
-        { n: "airplane", c: "maps", t: ["flight", "travel", "fly"] },
-        { n: "airplane-takeoff", c: "maps", t: ["depart", "flight"] },
-        { n: "airplane-landing", c: "maps", t: ["arrive", "flight"] },
-        { n: "car", c: "maps", t: ["vehicle", "auto", "drive"] },
-        { n: "truck", c: "maps", t: ["delivery", "vehicle", "cargo"] },
-        { n: "bus", c: "maps", t: ["transport", "public", "vehicle"] },
-        { n: "train", c: "maps", t: ["transport", "rail", "subway"] },
-        { n: "bicycle", c: "maps", t: ["bike", "cycle", "transport"] },
-        // Media
-        { n: "play", c: "media", t: ["video", "start", "media"] },
-        { n: "pause", c: "media", t: ["video", "hold", "media"] },
-        { n: "stop", c: "media", t: ["video", "end", "media"] },
-        { n: "skip-forward", c: "media", t: ["next", "forward", "track"] },
-        { n: "skip-back", c: "media", t: ["previous", "backward", "track"] },
-        { n: "fast-forward", c: "media", t: ["forward", "speed"] },
-        { n: "rewind", c: "media", t: ["backward", "speed"] },
-        { n: "shuffle", c: "media", t: ["random", "mix"] },
-        { n: "repeat", c: "media", t: ["loop", "again"] },
-        { n: "microphone", c: "media", t: ["record", "voice", "audio", "mic"] },
-        { n: "speaker-high", c: "media", t: ["volume", "sound", "audio", "loud"] },
-        { n: "speaker-none", c: "media", t: ["mute", "silent", "volume"] },
-        { n: "headphones", c: "media", t: ["audio", "music", "listen"] },
-        { n: "camera", c: "media", t: ["photo", "picture", "capture"] },
-        { n: "video-camera", c: "media", t: ["film", "record", "video"] },
-        { n: "film-reel", c: "media", t: ["movie", "cinema", "film"] },
-        { n: "youtube-logo", c: "media", t: ["video", "social", "platform"] },
-        { n: "spotify-logo", c: "media", t: ["music", "audio", "platform"] },
-        // Nature
-        { n: "sun", c: "nature", t: ["weather", "bright", "day", "light"] },
-        { n: "moon", c: "nature", t: ["night", "dark", "sleep"] },
-        { n: "cloud", c: "nature", t: ["weather", "sky", "overcast"] },
-        { n: "drop", c: "nature", t: ["water", "liquid", "rain"] },
-        { n: "fire", c: "nature", t: ["flame", "hot", "burn"] },
-        { n: "leaf", c: "nature", t: ["plant", "green", "eco", "nature"] },
-        { n: "tree", c: "nature", t: ["plant", "forest", "nature"] },
-        { n: "mountains", c: "nature", t: ["landscape", "peak", "hiking"] },
-        { n: "flower", c: "nature", t: ["plant", "bloom", "garden"] },
-        { n: "plant", c: "nature", t: ["grow", "green", "garden"] },
-        // People
-        { n: "user", c: "people", t: ["person", "account", "profile", "avatar"] },
-        { n: "users", c: "people", t: ["group", "team", "community"] },
-        { n: "users-three", c: "people", t: ["group", "team", "crowd"] },
-        { n: "user-circle", c: "people", t: ["avatar", "profile", "account"] },
-        { n: "user-plus", c: "people", t: ["add", "register", "invite"] },
-        { n: "handshake", c: "people", t: ["deal", "agreement", "partnership"] },
-        { n: "smiley", c: "people", t: ["emoji", "face", "happy"] },
-        { n: "smiley-melting", c: "people", t: ["emoji", "face", "melt"] },
-        { n: "thumbs-up", c: "people", t: ["like", "approve", "good"] },
-        { n: "thumbs-down", c: "people", t: ["dislike", "reject", "bad"] },
-        { n: "hand-pointing", c: "people", t: ["point", "click", "finger"] },
-        { n: "waving-hand", c: "people", t: ["hello", "hi", "wave", "greeting"] },
-        { n: "clapping-hands", c: "people", t: ["applaud", "praise", "celebrate"] },
-        // Photography
-        { n: "aperture", c: "photography", t: ["camera", "lens", "photography"] },
-        { n: "image", c: "photography", t: ["photo", "picture", "gallery"] },
-        { n: "images", c: "photography", t: ["photos", "gallery", "pictures"] },
-        { n: "squares-four", c: "photography", t: ["grid", "gallery"] },
-        { n: "crop", c: "photography", t: ["edit", "trim", "cut"] },
-        { n: "flip-horizontal", c: "photography", t: ["mirror", "reflect"] },
-        // Shopping
-        { n: "shopping-cart", c: "shopping", t: ["cart", "buy", "basket"] },
-        { n: "shopping-bag", c: "shopping", t: ["bag", "store", "buy"] },
-        { n: "storefront", c: "shopping", t: ["shop", "store", "business"] },
-        { n: "tag", c: "shopping", t: ["label", "price", "sale"] },
-        { n: "gift", c: "shopping", t: ["present", "birthday", "box"] },
-        { n: "barcode", c: "shopping", t: ["scan", "product", "code"] },
-        // System
-        { n: "gear", c: "system", t: ["settings", "config", "preferences", "cog"] },
-        { n: "gear-six", c: "system", t: ["settings", "config", "preferences"] },
-        { n: "sliders", c: "system", t: ["adjust", "controls", "settings"] },
-        { n: "toggle-left", c: "system", t: ["switch", "on", "off"] },
-        { n: "toggle-right", c: "system", t: ["switch", "on", "off"] },
-        { n: "power", c: "system", t: ["on", "off", "shutdown"] },
-        { n: "info", c: "system", t: ["information", "help", "details"] },
-        { n: "warning", c: "system", t: ["alert", "caution", "danger", "triangle"] },
-        { n: "check-circle", c: "system", t: ["done", "success", "complete", "ok"] },
-        { n: "x-circle", c: "system", t: ["close", "cancel", "error", "delete"] },
-        { n: "x", c: "system", t: ["close", "cancel", "remove"] },
-        { n: "check", c: "system", t: ["done", "confirm", "yes"] },
-        { n: "plus", c: "system", t: ["add", "new", "create"] },
-        { n: "minus", c: "system", t: ["remove", "subtract", "less"] },
-        { n: "magnifying-glass", c: "system", t: ["search", "find", "zoom", "lookup"] },
-        { n: "magnifying-glass-plus", c: "system", t: ["zoom", "in", "enlarge"] },
-        { n: "magnifying-glass-minus", c: "system", t: ["zoom", "out", "shrink"] },
-        { n: "funnel", c: "system", t: ["filter", "sort", "narrow"] },
-        { n: "list", c: "system", t: ["bullet", "items", "menu"] },
-        { n: "list-bullets", c: "system", t: ["bullet", "items"] },
-        { n: "dots-three", c: "system", t: ["more", "menu", "options"] },
-        { n: "dots-three-vertical", c: "system", t: ["more", "menu"] },
-        { n: "dots-six-vertical", c: "system", t: ["drag", "handle", "reorder"] },
-        { n: "eye", c: "system", t: ["view", "show", "visible", "watch"] },
-        { n: "eye-slash", c: "system", t: ["hide", "invisible", "private"] },
-        { n: "lock", c: "system", t: ["secure", "password", "closed"] },
-        { n: "lock-open", c: "system", t: ["unlock", "open", "access"] },
-        { n: "key", c: "system", t: ["password", "access", "secure"] },
-        { n: "shield-check", c: "system", t: ["security", "verified", "protection", "safe"] },
-        { n: "shield-warning", c: "system", t: ["security", "alert", "vulnerable"] },
-        { n: "download-simple", c: "system", t: ["save", "export", "file"] },
-        { n: "upload-simple", c: "system", t: ["import", "file", "share"] },
-        { n: "trash", c: "system", t: ["delete", "remove", "bin"] },
-        { n: "copy", c: "system", t: ["duplicate", "clone", "paste"] },
-        { n: "clipboard", c: "system", t: ["copy", "paste", "notes"] },
-        { n: "folder", c: "system", t: ["directory", "files", "project"] },
-        { n: "folder-open", c: "system", t: ["directory", "browse"] },
-        { n: "file", c: "system", t: ["document", "page"] },
-        { n: "file-text", c: "system", t: ["document", "read", "page"] },
-        { n: "link", c: "system", t: ["url", "chain", "connect"] },
-        { n: "link-simple", c: "system", t: ["url", "chain"] },
-        { n: "share-network", c: "system", t: ["share", "distribute", "social"] },
-        // Text
-        { n: "text-aa", c: "text", t: ["font", "typography", "size"] },
-        { n: "text-align-left", c: "text", t: ["align", "format", "paragraph"] },
-        { n: "text-align-center", c: "text", t: ["align", "format", "center"] },
-        { n: "text-align-right", c: "text", t: ["align", "format", "right"] },
-        { n: "text-bolder", c: "text", t: ["bold", "strong", "weight"] },
-        { n: "text-italic", c: "text", t: ["italic", "emphasis"] },
-        { n: "text-underline", c: "text", t: ["underline", "emphasis"] },
-        { n: "text-strikethrough", c: "text", t: ["strike", "delete", "line"] },
-        { n: "quotes", c: "text", t: ["quote", "citation", "speech"] },
-        // Time
-        { n: "clock", c: "time", t: ["time", "watch", "hour"] },
-        { n: "clock-afternoon", c: "time", t: ["time", "pm", "afternoon"] },
-        { n: "timer", c: "time", t: ["stopwatch", "countdown"] },
-        { n: "alarm", c: "time", t: ["wake", "morning", "alert"] },
-        { n: "calendar", c: "time", t: ["date", "schedule", "event", "day"] },
-        { n: "calendar-blank", c: "time", t: ["date", "schedule", "empty"] },
-        { n: "calendar-check", c: "time", t: ["date", "confirmed", "event"] },
-        { n: "sand-timer", c: "time", t: ["hourglass", "waiting", "countdown"] },
-        // Transportation
-        { n: "airplane", c: "transportation", t: ["fly", "travel", "flight"] },
-        { n: "car", c: "transportation", t: ["vehicle", "auto", "drive"] },
-        { n: "truck", c: "transportation", t: ["delivery", "cargo", "vehicle"] },
-        // Weather
-        { n: "sun", c: "weather", t: ["bright", "day", "clear"] },
-        { n: "cloud-rain", c: "weather", t: ["rain", "wet", "drizzle"] },
-        { n: "cloud-sun", c: "weather", t: ["partly", "cloudy"] },
-        { n: "cloud-lightning", c: "weather", t: ["storm", "thunder", "bolt"] },
-        { n: "snowflake", c: "weather", t: ["cold", "winter", "freeze"] },
-        { n: "thermometer", c: "weather", t: ["temperature", "hot", "cold"] },
-        { n: "wind", c: "weather", t: ["breeze", "air", "blow"] },
-        { n: "umbrella", c: "weather", t: ["rain", "protect"] },
-      ];
-
       let results = ICON_CATALOG;
       if (q) {
         results = results.filter(icon =>
@@ -6857,7 +6949,6 @@ async function handleMethod(method, params, userId, auth) {
         tags: icon.t,
         styles: ["thin", "light", "regular", "bold", "fill", "duotone"],
         className: `${iconStyle} ph-${icon.n}`,
-        html: `<i class="${iconStyle} ph-${icon.n}" style="font-size: 48px;"></i>`,
       }));
 
       return {
@@ -6865,8 +6956,7 @@ async function handleMethod(method, params, userId, auth) {
         showing: limited.length,
         style: params.style || "regular",
         icons: limited,
-        cdnUrl: "https://unpkg.com/@phosphor-icons/web@2.1.1",
-        note: "Insert using insert_icon tool, or manually add the CDN @import to your frame CSS and use <i class='ph ph-{name}'>.",
+        note: "Pass one of these `name` values to insert_icon to embed the real vector artwork as an inline <svg> layer. Do NOT hand-write <i class=\"ph ph-...\"> or an <svg><path> from memory — insert_icon fetches the actual SVG source, which is the only reliable way to ship an icon.",
       };
     }
 
@@ -6877,12 +6967,8 @@ async function handleMethod(method, params, userId, auth) {
       const frame = (tpl.frames || []).find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
 
-      const PHOSPHOR_CDN = "https://unpkg.com/@phosphor-icons/web@2.1.1";
-      const PHOSPHOR_IMPORT = `@import url('${PHOSPHOR_CDN}');`;
-      const STYLE_MAP = {
-        thin: "ph-thin", light: "ph-light", regular: "ph", bold: "ph-bold", fill: "ph-fill", duotone: "ph-duotone",
-      };
-      const cls = STYLE_MAP[params.style] || "ph";
+      const VALID_STYLES = ["thin", "light", "regular", "bold", "fill", "duotone"];
+      const style = VALID_STYLES.includes(params.style) ? params.style : "regular";
       const rawIcon = params.iconName || params.icon;
       if (!rawIcon) throw { code: -32602, message: "icon (or iconName) is required" };
       const iconName = rawIcon.replace(/^(ph[-\w]*\s+)?ph-/, "");
@@ -6892,16 +6978,14 @@ async function handleMethod(method, params, userId, auth) {
       const color = params.color || "#000000";
       const layerId = `icon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-      // Auto-inject Phosphor CDN import if not present
-      let css = frame.css || "";
-      if (!css.includes("phosphor-icons")) {
-        css = PHOSPHOR_IMPORT + "\n" + css;
+      // Real inline SVG, not a webfont glyph — see fetchPhosphorIconSvg for why
+      // (export reliability, editability, no external CDN dependency at render time).
+      const svgMarkup = await fetchPhosphorIconSvg(iconName, style, { layerId, layerName: iconName, x, y, size, color });
+      if (!svgMarkup) {
+        throw { code: -32000, message: `Icon "${iconName}" (style: ${style}) was not found. Use search_icons to find a valid name.` };
       }
-      frame.css = css;
 
-      // Insert icon element
-      const iconHtml = `<i class="${cls} ph-${iconName}" data-layer-id="${layerId}" style="position: absolute; left: ${x}px; top: ${y}px; font-size: ${size}px; color: ${color}; line-height: 1;"></i>`;
-      frame.html = (frame.html || "") + iconHtml;
+      frame.html = (frame.html || "") + svgMarkup;
       if (!tpl.metadata) tpl.metadata = {};
       tpl.metadata.updatedAt = new Date().toISOString();
 
@@ -6919,9 +7003,8 @@ async function handleMethod(method, params, userId, auth) {
         templateId: params.templateId,
         frameId: params.frameId,
         layerId,
-        iconHtml,
-        className: `${cls} ph-${iconName}`,
-        note: "Phosphor CDN auto-injected into frame CSS. Icon positioned absolutely.",
+        svg: svgMarkup,
+        note: "Inserted as a real inline SVG (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph.",
       };
     }
 

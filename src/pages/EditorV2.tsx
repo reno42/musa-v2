@@ -5141,7 +5141,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       {showIconPicker && (
         <IconPicker
           templateId={templateId}
-          frameId={selectedFrameId}
+          // Fall back to the only frame when nothing's explicitly selected —
+          // the overwhelmingly common single-canvas case — instead of making
+          // the user click into the frame first just to open this picker.
+          frameId={selectedFrameId || (frames.length === 1 ? frames[0].id : null)}
           onClose={() => setShowIconPicker(false)}
           onInsert={() => {
             addToast("✓ Icon inserted", "success");

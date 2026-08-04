@@ -41,18 +41,27 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
   const [inserting, setInserting] = useState<string | null>(null);
   const [color, setColor] = useState("#000000");
   const [size, setSize] = useState(48);
+  const [insertError, setInsertError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load Phosphor CSS once for live preview
+  // Load Phosphor CSS once for live preview — one stylesheet per weight,
+  // loaded up front so switching the style dropdown doesn't need a refetch.
+  // NOTE: the bare package URL (https://unpkg.com/@phosphor-icons/web@2.1.1)
+  // resolves to that package's "unpkg" field, which is a JS loader script
+  // meant for a <script> tag — loading it via <link rel="stylesheet"> (as
+  // this used to) silently produces zero usable CSS rules, so no icon ever
+  // rendered in this grid. The per-weight path below is the real stylesheet.
   useEffect(() => {
-    const id = "phosphor-preview-css";
-    if (!document.getElementById(id)) {
-      const link = document.createElement("link");
-      link.id = id;
-      link.rel = "stylesheet";
-      link.href = "https://unpkg.com/@phosphor-icons/web@2.1.1";
-      document.head.appendChild(link);
-    }
+    STYLE_OPTIONS.forEach(s => {
+      const id = `phosphor-preview-css-${s.value}`;
+      if (!document.getElementById(id)) {
+        const link = document.createElement("link");
+        link.id = id;
+        link.rel = "stylesheet";
+        link.href = `https://unpkg.com/@phosphor-icons/web@2.1.1/src/${s.value}/style.css`;
+        document.head.appendChild(link);
+      }
+    });
   }, []);
 
   // Debounced search
@@ -98,7 +107,13 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
   useEffect(() => { doSearch(); }, []);
 
   const handleInsert = async (icon: IconResult) => {
-    if (!frameId) return;
+    setInsertError("");
+    if (!frameId) {
+      // Silently doing nothing here is the exact bug this fixes: a click
+      // with no visible feedback reads as "the button is broken".
+      setInsertError("Selecciona un frame en el lienzo antes de insertar un icono.");
+      return;
+    }
     setInserting(icon.name);
     try {
       const res = await apiFetch<any>("/mcp", {
@@ -118,6 +133,12 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
         }),
       });
 
+      if (res?.error) {
+        setInsertError(res.error.message || "No se pudo insertar el icono.");
+        setInserting(null);
+        return;
+      }
+
       const content = res?.result?.content?.[0];
       let data = res?.result;
       if (content?.type === "text" && content.text) {
@@ -126,9 +147,11 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
 
       if (data?.success) {
         onInsert?.(data.layerId);
+      } else {
+        setInsertError(data?.error?.message || "No se pudo insertar el icono.");
       }
-    } catch {
-      // ignore
+    } catch (e: any) {
+      setInsertError(e?.message || "No se pudo insertar el icono.");
     }
     setInserting(null);
   };
@@ -147,6 +170,25 @@ export function IconPicker({ templateId, frameId, onClose, onInsert }: IconPicke
           <h2>Icons</h2>
           <button type="button" className="image-upload-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
+
+        {!frameId && (
+          <div style={{
+            padding: "8px 12px", marginBottom: 12, borderRadius: 8,
+            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)",
+            color: "#f87171", fontSize: 12,
+          }}>
+            Selecciona un frame en el lienzo primero — los iconos se insertan dentro de un frame.
+          </div>
+        )}
+        {insertError && (
+          <div style={{
+            padding: "8px 12px", marginBottom: 12, borderRadius: 8,
+            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)",
+            color: "#f87171", fontSize: 12,
+          }}>
+            {insertError}
+          </div>
+        )}
 
         {/* Controls */}
         <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
