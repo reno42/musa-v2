@@ -23,7 +23,7 @@ import { SvgImportDialog, type RasterImageImport } from "../components/SvgImport
 import { InsertToolbar } from "../components/InsertToolbar";
 import { PasteHtmlModal, type PasteResult } from "../components/PasteHtmlModal";
 import { parseHtmlDocument } from "../lib/htmlParser";
-import { IconPicker, type IconPayload } from "../components/IconPicker";
+import { IconPicker, type IconPayload, type IllustrationPayload, type PhotoPayload } from "../components/IconPicker";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 
 import { useDockablePanel } from "../hooks/useDockablePanel";
@@ -3323,6 +3323,76 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     else insertIconAsOrphan(icon, { x, y });
   }, [insertIconIntoFrame, insertIconAsOrphan]);
 
+  // Illustrations (unDraw) — same real-SVG-as-a-vector-layer treatment as
+  // icons, just much larger, so they're scaled to fit a sane canvas size
+  // while preserving aspect ratio.
+  const handleInsertIllustration = useCallback(async (ill: IllustrationPayload) => {
+    try {
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method: "get_illustration_svg", params: { slug: ill.slug }, id: 1 }),
+      });
+      if (res?.error) throw new Error(res.error.message);
+      const content = res?.result?.content?.[0];
+      const data = content?.type === "text" && content.text ? JSON.parse(content.text) : null;
+      if (!data?.svg) throw new Error("No se pudo obtener la ilustración.");
+
+      const scale = Math.min(1, 480 / (data.width || 800));
+      const w = Math.round((data.width || 800) * scale);
+      const h = Math.round((data.height || 600) * scale);
+      const orphanId = createOrphanId();
+      const html = String(data.svg).replace(/^<svg /, `<svg data-layer-id="${orphanId}" data-layer-name="${ill.title}" `);
+      const css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}`;
+      const position = findCanvasObjectPosition(frames, canvasObjectsRef.current);
+      const newOrphan: HtmlCanvasObject = {
+        id: orphanId, name: ill.title, kind: "shape", frameId: null,
+        html, css,
+        x: Math.round(position.x), y: Math.round(position.y),
+        width: w, height: h,
+        zIndex: canvasObjectsRef.current.length + frames.length,
+      };
+      commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
+      setSelectedOrphanIds(new Set([orphanId]));
+      setIconInsertError("");
+      addToast("✓ Ilustración insertada", "success");
+    } catch (e: any) {
+      setIconInsertError(e?.message || "No se pudo insertar la ilustración.");
+    }
+  }, [frames, commitCanvasObjects, addToast]);
+
+  // Photos (Unsplash) — routed through the existing asset pipeline so the
+  // image becomes a real owned asset in our own bucket rather than a hotlink
+  // to Unsplash's CDN (which can rotate URLs), exactly like every other
+  // image that enters the editor.
+  const handleInsertPhoto = useCallback(async (photo: PhotoPayload) => {
+    try {
+      addToast("Descargando foto…", "info");
+      const resp = await fetch(photo.url);
+      const blob = await resp.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const uploaded = await apiFetch<{ url: string }>("/api/assets/upload", {
+        method: "POST",
+        body: JSON.stringify({
+          // Unsplash's licence asks for photographer credit wherever the
+          // photo is used — baking it into the asset name keeps it attached
+          // to the file itself rather than living only in this one panel.
+          name: `${photo.alt.slice(0, 40)} — © ${photo.credit.name} (Unsplash)`,
+          data: dataUrl,
+          workspaceId: templateWorkspaceId,
+        }),
+      });
+      await handleAssetUploaded({ name: photo.alt || "Foto", url: uploaded.url, width: photo.width, height: photo.height });
+      setIconInsertError("");
+    } catch (e: any) {
+      setIconInsertError(e?.message || "No se pudo insertar la foto.");
+    }
+  }, [templateWorkspaceId, handleAssetUploaded, addToast]);
+
   // Convert the currently-selected image (frame-based <img> layer or an
   // orphan canvas image object) into an AI-replicated editable design.
   // Works the same whether the image lives on our own Supabase bucket or is
@@ -5243,6 +5313,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           anchorRect={iconPickerAnchor}
           onClose={() => setShowIconPicker(false)}
           onInsertIcon={handleInsertIconClick}
+          onInsertIllustration={handleInsertIllustration}
+          onInsertPhoto={handleInsertPhoto}
           insertError={iconInsertError}
         />
       )}

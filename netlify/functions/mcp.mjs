@@ -367,7 +367,39 @@ const ICON_LIBRARIES = {
     defaultStyle: "regular",
     urlFor: (name) => `https://unpkg.com/simple-icons@latest/icons/${name}.svg`,
   },
+  // Iconify aggregates 150+ open icon sets behind one API — this is what
+  // makes "variedad" real (200k+ icons) instead of a hand-curated ~200.
+  // Names here are fully-qualified "prefix:name" (e.g. "mdi:heart"), which
+  // is also exactly what its search endpoint returns, so a search result
+  // can be handed straight back to insert_icon with no translation.
+  iconify: {
+    label: "Todos (Iconify)",
+    styles: ["regular"],
+    defaultStyle: "regular",
+    searchable: true,
+    urlFor: (name) => `https://api.iconify.design/${name.replace(":", "/")}.svg`,
+  },
 };
+
+/** unDraw illustrations (MIT, free for commercial use, no attribution
+ *  required). No official search API exists, but the package's manifest is
+ *  a plain JSON array on a CDN and every illustration is served as a raw
+ *  SVG from cdn.undraw.co — so we fetch the manifest once, cache it for the
+ *  lifetime of the (warm) function, and search it ourselves. */
+const UNDRAW_MANIFEST_URL = "https://unpkg.com/undraw-svg@2.0.0/illustrations.json";
+let undrawManifestCache = null;
+async function getUndrawManifest() {
+  if (undrawManifestCache) return undrawManifestCache;
+  try {
+    const resp = await fetch(UNDRAW_MANIFEST_URL);
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    undrawManifestCache = Array.isArray(data) ? data : [];
+    return undrawManifestCache;
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Fetches an icon's real SVG source from its library's raw-asset CDN (actual
@@ -2194,7 +2226,7 @@ const MCP_TOOLS = [
       properties: {
         search: { type: "string", description: "Search by icon name or keyword (e.g. 'heart', 'arrow', 'settings')" },
         category: { type: "string", enum: ["arrows", "communication", "computers", "design", "education", "finance", "food", "gaming", "health", "maps", "media", "nature", "people", "photography", "shopping", "system", "text", "time", "transportation", "weather", "brands"], description: "Filter by category ('brands' only applies to library: simple-icons)" },
-        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor). simple-icons is brand/social logos, not general UI icons." },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons", "iconify"], description: "Icon library (default: phosphor). simple-icons is brand/social logos, not general UI icons." },
         style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style — valid values depend on the library (default: each library's default)" },
         limit: { type: "number", description: "Max results (default 20, max 50)" },
       },
@@ -2210,7 +2242,7 @@ const MCP_TOOLS = [
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Target frame ID" },
         icon: { type: "string", description: "Icon name without prefix (e.g. 'heart', 'rocket-launch'). Use search_icons to find names." },
-        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor)" },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons", "iconify"], description: "Icon library (default: phosphor)" },
         style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style — valid values depend on the library" },
         x: { type: "number", description: "Absolute X position in px (default: 50)" },
         y: { type: "number", description: "Absolute Y position in px (default: 50)" },
@@ -2227,11 +2259,34 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         name: { type: "string", description: "Icon name. Use search_icons to find names." },
-        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons"], description: "Icon library (default: phosphor)" },
+        library: { type: "string", enum: ["phosphor", "lucide", "tabler", "simple-icons", "iconify"], description: "Icon library (default: phosphor)" },
         style: { type: "string", enum: ["thin", "light", "regular", "bold", "fill", "duotone", "outline", "filled"], description: "Icon weight/style" },
         color: { type: "string", description: "CSS color (default: #000000)" },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "search_illustrations",
+    description: "Search unDraw illustrations (MIT licensed, free for commercial use, no attribution required) — full scenes/spot illustrations, a different vocabulary than single-concept UI icons. Returns slugs to pass to get_illustration_svg.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        search: { type: "string", description: "Keyword (e.g. 'team', 'design', 'analytics')" },
+        limit: { type: "number", description: "Max results (default 24, max 50)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_illustration_svg",
+    description: "Returns an unDraw illustration's real SVG source as an editable vector layer (data-layer-kind=\"svg\"), with no external dependency at export time. Use search_illustrations to find slugs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Illustration slug from search_illustrations" },
+      },
+      required: ["slug"],
     },
   },
   {
@@ -7041,16 +7096,33 @@ async function handleMethod(method, params, userId, auth) {
       const style = libDef.styles.includes(params.style) ? params.style : libDef.defaultStyle;
       const q = (params.search || "").toLowerCase().trim();
       const limit = Math.min(params.limit || 20, 50);
-      const catalog = library === "simple-icons" ? SIMPLE_ICONS_CATALOG : ICON_CATALOG;
 
-      let results = catalog;
-      if (q) {
-        results = results.filter(icon =>
-          icon.n.includes(q) || icon.t.some(tag => tag.includes(q))
-        );
-      }
-      if (params.category) {
-        results = results.filter(icon => icon.c === params.category);
+      let results;
+      if (libDef.searchable) {
+        // Iconify: search its live API across every set rather than a local
+        // catalog. Its results are already "prefix:name" strings, which are
+        // exactly what this library's urlFor and insert_icon expect.
+        const query = q || "star";
+        let names = [];
+        try {
+          const resp = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            names = Array.isArray(data?.icons) ? data.icons : [];
+          }
+        } catch { /* fall through to an empty result set */ }
+        results = names.map(full => ({ n: full, c: full.split(":")[0], t: [full.split(":")[1] || full] }));
+      } else {
+        const catalog = library === "simple-icons" ? SIMPLE_ICONS_CATALOG : ICON_CATALOG;
+        results = catalog;
+        if (q) {
+          results = results.filter(icon =>
+            icon.n.includes(q) || icon.t.some(tag => tag.includes(q))
+          );
+        }
+        if (params.category) {
+          results = results.filter(icon => icon.c === params.category);
+        }
       }
 
       const limited = results.slice(0, limit);
@@ -7139,6 +7211,61 @@ async function handleMethod(method, params, userId, auth) {
       const svg = await fetchIconSvg(name.replace(/^(ph[-\w]*\s+)?ph-/, ""), library, style, { bare: true, color });
       if (!svg) throw { code: -32000, message: `Icon "${name}" (style: ${style}, library: ${library}) was not found. Use search_icons to find a valid name.` };
       return { svg, library, style };
+    }
+
+    case "search_illustrations": {
+      const manifest = await getUndrawManifest();
+      const q = (params.search || "").toLowerCase().trim();
+      const limit = Math.min(params.limit || 24, 50);
+      let results = manifest;
+      if (q) {
+        results = results.filter(i =>
+          (i.title || "").toLowerCase().includes(q) ||
+          (i.slug || "").toLowerCase().includes(q) ||
+          (i.keywords || []).some(k => String(k).toLowerCase().includes(q))
+        );
+      }
+      const items = results.slice(0, limit).map(i => ({
+        slug: i.newSlug || i.slug,
+        title: i.title,
+        url: i.media,
+        width: i.width,
+        height: i.height,
+        keywords: i.keywords || [],
+      }));
+      return {
+        total: results.length,
+        showing: items.length,
+        illustrations: items,
+        source: "unDraw (MIT)",
+        note: "Pass `slug` to get_illustration_svg to embed the real vector artwork.",
+      };
+    }
+
+    case "get_illustration_svg": {
+      const slug = params.slug;
+      if (!slug) throw { code: -32602, message: "slug is required" };
+      const manifest = await getUndrawManifest();
+      const entry = manifest.find(i => (i.newSlug || i.slug) === slug || i.slug === slug);
+      const url = entry?.media || `https://cdn.undraw.co/illustration/${slug}.svg`;
+      let raw;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(String(resp.status));
+        raw = await resp.text();
+      } catch {
+        throw { code: -32000, message: `Illustration "${slug}" could not be fetched. Use search_illustrations to find a valid slug.` };
+      }
+      const openMatch = raw.match(/<svg\s+([^>]*)>/);
+      if (!openMatch) throw { code: -32000, message: "Illustration source was not a usable SVG." };
+      const viewBoxMatch = openMatch[1].match(/viewBox="([^"]+)"/);
+      const viewBox = viewBoxMatch ? viewBoxMatch[1] : `0 0 ${entry?.width || 800} ${entry?.height || 600}`;
+      const closeIdx = raw.lastIndexOf("</svg>");
+      const inner = raw.slice(openMatch.index + openMatch[0].length, closeIdx);
+      // Same shape-layer convention as icons — a real editable vector layer,
+      // no external dependency at export time.
+      const svg = `<svg data-layer-kind="svg" viewBox="${viewBox}">${inner}</svg>`;
+      return { svg, slug, width: entry?.width || 800, height: entry?.height || 600, title: entry?.title || slug };
     }
 
     case "resolve_icon_hints": {

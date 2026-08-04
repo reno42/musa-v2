@@ -9,6 +9,24 @@ export interface IconPayload {
   size: number;
 }
 
+export interface IllustrationPayload {
+  kind: "illustration";
+  slug: string;
+  title: string;
+  width: number;
+  height: number;
+}
+
+export interface PhotoPayload {
+  kind: "photo";
+  url: string;
+  alt: string;
+  width: number;
+  height: number;
+  /** Unsplash requires crediting the photographer wherever a photo is used. */
+  credit: { name: string; link: string };
+}
+
 interface IconPickerProps {
   /** Screen position of the trigger button — the panel anchors beside it
    *  instead of covering the editor like the old full-screen modal did. */
@@ -16,8 +34,10 @@ interface IconPickerProps {
   onClose: () => void;
   /** Click-to-insert. The caller (EditorV2) owns placement: into the
    *  selected frame, or as a canvas object if nothing is selected — this
-   *  component only ever hands back "which icon, what color/size". */
+   *  component only ever hands back "which asset, what color/size". */
   onInsertIcon: (icon: IconPayload) => void;
+  onInsertIllustration: (ill: IllustrationPayload) => void;
+  onInsertPhoto: (photo: PhotoPayload) => void;
   insertError?: string;
 }
 
@@ -28,6 +48,24 @@ interface IconResult {
   library: string;
   style: string;
   svgPreview: string;
+}
+
+interface IllustrationResult {
+  slug: string;
+  title: string;
+  url: string;
+  width: number;
+  height: number;
+}
+
+interface PhotoResult {
+  id: string;
+  thumb: string;
+  full: string;
+  alt: string;
+  width: number;
+  height: number;
+  credit: { name: string; link: string };
 }
 
 const CATEGORIES = [
@@ -47,7 +85,14 @@ const LIBRARIES: { value: string; label: string; styles: { value: string; label:
   { value: "lucide", label: "Lucide", styles: [{ value: "regular", label: "Regular" }] },
   { value: "tabler", label: "Tabler", styles: [{ value: "outline", label: "Outline" }, { value: "filled", label: "Filled" }] },
   { value: "simple-icons", label: "Marcas", styles: [{ value: "regular", label: "Regular" }] },
+  { value: "iconify", label: "Todos", styles: [{ value: "regular", label: "Regular" }] },
 ];
+
+/** Unsplash needs an access key the user supplies themselves (same
+ *  bring-your-own-key model the chat already uses for its LLM provider) —
+ *  it's their quota and their API terms, so it's stored per-browser and
+ *  never travels through our backend. */
+const LS_UNSPLASH_KEY = "futuraria-unsplash-key";
 
 /** Relative luminance (0=black, 1=white) — decides whether an icon's own
  *  swatch card needs a light or dark backing so it never disappears into
@@ -64,19 +109,27 @@ function luminanceOf(hex: string): number {
 
 const ICON_DRAG_MIME = "application/x-futuraria-icon";
 
-export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: IconPickerProps) {
-  const [tab, setTab] = useState<"icons" | "illustrations">("icons");
+export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustration, onInsertPhoto, insertError }: IconPickerProps) {
+  const [tab, setTab] = useState<"icons" | "illustrations" | "photos">("icons");
   const [library, setLibrary] = useState("phosphor");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [style, setStyle] = useState("regular");
   const [icons, setIcons] = useState<IconResult[]>([]);
+  const [illustrations, setIllustrations] = useState<IllustrationResult[]>([]);
+  const [photos, setPhotos] = useState<PhotoResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [color, setColor] = useState("#111111");
   const [size, setSize] = useState(48);
+  const [unsplashKey, setUnsplashKey] = useState(() => {
+    try { return localStorage.getItem(LS_UNSPLASH_KEY) || ""; } catch { return ""; }
+  });
+  const [photoError, setPhotoError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const libDef = useMemo(() => LIBRARIES.find(l => l.value === library) || LIBRARIES[0], [library]);
+
+  useEffect(() => { try { localStorage.setItem(LS_UNSPLASH_KEY, unsplashKey); } catch { /* private mode */ } }, [unsplashKey]);
 
   // Style must stay valid for whichever library is active (Lucide/Marcas
   // only have one; Tabler uses outline/filled, not Phosphor's 6 weights).
@@ -84,12 +137,12 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: I
     if (!libDef.styles.some(s => s.value === style)) setStyle(libDef.styles[0].value);
   }, [libDef, style]);
 
-  const doSearch = async (lib: string, q: string, cat: string, sty: string) => {
+  const searchIcons = async (lib: string, q: string, cat: string, sty: string) => {
     setLoading(true);
     try {
       const params: Record<string, string> = { library: lib, style: sty, limit: "40" };
       if (q.trim()) params.search = q.trim();
-      if (cat !== "all" && lib !== "simple-icons") params.category = cat;
+      if (cat !== "all" && lib !== "simple-icons" && lib !== "iconify") params.category = cat;
       const res = await apiFetch<any>(`/mcp`, {
         method: "POST",
         body: JSON.stringify({ jsonrpc: "2.0", method: "search_icons", params, id: 1 }),
@@ -103,14 +156,67 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: I
     setLoading(false);
   };
 
-  // Debounced search — re-fires on library/category/style change too, not
-  // just typing, since those change which CDN/catalog is being queried.
+  const searchIllustrations = async (q: string) => {
+    setLoading(true);
+    try {
+      const params: Record<string, string> = { limit: "24" };
+      if (q.trim()) params.search = q.trim();
+      const res = await apiFetch<any>(`/mcp`, {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method: "search_illustrations", params, id: 1 }),
+      });
+      const content = res?.result?.content?.[0];
+      const data = content?.type === "text" && content.text ? JSON.parse(content.text) : null;
+      setIllustrations(data?.illustrations || []);
+    } catch {
+      setIllustrations([]);
+    }
+    setLoading(false);
+  };
+
+  // Unsplash is called straight from the browser with the user's own key —
+  // it never passes through our backend, so their quota/terms stay theirs.
+  const searchPhotos = async (q: string, key: string) => {
+    if (!key) { setPhotos([]); return; }
+    setLoading(true);
+    setPhotoError("");
+    try {
+      const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(q.trim() || "abstract")}&per_page=24`;
+      const resp = await fetch(url, { headers: { Authorization: `Client-ID ${key}` } });
+      if (!resp.ok) {
+        setPhotoError(resp.status === 401 ? "La API key de Unsplash no es válida." : `Unsplash respondió ${resp.status}.`);
+        setPhotos([]);
+        setLoading(false);
+        return;
+      }
+      const data = await resp.json();
+      setPhotos((data?.results || []).map((p: any) => ({
+        id: p.id,
+        thumb: p.urls?.thumb,
+        full: p.urls?.regular,
+        alt: p.alt_description || p.description || "Foto",
+        width: p.width, height: p.height,
+        credit: { name: p.user?.name || "Unsplash", link: p.user?.links?.html || "https://unsplash.com" },
+      })));
+    } catch (e: any) {
+      setPhotoError(e?.message || "No se pudo contactar Unsplash.");
+      setPhotos([]);
+    }
+    setLoading(false);
+  };
+
+  // Debounced search — re-fires on tab/library/category/style change too,
+  // since each of those changes which source is being queried.
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => doSearch(library, search, category, style), 200);
+    searchTimer.current = setTimeout(() => {
+      if (tab === "icons") searchIcons(library, search, category, style);
+      else if (tab === "illustrations") searchIllustrations(search);
+      else searchPhotos(search, unsplashKey);
+    }, 250);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [library, search, category, style]);
+  }, [tab, library, search, category, style, unsplashKey]);
 
   const currentPayload = (icon: IconResult): IconPayload => ({
     library: icon.library, name: icon.name, style: icon.style, color, size,
@@ -147,9 +253,10 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: I
       >
         {/* Header + tabs */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px 0" }}>
-          <div style={{ display: "flex", gap: 4 }}>
+          <div style={{ display: "flex", gap: 2 }}>
             <button type="button" onClick={() => setTab("icons")} style={tabBtnStyle(tab === "icons")}>🔷 Iconos</button>
-            <button type="button" onClick={() => setTab("illustrations")} style={tabBtnStyle(tab === "illustrations")}>🎨 Ilustraciones</button>
+            <button type="button" onClick={() => setTab("illustrations")} style={tabBtnStyle(tab === "illustrations")}>🎨 Ilustr.</button>
+            <button type="button" onClick={() => setTab("photos")} style={tabBtnStyle(tab === "photos")}>📷 Fotos</button>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ background: "transparent", border: "none", color: "#888", cursor: "pointer", fontSize: 16, padding: 4 }}>✕</button>
         </div>
@@ -262,10 +369,102 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, insertError }: I
               Click para insertar · arrastrá al lienzo · {libDef.label} (MIT)
             </div>
           </div>
+        ) : tab === "illustrations" ? (
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
+            {insertError && (
+              <div style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171", fontSize: 11.5 }}>
+                {insertError}
+              </div>
+            )}
+            <input
+              type="text" placeholder="Buscar ilustraciones…" value={search} onChange={e => setSearch(e.target.value)}
+              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+            />
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 200 }}>
+              {loading ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Cargando…</div>
+              ) : illustrations.length === 0 ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Sin resultados</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+                  {illustrations.map(ill => (
+                    <button
+                      key={ill.slug}
+                      type="button"
+                      onClick={() => onInsertIllustration({ kind: "illustration", slug: ill.slug, title: ill.title, width: ill.width, height: ill.height })}
+                      title={ill.title}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                        padding: 6, background: "#ffffff",
+                        border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, cursor: "pointer",
+                      }}
+                    >
+                      <img src={ill.url} alt={ill.title} style={{ width: "100%", height: 76, objectFit: "contain" }} />
+                      <span style={{ fontSize: 8.5, color: "#555", textAlign: "center", lineHeight: 1.2 }}>
+                        {ill.title.length > 20 ? ill.title.slice(0, 18) + "…" : ill.title}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: 9.5, color: "#555", textAlign: "center" }}>
+              Click para insertar · unDraw (MIT, uso comercial libre)
+            </div>
+          </div>
         ) : (
-          <div style={{ padding: 24, textAlign: "center", color: "#777", fontSize: 12, lineHeight: 1.6 }}>
-            🎨<br />Ilustraciones — todavía no hay una fuente conectada acá.
-            <br />Avisale a Renzo cuál librería de ilustraciones querés (con licencia libre de verdad) y la conectamos.
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
+            {!unsplashKey ? (
+              <div style={{ fontSize: 11.5, color: "#999", lineHeight: 1.6 }}>
+                <p style={{ margin: "0 0 8px" }}>
+                  Las fotos vienen de <strong style={{ color: "#c8b898" }}>Unsplash</strong>, que pide tu propia API key (gratis).
+                </p>
+                <ol style={{ margin: "0 0 10px", paddingLeft: 18 }}>
+                  <li>Entrá a unsplash.com/developers y creá una cuenta.</li>
+                  <li>"New Application" → aceptá los términos.</li>
+                  <li>Copiá el <em>Access Key</em> y pegalo acá abajo.</li>
+                </ol>
+              </div>
+            ) : null}
+            <input
+              type="password" placeholder="Unsplash Access Key" value={unsplashKey} onChange={e => setUnsplashKey(e.target.value)}
+              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none" }}
+            />
+            {unsplashKey && (
+              <input
+                type="text" placeholder="Buscar fotos…" value={search} onChange={e => setSearch(e.target.value)}
+                style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+              />
+            )}
+            {photoError && (
+              <div style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171", fontSize: 11.5 }}>
+                {photoError}
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 160 }}>
+              {!unsplashKey ? null : loading ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Cargando…</div>
+              ) : photos.length === 0 ? (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Sin resultados</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8 }}>
+                  {photos.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onInsertPhoto({ kind: "photo", url: p.full, alt: p.alt, width: p.width, height: p.height, credit: p.credit })}
+                      title={`${p.alt} — © ${p.credit.name}`}
+                      style={{ padding: 0, border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, cursor: "pointer", overflow: "hidden", background: "transparent" }}
+                    >
+                      <img src={p.thumb} alt={p.alt} style={{ width: "100%", height: 72, objectFit: "cover", display: "block" }} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: 9.5, color: "#555", textAlign: "center" }}>
+              Fotos de Unsplash · se acredita al autor automáticamente
+            </div>
           </div>
         )}
       </div>
