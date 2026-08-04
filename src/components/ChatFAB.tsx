@@ -133,8 +133,17 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
 3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer: dimensiones, texto, colores, estilo, y si es crear nuevo o modificar existente con templateId>" })
    - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
    - No puedes predecir qué hará. Solo le das la instrucción y esperas.
-   - El resultado incluye templateId si se creó un template.
-4. Si el implementer devuelve "done" → studio_move_card → "review"
+   - El resultado incluye templateId (y templateIds si creó varios) si se creó algún template.
+   - El sistema verifica automáticamente CADA templateId reportado (que exista Y que tenga
+     contenido real, no vacío) antes de dejarte continuar. Si ves "verification_failed": true
+     en el resultado, ESO ES DEFINITIVO — no lo cuestiones ni lo reinterpretes: no muevas la
+     tarjeta a "review", no reportes nada como completado al humano. Lee "verification_error"
+     y "failedTemplateIds" y decide entre re-delegar con instrucciones más claras o informar
+     honestamente al humano que el diseño no se pudo generar. NUNCA repitas como hecho un
+     templateId o una descripción de diseño que solo viste en el texto del implementer sin
+     que el sistema lo haya confirmado — el texto del implementer no es fuente de verdad, la
+     verificación sí.
+4. Si el implementer devuelve "done" (SIN verification_failed) → studio_move_card → "review"
 5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
    - El reviewer tiene tools de verificación únicamente (get_template, get_frame, lint_design, harness_evaluate_checkpoint).
    - El reviewer DEBE evaluar checkpoints C1-C5 con harness_evaluate_checkpoint.
@@ -178,6 +187,8 @@ PROTOCOLO DE ERRORES:
 LINK DEL EDITOR:
 - Cuando el implementer crea un template, el ID (tpl_xxx) viene en el resultado de harness_delegate_task.
 - El link del editor es: https://design.futuraria.com/?template=<templateId>
+- Si el humano pidió varios diseños, tu respuesta final debe incluir el link de CADA UNO de los
+  templateIds verificados (verifiedTemplateIds) — nunca solo el primero.
 - Si necesitas encontrar el templateId, llama list_templates o studio_get_card.
 
 PRINCIPIO CRÍTICO:
@@ -521,6 +532,10 @@ MODO A — Crear diseño nuevo (si el contexto dice "No se pasó templateId: est
     Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
     ⚠️ El contenido debe caber DENTRO de width×height. Nada puede desbordar el frame.
   PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
+  ⚠️ SI LA INSTRUCCIÓN PIDE VARIOS DISEÑOS (ej: "crea 3 posts"): llama create_html_template
+    UNA VEZ POR CADA diseño, cada llamada con su HTML/CSS COMPLETO propio — nunca un template
+    vacío "de prueba" ni un placeholder que pienses borrar después. Tu resumen final DEBE
+    mencionar el ID real de cada uno de los templates que creaste (todos, no solo el primero).
 
 MODO B — Trabajar sobre un template existente (si el contexto incluye "templateId=..."):
   PASO 1: Llama get_template con el templateId para ver el estado actual, y list_frames para ver qué frames ya existen.
@@ -855,7 +870,20 @@ async function spawnSubagent(params: {
   // Include sessionId in the first message so the subagent can use it immediately
   const subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
   const MAX_SUB_ROUNDS = 15;
-  let capturedTemplateId: string | null = null;
+  // Tracks every templateId the implementer actually CREATED or WROTE TO via
+  // a real tool call — never from read-only calls (get_template, get_frame,
+  // list_templates, etc.), so inspecting a reference/style template is never
+  // mistaken for the implementer's own deliverable. Multi-artifact tasks
+  // ("crea 3 posts") produce several ids; a single-id capture only ever kept
+  // the FIRST one seen, so downstream verification silently checked (and the
+  // Leader silently reported) whatever the implementer happened to touch
+  // first — a throwaway scratch template, or just the style it read for
+  // reference — while the real deliverables went completely unverified.
+  const capturedTemplateIds: string[] = [];
+  const addCapturedTemplateId = (id: string | undefined | null) => {
+    if (id && !capturedTemplateIds.includes(id)) capturedTemplateIds.push(id);
+  };
+  let madeAnyToolCall = false;
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
     if (signal?.aborted) return JSON.stringify({ delegated: true, role: params.role, sessionId, result: "(detenido por el usuario)", stopped: true, rounds: round });
@@ -903,10 +931,20 @@ async function spawnSubagent(params: {
       return JSON.stringify({
         delegated: true, role: params.role, sessionId,
         result: textContent.trim().slice(0, 500) || "(sin respuesta del subagente)",
-        templateId: capturedTemplateId,
+        templateId: capturedTemplateIds[0] || null,
+        templateIds: capturedTemplateIds,
+        // No design tool was ever called — the implementer's text is pure
+        // prose with nothing behind it. This is the pattern that produces
+        // fully fabricated templateIds/session summaries: a weak-tool-use
+        // model writes out what a tool call transcript WOULD look like
+        // instead of actually emitting tool_calls. The Leader must never
+        // trust "done"-sounding text when this flag is set.
+        noToolCallsMade: !madeAnyToolCall,
         rounds: round + 1,
       });
     }
+
+    madeAnyToolCall = true;
 
     // Push assistant message into subagent conversation
     if (isAnthropic) { subConv.push(data.content); }
@@ -915,26 +953,24 @@ async function spawnSubagent(params: {
     // Execute each tool call within the subagent's own loop
     for (const tc of toolCalls) {
       const resultStr = await executeToolCall(tc.name, tc.args, signal);
-      // Gap 4: Robust templateId capture from any design tool
-      if (!capturedTemplateId) {
-        // From create_html_template / create_template result: { id: "tpl_xxx", ... }
-        if (tc.name === "create_html_template" || tc.name === "create_template") {
-          try {
-            const parsed = JSON.parse(resultStr);
-            if (parsed?.id) capturedTemplateId = parsed.id;
-          } catch { /* non-fatal */ }
-        }
-        // From set_html / set_css result: { templateId: "tpl_xxx", ... }
-        if (tc.name === "set_html" || tc.name === "set_css") {
-          try {
-            const parsed = JSON.parse(resultStr);
-            if (parsed?.templateId) capturedTemplateId = parsed.templateId;
-          } catch { /* non-fatal */ }
-        }
-        // From args of any tool that passes templateId (create_frame, create_html_frame, get_template, etc.)
-        if (tc.args?.templateId) {
-          capturedTemplateId = tc.args.templateId;
-        }
+      // Track every template genuinely created or written to. Deliberately
+      // restricted to mutation tools — the old fallback captured templateId
+      // from the ARGS of any tool call at all (including get_template,
+      // get_frame, list_frames…), so an implementer that merely inspected a
+      // reference/style template before doing any real work could have that
+      // reference template silently accepted as "the deliverable".
+      if (tc.name === "create_html_template" || tc.name === "create_template") {
+        try {
+          const parsed = JSON.parse(resultStr);
+          addCapturedTemplateId(parsed?.id);
+        } catch { /* non-fatal */ }
+      } else if (tc.name === "set_html" || tc.name === "set_css") {
+        try {
+          const parsed = JSON.parse(resultStr);
+          addCapturedTemplateId(parsed?.templateId);
+        } catch { /* non-fatal */ }
+      } else if (tc.name === "create_frame" || tc.name === "create_html_frame" || tc.name === "update_template" || tc.name === "update_frame_content" || tc.name === "update_html_frame") {
+        addCapturedTemplateId(tc.args?.templateId);
       }
       if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
@@ -945,7 +981,10 @@ async function spawnSubagent(params: {
   return JSON.stringify({
     delegated: true, role: params.role, sessionId,
     result: "(subagente alcanzó límite de iteraciones)",
-    templateId: capturedTemplateId,
+    templateId: capturedTemplateIds[0] || null,
+    templateIds: capturedTemplateIds,
+    noToolCallsMade: !madeAnyToolCall,
+    hitRoundLimit: true,
     rounds: MAX_SUB_ROUNDS + 1,
   });
 }
@@ -1163,28 +1202,52 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
             });
           }
 
-          // ── Post-delegate verification: confirm template exists in DB ──
-          // If harness_delegate_task returned a templateId, verify it with get_template
-          // before accepting the result. This prevents hallucinated "done" responses.
+          // ── Post-delegate verification: confirm EVERY reported template is
+          // real and has actual content — not just that harness_delegate_task
+          // returned SOME templateId. This closes two gaps a single-id
+          // existence-only check left open: (1) multi-artifact tasks ("crea 3
+          // posts") report several templateIds, and only verifying the first
+          // let the other two go completely unverified; (2) an implementer
+          // that never made a single real tool call (pure hallucinated prose)
+          // has no templateId to check at all — that case must be caught
+          // explicitly instead of silently skipping verification.
           let finalResultStr = resultStr;
           if (tc.name === "harness_delegate_task" && !isError) {
             try {
               const parsed = JSON.parse(resultStr);
-              const delegateTemplateId = parsed?.templateId;
               const delegateRole = parsed?.role;
-              // Only verify after implementer (not reviewer — reviewer doesn't create templates)
-              if (delegateTemplateId && delegateRole === "implementer") {
-                setToolEvents(prev => [...prev, { tool: "get_template (verify)", status: "running" }]);
-                const verifyResult = await mcpCall("get_template", { templateId: delegateTemplateId });
-                const verifyOk = verifyResult && !verifyResult.error && (verifyResult.id || verifyResult.template?.id);
-                setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: verifyOk ? "done" as const : "error" as const, result: verifyOk ? "Template confirmed" : "Template NOT found" } : e));
-                if (!verifyOk) {
-                  // Template was NOT created — inject error into conversation for Leader to handle
-                  const verifyErr = `⚠️ VERIFICATION FAILED: harness_delegate_task reported templateId "${delegateTemplateId}" but get_template could not find it in the database. The implementer may have returned "done" without actually creating the template. Do NOT move to review — re-delegate to the implementer with clearer instructions.`;
+              const delegateTemplateIds: string[] = Array.isArray(parsed?.templateIds) && parsed.templateIds.length > 0
+                ? parsed.templateIds
+                : (parsed?.templateId ? [parsed.templateId] : []);
+              // Only verify after implementer — reviewer doesn't create templates.
+              if (delegateRole === "implementer") {
+                if (parsed?.noToolCallsMade || delegateTemplateIds.length === 0) {
+                  setToolEvents(prev => [...prev, { tool: "verify (no tool calls)", status: "error", result: "El implementer no ejecutó ninguna tool de diseño." }]);
+                  const verifyErr = `⚠️ VERIFICACIÓN FALLIDA: el implementer no hizo ninguna llamada real a una tool de diseño (create_html_template/set_html/set_css/etc.) — no hay ningún templateId verificable respaldando su respuesta. NUNCA repitas ni des por buena ninguna descripción de diseño o templateId que haya mencionado solo en texto. No muevas a review — re-delega con instrucciones más concretas, o si vuelve a pasar informa honestamente al humano que no se pudo generar el diseño.`;
                   finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr });
                   setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                 } else {
-                  setMessages(prev => [...prev, { role: "assistant", content: `✓ get_template (verify) → Template confirmed: ${delegateTemplateId}`, ts: Date.now(), kind: "step" }]);
+                  const verifiedIds: string[] = [];
+                  const failedIds: string[] = [];
+                  for (const tid of delegateTemplateIds) {
+                    setToolEvents(prev => [...prev, { tool: `get_template (verify ${tid})`, status: "running" }]);
+                    let ok = false;
+                    try {
+                      const verifyResult = await mcpCall("get_template", { templateId: tid });
+                      const t = verifyResult?.template || verifyResult;
+                      const hasRealHtml = (s: any) => typeof s === "string" && s.trim().length > 10;
+                      ok = !!(t && !t.error && t.id && (hasRealHtml(t.html) || (Array.isArray(t.frames) && t.frames.some((f: any) => hasRealHtml(f?.html)))));
+                    } catch { ok = false; }
+                    setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: ok ? "done" as const : "error" as const, result: ok ? "Contenido confirmado" : "Vacío o no encontrado" } : e));
+                    (ok ? verifiedIds : failedIds).push(tid);
+                  }
+                  if (failedIds.length > 0) {
+                    const verifyErr = `⚠️ VERIFICACIÓN FALLIDA: de ${delegateTemplateIds.length} template(s) reportado(s) por el implementer, ${failedIds.length} está(n) vacío(s) o no existe(n): ${failedIds.join(", ")}. Con contenido real confirmado: ${verifiedIds.join(", ") || "ninguno"}. NO reportes los fallidos como completados al humano — re-delega para que los complete de verdad, o informa honestamente cuáles sí y cuáles no.`;
+                    finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr, verifiedTemplateIds: verifiedIds, failedTemplateIds: failedIds });
+                    setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
+                  } else {
+                    setMessages(prev => [...prev, { role: "assistant", content: `✓ Verificado: ${verifiedIds.length} template(s) con contenido real confirmado (${verifiedIds.join(", ")})`, ts: Date.now(), kind: "step" }]);
+                  }
                 }
               }
             } catch { /* resultStr was not JSON — skip verification */ }
