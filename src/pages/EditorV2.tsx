@@ -18,7 +18,6 @@ import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
-import { AssetsPanel } from "../components/AssetsPanel";
 import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
 import { InsertToolbar } from "../components/InsertToolbar";
@@ -85,7 +84,7 @@ import { DocumentStore, createDocumentStore } from "../lib/documentStore";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconPalette,
-  IconBot, IconType, IconImage, IconCopy, IconTrash,
+  IconBot, IconType, IconCopy, IconTrash,
   IconDownload, IconTag,
   IconPointer, IconHand, IconZoomIn, IconZoomOut, IconMaximize,
   IconRectangle, IconCircleOutline, IconPen, IconChevronDown,
@@ -218,6 +217,10 @@ const elemBtnStyle: React.CSSProperties = {
 };
 const sepStyle: React.CSSProperties = {
   width: 1, height: 20, background: "rgba(255,255,255,0.08)", margin: "0 4px",
+};
+const batchMenuItemStyle: React.CSSProperties = {
+  textAlign: "left", background: "transparent", border: "none", borderRadius: 6,
+  padding: "8px 10px", cursor: "pointer", color: "#f0ebe0", fontFamily: "inherit",
 };
 
 const DEFAULT_HTML = `<div class="card">
@@ -2895,6 +2898,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showPasteHtml, setShowPasteHtml] = useState(false);
   const [batchCheckedFrameIds, setBatchCheckedFrameIds] = useState<Set<string>>(new Set());
   const [batchHoveredFrameId, setBatchHoveredFrameId] = useState<string | null>(null);
+  const [showBatchMenu, setShowBatchMenu] = useState(false);
   const [showDesignImport, setShowDesignImport] = useState(false);
 
   // ── Unified Import router: one entry point that detects what was
@@ -3336,6 +3340,96 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setRightPanelTab("batch");
     setShowRightPanel(true);
   }, [showRightPanel, rightPanelTab, selectedFrameIds, selectedFrameId]);
+
+  // Scans a frame's HTML for <img> tags and uploads each distinct src as a
+  // Workspace Asset — data: URLs go straight through, http(s) URLs (e.g. an
+  // AI-placed image) are fetched and re-uploaded so they land in our own
+  // storage, same approach as AssetsPanel's "save selection as asset".
+  // Used by the Batchamator "Content Machine" flow to auto-capture any
+  // logo/photo/pattern already sitting in the chosen frame.
+  const saveFrameImagesAsAssets = useCallback(async (frame: FrameData): Promise<number> => {
+    if (!frame.html) return 0;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = frame.html;
+    const imgs = Array.from(wrapper.querySelectorAll("img"));
+    const seen = new Set<string>();
+    let saved = 0;
+    for (const img of imgs) {
+      const src = img.getAttribute("src");
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      try {
+        let dataUrl = src;
+        if (!dataUrl.startsWith("data:")) {
+          const resp = await fetch(src);
+          const blob = await resp.blob();
+          if (!blob.type.startsWith("image/")) continue;
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }
+        const name = img.getAttribute("data-layer-name") || img.getAttribute("alt") || `Asset ${saved + 1}`;
+        await apiFetch("/api/assets/upload", {
+          method: "POST",
+          body: JSON.stringify({ name, data: dataUrl, workspaceId: templateWorkspaceId }),
+        });
+        saved++;
+      } catch (e) {
+        console.error("[Content Machine] No se pudo guardar la imagen como asset:", e);
+      }
+    }
+    return saved;
+  }, [templateWorkspaceId]);
+
+  // ── Batchamator ▸ Content Machine ──
+  // 1) guarda el frame elegido como Key Visual, 2) guarda cualquier png/jpg
+  // que contenga como Asset, 3) abre el panel de Batchamator (CSV) ya listo
+  // para exportar/rellenar/resubir sobre ese mismo frame.
+  const handleContentMachine = useCallback(async () => {
+    setShowBatchMenu(false);
+    const ids = selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : []);
+    const targetFrames = frames.filter(f => ids.has(f.id));
+    if (targetFrames.length === 0) {
+      addToast("Selecciona un frame primero.", "error");
+      return;
+    }
+    await handleSaveRecipe();
+    let totalAssets = 0;
+    for (const f of targetFrames) {
+      totalAssets += await saveFrameImagesAsAssets(f);
+    }
+    if (totalAssets > 0) {
+      addToast(`✓ ${totalAssets} imagen${totalAssets === 1 ? "" : "es"} guardada${totalAssets === 1 ? "" : "s"} como Asset.`, "success");
+    }
+    openBatchPanel();
+  }, [selectedFrameIds, selectedFrameId, frames, handleSaveRecipe, saveFrameImagesAsAssets, openBatchPanel, addToast]);
+
+  // ── Batchamator ▸ Brand Guidelines / Design System ──
+  // Ambos toman el frame seleccionado (como "Logotipo" o como "inspiración",
+  // según el caso), extraen tokens vía generate_design_artifacts (que ya
+  // aplica el fallback a Inter cuando no hay tipografía) y lo guardan como
+  // Style en la Biblioteca, con un nombre sugerido para que quede claro de
+  // dónde salió.
+  const handleCaptureStyleFromSelection = useCallback(async (suffix: string) => {
+    setShowBatchMenu(false);
+    const ids = selectedFrameIds.size > 0 ? selectedFrameIds : new Set(selectedFrameId ? [selectedFrameId] : []);
+    if (ids.size === 0) {
+      addToast("Selecciona uno o varios frames primero.", "error");
+      return;
+    }
+    const suggestedName = `${(templateName || "Marca").trim()}_${suffix}`;
+    const ok = await handlePublishStyle(suggestedName);
+    if (ok) {
+      setRightPanelTab("styleLibrary");
+      setShowRightPanel(true);
+    }
+  }, [selectedFrameIds, selectedFrameId, templateName, handlePublishStyle]);
+
+  const handleBrandGuidelinesCapture = useCallback(() => handleCaptureStyleFromSelection("BrandGuidelines"), [handleCaptureStyleFromSelection]);
+  const handleDesignSystemCapture = useCallback(() => handleCaptureStyleFromSelection("DesignSystem"), [handleCaptureStyleFromSelection]);
 
   // While the Batchamator panel is open, outline the canvas frame under the
   // mouse (light) and every checked frame (stronger) — a direct DOM effect
@@ -3885,8 +3979,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     contextual: "Properties",
     history: "History",
     meta: "Information",
-    styleLibrary: "Style Library",
-    assets: "Assets",
+    styleLibrary: "Biblioteca",
     batch: "Batchamator",
   };
 
@@ -4130,9 +4223,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             a otros diseños — estilos, assets, iconos, key visuals, y el
             contexto de marca/campaña de Obsidian) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-bibliotecas" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Style Library: opens as a right-side panel (like Properties/
-              History/Obsidian) — browsing, capturing, uploading styles, and
-              Key Visuals all live in its internal tabs. */}
+          {/* Biblioteca: opens as a right-side panel (like Properties/
+              History/Información) — Estilos (Brand Guidelines), Plantillas
+              (Key Visuals) y Recursos (Assets) viven en sus pestañas internas. */}
           <button
             type="button"
             className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "styleLibrary" ? "active" : ""}`}
@@ -4144,30 +4237,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 setShowRightPanel(true);
               }
             }}
-            title="Style Library"
+            title="Biblioteca — Estilos, Plantillas y Recursos"
           >
             <IconPalette size={14} />
-            <span style={{ fontSize: 9, marginLeft: 3 }}>Library</span>
-          </button>
-
-          {/* Assets: the reusable file library (uploaded images/logos) —
-              deliberately labeled apart from "Import" so it doesn't read as
-              the same action. */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "assets" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "assets") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("assets");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Assets — biblioteca de archivos subidos"
-          >
-            <IconImage size={14} />
-            <span style={{ fontSize: 9, marginLeft: 3 }}>Assets</span>
+            <span style={{ fontSize: 9, marginLeft: 3 }}>Biblioteca</span>
           </button>
 
         </div>
@@ -4225,16 +4298,62 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <IconWand size={14} />
           </button>
 
-          {/* Batchamator — duplicates selected frames per CSV row, right panel */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "batch" ? "active" : ""}`}
-            onClick={openBatchPanel}
-            title="Batchamator — Generate designs from CSV"
-          >
-            <IconGrid size={14} />
-            <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
-          </button>
+          {/* Batchamator — un botón, tres flujos: Content Machine, Brand
+              Guidelines, Design System. Ver handleContentMachine /
+              handleBrandGuidelinesCapture / handleDesignSystemCapture. */}
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`editor-v2-topbar-icon-btn ${(showRightPanel && rightPanelTab === "batch") || showBatchMenu ? "active" : ""}`}
+              onClick={() => setShowBatchMenu(v => !v)}
+              title="Batchamator — Content Machine, Brand Guidelines, Design System"
+            >
+              <IconGrid size={14} />
+              <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
+            </button>
+            {showBatchMenu && (
+              <>
+                <div
+                  onClick={() => setShowBatchMenu(false)}
+                  style={{ position: "fixed", inset: 0, zIndex: 999 }}
+                />
+                <div
+                  style={{
+                    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 1000,
+                    background: "var(--glass-bg)", backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    border: "1px solid var(--glass-border)", borderRadius: 10,
+                    padding: 6, width: 240, display: "flex", flexDirection: "column", gap: 2,
+                  }}
+                >
+                  <button
+                    type="button" onClick={handleContentMachine} style={batchMenuItemStyle}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>📄 Content Machine</div>
+                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Guarda como Plantilla + Assets, exporta CSV para generar variantes</div>
+                  </button>
+                  <button
+                    type="button" onClick={handleBrandGuidelinesCapture} style={batchMenuItemStyle}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>🎨 Brand Guidelines</div>
+                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Toma el frame como logotipo y arma un Style de marca</div>
+                  </button>
+                  <button
+                    type="button" onClick={handleDesignSystemCapture} style={batchMenuItemStyle}
+                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>🧩 Design System</div>
+                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Toma el frame como inspiración y arma un Style reusable</div>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="editor-v2-topbar-sep" />
@@ -4457,7 +4576,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconPalette size={16} /> Style Library
+                  <IconPalette size={16} /> Biblioteca
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { setShowFontPicker(!showFontPicker); setMobileMenuOpen(false); }}
@@ -4474,18 +4593,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               </button>
 
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
-              
-              <button type="button" className="landing-menu-link"
-                onClick={() => {
-                  if (showRightPanel && rightPanelTab === "assets") setShowRightPanel(false);
-                  else { setRightPanelTab("assets"); setShowRightPanel(true); }
-                  setMobileMenuOpen(false);
-                }}
-                style={{ fontSize: 13, padding: "10px 14px" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconImage size={16} /> Assets
-                </span>
-              </button>
+
               <button type="button" className="landing-menu-link" onClick={() => { duplicateFrame(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -4529,10 +4637,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <IconWand size={16} /> Lint Design
                 </span>
               </button>
-              <button type="button" className="landing-menu-link" onClick={() => { openBatchPanel(); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { handleContentMachine(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconGrid size={16} /> Batchamator
+                  <IconGrid size={16} /> Batchamator: Content Machine
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { handleBrandGuidelinesCapture(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconGrid size={16} /> Batchamator: Brand Guidelines
+                </span>
+              </button>
+              <button type="button" className="landing-menu-link" onClick={() => { handleDesignSystemCapture(); setMobileMenuOpen(false); }}
+                style={{ fontSize: 13, padding: "10px 14px" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <IconGrid size={16} /> Batchamator: Design System
                 </span>
               </button>
             </div>
@@ -4924,11 +5044,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               saveRecipeMsg={saveRecipeMsg}
               selectedFrameCount={selectedFrameIds.size > 0 ? selectedFrameIds.size : (selectedFrameId ? 1 : 0)}
               onOpenTemplate={onOpenTemplate}
-            />
-          )}
-          {rightPanelTab === "assets" && (
-            <AssetsPanel
-              workspaceId={templateWorkspaceId}
               onAssetUploaded={handleAssetUploaded}
               selectedImageSrc={selectedElement?.src}
               onManageStorage={() => {

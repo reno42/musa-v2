@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
+import { AssetsPanel } from "./AssetsPanel";
 
 interface Props {
   workspaceId: string;
@@ -18,6 +19,10 @@ interface Props {
   selectedFrameCount: number;
   /** Opens a template — used to jump into a design created from a Key Visual. */
   onOpenTemplate?: (id: string) => void;
+  /** Recursos (Assets) tab — same contract as AssetsPanel's own props. */
+  onAssetUploaded?: (asset: { id: string; name: string; filename: string; mimeType: string; sizeBytes: number; url: string; width?: number; height?: number; tags?: string[]; workspaceId?: string; createdAt?: string }) => void;
+  onManageStorage?: () => void;
+  selectedImageSrc?: string | null;
 }
 
 interface BrandStyle {
@@ -60,11 +65,13 @@ const btnStyle: React.CSSProperties = {
 export function StyleLibraryPanel({
   workspaceId, onToast, onPublish, publishing,
   onSaveKeyVisual, saveRecipeMsg, selectedFrameCount, onOpenTemplate,
+  onAssetUploaded, onManageStorage, selectedImageSrc,
 }: Props) {
   const [styles, setStyles] = useState<BrandStyle[]>([]);
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"library" | "keyvisuals" | "upload">("library");
+  const [tab, setTab] = useState<"library" | "keyvisuals" | "assets">("library");
+  const [showUpload, setShowUpload] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [dupGroups, setDupGroups] = useState<any[]>([]);
   const [dupLoading, setDupLoading] = useState(false);
@@ -232,7 +239,7 @@ export function StyleLibraryPanel({
       if (data?.id || data?.brand?.id) {
         onToast?.(`Style "${uploadData.name}" uploaded!`, "success");
         setUploadData({ name: "", tokensJson: "", designMd: "", sharedCss: "" });
-        setTab("library");
+        setShowUpload(false);
         loadStyles();
       }
     } catch {
@@ -380,19 +387,19 @@ export function StyleLibraryPanel({
 
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
-        <button style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")}>
-          📚 Estilos
+        <button style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")} title="Brand Guidelines extraídas de tus diseños">
+          🎨 Estilos
         </button>
-        <button style={tabBtnStyle(tab === "keyvisuals")} onClick={() => setTab("keyvisuals")}>
-          🎬 Key Visuals
+        <button style={tabBtnStyle(tab === "keyvisuals")} onClick={() => setTab("keyvisuals")} title="Key Visuals — diseños completos reutilizables">
+          🖼 Plantillas
         </button>
-        <button style={tabBtnStyle(tab === "upload")} onClick={() => setTab("upload")}>
-          ⬆ Subir
+        <button style={tabBtnStyle(tab === "assets")} onClick={() => setTab("assets")} title="Assets de marca: logos, patrones, fondos">
+          📦 Recursos
         </button>
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+      <div style={tab === "assets" ? { flex: 1, overflow: "hidden", display: "flex" } : { flex: 1, overflow: "auto", padding: 12 }}>
         {tab === "library" ? (
           /* ── Estilos Tab ── */
           loading ? (
@@ -412,6 +419,9 @@ export function StyleLibraryPanel({
               )}
               <button onClick={downloadTemplate} style={btnStyle}>
                 📄 tokens-template.json
+              </button>
+              <button onClick={() => setShowUpload(v => !v)} style={btnStyle}>
+                ⬆ {showUpload ? "Cancelar subida" : "Subir estilo manual"}
               </button>
               {styles.length > 1 && (
                 <button
@@ -471,15 +481,159 @@ export function StyleLibraryPanel({
               </div>
             )}
 
-            {styles.length === 0 ? (
+            {showUpload && (
+              <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12 }}>💡 Cómo funciona</div>
+                <div style={{ fontSize: 11, color: "#999", lineHeight: 1.5, marginBottom: 8 }}>
+                  1. Descarga <code>tokens-template.json</code> arriba<br/>
+                  2. Pégalo en Gemini/ChatGPT junto con imágenes de tu diseño<br/>
+                  3. Pide que complete cada campo <code>$value</code> según las imágenes<br/>
+                  4. Guarda el resultado como <code>.json</code> y súbelo aquí
+                </div>
+
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    border: "2px dashed rgba(255,255,255,0.15)", borderRadius: 8,
+                    padding: 20, textAlign: "center", cursor: "pointer", marginBottom: 12,
+                    transition: "border 0.15s",
+                  }}
+                  onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#c8b898"; }}
+                  onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)";
+                    const file = e.dataTransfer.files[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const content = ev.target?.result as string;
+                        if (file.name.endsWith(".json")) {
+                          setUploadData(prev => ({ ...prev, tokensJson: content, name: prev.name || file.name.replace(/\.json$/i, "") }));
+                        } else if (file.name.endsWith(".md")) {
+                          setUploadData(prev => ({ ...prev, designMd: content, name: prev.name || file.name.replace(/\.md$/i, "") }));
+                        } else if (file.name.endsWith(".css")) {
+                          setUploadData(prev => ({ ...prev, sharedCss: content, name: prev.name || file.name.replace(/\.css$/i, "") }));
+                        }
+                        onToast?.(`Loaded ${file.name}`, "success");
+                      };
+                      reader.readAsText(file);
+                    }
+                  }}
+                >
+                  <div style={{ fontSize: 22, marginBottom: 4 }}>📁</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>
+                    Suelta archivos aquí o haz clic para buscar<br/>
+                    <span style={{ fontSize: 10 }}>Soporta: .json (tokens), .md (design ref), .css (variables)</span>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,.md,.css"
+                    onChange={handleFileUpload}
+                    style={{ display: "none" }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>Nombre del estilo *</label>
+                  <input
+                    value={uploadData.name}
+                    onChange={e => setUploadData(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Marca_Propósito"
+                    style={{
+                      width: "100%", padding: "8px 12px",
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 6, color: "#e0e0e0", fontSize: 12,
+                      outline: "none", fontFamily: "inherit",
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
+                      tokens.json {uploadData.tokensJson ? "✓" : ""}
+                    </label>
+                    <textarea
+                      value={uploadData.tokensJson}
+                      onChange={e => setUploadData(prev => ({ ...prev, tokensJson: e.target.value }))}
+                      placeholder='{ "color": { ... } }'
+                      rows={3}
+                      style={{
+                        width: "100%", padding: "8px 12px",
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 6, color: "#e0e0e0", fontSize: 10,
+                        outline: "none", fontFamily: "monospace", resize: "vertical",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
+                      shared.css {uploadData.sharedCss ? "✓" : ""}
+                    </label>
+                    <textarea
+                      value={uploadData.sharedCss}
+                      onChange={e => setUploadData(prev => ({ ...prev, sharedCss: e.target.value }))}
+                      placeholder=":root { --color-... }"
+                      rows={3}
+                      style={{
+                        width: "100%", padding: "8px 12px",
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 6, color: "#e0e0e0", fontSize: 10,
+                        outline: "none", fontFamily: "monospace", resize: "vertical",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
+                    DESIGN.md {uploadData.designMd ? "✓" : ""}
+                  </label>
+                  <textarea
+                    value={uploadData.designMd}
+                    onChange={e => setUploadData(prev => ({ ...prev, designMd: e.target.value }))}
+                    placeholder="# Style Name..."
+                    rows={4}
+                    style={{
+                      width: "100%", padding: "8px 12px",
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 6, color: "#e0e0e0", fontSize: 10,
+                      outline: "none", fontFamily: "monospace", resize: "vertical",
+                    }}
+                  />
+                </div>
+
+                <button
+                  onClick={handleUpload}
+                  disabled={!uploadData.name.trim()}
+                  style={{
+                    ...btnStyle,
+                    opacity: !uploadData.name.trim() ? 0.4 : 1,
+                    background: "rgba(200,184,152,0.2)",
+                    borderColor: "rgba(200,184,152,0.3)",
+                    width: "100%", fontWeight: 600,
+                  }}
+                >
+                  ⬆ Subir estilo
+                </button>
+              </div>
+            )}
+
+            {styles.length === 0 && !showUpload ? (
               <div style={{ textAlign: "center", padding: 40, color: "#666" }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>🎨</div>
                 <div>No styles yet. Capture one from the current design, or upload one.</div>
                 <div style={{ fontSize: 11, marginTop: 4 }}>
-                  Use "📸 Capturar estilo de este diseño" above, or the "Subir" tab.
+                  Usa "📸 Capturar estilo" arriba, o "⬆ Subir estilo manual".
                 </div>
               </div>
-            ) : (
+            ) : styles.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {styles.map(style => {
                   const isLocked = lockedIds.has(style.id);
@@ -684,153 +838,13 @@ export function StyleLibraryPanel({
             )}
           </div>
         ) : (
-          /* ── Subir Tab ── */
-          <div>
-            <div style={{ marginBottom: 16, padding: 12, background: "rgba(200,184,152,0.05)", borderRadius: 8, border: "1px solid rgba(200,184,152,0.15)" }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>💡 How it works</div>
-              <div style={{ fontSize: 11, color: "#999", lineHeight: 1.5 }}>
-                1. Download <code>tokens-template.json</code> below<br/>
-                2. Paste its content into Gemini/ChatGPT with your design images<br/>
-                3. Ask the AI to fill each <code>$value</code> field based on the images<br/>
-                4. Save the result as a <code>.json</code> file and drag-drop it here
-              </div>
-              <button onClick={downloadTemplate} style={{ ...btnStyle, marginTop: 8, fontSize: 11 }}>
-                📄 Download tokens-template.json
-              </button>
-            </div>
-
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: "2px dashed rgba(255,255,255,0.15)", borderRadius: 8,
-                padding: 24, textAlign: "center", cursor: "pointer", marginBottom: 12,
-                transition: "border 0.15s",
-              }}
-              onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#c8b898"; }}
-              onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
-              onDrop={e => {
-                e.preventDefault();
-                e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)";
-                const file = e.dataTransfer.files[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (ev) => {
-                    const content = ev.target?.result as string;
-                    if (file.name.endsWith(".json")) {
-                      setUploadData(prev => ({ ...prev, tokensJson: content, name: prev.name || file.name.replace(/\.json$/i, "") }));
-                    } else if (file.name.endsWith(".md")) {
-                      setUploadData(prev => ({ ...prev, designMd: content, name: prev.name || file.name.replace(/\.md$/i, "") }));
-                    } else if (file.name.endsWith(".css")) {
-                      setUploadData(prev => ({ ...prev, sharedCss: content, name: prev.name || file.name.replace(/\.css$/i, "") }));
-                    }
-                    onToast?.(`Loaded ${file.name}`, "success");
-                  };
-                  reader.readAsText(file);
-                }
-              }}
-            >
-              <div style={{ fontSize: 24, marginBottom: 4 }}>📁</div>
-              <div style={{ fontSize: 12, color: "#888" }}>
-                Drop files here or click to browse<br/>
-                <span style={{ fontSize: 10 }}>Supports: .json (tokens), .md (design ref), .css (variables)</span>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json,.md,.css"
-                onChange={handleFileUpload}
-                style={{ display: "none" }}
-              />
-            </div>
-
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>Style Name *</label>
-              <input
-                value={uploadData.name}
-                onChange={e => setUploadData(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="e.g. Glassmorphism Dark"
-                style={{
-                  width: "100%", padding: "8px 12px",
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 6, color: "#e0e0e0", fontSize: 12,
-                  outline: "none", fontFamily: "inherit",
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                  tokens.json {uploadData.tokensJson ? "✓" : ""}
-                </label>
-                <textarea
-                  value={uploadData.tokensJson}
-                  onChange={e => setUploadData(prev => ({ ...prev, tokensJson: e.target.value }))}
-                  placeholder='{ "color": { ... } }'
-                  rows={3}
-                  style={{
-                    width: "100%", padding: "8px 12px",
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                    outline: "none", fontFamily: "monospace", resize: "vertical",
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                  shared.css {uploadData.sharedCss ? "✓" : ""}
-                </label>
-                <textarea
-                  value={uploadData.sharedCss}
-                  onChange={e => setUploadData(prev => ({ ...prev, sharedCss: e.target.value }))}
-                  placeholder=":root { --color-... }"
-                  rows={3}
-                  style={{
-                    width: "100%", padding: "8px 12px",
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                    outline: "none", fontFamily: "monospace", resize: "vertical",
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                DESIGN.md {uploadData.designMd ? "✓" : ""}
-              </label>
-              <textarea
-                value={uploadData.designMd}
-                onChange={e => setUploadData(prev => ({ ...prev, designMd: e.target.value }))}
-                placeholder="# Style Name..."
-                rows={4}
-                style={{
-                  width: "100%", padding: "8px 12px",
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                  outline: "none", fontFamily: "monospace", resize: "vertical",
-                }}
-              />
-            </div>
-
-            <button
-              onClick={handleUpload}
-              disabled={!uploadData.name.trim()}
-              style={{
-                ...btnStyle,
-                opacity: !uploadData.name.trim() ? 0.4 : 1,
-                background: "rgba(200,184,152,0.2)",
-                borderColor: "rgba(200,184,152,0.3)",
-                width: "100%", fontWeight: 600,
-              }}
-            >
-              ⬆ Upload Style
-            </button>
-          </div>
+          /* ── Recursos Tab (Assets de marca: logos, patrones, fondos) ── */
+          <AssetsPanel
+            workspaceId={workspaceId}
+            onAssetUploaded={onAssetUploaded}
+            onManageStorage={onManageStorage}
+            selectedImageSrc={selectedImageSrc}
+          />
         )}
       </div>
     </div>

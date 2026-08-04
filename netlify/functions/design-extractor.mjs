@@ -516,6 +516,12 @@ export function extractDesignSystem(frames) {
     .map(function (k) { return { name: k, count: fontFamilyCounts[k] }; })
     .sort(function (a, b) { return b.count - a.count || (a.name || "").localeCompare(b.name || ""); });
 
+  // No font-family declared anywhere in the captured CSS — default to Inter
+  // rather than shipping a brand guideline with an empty typography section.
+  if (families.length === 0) {
+    families.push({ name: "Inter", count: 0 });
+  }
+
   var typeScale = Object.keys(fontSizeCounts)
     .map(function (k) { return parseInt(k); })
     .sort(sortNumberDesc);
