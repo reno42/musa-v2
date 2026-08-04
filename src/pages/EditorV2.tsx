@@ -1548,7 +1548,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // Shared "apply parsed HTML/CSS as a frame" logic — used by both the
   // PasteHtmlModal (manual import) and the native-paste "paste as image" path.
-  const applyPastedHtmlAsFrame = useCallback((result: PasteResult) => {
+  // Pasted code from an external chat (told to mark icons with data-icon-hint
+  // instead of drawing them itself — see the icon-hint convention shared with
+  // image_to_design/import_design) gets those placeholders swapped for real
+  // Phosphor SVGs before the frame is created. Only fires when the marker is
+  // actually present, so ordinary pastes take the exact same synchronous path
+  // as before.
+  const applyPastedHtmlAsFrame = useCallback(async (result: PasteResult) => {
+    if (result.html?.includes("data-icon-hint")) {
+      try {
+        const res = await apiFetch<any>("/mcp", {
+          method: "POST",
+          body: JSON.stringify({ jsonrpc: "2.0", method: "resolve_icon_hints", params: { html: result.html }, id: 1 }),
+        });
+        const content = res?.result?.content?.[0];
+        const data = content?.type === "text" && content.text ? JSON.parse(content.text) : null;
+        if (data?.html) result = { ...result, html: data.html };
+      } catch { /* fall through and apply the unresolved HTML rather than block the paste */ }
+    }
     const w = result.width || 1080;
     const h = result.height || 1080;
     if (selectedFrameId) {
@@ -1621,10 +1638,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const trimmed = text.trim();
       if (trimmed.startsWith("{")) {
         const parsed = JSON.parse(trimmed);
-        applyPastedHtmlAsFrame({ html: parsed.html || "", css: parsed.css || "", width: parsed.width, height: parsed.height });
+        await applyPastedHtmlAsFrame({ html: parsed.html || "", css: parsed.css || "", width: parsed.width, height: parsed.height });
       } else {
         const parsed = parseHtmlDocument(trimmed);
-        applyPastedHtmlAsFrame({ html: parsed.html, css: parsed.css, width: parsed.width, height: parsed.height });
+        await applyPastedHtmlAsFrame({ html: parsed.html, css: parsed.css, width: parsed.width, height: parsed.height });
       }
       addToast("✓ Pegado como diseño", "success");
     } catch {
@@ -5083,8 +5100,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <PasteHtmlModal
           initialFile={routedImportFile}
           onClose={() => { setShowPasteHtml(false); setRoutedImportFile(null); }}
-          onApply={(result: PasteResult) => {
-            applyPastedHtmlAsFrame(result);
+          onApply={async (result: PasteResult) => {
+            await applyPastedHtmlAsFrame(result);
             addToast("✓ HTML/CSS applied", "success");
             setShowPasteHtml(false);
           }}

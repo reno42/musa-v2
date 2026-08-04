@@ -381,10 +381,15 @@ async function resolveIconHintsInHtml(html) {
     cursor = match.index + fullTag.length;
 
     const hint = hintRaw.toLowerCase().trim();
-    const catalogEntry = ICON_CATALOG.find(i => i.n === hint)
-      || ICON_CATALOG.find(i => i.t.includes(hint))
-      || ICON_CATALOG.find(i => i.n.includes(hint) || hint.includes(i.n));
-    if (!catalogEntry) continue; // no safe match — drop the placeholder entirely
+    // Exact name or exact tag only — no substring fuzzy-matching. A short
+    // catalog name like "x" would otherwise match almost any hint purely by
+    // coincidence (e.g. "totally-not-a-real-icon-xyz" contains "x").
+    const catalogEntry = ICON_CATALOG.find(i => i.n === hint) || ICON_CATALOG.find(i => i.t.includes(hint));
+    // The curated ICON_CATALOG is only ~200 of Phosphor's 1300+ icons (a
+    // browsing-friendly subset for search_icons) — a hint with no catalog
+    // match may still be a perfectly real icon name (e.g. "star"), so fall
+    // back to trying it directly against the real asset CDN before giving up.
+    const resolvedName = catalogEntry?.n || hint;
 
     const styleMatch = attrs.match(/style="([^"]*)"/);
     const style = styleMatch ? styleMatch[1] : "";
@@ -394,10 +399,10 @@ async function resolveIconHintsInHtml(html) {
     const colorMatch = attrs.match(/data-icon-color="([^"]+)"/);
     const color = colorMatch ? colorMatch[1] : "#000000";
 
-    const svg = await fetchPhosphorIconSvg(catalogEntry.n, "regular", {
-      layerName: catalogEntry.n, x: left, y: top, size: width, color,
+    const svg = await fetchPhosphorIconSvg(resolvedName, "regular", {
+      layerName: resolvedName, x: left, y: top, size: width, color,
     });
-    if (svg) result += svg;
+    if (svg) result += svg; // no match at all (catalog nor direct name) — drop the placeholder
   }
   result += html.slice(cursor);
   return result;
@@ -2135,6 +2140,17 @@ const MCP_TOOLS = [
       required: ["templateId", "frameId", "icon"],
     },
   },
+  {
+    name: "resolve_icon_hints",
+    description: "Swaps every <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> placeholder in the given HTML for the real Phosphor SVG (same pipeline as insert_icon/image_to_design/import_design). Use this when you're handed raw HTML (e.g. pasted from an external chat) that already follows the icon-hint convention and you need it resolved before applying — does not touch any template, purely a text transform.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "HTML containing zero or more data-icon-hint placeholders" },
+      },
+      required: ["html"],
+    },
+  },
   // ── HTML Engine: Frame Management ──
   {
     name: "create_html_frame",
@@ -3084,7 +3100,7 @@ const MCP_TOOLS = [
   },
   {
     name: "import_design",
-    description: "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
+    description: "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. ICONS: any <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> in the imported HTML is automatically swapped for the real Phosphor SVG — if the source HTML uses emoji or hand-drawn icon glyphs instead, tell whoever generated it to use this placeholder convention instead so icons render reliably. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7008,6 +7024,12 @@ async function handleMethod(method, params, userId, auth) {
       };
     }
 
+    case "resolve_icon_hints": {
+      if (typeof params.html !== "string") throw { code: -32602, message: "html (string) is required" };
+      const resolved = await resolveIconHintsInHtml(params.html);
+      return { html: resolved };
+    }
+
     // ── HTML Engine: Frame Management ──
     case "create_html_frame": {
       const tpl = await templates.getTemplate(params.templateId);
@@ -10845,6 +10867,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!finalHtml && !finalCss) {
         throw { code: -32602, message: "Provide either 'document' (complete HTML) or 'html' + 'css' (separate fields)." };
       }
+
+      // Swap any data-icon-hint placeholders for real Phosphor SVGs — the
+      // same convention/pass used by image_to_design, so pasting code from
+      // an external chat (told to use icon-hints instead of drawing icons
+      // itself) resolves to real vector icons through this path too.
+      if (finalHtml) finalHtml = await resolveIconHintsInHtml(finalHtml);
 
       const frameWidth = params.width || detectedWidth || 1080;
       const frameHeight = params.height || detectedHeight || 1080;
