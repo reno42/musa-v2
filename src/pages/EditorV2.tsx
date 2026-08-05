@@ -3640,6 +3640,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           reader.readAsDataURL(blob);
         });
       }
+      // Strip the data URL prefix ("data:image/png;base64,") — Quiver
+      // expects raw base64 and rejects data URLs with 400 invalid_base64.
+      imageBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
       addToast("✦ Vectorizando con Quiver AI...", "info");
 

@@ -12018,9 +12018,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         auto_crop: params.autoCrop !== false,
         stream: false,
       };
-      // Quiver expects image as ImageInputReference: { base64 } or { url }
+      // Quiver expects image as ImageInputReference: { base64 } or { url }.
+      // Strip the data URL prefix ("data:image/png;base64,") since Quiver
+      // rejects it — it expects raw base64 only.
       if (params.imageBase64) {
-        body.image = { base64: params.imageBase64 };
+        const raw = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+        body.image = { base64: raw };
       } else if (params.imageUrl) {
         body.image = { url: params.imageUrl };
       }

@@ -113,11 +113,14 @@ export async function handler(event) {
       stream: true,
     };
     // Quiver expects `image` as an ImageInputReference object:
-    //   { base64: "..." } for base64 payloads
+    //   { base64: "..." } for base64 payloads (raw base64, NO data URL prefix)
     //   { url: "..." }   for network URLs
-    // Sending a raw string causes a 400 "Invalid request body".
+    // canvas.toDataURL() and FileReader.readAsDataURL() produce
+    // "data:image/png;base64,iVBORw..." — strip the prefix server-side so
+    // any caller (client, MCP, future tools) is handled uniformly.
     if (body.imageBase64) {
-      quiverBody.image = { base64: body.imageBase64 };
+      const raw = body.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+      quiverBody.image = { base64: raw };
     } else if (body.imageUrl) {
       quiverBody.image = { url: body.imageUrl };
     } else {
