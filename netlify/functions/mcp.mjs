@@ -12167,9 +12167,367 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // MUSA DAILY BATCH — task_queue + automated design processing
+    // ═══════════════════════════════════════════════════════════════
+
+    case "task_queue_add": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Task queue requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      const action = {
+        type: "create_design",
+        instructions: params.instructions || "",
+        width: params.width || 1080,
+        height: params.height || 1080,
+        style: params.style || "",
+        templateId: params.templateId || null,
+        name: params.name || `Batch design ${new Date().toISOString().slice(0, 10)}`,
+      };
+
+      // Create a Kanban card so the result is visible in the UI
+      const taskId = "card_batch_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+      try {
+        await sb.from("design_kanban_tasks").insert({
+          id: taskId,
+          account_id: accountId,
+          title: action.name,
+          workspace_id: params.workspaceId,
+          type: "post",
+          status: "backlog",
+          priority: 2,
+          brief: action.instructions,
+          tags: [params.tag || "auto", "batch"],
+          created_by: "task_queue_add",
+        });
+      } catch { /* non-fatal — task_queue works without kanban */ }
+
+      const { data: item, error } = await sb.from("task_queue").insert({
+        workspace_id: params.workspaceId,
+        account_id: accountId,
+        task_id: taskId,
+        action,
+        tag: params.tag || "auto",
+        status: "pending",
+        priority: params.priority || 0,
+      }).select().single();
+      if (error) throw { code: -32000, message: "Queue insert failed: " + error.message };
+
+      return {
+        success: true,
+        queueId: item.id,
+        taskId,
+        message: `Item enqueued for batch processing (tag: ${params.tag || "auto"}). It will be processed on the next daily batch run.`,
+      };
+    }
+
+    case "task_queue_list": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Task queue requires Supabase." };
+
+      let query = sb.from("task_queue").select("*").eq("workspace_id", params.workspaceId).order("created_at", { ascending: false }).limit(50);
+      if (params.status) query = query.eq("status", params.status);
+      if (params.tag) query = query.eq("tag", params.tag);
+
+      const { data: items, error } = await query;
+      if (error) throw { code: -32000, message: "Queue list failed: " + error.message };
+      return { items: items || [], count: (items || []).length };
+    }
+
+    case "task_queue_update_config": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Requires Supabase." };
+      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      const config = {
+        workspace_id: params.workspaceId,
+        auto_process_enabled: params.autoProcessEnabled ?? true,
+        auto_process_time: params.autoProcessTime || "06:00",
+        auto_process_timezone: params.autoProcessTimezone || "America/Argentina/Buenos_Aires",
+        auto_process_max_items: params.autoProcessMaxItems || 50,
+        auto_process_tag: params.autoProcessTag || "auto",
+        notify_on_complete: params.notifyOnComplete ?? false,
+        notify_chat_id: params.notifyChatId || null,
+        batch_llm_provider: params.batchLlmProvider || "deepseek",
+      };
+
+      const { data: existing } = await sb.from("workspace_config").select("workspace_id").eq("workspace_id", params.workspaceId).maybeSingle();
+      let result;
+      if (existing) {
+        const { data, error } = await sb.from("workspace_config").update(config).eq("workspace_id", params.workspaceId).select().single();
+        if (error) throw { code: -32000, message: "Config update failed: " + error.message };
+        result = data;
+      } else {
+        const { data, error } = await sb.from("workspace_config").insert(config).select().single();
+        if (error) throw { code: -32000, message: "Config insert failed: " + error.message };
+        result = data;
+      }
+      return { success: true, config: { ...result, batch_llm_key_encrypted: result.batch_llm_key_encrypted ? "[set]" : null } };
+    }
+
+    case "process_daily_batch": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Batch processing requires Supabase." };
+
+      // 1. Get all workspaces with auto-processing enabled
+      const { data: workspaces, error: wsErr } = await sb.from("workspace_config")
+        .select("*").eq("auto_process_enabled", true);
+      if (wsErr) throw { code: -32000, message: "Workspace config query failed: " + wsErr.message };
+
+      if (!workspaces || workspaces.length === 0) {
+        return { processed: [], message: "No workspaces have auto-process enabled." };
+      }
+
+      const batchResults = [];
+
+      for (const ws of workspaces) {
+        // Timezone check — only process within ±1 hour window of configured time
+        const configuredHour = parseInt((ws.auto_process_time || "06:00").split(":")[0], 10);
+        try {
+          const localHour = parseInt(new Date().toLocaleString("en-US", {
+            timeZone: ws.auto_process_timezone || "UTC",
+            hour: "2-digit",
+            hour12: false,
+          }), 10);
+          if (Math.abs(localHour - configuredHour) > 1) {
+            batchResults.push({ workspaceId: ws.workspace_id, skipped: true, reason: `Not in time window (local ${localHour}:00 vs configured ${configuredHour}:00)` });
+            continue;
+          }
+        } catch {
+          // If timezone parsing fails, process anyway (fail-open)
+        }
+
+        // 2. Fetch pending tasks
+        const maxItems = ws.auto_process_max_items || 50;
+        const { data: tasks, error: tErr } = await sb.from("task_queue")
+          .select("*").eq("workspace_id", ws.workspace_id).eq("status", "pending").eq("tag", ws.auto_process_tag || "auto")
+          .order("priority", { ascending: false }).order("created_at", { ascending: true }).limit(maxItems);
+        if (tErr) throw { code: -32000, message: "Task queue query failed: " + tErr.message };
+
+        if (!tasks || tasks.length === 0) {
+          batchResults.push({ workspaceId: ws.workspace_id, success: 0, failed: 0, total: 0, skipped: true });
+          continue;
+        }
+
+        let success = 0;
+        let failed = 0;
+        const errors = [];
+
+        // 3. Process each task
+        for (const task of tasks) {
+          // Mark as processing
+          await sb.from("task_queue").update({ status: "processing" }).eq("id", task.id);
+
+          // Move kanban card to "design"
+          if (task.task_id) {
+            try {
+              await sb.from("design_kanban_tasks").update({ status: "design" }).eq("id", task.task_id);
+            } catch { /* non-fatal */ }
+          }
+
+          try {
+            const result = await executeDesignCreation(task.action, ws, task);
+
+            // Mark as done
+            await sb.from("task_queue").update({
+              status: "done",
+              result: { templateId: result.templateId, renderUrl: result.renderUrl },
+              processed_at: new Date().toISOString(),
+            }).eq("id", task.id);
+
+            // Move kanban card to "done"
+            if (task.task_id) {
+              await sb.from("design_kanban_tasks").update({
+                status: "done",
+                template_id: result.templateId,
+                render_url: result.renderUrl,
+                completed_at: new Date().toISOString(),
+              }).eq("id", task.task_id);
+            }
+
+            success++;
+          } catch (err) {
+            // Mark as failed
+            await sb.from("task_queue").update({
+              status: "failed",
+              error_message: (err.message || String(err)).slice(0, 500),
+              processed_at: new Date().toISOString(),
+            }).eq("id", task.id);
+
+            // Move kanban card to "feedback"
+            if (task.task_id) {
+              try {
+                await sb.from("design_kanban_tasks").update({
+                  status: "feedback",
+                  blocker_reason: `Batch error: ${(err.message || "").slice(0, 200)}`,
+                }).eq("id", task.task_id);
+              } catch { /* non-fatal */ }
+            }
+
+            errors.push({ taskId: task.id, error: err.message });
+            failed++;
+          }
+        }
+
+        batchResults.push({ workspaceId: ws.workspace_id, success, failed, total: tasks.length, errors: errors.length > 0 ? errors : undefined });
+
+        // 4. Telegram notification
+        if (ws.notify_on_complete && ws.notify_chat_id) {
+          try {
+            const { sendTelegram, formatBatchMessage } = await import("./telegram-notify.mjs");
+            const msg = formatBatchMessage({ workspaceId: ws.workspace_id, success, failed, total: tasks.length });
+            await sendTelegram(ws.notify_chat_id, msg);
+          } catch { /* best-effort */ }
+        }
+      }
+
+      const totalSuccess = batchResults.reduce((s, r) => s + (r.success || 0), 0);
+      const totalFailed = batchResults.reduce((s, r) => s + (r.failed || 0), 0);
+      return {
+        processed: batchResults,
+        summary: { workspaces: batchResults.length, totalSuccess, totalFailed, total: totalSuccess + totalFailed },
+      };
+    }
+
     default:
       throw { code: -32601, message: "Method not found: " + method };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// executeDesignCreation — Server-side headless design generator.
+// Called by process_daily_batch. Uses LLM to generate HTML/CSS,
+// creates a template, and renders it — all without a browser.
+// ═══════════════════════════════════════════════════════════════
+
+const PROVIDER_ENDPOINTS = {
+  deepseek: "https://api.deepseek.com/v1/chat/completions",
+  openai: "https://api.openai.com/v1/chat/completions",
+  anthropic: "https://api.anthropic.com/v1/messages",
+};
+
+async function executeDesignCreation(action, wsConfig, task) {
+  if (!action || action.type !== "create_design") {
+    throw new Error("Invalid action type: " + (action?.type || "none"));
+  }
+
+  // Resolve LLM key: workspace config > env var
+  const provider = wsConfig.batch_llm_provider || "deepseek";
+  const llmKey = wsConfig.batch_llm_key_encrypted || process.env.BATCH_LLM_KEY || "";
+  if (!llmKey) throw new Error("No LLM key configured for batch. Set BATCH_LLM_KEY or workspace_config.batch_llm_key_encrypted.");
+
+  const model = provider === "anthropic" ? "claude-3-5-sonnet-20241022" :
+                provider === "openai" ? "gpt-4o-mini" :
+                "deepseek-chat";
+  const endpoint = PROVIDER_ENDPOINTS[provider] || PROVIDER_ENDPOINTS.deepseek;
+
+  const width = action.width || 1080;
+  const height = action.height || 1080;
+  const name = action.name || `Batch design ${new Date().toISOString().slice(0, 10)}`;
+  const styleNote = action.style ? `Estilo visual: ${action.style}.` : "";
+
+  // 1. Call LLM to generate HTML + CSS
+  const systemPrompt = `You are a design generator. You receive instructions for a visual design and return ONLY raw HTML and CSS code. No markdown, no explanations.
+
+Rules:
+- The design must fit exactly ${width}x${height} pixels. Nothing overflows.
+- Return HTML first inside a block delimited by <HTML> and </HTML> tags.
+- Then return CSS inside a block delimited by <CSS> and </CSS> tags.
+- Use only system fonts or Google Fonts via @import.
+- The HTML is a single root <div> container. No <html>, <head>, or <body> tags.
+- Text must be readable, properly sized, and positioned within bounds.
+- Colors must be hex (#RRGGBB). No CSS variables in the output.
+${styleNote}`;
+
+  const userPrompt = `Design instructions: ${action.instructions}`;
+
+  let llmResponse;
+  if (provider === "anthropic") {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": llmKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model, max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+    const data = await resp.json();
+    llmResponse = data.content?.map(b => b.text || "").join("") || "";
+  } else {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${llmKey}`,
+      },
+      body: JSON.stringify({
+        model, max_tokens: 4096,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+    const data = await resp.json();
+    llmResponse = data.choices?.[0]?.message?.content || "";
+  }
+
+  // 2. Parse HTML and CSS from response
+  const htmlMatch = llmResponse.match(/<HTML>\s*([\s\S]*?)\s*<\/HTML>/i);
+  const cssMatch = llmResponse.match(/<CSS>\s*([\s\S]*?)\s*<\/CSS>/i);
+  let html = htmlMatch ? htmlMatch[1].trim() : "";
+  let css = cssMatch ? cssMatch[1].trim() : "";
+
+  // Fallback: try ```html and ```css fenced code blocks
+  if (!html) {
+    const fenced = llmResponse.match(/```html\s*([\s\S]*?)```/i);
+    if (fenced) html = fenced[1].trim();
+  }
+  if (!css) {
+    const fenced = llmResponse.match(/```css\s*([\s\S]*?)```/i);
+    if (fenced) css = fenced[1].trim();
+  }
+
+  if (!html || html.length < 20) {
+    throw new Error("LLM did not produce valid HTML. Response: " + llmResponse.slice(0, 200));
+  }
+
+  // 3. Create template
+  const tpl = await templates.createTemplate(name, width, height, null, null, task.workspace_id);
+  if (!tpl) throw new Error("Failed to create template");
+
+  tpl.engine = "html";
+  tpl.html = html;
+  tpl.css = css;
+
+  await templates.updateTemplate(tpl.id, {
+    engine: "html",
+    html,
+    css,
+    frames: tpl.frames || [],
+  });
+
+  // 4. Verify template has content
+  const verify = await templates.getTemplate(tpl.id);
+  if (!verify || !verify.html || verify.html.length < 20) {
+    throw new Error("Template verification failed — no HTML content after save");
+  }
+
+  return {
+    templateId: tpl.id,
+    renderUrl: null, // render happens lazily on first editor open
+    width,
+    height,
+  };
 }
 
 export const handler = async (event) => {

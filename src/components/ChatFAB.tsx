@@ -285,6 +285,13 @@ LINK DEL EDITOR:
   templateIds verificados (verifiedTemplateIds) — nunca solo el primero.
 - Si necesitas encontrar el templateId, llama list_templates o studio_get_card.
 
+MUSA DAILY BATCH — Cola de diseño automatizada:
+- Si el humano pide "prepará para mañana", "encolá esto", "procesá en batch" → usa task_queue_add.
+- task_queue_add guarda la instrucción en la cola. Musa Batch procesa todo a las 6am (configurable por workspace).
+- El humano puede ver el estado de la cola con task_queue_list.
+- NO encolas si el humano quiere el diseño AHORA. En ese caso usa el flujo normal (delegar al implementer).
+- Cuando encoles, sé específico en las instrucciones (dimensiones, texto exacto, colores hex, estilo) — el batch no puede pedir aclaraciones.
+
 PRINCIPIO CRÍTICO:
 - Tú ORQUESTAS. No implementas. No diseñas. No escribes HTML/CSS.
 - harness_delegate_task es tu tool principal. Úsala SIEMPRE para diseño y review.
@@ -556,6 +563,11 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_toggle_cronjob", description: "Activa/desactiva un cronjob.", parameters: { type: "object", required: ["cronjobId", "enabled"], properties: { cronjobId: { type: "string" }, enabled: { type: "boolean" } } } } },
   { type: "function", function: { name: "harness_report_error", description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.", parameters: { type: "object", required: ["tool", "error_message"], properties: { tool: { type: "string", description: "Nombre de la tool que falló" }, args: { type: "object", description: "Argumentos con los que se llamó" }, error_message: { type: "string", description: "Mensaje de error o resultado" }, step: { type: "number" }, totalSteps: { type: "number" }, round: { type: "number" }, provider: { type: "string" }, source: { type: "string", description: "chatfab, mcp, manual" } } } } },
   { type: "function", function: { name: "harness_delegate_task", description: "DELEGA a un subagente real. Esto spawnea una llamada LLM SEPARADA con contexto aislado y tools restringidas al rol. El Leader NUNCA hace diseño directamente — SIEMPRE delega con esta tool. Retorna un resumen (done/blocked para implementer, APPROVED/CHANGES_REQUESTED para reviewer).", parameters: { type: "object", required: ["role", "instruction"], properties: { role: { type: "string", enum: ["implementer", "reviewer"], description: "implementer ejecuta diseño con tools de diseño, reviewer verifica con tools de solo lectura" }, taskId: { type: "string", description: "ID de la tarjeta Kanban (card_xxx)" }, instruction: { type: "string", description: "Instrucción específica para el subagente. Ej implementer: 'Crea frame 1080x1080 con texto Hola Ren en estilo Futuraria (morado #7B2FF7, Orbitron).' Ej reviewer: 'Verifica: dimensiones 1080x1080, tipografía legible, paleta consistente.'" }, templateId: { type: "string", description: "Template ID si ya existe (tpl_xxx)" } } } } },
+  // ═══════════════════════════════════════════════
+  //  Musa Daily Batch — Queue items for automated processing
+  // ═══════════════════════════════════════════════
+  { type: "function", function: { name: "task_queue_add", description: "Encola un diseño para que Musa Batch lo procese automáticamente (a las 6am o cuando se dispare el batch). Útil cuando el humano pide 'prepará para mañana' o 'ponelo en cola'. El diseño se crea headless con LLM, sin navegador.", parameters: { type: "object", required: ["workspaceId", "instructions"], properties: { workspaceId: { type: "string", description: "ID del workspace donde crear el diseño" }, instructions: { type: "string", description: "Descripción del diseño: dimensiones, texto, colores, estilo" }, width: { type: "number", description: "Ancho en píxeles (default 1080)" }, height: { type: "number", description: "Alto en píxeles (default 1080)" }, style: { type: "string", description: "Nombre del estilo/marca (ej: Futuraria)" }, name: { type: "string", description: "Nombre del diseño" }, tag: { type: "string", description: "Tag para filtrar (default: 'auto')" }, priority: { type: "number", description: "Prioridad 0-10 (mayor = más urgente)" } } } } },
+  { type: "function", function: { name: "task_queue_list", description: "Lista los items en cola de un workspace (pending, done, failed).", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" }, status: { type: "string", enum: ["pending", "processing", "done", "failed"] }, tag: { type: "string" } } } } },
   // ═══════════════════════════════════════════════
   //  Fonts
   // ═══════════════════════════════════════════════
