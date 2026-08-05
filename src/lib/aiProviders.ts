@@ -83,6 +83,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     keySlot: "futuraria-chat-key-deepseek",
     modelSlot: "futuraria-chat-model-deepseek",
     models: [
+      "deepseek-v4-pro",
       "deepseek-chat",
       "deepseek-reasoner",
     ],

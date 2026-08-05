@@ -77,6 +77,105 @@ const LS_MODEL_KEY = "futuraria-chat-model";
 const LS_MESSAGES_KEY = "futuraria-chat-messages";
 const MAX_STORED_MESSAGES = 50;
 
+// ── Multi-model per role ──
+// Each agent role (leader, implementer, reviewer) can use a different
+// provider+model. API keys are stored per-provider so roles that share a
+// provider reuse the same key.
+const LS_ROLE_CONFIG_KEY = "futuraria-chat-role-config";
+const LS_PROVIDER_KEYS_PREFIX = "futuraria-chat-key-";
+
+type AgentRole = "leader" | "implementer" | "reviewer";
+interface RoleConfig { provider: string; model: string }
+type RoleConfigMap = Record<AgentRole, RoleConfig>;
+
+const DEFAULT_ROLE_CONFIG: RoleConfigMap = {
+  leader:       { provider: "deepseek", model: "deepseek-v4-pro" },
+  implementer:  { provider: "deepseek", model: "deepseek-v4-pro" },
+  reviewer:     { provider: "deepseek", model: "deepseek-v4-pro" },
+};
+
+/** Load role config from localStorage, migrating from old single-model keys. */
+function loadRoleConfig(): RoleConfigMap {
+  try {
+    const raw = localStorage.getItem(LS_ROLE_CONFIG_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Ensure all three roles exist (forward-compat if we add roles later)
+      return {
+        leader:      parsed.leader      || DEFAULT_ROLE_CONFIG.leader,
+        implementer: parsed.implementer || DEFAULT_ROLE_CONFIG.implementer,
+        reviewer:    parsed.reviewer    || DEFAULT_ROLE_CONFIG.reviewer,
+      };
+    }
+    // ── Migration from old global keys ──
+    const oldProvider = localStorage.getItem(LS_PROVIDER_KEY) || "";
+    const oldModel = localStorage.getItem(LS_MODEL_KEY) || "";
+    if (oldProvider) {
+      const migrated: RoleConfigMap = {
+        leader:       { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
+        implementer:  { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
+        reviewer:     { provider: oldProvider, model: oldModel || PROVIDERS.find(p => p.id === oldProvider)?.defaultModel || "deepseek-v4-pro" },
+      };
+      localStorage.setItem(LS_ROLE_CONFIG_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+  } catch { /* fall through to default */ }
+  return { ...DEFAULT_ROLE_CONFIG };
+}
+
+/** Persist role config. */
+function saveRoleConfig(cfg: RoleConfigMap) {
+  try { localStorage.setItem(LS_ROLE_CONFIG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
+/** Get API key for a provider, migrating from old global key if needed. */
+function getProviderKey(providerId: string): string {
+  try {
+    const key = localStorage.getItem(LS_PROVIDER_KEYS_PREFIX + providerId);
+    if (key) return key;
+    // Migration: if old global key exists and old provider matches, copy it
+    const oldKey = localStorage.getItem(LS_LLM_KEY_KEY);
+    const oldProvider = localStorage.getItem(LS_PROVIDER_KEY);
+    if (oldKey && oldProvider === providerId) {
+      localStorage.setItem(LS_PROVIDER_KEYS_PREFIX + providerId, oldKey);
+      return oldKey;
+    }
+  } catch {}
+  return "";
+}
+
+/** Set API key for a provider. */
+function setProviderKey(providerId: string, key: string) {
+  try { localStorage.setItem(LS_PROVIDER_KEYS_PREFIX + providerId, key); } catch {}
+}
+
+/** Load all provider keys as a map. */
+function loadAllProviderKeys(): Record<string, string> {
+  const keys: Record<string, string> = {};
+  for (const p of PROVIDERS) {
+    keys[p.id] = getProviderKey(p.id);
+  }
+  return keys;
+}
+
+/** Resolve the LLM config (provider, model, key, endpoint) for a given role.
+ *  Used by module-level spawnSubagent (reads localStorage directly). */
+function resolveRoleLLM(role: AgentRole): {
+  providerId: string; model: string; apiKey: string; endpoint: string; isAnthropic: boolean;
+} | null {
+  const cfg = loadRoleConfig()[role];
+  const apiKey = getProviderKey(cfg.provider);
+  if (!apiKey) return null;
+  const prov = PROVIDERS.find(p => p.id === cfg.provider) || PROVIDERS[0];
+  return {
+    providerId: cfg.provider,
+    model: cfg.model || prov.defaultModel,
+    apiKey,
+    endpoint: prov.endpoint,
+    isAnthropic: cfg.provider === "anthropic",
+  };
+}
+
 /**
  * Which workspace/template the human is actually looking at right now.
  * executeToolCall/spawnSubagent are module-level functions (not hooks), so
@@ -907,15 +1006,15 @@ async function spawnSubagent(params: {
   instruction: string;
   templateId?: string;
 }, signal?: AbortSignal): Promise<string> {
-  const llmKey = localStorage.getItem(LS_LLM_KEY_KEY) || "";
-  const providerId = localStorage.getItem(LS_PROVIDER_KEY) || "deepseek";
-  const model = localStorage.getItem(LS_MODEL_KEY) || "";
-  const prov = PROVIDERS.find(p => p.id === providerId) || PROVIDERS[0];
-  const isAnthropic = providerId === "anthropic";
-
-  if (!llmKey) {
-    return JSON.stringify({ error: "No LLM API key found for subagent. Set your API key in chat settings." });
+  // ── Per-role LLM config: each subagent role can use a different provider+model ──
+  const roleLLM = resolveRoleLLM(params.role);
+  if (!roleLLM) {
+    const cfg = loadRoleConfig()[params.role];
+    const provLabel = PROVIDERS.find(p => p.id === cfg.provider)?.label || cfg.provider;
+    return JSON.stringify({ error: `No API key set for ${provLabel} (used by ${params.role}). Set your key in chat settings (⚙️).` });
   }
+  const { providerId, model, apiKey: llmKey, endpoint, isAnthropic } = roleLLM;
+  const prov = PROVIDERS.find(p => p.id === providerId) || PROVIDERS[0];
 
   // Carry the known WORKSPACE into the delegated instruction so the subagent
   // doesn't have to blindly call list_workspaces and guess — same fix as
@@ -1180,24 +1279,24 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
-  const [provider, setProvider] = useState<string>(() => {
-    try { return localStorage.getItem(LS_PROVIDER_KEY) || "openai"; } catch { return "openai"; }
-  });
-  const [llmKey, setLlmKey] = useState<string>(() => {
-    try { return localStorage.getItem(LS_LLM_KEY_KEY) || ""; } catch { return ""; }
-  });
-  const [model, setModel] = useState<string>(() => {
-    try { return localStorage.getItem(LS_MODEL_KEY) || PROVIDERS[0].defaultModel; } catch { return PROVIDERS[0].defaultModel; }
-  });
-  const [showSettings, setShowSettings] = useState(!llmKey);
+  // ── Multi-model per role: each role can use a different provider+model ──
+  const [roleConfig, setRoleConfig] = useState<RoleConfigMap>(() => loadRoleConfig());
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadAllProviderKeys());
+  const leaderProvider = roleConfig.leader.provider;
+  const leaderModel = roleConfig.leader.model;
+  const leaderKey = providerKeys[leaderProvider] || "";
+  const [showSettings, setShowSettings] = useState(!leaderKey);
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Persist settings
-  useEffect(() => { try { localStorage.setItem(LS_PROVIDER_KEY, provider); } catch {} }, [provider]);
-  useEffect(() => { try { localStorage.setItem(LS_LLM_KEY_KEY, llmKey); } catch {} }, [llmKey]);
-  useEffect(() => { try { localStorage.setItem(LS_MODEL_KEY, model); } catch {} }, [model]);
+  useEffect(() => { saveRoleConfig(roleConfig); }, [roleConfig]);
+  useEffect(() => {
+    for (const [pid, key] of Object.entries(providerKeys)) {
+      setProviderKey(pid, key);
+    }
+  }, [providerKeys]);
 
   // Persist messages
   useEffect(() => { saveMessages(messages); }, [messages]);
@@ -1220,7 +1319,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
 
   const send = useCallback(async () => {
     if (!input.trim() || sending) return;
-    if (!llmKey) { setShowSettings(true); setAccordion("config"); return; }
+    if (!leaderKey) { setShowSettings(true); setAccordion("config"); return; }
 
     const userMsg: Message = { role: "user", content: input.trim(), ts: Date.now() };
     let conversation: any[] = [...messages.filter(m => m.role !== "system"), userMsg].map(m => ({ role: m.role, content: m.content }));
@@ -1233,8 +1332,8 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
     abortRef.current = controller;
     const { signal } = controller;
 
-    const prov = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
-    const isAnthropic = provider === "anthropic";
+    const prov = PROVIDERS.find(p => p.id === leaderProvider) || PROVIDERS[0];
+    const isAnthropic = leaderProvider === "anthropic";
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
 
@@ -1273,16 +1372,16 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         if (isAnthropic) {
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS), tool_choice: { type: "auto" } }),
+            headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS), tool_choice: { type: "auto" } }),
           }, { signal });
           if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
         } else {
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-            body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS, tool_choice: "auto" }),
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS, tool_choice: "auto" }),
           }, { signal });
           if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
@@ -1350,7 +1449,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
               result: resultStr.slice(0, 500),
               step: ti + 1, totalSteps: toolCalls.length,
               round, timestamp: new Date().toISOString(),
-              provider,
+              provider: leaderProvider,
             });
           }
 
@@ -1424,7 +1523,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
       setToolEvents([]);
       abortRef.current = null;
     }
-  }, [input, sending, llmKey, messages, model, provider, systemPrompt]);
+  }, [input, sending, leaderKey, messages, leaderModel, leaderProvider, systemPrompt]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -1515,18 +1614,58 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           }}>
             <span style={{ fontSize: 10, transition: "transform 0.2s", display: "inline-block", transform: accordion === "config" ? "rotate(0deg)" : "rotate(-90deg)" }}>▾</span>
             Configuración
-            <span style={{ marginLeft: "auto", width: 8, height: 8, borderRadius: "50%", background: llmKey ? "#34d399" : "#f87171" }} />
+            <span style={{ marginLeft: "auto", width: 8, height: 8, borderRadius: "50%", background: leaderKey ? "#34d399" : "#f87171" }} />
           </button>
           {accordion === "config" && (
-            <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <select value={provider} onChange={e => { setProvider(e.target.value); const p = PROVIDERS.find(x => x.id === e.target.value); if (p) setModel(p.defaultModel); }} style={{ ...inputBase, width: "100%", padding: "6px 12px", fontSize: 11 }}>
-                {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
-              <select value={model} onChange={e => setModel(e.target.value)} style={{ ...inputBase, width: "100%", padding: "6px 12px", fontSize: 11 }}>
-                {(PROVIDERS.find(p => p.id === provider)?.models || []).map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-              <input type="password" value={llmKey} onChange={e => setLlmKey(e.target.value)} placeholder={`${PROVIDERS.find(p => p.id === provider)?.keyPrefix || "sk-"}... API key`} style={{ ...inputBase, padding: "6px 12px", fontSize: 11, fontFamily: "monospace" }} />
-              <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>Guardado en tu navegador. Se envía directo al proveedor LLM.</span>
+            <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* ── API Keys per provider ── */}
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1 }}>API Keys</div>
+              {PROVIDERS.map(p => (
+                <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.label}</label>
+                  <input
+                    type="password"
+                    value={providerKeys[p.id] || ""}
+                    onChange={e => setProviderKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
+                    placeholder={`${p.keyPrefix}... ${p.label} key`}
+                    style={{ ...inputBase, padding: "5px 10px", fontSize: 11, fontFamily: "monospace" }}
+                  />
+                </div>
+              ))}
+          
+              {/* ── Model per role ── */}
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>Modelos por Rol</div>
+              {(["leader", "implementer", "reviewer"] as AgentRole[]).map(role => (
+                <div key={role} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>
+                    {role === "leader" ? "Leader" : role === "implementer" ? "Implementer" : "Reviewer"}
+                    <span style={{ color: "rgba(255,255,255,0.2)", marginLeft: 4 }}>
+                      {role === "leader" ? "(chat)" : role === "implementer" ? "(diseño)" : "(verificación)"}
+                    </span>
+                  </label>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <select
+                      value={roleConfig[role].provider}
+                      onChange={e => {
+                        const pid = e.target.value;
+                        const def = PROVIDERS.find(x => x.id === pid)?.defaultModel || "";
+                        setRoleConfig(prev => ({ ...prev, [role]: { provider: pid, model: def } }));
+                      }}
+                      style={{ ...inputBase, flex: 1, padding: "5px 8px", fontSize: 11 }}
+                    >
+                      {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                    <select
+                      value={roleConfig[role].model}
+                      onChange={e => setRoleConfig(prev => ({ ...prev, [role]: { ...prev[role], model: e.target.value } }))}
+                      style={{ ...inputBase, flex: 1, padding: "5px 8px", fontSize: 11 }}
+                    >
+                      {(PROVIDERS.find(p => p.id === roleConfig[role].provider)?.models || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+              ))}
+              <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>Keys guardadas en tu navegador. Se envían directo al proveedor LLM. Cada rol puede usar un proveedor y modelo distinto.</span>
             </div>
           )}
         </div>
@@ -1612,7 +1751,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder={llmKey ? "Pídele algo al Leader…" : "Configura tu API key ↑"}
+              placeholder={leaderKey ? "Pídele algo al Leader…" : "Configura tu API key ↑"}
               disabled={sending}
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />
@@ -1624,12 +1763,12 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
                 cursor: "pointer", fontFamily: "inherit",
               }}>■ Detener</button>
             ) : (
-              <button type="button" onClick={send} disabled={!input.trim() || !llmKey} style={{
-                background: input.trim() && llmKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
-                color: input.trim() && llmKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
-                border: `1px solid ${input.trim() && llmKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
+              <button type="button" onClick={send} disabled={!input.trim() || !leaderKey} style={{
+                background: input.trim() && leaderKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.04)",
+                color: input.trim() && leaderKey ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.2)",
+                border: `1px solid ${input.trim() && leaderKey ? "rgba(200,184,152,0.35)" : "rgba(255,255,255,0.05)"}`,
                 borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
-                cursor: input.trim() && llmKey ? "pointer" : "not-allowed", fontFamily: "inherit",
+                cursor: input.trim() && leaderKey ? "pointer" : "not-allowed", fontFamily: "inherit",
               }}>Enviar</button>
             )}
           </div>
