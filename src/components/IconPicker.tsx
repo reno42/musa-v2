@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { apiFetch } from "../lib/supabase";
+import { streamGenerate, type QuiverEvent } from "../lib/quiverStream";
 
 export interface IconPayload {
   library: string;
@@ -38,6 +39,8 @@ interface IconPickerProps {
   onInsertIcon: (icon: IconPayload) => void;
   onInsertIllustration: (ill: IllustrationPayload) => void;
   onInsertPhoto: (photo: PhotoPayload) => void;
+  /** Insert a generated SVG as a vector layer (Quiver AI text-to-SVG). */
+  onInsertSvg?: (svg: string) => void;
   insertError?: string;
 }
 
@@ -109,8 +112,8 @@ function luminanceOf(hex: string): number {
 
 const ICON_DRAG_MIME = "application/x-futuraria-icon";
 
-export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustration, onInsertPhoto, insertError }: IconPickerProps) {
-  const [tab, setTab] = useState<"icons" | "illustrations" | "photos">("icons");
+export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustration, onInsertPhoto, onInsertSvg, insertError }: IconPickerProps) {
+  const [tab, setTab] = useState<"icons" | "illustrations" | "photos" | "ai">("icons");
   const [library, setLibrary] = useState("phosphor");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -126,6 +129,14 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
   });
   const [photoError, setPhotoError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── AI Generate state ──
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [aiResults, setAiResults] = useState<string[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   const libDef = useMemo(() => LIBRARIES.find(l => l.value === library) || LIBRARIES[0], [library]);
 
@@ -205,6 +216,30 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
     setLoading(false);
   };
 
+  const handleAiGenerate = async () => {
+    if (!aiPrompt.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiResults([]);
+    setAiDraft(null);
+
+    const controller = streamGenerate(
+      { prompt: aiPrompt.trim(), instructions: aiInstructions.trim() || undefined, n: 4 },
+      {
+        onEvent: (event: QuiverEvent) => {
+          if (event.type === "draft") {
+            setAiDraft(event.svg);
+          } else if (event.type === "content") {
+            setAiResults(prev => [...prev, event.svg].filter((v, i, a) => a.indexOf(v) === i));
+            setAiDraft(null);
+          }
+        },
+        onError: () => { setAiLoading(false); },
+        onClose: () => { setAiLoading(false); setAiDraft(null); },
+      },
+    );
+    aiAbortRef.current = controller;
+  };
+
   // Debounced search — re-fires on tab/library/category/style change too,
   // since each of those changes which source is being queried.
   useEffect(() => {
@@ -212,7 +247,8 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
     searchTimer.current = setTimeout(() => {
       if (tab === "icons") searchIcons(library, search, category, style);
       else if (tab === "illustrations") searchIllustrations(search);
-      else searchPhotos(search, unsplashKey);
+      else if (tab === "photos") searchPhotos(search, unsplashKey);
+      // "ai" tab doesn't auto-search — user presses Generate
     }, 250);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -257,6 +293,7 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
             <button type="button" onClick={() => setTab("icons")} style={tabBtnStyle(tab === "icons")}>🔷 Iconos</button>
             <button type="button" onClick={() => setTab("illustrations")} style={tabBtnStyle(tab === "illustrations")}>🎨 Ilustr.</button>
             <button type="button" onClick={() => setTab("photos")} style={tabBtnStyle(tab === "photos")}>📷 Fotos</button>
+            <button type="button" onClick={() => setTab("ai")} style={tabBtnStyle(tab === "ai")}>✦ AI</button>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ background: "transparent", border: "none", color: "#888", cursor: "pointer", fontSize: 16, padding: 4 }}>✕</button>
         </div>
@@ -410,6 +447,73 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
             </div>
             <div style={{ fontSize: 9.5, color: "#555", textAlign: "center" }}>
               Click para insertar · unDraw (MIT, uso comercial libre)
+            </div>
+          </div>
+        ) : tab === "ai" ? (
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
+            <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>
+              Generá SVG con IA desde texto. Requiere una key de <strong style={{ color: "#a78bfa" }}>Quiver AI</strong> configurada en AI Settings.
+            </div>
+            <textarea
+              placeholder="Describí el SVG que querés generar… (ej: 'unicornio minimalista, línea continua, una sola tinta')"
+              value={aiPrompt}
+              onChange={e => setAiPrompt(e.target.value)}
+              rows={2}
+              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "none" }}
+            />
+            <input
+              type="text" placeholder="Instrucciones de estilo (opcional): flat, monocromo, rounded…"
+              value={aiInstructions} onChange={e => setAiInstructions(e.target.value)}
+              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none" }}
+            />
+            <button
+              type="button" onClick={handleAiGenerate} disabled={!aiPrompt.trim() || aiLoading}
+              style={{
+                padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+                border: "none", cursor: aiPrompt.trim() && !aiLoading ? "pointer" : "not-allowed",
+                background: aiPrompt.trim() && !aiLoading ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.04)",
+                color: aiPrompt.trim() && !aiLoading ? "#c4b5fd" : "#555",
+              }}
+            >
+              {aiLoading ? "✦ Generando…" : "✦ Generar SVG"}
+            </button>
+            {aiLoading && (
+              <button type="button" onClick={() => { aiAbortRef.current?.abort(); setAiLoading(false); }}
+                style={{ fontSize: 11, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.1)", color: "#f87171", borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontFamily: "inherit" }}>Cancelar</button>
+            )}
+
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 160 }}>
+              {/* Live draft preview while streaming */}
+              {aiDraft && (
+                <div style={{ marginBottom: 8, padding: 6, background: "rgba(255,255,255,0.97)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 80 }}>
+                  <div style={{ width: "100%", maxWidth: 200 }} dangerouslySetInnerHTML={{ __html: aiDraft }} />
+                </div>
+              )}
+              {aiResults.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+                  {aiResults.map((svg, i) => (
+                    <button
+                      key={i} type="button"
+                      onClick={() => onInsertSvg?.(svg)}
+                      style={{
+                        padding: 6, background: "rgba(255,255,255,0.97)",
+                        border: "1px solid rgba(139,92,246,0.2)", borderRadius: 10, cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center", minHeight: 80,
+                      }}
+                    >
+                      <div style={{ width: "100%", maxWidth: 80 }} dangerouslySetInnerHTML={{ __html: svg }} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!aiLoading && aiResults.length === 0 && !aiDraft && (
+                <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>
+                  Escribí una descripción y presioná Generar.
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: 9.5, color: "#555", textAlign: "center" }}>
+              ✦ Quiver AI · text-to-SVG · click para insertar
             </div>
           </div>
         ) : (

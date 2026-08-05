@@ -280,3 +280,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_slug
   ON workspaces(slug);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_slug_ws
   ON templates(workspace_id, slug);
+
+-- ============================================================
+-- TABLE 9: user_api_keys (BYOK — encrypted provider keys)
+-- Stores each user's third-party API keys (Gemini, Quiver, OpenAI,
+-- etc.) encrypted with KEY_ENCRYPTION_SECRET. Keys are NEVER stored
+-- in plain text and NEVER exposed to the browser — the GET endpoint
+-- only returns whether a key is configured, not the key itself.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  encrypted_key TEXT NOT NULL,
+  model TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id);
+
+ALTER TABLE user_api_keys ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users read own API keys" ON user_api_keys;
+CREATE POLICY "Users read own API keys"
+  ON user_api_keys FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users insert own API keys" ON user_api_keys;
+CREATE POLICY "Users insert own API keys"
+  ON user_api_keys FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users update own API keys" ON user_api_keys;
+CREATE POLICY "Users update own API keys"
+  ON user_api_keys FOR UPDATE
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users delete own API keys" ON user_api_keys;
+CREATE POLICY "Users delete own API keys"
+  ON user_api_keys FOR DELETE
+  USING (auth.uid() = user_id);

@@ -38,6 +38,17 @@ export const AI_PROVIDERS: AIProvider[] = [
     ],
   },
   {
+    id: "quiver",
+    label: "Quiver AI",
+    keyPrefix: "qv_",
+    keySlot: "futuraria-quiver-key",
+    modelSlot: "futuraria-quiver-model",
+    models: [
+      "arrow-1.1",
+      "arrow-1.1-max",
+    ],
+  },
+  {
     id: "openai",
     label: "OpenAI",
     keyPrefix: "sk-",

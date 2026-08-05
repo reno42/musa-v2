@@ -28,6 +28,24 @@
   status = 200
 
 [[redirects]]
+  from = "/api/keys/*"
+  to = "/.netlify/functions/keys"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/keys"
+  to = "/.netlify/functions/keys"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/quiver/*"
+  to = "/.netlify/functions/quiver-stream"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api"
   status = 200

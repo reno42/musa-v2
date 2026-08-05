@@ -14,6 +14,7 @@ import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
+import { getUserKey } from "./keys.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -3624,6 +3625,44 @@ const MCP_TOOLS = [
       required: ["templateId", "parentId", "body"],
     },
   },
+  // ── Shared: Quiver AI (image→SVG + text→SVG) ──
+  {
+    name: "vectorize_image",
+    description: "Convert a raster image (base64 or URL) into an editable SVG vector using Quiver AI. Inserts the result as a vector layer (data-layer-kind=\"svg\") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG directly.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to inject the SVG into" },
+        frameId: { type: "string", description: "Optional frame ID. If omitted, writes to the first frame." },
+        imageBase64: { type: "string", description: "Base64-encoded image data (data:image/...;base64,...). Either this or imageUrl is required." },
+        imageUrl: { type: "string", description: "Public URL of the image to vectorize. Used if imageBase64 is not provided." },
+        autoCrop: { type: "boolean", description: "Automatically detect and crop to the main subject (default: true)" },
+        targetSize: { type: "string", description: "Target SVG viewport size, e.g. '1024x1024' (default: original image size)" },
+        x: { type: "number", description: "Absolute X position in px for the inserted SVG (default: 0)" },
+        y: { type: "number", description: "Absolute Y position in px for the inserted SVG (default: 0)" },
+        model: { type: "string", description: "Quiver model ID (default: arrow-1.1). Options: arrow-1.1, arrow-1.1-max" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
+    name: "generate_svg",
+    description: "Generate SVG vector art from a text prompt using Quiver AI. Inserts the result as a vector layer (data-layer-kind=\"svg\") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG(s) directly.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID to inject the SVG into" },
+        frameId: { type: "string", description: "Target frame ID" },
+        prompt: { type: "string", description: "Text description of the SVG to generate (e.g. 'a minimalist unicorn icon')" },
+        instructions: { type: "string", description: "Optional style guidance (e.g. 'flat design, single color, rounded corners')" },
+        n: { type: "number", description: "Number of variations to generate (1-4, default: 1). The first is auto-inserted." },
+        model: { type: "string", description: "Quiver model ID (default: arrow-1.1). Options: arrow-1.1, arrow-1.1-max" },
+        x: { type: "number", description: "Absolute X position in px for the inserted SVG (default: 50)" },
+        y: { type: "number", description: "Absolute Y position in px for the inserted SVG (default: 50)" },
+      },
+      required: ["templateId", "prompt"],
+    },
+  },
 ];
 
 function getUserId(event) {
@@ -6935,7 +6974,14 @@ async function handleMethod(method, params, userId, auth) {
       // NOT the chat's LLM key (which may be DeepSeek/OpenAI/etc) — sending
       // one provider's key to another's endpoint just fails with a confusing
       // auth error, so the two are kept in separate storage on the client.
-      const apiKey = params.geminiApiKey || process.env.GEMINI_API_KEY;
+      // Key resolution chain: caller-supplied → user's BYOK key (DB) → deployment env.
+      // BYOK keys are stored encrypted in user_api_keys and decrypted here.
+      let apiKey = params.geminiApiKey;
+      if (!apiKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "google");
+        if (userKey.key) apiKey = userKey.key;
+      }
+      if (!apiKey) apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw {
           code: -32000,
@@ -11945,6 +11991,176 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: reply, error } = await sb.from("design_comments").insert(newReply).select().single();
       if (error) throw { code: -32000, message: "Reply failed: " + error.message };
       return { success: true, reply };
+    }
+
+    // ── Quiver AI: image-to-SVG vectorization ──
+    case "vectorize_image": {
+      if (!params.imageBase64 && !params.imageUrl) {
+        throw { code: -32602, message: "Either imageBase64 or imageUrl is required." };
+      }
+
+      // Resolve Quiver key: user's BYOK (DB) → no deployment fallback
+      let quiverKey = null;
+      if (auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "quiver");
+        if (userKey.key) quiverKey = userKey.key;
+      }
+      if (!quiverKey) {
+        throw {
+          code: -32000,
+          message: "NO_QUIVER_KEY: Configure your Quiver API key in AI Settings (server-side encrypted).",
+        };
+      }
+
+      const model = params.model || "arrow-1.1";
+      const body = {
+        model,
+        auto_crop: params.autoCrop !== false,
+        stream: false,
+      };
+      if (params.imageBase64) {
+        body.image = params.imageBase64;
+      } else if (params.imageUrl) {
+        body.image_url = params.imageUrl;
+      }
+      if (params.targetSize) body.target_size = params.targetSize;
+
+      const quiverRes = await fetch("https://api.quiver.ai/v1/svgs/vectorizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${quiverKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!quiverRes.ok) {
+        const errText = await quiverRes.text().catch(() => "");
+        throw { code: -32000, message: `Quiver API error ${quiverRes.status}: ${errText.substring(0, 200)}` };
+      }
+
+      const quiverJson = await quiverRes.json();
+      const svg = quiverJson?.data?.svg || quiverJson?.svg || "";
+      if (!svg) throw { code: -32000, message: "Quiver returned no SVG content." };
+
+      // Insert as a vector layer into the frame
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      requireFrames(tpl);
+      const targetFrame = params.frameId
+        ? (tpl.frames || []).find(f => f.id === params.frameId)
+        : (tpl.frames || [])[0];
+      if (params.frameId && !targetFrame) {
+        throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      }
+
+      const layerId = `quiver_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const x = params.x ?? 0;
+      const y = params.y ?? 0;
+      const wrappedSvg = svg.replace(/<svg/, `<svg data-layer-id="${layerId}" data-layer-kind="svg" data-layer-name="quiver-vector" style="position:absolute;left:${x}px;top:${y}px;"`);
+
+      targetFrame.html = (targetFrame.html || "") + wrappedSvg;
+      if (!tpl.metadata) tpl.metadata = {};
+      tpl.metadata.updatedAt = new Date().toISOString();
+
+      const persisted = await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames, html: tpl.html, css: tpl.css,
+      });
+      if (!persisted) throw { code: -32000, message: "Persistence failed." };
+
+      return {
+        success: true,
+        templateId: params.templateId,
+        frameId: targetFrame.id,
+        layerId,
+        svg: wrappedSvg,
+        model,
+        note: "Vectorized image inserted as an editable SVG vector layer.",
+      };
+    }
+
+    // ── Quiver AI: text-to-SVG generation ──
+    case "generate_svg": {
+      if (!params.prompt) {
+        throw { code: -32602, message: "prompt is required." };
+      }
+
+      let quiverKey = null;
+      if (auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "quiver");
+        if (userKey.key) quiverKey = userKey.key;
+      }
+      if (!quiverKey) {
+        throw {
+          code: -32000,
+          message: "NO_QUIVER_KEY: Configure your Quiver API key in AI Settings (server-side encrypted).",
+        };
+      }
+
+      const model = params.model || "arrow-1.1";
+      const n = Math.min(Math.max(params.n || 1, 1), 4);
+      const body = {
+        model,
+        prompt: params.prompt,
+        n,
+        stream: false,
+      };
+      if (params.instructions) body.instructions = params.instructions;
+
+      const quiverRes = await fetch("https://api.quiver.ai/v1/svgs/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${quiverKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!quiverRes.ok) {
+        const errText = await quiverRes.text().catch(() => "");
+        throw { code: -32000, message: `Quiver API error ${quiverRes.status}: ${errText.substring(0, 200)}` };
+      }
+
+      const quiverJson = await quiverRes.json();
+      const results = Array.isArray(quiverJson?.data) ? quiverJson.data : [quiverJson?.data].filter(Boolean);
+      if (!results.length || !results[0]?.svg) {
+        throw { code: -32000, message: "Quiver returned no SVG content." };
+      }
+
+      // Insert the first SVG as a vector layer
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      requireFrames(tpl);
+      const targetFrame = params.frameId
+        ? (tpl.frames || []).find(f => f.id === params.frameId)
+        : (tpl.frames || [])[0];
+      if (!targetFrame) throw { code: -32000, message: "No frame to insert into." };
+
+      const layerId = `quiver_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const x = params.x ?? 50;
+      const y = params.y ?? 50;
+      const firstSvg = results[0].svg;
+      const wrappedSvg = firstSvg.replace(/<svg/, `<svg data-layer-id="${layerId}" data-layer-kind="svg" data-layer-name="quiver-gen" style="position:absolute;left:${x}px;top:${y}px;"`);
+
+      targetFrame.html = (targetFrame.html || "") + wrappedSvg;
+      if (!tpl.metadata) tpl.metadata = {};
+      tpl.metadata.updatedAt = new Date().toISOString();
+
+      const persisted = await templates.updateTemplate(params.templateId, {
+        frames: tpl.frames, html: tpl.html, css: tpl.css,
+      });
+      if (!persisted) throw { code: -32000, message: "Persistence failed." };
+
+      return {
+        success: true,
+        templateId: params.templateId,
+        frameId: targetFrame.id,
+        layerId,
+        inserted: wrappedSvg,
+        variations: results.map((r, i) => ({ index: i, svg: r.svg })),
+        model,
+        note: `Generated ${results.length} SVG${results.length > 1 ? "s" : ""}. First one inserted as a vector layer.`,
+      };
     }
 
     default:

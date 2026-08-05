@@ -695,6 +695,8 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "search_stock_image", "upload_cover_image",
   // ── Icons ──
   "search_icons", "insert_icon",
+  // ── Quiver AI (vectorize + text-to-SVG) ──
+  "vectorize_image", "generate_svg",
   // ── Format Adaptation ──
   "adapt_format", "adapt_all_formats",
   // ── Export / Render ──

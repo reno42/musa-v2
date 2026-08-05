@@ -14,6 +14,7 @@ import { saveCurrentRoute } from "../lib/routePersistence";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
+import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { WorkspaceConsole } from "./WorkspaceConsole";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
@@ -216,30 +217,79 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
 
-  // Google Gemini key (powers convert-image-to-design). Its own storage
-  // slot on purpose — the chat's provider key (futuraria-chat-llm-key) may
-  // hold a DeepSeek/OpenAI key, and sending that to Gemini's endpoint only
-  // yields a confusing auth error. Same slot the editor's prompt writes to.
-  const GEMINI_KEY_SLOT = "futuraria-gemini-key";
-  const GEMINI_MODEL_SLOT = "futuraria-gemini-model";
+  // ── Server-side BYOK key management (replaces localStorage) ──
+  // Keys are encrypted server-side. The browser only knows whether a key
+  // is configured and which model is selected — never the actual value.
   const geminiProvider = getProvider("google")!;
-  const [geminiKey, setGeminiKey] = useState(() => {
-    try { return localStorage.getItem(GEMINI_KEY_SLOT) || ""; } catch { return ""; }
-  });
-  const [geminiModel, setGeminiModel] = useState(() => {
-    try { return localStorage.getItem(GEMINI_MODEL_SLOT) || geminiProvider.models[0]; } catch { return geminiProvider.models[0]; }
-  });
+  const quiverProvider = getProvider("quiver")!;
+  const [keyStatuses, setKeyStatuses] = useState<KeyStatusMap>({});
   const [geminiDraft, setGeminiDraft] = useState("");
+  const [quiverDraft, setQuiverDraft] = useState("");
   const [editingGemini, setEditingGemini] = useState(false);
-  const saveGeminiKey = (value: string) => {
+  const [editingQuiver, setEditingQuiver] = useState(false);
+  const [keySaving, setKeySaving] = useState(false);
+
+  const geminiConfigured = !!keyStatuses["google"]?.configured;
+  const geminiModel = keyStatuses["google"]?.model || geminiProvider.models[0];
+  const quiverConfigured = !!keyStatuses["quiver"]?.configured;
+  const quiverModel = keyStatuses["quiver"]?.model || quiverProvider.models[0];
+
+  const refreshKeyStatuses = useCallback(async () => {
+    try {
+      const statuses = await fetchKeyStatuses();
+      setKeyStatuses(statuses);
+    } catch { /* not signed in or server not configured */ }
+  }, []);
+
+  useEffect(() => { void refreshKeyStatuses(); }, [refreshKeyStatuses]);
+
+  const handleSaveGeminiKey = async (value: string) => {
     const v = value.trim();
-    try { localStorage.setItem(GEMINI_KEY_SLOT, v); } catch { /* private mode */ }
-    setGeminiKey(v);
-    setEditingGemini(false);
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("google", v, geminiModel);
+      } else {
+        await deleteProviderKey("google");
+      }
+      await refreshKeyStatuses();
+      setEditingGemini(false);
+      setGeminiDraft("");
+      addToast(v ? "Gemini key saved (encrypted server-side)." : "Gemini key removed.", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Save failed: ${err.message}`, "error");
+    }
+    setKeySaving(false);
   };
-  const saveGeminiModel = (m: string) => {
-    try { localStorage.setItem(GEMINI_MODEL_SLOT, m); } catch { /* private mode */ }
-    setGeminiModel(m);
+
+  const handleSaveGeminiModel = async (m: string) => {
+    setKeySaving(true);
+    try {
+      if (geminiConfigured) {
+        await saveProviderKey("google", "", m);
+      }
+      await refreshKeyStatuses();
+    } catch { /* model save is best-effort */ }
+    setKeySaving(false);
+  };
+
+  const handleSaveQuiverKey = async (value: string) => {
+    const v = value.trim();
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("quiver", v, quiverModel);
+      } else {
+        await deleteProviderKey("quiver");
+      }
+      await refreshKeyStatuses();
+      setEditingQuiver(false);
+      setQuiverDraft("");
+      addToast(v ? "Quiver key saved (encrypted server-side)." : "Quiver key removed.", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Save failed: ${err.message}`, "error");
+    }
+    setKeySaving(false);
   };
   const [apiKeyRotating, setApiKeyRotating] = useState(false);
   const [apiKeyBannerDismissed, setApiKeyBannerDismissed] = useState(() => {
@@ -1550,38 +1600,35 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* ── AI Configuration ── */}
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>AI Configuration</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
-            {/* Google Gemini key — a real editable field. This used to be a
-                decorative card that read "AI-Ready" whether or not any key
-                existed, so convert-image-to-design could fail while Settings
-                claimed everything was fine. */}
+            {/* Google Gemini — server-side encrypted key */}
             <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingGemini || !geminiKey ? 10 : 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingGemini || !geminiConfigured ? 10 : 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ fontSize: 14 }}>🧠</span>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Google Gemini</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                      Convertir imagen a diseño · distinta a la key del chat
+                      Convertir imagen a diseño · almacenada en el servidor (cifrada)
                     </div>
                   </div>
                 </div>
                 <span style={{
                   fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
-                  background: geminiKey ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
-                  color: geminiKey ? "#4ade80" : "#facc15",
+                  background: geminiConfigured ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+                  color: geminiConfigured ? "#4ade80" : "#facc15",
                 }}>
-                  {geminiKey ? "Configurada" : "Falta"}
+                  {geminiConfigured ? "Configurada" : "Falta"}
                 </span>
               </div>
 
-              {editingGemini || !geminiKey ? (
+              {editingGemini || !geminiConfigured ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input
                     type="password"
                     value={geminiDraft}
                     onChange={e => setGeminiDraft(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === "Enter" && geminiDraft.trim()) saveGeminiKey(geminiDraft);
+                      if (e.key === "Enter" && geminiDraft.trim()) handleSaveGeminiKey(geminiDraft);
                       if (e.key === "Escape") { setEditingGemini(false); setGeminiDraft(""); }
                     }}
                     placeholder="AIza… (key de Google Gemini)"
@@ -1593,19 +1640,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   />
                   <button
                     type="button"
-                    onClick={() => saveGeminiKey(geminiDraft)}
-                    disabled={!geminiDraft.trim()}
+                    onClick={() => handleSaveGeminiKey(geminiDraft)}
+                    disabled={!geminiDraft.trim() || keySaving}
                     style={{
                       borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
-                      border: "none", cursor: geminiDraft.trim() ? "pointer" : "not-allowed",
-                      background: geminiDraft.trim() ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
-                      color: geminiDraft.trim() ? "#a5b4fc" : "rgba(255,255,255,0.3)",
+                      border: "none", cursor: geminiDraft.trim() && !keySaving ? "pointer" : "not-allowed",
+                      background: geminiDraft.trim() && !keySaving ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
+                      color: geminiDraft.trim() && !keySaving ? "#a5b4fc" : "rgba(255,255,255,0.3)",
                       whiteSpace: "nowrap",
                     }}
                   >
                     Guardar
                   </button>
-                  {geminiKey && (
+                  {geminiConfigured && (
                     <button type="button" onClick={() => { setEditingGemini(false); setGeminiDraft(""); }}
                       style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)" }}>
                       Cancelar
@@ -1619,14 +1666,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                    {geminiKey.slice(0, 6)}…{geminiKey.slice(-4)} · guardada en este navegador
+                    🔒 Cifrada en el servidor — no visible en el navegador
                   </span>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button type="button" onClick={() => { setGeminiDraft(geminiKey); setEditingGemini(true); }}
+                    <button type="button" onClick={() => { setGeminiDraft(""); setEditingGemini(true); }}
                       style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.12)", color: "#a5b4fc" }}>
                       Cambiar
                     </button>
-                    <button type="button" onClick={() => saveGeminiKey("")}
+                    <button type="button" onClick={() => handleSaveGeminiKey("")}
                       style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
                       Borrar
                     </button>
@@ -1638,7 +1685,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Modelo</span>
                 <select
                   value={geminiModel}
-                  onChange={e => saveGeminiModel(e.target.value)}
+                  onChange={e => handleSaveGeminiModel(e.target.value)}
                   style={{
                     flex: 1, padding: "6px 12px", borderRadius: 8,
                     background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
@@ -1646,6 +1693,107 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   }}
                 >
                   {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Quiver AI — image-to-SVG vectorization */}
+            <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingQuiver || !quiverConfigured ? 10 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 14 }}>✦</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Quiver AI</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                      Vectorizar imagen a SVG · text-to-SVG · almacenada en el servidor (cifrada)
+                    </div>
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
+                  background: quiverConfigured ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+                  color: quiverConfigured ? "#4ade80" : "#facc15",
+                }}>
+                  {quiverConfigured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+
+              {editingQuiver || !quiverConfigured ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    type="password"
+                    value={quiverDraft}
+                    onChange={e => setQuiverDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && quiverDraft.trim()) handleSaveQuiverKey(quiverDraft);
+                      if (e.key === "Escape") { setEditingQuiver(false); setQuiverDraft(""); }
+                    }}
+                    placeholder="qv_… (key de Quiver AI)"
+                    style={{
+                      flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
+                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                      color: "#fff", fontSize: 12, outline: "none",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSaveQuiverKey(quiverDraft)}
+                    disabled={!quiverDraft.trim() || keySaving}
+                    style={{
+                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
+                      border: "none", cursor: quiverDraft.trim() && !keySaving ? "pointer" : "not-allowed",
+                      background: quiverDraft.trim() && !keySaving ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
+                      color: quiverDraft.trim() && !keySaving ? "#a5b4fc" : "rgba(255,255,255,0.3)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Guardar
+                  </button>
+                  {quiverConfigured && (
+                    <button type="button" onClick={() => { setEditingQuiver(false); setQuiverDraft(""); }}
+                      style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)" }}>
+                      Cancelar
+                    </button>
+                  )}
+                  <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", whiteSpace: "nowrap" }}>
+                    Obtener key ↗
+                  </a>
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    🔒 Cifrada en el servidor — no visible en el navegador
+                  </span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button type="button" onClick={() => { setQuiverDraft(""); setEditingQuiver(true); }}
+                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.12)", color: "#a5b4fc" }}>
+                      Cambiar
+                    </button>
+                    <button type="button" onClick={() => handleSaveQuiverKey("")}
+                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
+                      Borrar
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Model picker */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select
+                  value={quiverModel}
+                  onChange={e => {
+                    if (quiverConfigured) {
+                      saveProviderKey("quiver", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                    }
+                  }}
+                  style={{
+                    flex: 1, padding: "6px 12px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                    color: "#fff", fontSize: 12, outline: "none", cursor: "pointer",
+                  }}
+                >
+                  {quiverProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
             </div>

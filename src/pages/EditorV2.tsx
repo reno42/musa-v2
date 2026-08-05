@@ -32,6 +32,8 @@ import { apiFetch } from "../lib/supabase";
 import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
 import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
+import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
+import { streamVectorize, type QuiverEvent } from "../lib/quiverStream";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
   appendCssOverride,
@@ -2962,34 +2964,78 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [iconPickerAnchor, setIconPickerAnchor] = useState<DOMRect | null>(null);
 
-  // Convert-image-to-design runs on Google Gemini. Its key is stored under
-  // its OWN localStorage name, deliberately separate from the chat's LLM key
-  // (futuraria-chat-llm-key) — that one may hold a DeepSeek/OpenAI/etc key,
-  // and sending it to Gemini's endpoint would just fail with a confusing
-  // auth error. Never read the two from a shared slot.
+  // ── Server-side BYOK key management (replaces localStorage) ──
+  // Keys are encrypted server-side. The browser only knows whether a key
+  // is configured and which model is selected — never the actual value.
   const geminiProvider = getProvider("google")!;
-  const [geminiKey, setGeminiKey] = useState(() => {
-    try { return localStorage.getItem("futuraria-gemini-key") || ""; } catch { return ""; }
-  });
-  const [geminiModel, setGeminiModel] = useState(() => {
-    try { return localStorage.getItem("futuraria-gemini-model") || geminiProvider.models[0]; } catch { return geminiProvider.models[0]; }
-  });
+  const quiverProvider = getProvider("quiver")!;
+  const [keyStatuses, setKeyStatuses] = useState<KeyStatusMap>({});
   const [showGeminiKeyPrompt, setShowGeminiKeyPrompt] = useState(false);
   const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
-  useEffect(() => {
-    try { localStorage.setItem("futuraria-gemini-key", geminiKey); } catch { /* private mode */ }
-  }, [geminiKey]);
-  useEffect(() => {
-    try { localStorage.setItem("futuraria-gemini-model", geminiModel); } catch { /* private mode */ }
-  }, [geminiModel]);
+  const [quiverKeyDraft, setQuiverKeyDraft] = useState("");
+  const [keySaving, setKeySaving] = useState(false);
+
+  const geminiConfigured = !!keyStatuses["google"]?.configured;
+  const geminiModel = keyStatuses["google"]?.model || geminiProvider.models[0];
+  const quiverConfigured = !!keyStatuses["quiver"]?.configured;
+  const quiverModel = keyStatuses["quiver"]?.model || quiverProvider.models[0];
+
+  const refreshKeyStatuses = useCallback(async () => {
+    try {
+      setKeyStatuses(await fetchKeyStatuses());
+    } catch { /* not signed in or server not configured */ }
+  }, []);
+  useEffect(() => { void refreshKeyStatuses(); }, [refreshKeyStatuses]);
+
+  const handleSaveGeminiKey = useCallback(async (value: string) => {
+    const v = value.trim();
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("google", v, geminiModel);
+      } else {
+        await deleteProviderKey("google");
+      }
+      await refreshKeyStatuses();
+      addToast(v ? "✓ Gemini key guardada (servidor)" : "Gemini key eliminada", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Error: ${err.message}`, "error");
+    }
+    setKeySaving(false);
+  }, [geminiModel, refreshKeyStatuses, addToast]);
+
+  const handleSaveQuiverKey = useCallback(async (value: string) => {
+    const v = value.trim();
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("quiver", v, quiverModel);
+      } else {
+        await deleteProviderKey("quiver");
+      }
+      await refreshKeyStatuses();
+      addToast(v ? "✓ Quiver key guardada (servidor)" : "Quiver key eliminada", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Error: ${err.message}`, "error");
+    }
+    setKeySaving(false);
+  }, [quiverModel, refreshKeyStatuses, addToast]);
 
   /** Opens the AI config panel in the right sidebar — the user never has to
    *  leave the editor to set their key/model. Returns from any caller. */
   const openAiConfigPanel = useCallback(() => {
-    setGeminiKeyDraft(geminiKey);
+    setGeminiKeyDraft("");
     setRightPanelTab("ai");
     setShowRightPanel(true);
-  }, [geminiKey]);
+  }, []);
+
+  // ── Quiver streaming vectorize state ──
+  const [vectorizePreview, setVectorizePreview] = useState<string | null>(null);
+  const [vectorizeLoading, setVectorizeLoading] = useState(false);
+  const [vectorizeReasoning, setVectorizeReasoning] = useState("");
+  const [cropMode, setCropMode] = useState<"auto" | "manual">("auto");
+  const [cropRegion, setCropRegion] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const quiverAbortRef = useRef<AbortController | null>(null);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   // Saves whichever frame(s) are currently selected — same selection
@@ -3503,8 +3549,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           params: {
             templateId, imageBase64, frameId: newFrame.id,
             width: newFrame.width, height: newFrame.height,
-            // Only ever the Gemini-specific key — never the chat's LLM key.
-            ...(geminiKey ? { geminiApiKey: geminiKey } : {}),
             geminiModel,
           },
           id: 0,
@@ -3526,7 +3570,122 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       addToast(`No se pudo convertir la imagen: ${err?.message || "error desconocido"}`, "error");
     }
     setMcpLoading(null);
-  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiKey, geminiModel, openAiConfigPanel]);
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiModel, openAiConfigPanel]);
+
+  /** Vectorize the selected image to SVG via Quiver AI with live streaming.
+   *  Shows a floating preview panel with the SVG building in real-time from
+   *  draft events, then inserts the final SVG as a vector layer. */
+  const handleVectorizeSelectedImage = useCallback(async () => {
+    if (!quiverConfigured) {
+      addToast("Configurá tu API key de Quiver AI en el panel de la derecha.", "info");
+      openAiConfigPanel();
+      return;
+    }
+
+    // Resolve the source image
+    let srcUrl: string | null = null;
+    let srcX = 0, srcY = 0;
+
+    if (selectedElement?.src) {
+      srcUrl = selectedElement.src;
+    } else if (selectedOrphanIds.size === 1) {
+      const obj = canvasObjects.find(o => selectedOrphanIds.has(o.id));
+      if (!obj || obj.kind !== "image") { addToast("Selecciona una imagen primero.", "error"); return; }
+      srcUrl = obj.html.match(/src="([^"]+)"/)?.[1] || null;
+      srcX = obj.x; srcY = obj.y;
+    } else {
+      addToast("Selecciona una imagen en el editor primero.", "error");
+      return;
+    }
+    if (!srcUrl) { addToast("La imagen seleccionada no tiene una fuente válida.", "error"); return; }
+
+    setVectorizeLoading(true);
+    setVectorizePreview(null);
+    setVectorizeReasoning("");
+
+    try {
+      const resp = await fetch(srcUrl);
+      const blob = await resp.blob();
+
+      let imageBase64: string;
+
+      if (cropMode === "manual" && cropRegion) {
+        // Crop the image to the selected region using a canvas
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const url = URL.createObjectURL(blob);
+          const el = new Image();
+          el.onload = () => { resolve(el); };
+          el.onerror = reject;
+          el.src = url;
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(cropRegion.w);
+        canvas.height = Math.round(cropRegion.h);
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, cropRegion.x, cropRegion.y, cropRegion.w, cropRegion.h, 0, 0, canvas.width, canvas.height);
+        imageBase64 = canvas.toDataURL("image/png");
+      } else {
+        // Auto-crop: send the full image, let Quiver detect the subject
+        imageBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("No se pudo leer la imagen"));
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      addToast("✦ Vectorizando con Quiver AI...", "info");
+
+      const controller = streamVectorize(
+        {
+          imageBase64,
+          autoCrop: cropMode === "auto",
+          model: quiverModel,
+        },
+        {
+          onEvent: (event: QuiverEvent) => {
+            if (event.type === "reasoning") {
+              setVectorizeReasoning(event.reasoning);
+            } else if (event.type === "draft") {
+              setVectorizePreview(event.svg);
+            } else if (event.type === "content") {
+              // Final SVG — insert as a vector layer
+              setVectorizePreview(event.svg);
+              const layerId = `quiver_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const wrappedSvg = event.svg.replace(
+                /<svg/,
+                `<svg data-layer-id="${layerId}" data-layer-kind="svg" data-layer-name="quiver-vector" style="position:absolute;left:${Math.round(srcX)}px;top:${Math.round(srcY)}px;"`,
+              );
+
+              const targetFrame = selectedElement?.frameId
+                ? frames.find(f => f.id === selectedElement.frameId)
+                : frames.find(f => f.id === selectedFrameId);
+
+              if (targetFrame) {
+                const updatedHtml = (targetFrame.html || "") + wrappedSvg;
+                const updatedFrames = frames.map(f =>
+                  f.id === targetFrame.id ? { ...f, html: updatedHtml } : f,
+                );
+                store.replaceAllWithUndo(updatedFrames, "edit");
+                addToast("✓ SVG vectorizado insertado como capa editable.", "success");
+              }
+            }
+          },
+          onError: (err: Error) => {
+            addToast(`Error de vectorización: ${err.message}`, "error");
+            setVectorizeLoading(false);
+          },
+          onClose: () => {
+            setVectorizeLoading(false);
+          },
+        },
+      );
+      quiverAbortRef.current = controller;
+    } catch (err: any) {
+      addToast(`No se pudo vectorizar: ${err?.message || "error desconocido"}`, "error");
+      setVectorizeLoading(false);
+    }
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, selectedFrameId, quiverConfigured, quiverModel, cropMode, cropRegion, store, addToast, openAiConfigPanel]);
 
   // Batchamator commits its generated duplicates the same way any other
   // frame-adding action does — append + undo-tracked + autosaved.
@@ -4490,7 +4649,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             type="button"
             className="editor-v2-topbar-icon-btn"
             onClick={() => {
-              if (!geminiKey) { openAiConfigPanel(); return; }
+              if (!geminiConfigured) { openAiConfigPanel(); return; }
               handleConvertSelectedImageToDesign();
             }}
             disabled={mcpLoading === "imageToDesign"}
@@ -4498,6 +4657,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             style={{ background: "linear-gradient(135deg, rgba(200,184,152,0.15), rgba(168,146,106,0.15))" }}
           >
             <span style={{ fontSize: 14 }}>{mcpLoading === "imageToDesign" ? "⏳" : "🪄"}</span>
+          </button>
+
+          {/* Vectorize Image → SVG (Quiver AI) — acts on the selected image,
+              streams the SVG building live, then inserts as a vector layer. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => {
+              if (!quiverConfigured) { openAiConfigPanel(); return; }
+              handleVectorizeSelectedImage();
+            }}
+            disabled={vectorizeLoading}
+            title="Vectorize selected image to SVG (Quiver AI)"
+            style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))" }}
+          >
+            <span style={{ fontSize: 14 }}>{vectorizeLoading ? "⏳" : "✦"}</span>
           </button>
 
           {/* AI Settings — provider/model/key config without leaving editor */}
@@ -5308,7 +5483,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo</label>
                     <select
                       value={geminiModel}
-                      onChange={e => setGeminiModel(e.target.value)}
+                      onChange={e => {
+                        if (geminiConfigured) {
+                          saveProviderKey("google", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                        }
+                      }}
                       style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
                     >
                       {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
@@ -5322,31 +5501,84 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                         value={geminiKeyDraft}
                         onChange={e => setGeminiKeyDraft(e.target.value)}
                         onKeyDown={e => {
-                          if (e.key === "Enter" && geminiKeyDraft.trim()) {
-                            setGeminiKey(geminiKeyDraft.trim());
-                            addToast("✓ Gemini key guardada", "success");
-                          }
-                          if (e.key === "Escape") setGeminiKeyDraft(geminiKey);
+                          if (e.key === "Enter" && geminiKeyDraft.trim()) handleSaveGeminiKey(geminiKeyDraft.trim());
+                          if (e.key === "Escape") setGeminiKeyDraft("");
                         }}
                         placeholder="AIza... (Google Gemini API key)"
                         style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
                       />
                       <button
                         type="button"
-                        disabled={geminiKeyDraft === geminiKey}
-                        onClick={() => { setGeminiKey(geminiKeyDraft.trim()); addToast("✓ Gemini key guardada", "success"); }}
-                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: geminiKeyDraft !== geminiKey ? "pointer" : "not-allowed", background: geminiKeyDraft !== geminiKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: geminiKeyDraft !== geminiKey ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                        disabled={!geminiKeyDraft.trim() || keySaving}
+                        onClick={() => handleSaveGeminiKey(geminiKeyDraft.trim())}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: geminiKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: geminiKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: geminiKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
                       >
                         Guardar
                       </button>
                     </div>
-                    {geminiKey ? (
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
-                        {geminiKey.slice(0, 6)}…{geminiKey.slice(-4)} · {geminiModel}
+                    {geminiConfigured ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · {geminiModel}</span>
+                        <button type="button" onClick={() => handleSaveGeminiKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
                       </div>
                     ) : (
                       <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
                         Obtener key gratis ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Quiver AI (vectorize) ── */}
+              <div>
+                <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Vectorize Image → SVG (Quiver AI)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo</label>
+                    <select
+                      value={quiverModel}
+                      onChange={e => {
+                        if (quiverConfigured) {
+                          saveProviderKey("quiver", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                        }
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {quiverProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>API Key</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        type="password"
+                        value={quiverKeyDraft}
+                        onChange={e => setQuiverKeyDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && quiverKeyDraft.trim()) handleSaveQuiverKey(quiverKeyDraft.trim());
+                          if (e.key === "Escape") setQuiverKeyDraft("");
+                        }}
+                        placeholder="qv_... (Quiver AI API key)"
+                        style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!quiverKeyDraft.trim() || keySaving}
+                        onClick={() => handleSaveQuiverKey(quiverKeyDraft.trim())}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: quiverKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: quiverKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: quiverKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                    {quiverConfigured ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · {quiverModel}</span>
+                        <button type="button" onClick={() => handleSaveQuiverKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                      </div>
+                    ) : (
+                      <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                        Obtener key ↗
                       </a>
                     )}
                   </div>
@@ -5361,7 +5593,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6, marginBottom: 10 }}>
                   La key del chat se configura en el panel del chat (botón 💬). Acá solo se muestra qué modelos hay disponibles por proveedor.
                 </p>
-                {AI_PROVIDERS.filter(p => p.id !== "google").map(p => (
+                {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver").map(p => (
                   <div key={p.id} style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
                     <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>{p.label}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -5458,6 +5690,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onInsertIcon={handleInsertIconClick}
           onInsertIllustration={handleInsertIllustration}
           onInsertPhoto={handleInsertPhoto}
+          onInsertSvg={(svg: string) => {
+            const targetFrame = frames.find(f => f.id === selectedFrameId) || frames[0];
+            if (!targetFrame) return;
+            const layerId = `quiver_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            const wrappedSvg = svg.replace(
+              /<svg/,
+              `<svg data-layer-id="${layerId}" data-layer-kind="svg" data-layer-name="ai-generated" style="position:absolute;left:50px;top:50px;"`,
+            );
+            const updatedHtml = (targetFrame.html || "") + wrappedSvg;
+            const updatedFrames = frames.map(f =>
+              f.id === targetFrame.id ? { ...f, html: updatedHtml } : f,
+            );
+            store.replaceAllWithUndo(updatedFrames, "edit");
+            addToast("✓ SVG generado insertado como capa vectorial.", "success");
+          }}
           insertError={iconInsertError}
         />
       )}
@@ -5496,11 +5743,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 Cancelar
               </button>
               <button type="button"
-                disabled={!geminiKeyDraft.trim()}
+                disabled={!geminiKeyDraft.trim() || keySaving}
                 onClick={() => {
-                  setGeminiKey(geminiKeyDraft.trim());
+                  handleSaveGeminiKey(geminiKeyDraft.trim());
                   setShowGeminiKeyPrompt(false);
-                  addToast("Key guardada. Volvé a presionar 🪄 para convertir la imagen.", "success");
                 }}
                 style={{
                   padding: "8px 14px", borderRadius: 8, border: "none",
@@ -5512,6 +5758,76 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ═══ Quiver Vectorize Preview Panel ═══ */}
+      {(vectorizeLoading || vectorizePreview) && (
+        <div style={{
+          position: "fixed", top: 80, right: 340, zIndex: 800,
+          width: 320, maxHeight: "70vh", overflowY: "auto",
+          background: "rgba(15,15,20,0.96)", border: "1px solid rgba(139,92,246,0.3)",
+          borderRadius: 12, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          backdropFilter: "blur(12px)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#a78bfa" }}>✦ Quiver Vectorize</span>
+            {vectorizeLoading && <span style={{ fontSize: 11, color: "#7c7c7c" }}>streaming…</span>}
+            {!vectorizeLoading && vectorizePreview && (
+              <button type="button" onClick={() => { setVectorizePreview(null); setVectorizeReasoning(""); }}
+                style={{ fontSize: 11, border: "none", background: "transparent", color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: 0 }}>✕</button>
+            )}
+          </div>
+
+          {/* Crop mode toggle */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            <button type="button"
+              onClick={() => setCropMode("auto")}
+              style={{
+                flex: 1, padding: "5px 8px", fontSize: 11, borderRadius: 6, border: "none", cursor: "pointer",
+                background: cropMode === "auto" ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.04)",
+                color: cropMode === "auto" ? "#c4b5fd" : "rgba(255,255,255,0.4)",
+              }}>Auto-crop</button>
+            <button type="button"
+              onClick={() => setCropMode("manual")}
+              style={{
+                flex: 1, padding: "5px 8px", fontSize: 11, borderRadius: 6, border: "none", cursor: "pointer",
+                background: cropMode === "manual" ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.04)",
+                color: cropMode === "manual" ? "#c4b5fd" : "rgba(255,255,255,0.4)",
+              }}>Manual</button>
+          </div>
+
+          {/* SVG preview */}
+          {vectorizePreview ? (
+            <div style={{
+              background: "rgba(255,255,255,0.97)", borderRadius: 8, padding: 8, marginBottom: 8,
+              display: "flex", alignItems: "center", justifyContent: "center", minHeight: 120,
+            }}>
+              <div style={{ width: "100%", maxWidth: 260 }} dangerouslySetInnerHTML={{ __html: vectorizePreview }} />
+            </div>
+          ) : (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              height: 120, color: "rgba(255,255,255,0.3)", fontSize: 12,
+            }}>Generando SVG…</div>
+          )}
+
+          {/* Reasoning text */}
+          {vectorizeReasoning && (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.5, fontStyle: "italic", marginTop: 8 }}>
+              {vectorizeReasoning.substring(0, 200)}{vectorizeReasoning.length > 200 ? "…" : ""}
+            </div>
+          )}
+
+          {/* Cancel button while loading */}
+          {vectorizeLoading && (
+            <button type="button" onClick={() => { quiverAbortRef.current?.abort(); setVectorizeLoading(false); }}
+              style={{
+                width: "100%", marginTop: 8, padding: "6px 12px", fontSize: 12, fontWeight: 500,
+                borderRadius: 6, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.1)",
+                color: "#f87171", cursor: "pointer", fontFamily: "inherit",
+              }}>Cancelar</button>
+          )}
         </div>
       )}
 
