@@ -12018,12 +12018,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         auto_crop: params.autoCrop !== false,
         stream: false,
       };
+      // Quiver expects image as ImageInputReference: { base64 } or { url }
       if (params.imageBase64) {
-        body.image = params.imageBase64;
+        body.image = { base64: params.imageBase64 };
       } else if (params.imageUrl) {
-        body.image_url = params.imageUrl;
+        body.image = { url: params.imageUrl };
       }
-      if (params.targetSize) body.target_size = params.targetSize;
+      if (params.targetSize) body.target_size = Number(params.targetSize);
 
       const quiverRes = await fetch("https://api.quiver.ai/v1/svgs/vectorizations", {
         method: "POST",
@@ -12040,7 +12041,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
 
       const quiverJson = await quiverRes.json();
-      const svg = quiverJson?.data?.svg || quiverJson?.svg || "";
+      const svg = quiverJson?.data?.[0]?.svg || quiverJson?.svg || "";
       if (!svg) throw { code: -32000, message: "Quiver returned no SVG content." };
 
       // Insert as a vector layer into the frame

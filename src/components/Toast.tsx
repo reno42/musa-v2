@@ -5,6 +5,7 @@ interface Toast {
   message: string;
   type: "info" | "success" | "error";
   persistent?: boolean;
+  copied?: boolean;
 }
 
 interface ToastContextValue {
@@ -43,6 +44,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const copyToast = useCallback((id: string, message: string) => {
+    navigator.clipboard.writeText(message).then(() => {
+      setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, copied: true } : t)));
+      setTimeout(() => {
+        setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, copied: false } : t)));
+      }, 2000);
+    }).catch(() => {});
   }, []);
 
   const addToast = useCallback(
@@ -96,7 +106,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             }}
           >
             <span style={{ flexShrink: 0, fontSize: 14, lineHeight: "18px" }}>{ICONS[t.type]}</span>
-            <span style={{ flex: 1, lineHeight: "18px" }}>{t.message}</span>
+            <span style={{ flex: 1, lineHeight: "18px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{t.message}</span>
+            {t.type === "error" && (
+              <button
+                type="button"
+                onClick={() => copyToast(t.id, t.message)}
+                style={{
+                  flexShrink: 0,
+                  background: "none",
+                  border: "none",
+                  color: t.copied ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  lineHeight: "18px",
+                  padding: 0,
+                  marginLeft: 4,
+                  fontFamily: "inherit",
+                }}
+                aria-label="Copy error text"
+                title="Copy error text"
+              >
+                {t.copied ? "✓" : "⧉"}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => dismissToast(t.id)}

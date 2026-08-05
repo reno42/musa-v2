@@ -112,14 +112,18 @@ export async function handler(event) {
       auto_crop: body.autoCrop !== false,
       stream: true,
     };
+    // Quiver expects `image` as an ImageInputReference object:
+    //   { base64: "..." } for base64 payloads
+    //   { url: "..." }   for network URLs
+    // Sending a raw string causes a 400 "Invalid request body".
     if (body.imageBase64) {
-      quiverBody.image = body.imageBase64;
+      quiverBody.image = { base64: body.imageBase64 };
     } else if (body.imageUrl) {
-      quiverBody.image_url = body.imageUrl;
+      quiverBody.image = { url: body.imageUrl };
     } else {
       return jsonResponse(400, { error: "Either imageBase64 or imageUrl is required." });
     }
-    if (body.targetSize) quiverBody.target_size = body.targetSize;
+    if (body.targetSize) quiverBody.target_size = Number(body.targetSize);
   }
 
   // ── Call Quiver with streaming ──
