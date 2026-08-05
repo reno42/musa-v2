@@ -190,11 +190,71 @@ PRINCIPIO CRÍTICO:
 - harness_delegate_task es tu tool principal. Úsala SIEMPRE para diseño y review.
 - El implementer hace el trabajo. El reviewer verifica. Tú coordinas.`;
 
+// ═══════════════════════════════════════════════
+// BOOTSTRAP CONTEXT — loaded ONCE when chat opens so the Leader starts
+// every session with memory instead of from zero.
+// ═══════════════════════════════════════════════
+interface BootstrapContext {
+  styles: Array<{ name: string; description?: string }>;
+  recentTemplates: Array<{ id: string; name: string }>;
+  previousSessions: Array<{ id: string; summary: string }>;
+  skills: Array<{ name: string; trigger: string; steps: string }>;
+  healthOk: boolean;
+}
+
+async function bootstrapSession(): Promise<BootstrapContext> {
+  const ctx: BootstrapContext = { styles: [], recentTemplates: [], previousSessions: [], skills: [], healthOk: false };
+  try {
+    const health = await mcpCall("harness_healthcheck", {}).catch(() => null);
+    ctx.healthOk = health?.ok === true;
+    if (currentContext.workspaceId) {
+      const context = await mcpCall("harness_get_context", { agentType: "leader", workspaceId: currentContext.workspaceId }).catch(() => null);
+      if (context?.sessions) {
+        ctx.previousSessions = context.sessions.slice(0, 3).map((s: any) => ({ id: s.id, summary: s.summary || s.task_title || "Sin resumen" }));
+      }
+      const styles = await mcpCall("get_active_styles", { workspaceId: currentContext.workspaceId }).catch(() => null);
+      if (Array.isArray(styles)) {
+        ctx.styles = styles.slice(0, 20).map((s: any) => ({ name: s.name || s.id, description: s.description || "" }));
+      }
+      const templates = await mcpCall("list_templates", { workspaceId: currentContext.workspaceId }).catch(() => null);
+      if (Array.isArray(templates)) {
+        ctx.recentTemplates = templates.slice(0, 5).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
+      }
+      try {
+        const playbook = await mcpCall("get_playbook", { name: "multi-agent" }).catch(() => null);
+        if (playbook?.content) {
+          ctx.skills.push({ name: "multi-agent-playbook", trigger: "design tasks", steps: typeof playbook.content === "string" ? playbook.content.slice(0, 500) : JSON.stringify(playbook.content).slice(0, 500) });
+        }
+      } catch { /* playbook may not exist */ }
+    }
+  } catch { /* bootstrap is best-effort */ }
+  return ctx;
+}
+
 /** Fills in the {CURRENT_CONTEXT} block with what the human is actually looking at. */
-function buildSystemPrompt(): string {
+function buildSystemPrompt(bootstrap?: BootstrapContext): string {
   const ctxLines: string[] = [];
   if (currentContext.workspaceId) ctxLines.push(`- workspaceId actual: ${currentContext.workspaceId}`);
   if (currentContext.templateId) ctxLines.push(`- templateId actualmente abierto en el editor: ${currentContext.templateId} (si el pedido es sobre "esto"/"este diseño", es este)`);
+  if (bootstrap) {
+    if (!bootstrap.healthOk) ctxLines.push("⚠️ HEALTH CHECK FALLÓ. Verifica conexión con Supabase antes de continuar.");
+    if (bootstrap.styles.length > 0) {
+      ctxLines.push(`ESTILOS GUARDADOS (${bootstrap.styles.length}):`);
+      bootstrap.styles.forEach(s => ctxLines.push(`  - ${s.name}${s.description ? ": " + s.description : ""}`));
+    }
+    if (bootstrap.recentTemplates.length > 0) {
+      ctxLines.push("TEMPLATES RECIENTES:");
+      bootstrap.recentTemplates.forEach(t => ctxLines.push(`  - ${t.id}: ${t.name}`));
+    }
+    if (bootstrap.previousSessions.length > 0) {
+      ctxLines.push("SESIONES PREVIAS (resumen):");
+      bootstrap.previousSessions.forEach(s => ctxLines.push(`  - ${s.id}: ${s.summary}`));
+    }
+    if (bootstrap.skills.length > 0) {
+      ctxLines.push("SKILLS CARGADOS:");
+      bootstrap.skills.forEach(s => ctxLines.push(`  - ${s.name}: ${s.trigger} → ${s.steps}`));
+    }
+  }
   const block = ctxLines.length > 0
     ? `CONTEXTO ACTUAL (lo que el humano está mirando ahora mismo):\n${ctxLines.join("\n")}`
     : `CONTEXTO ACTUAL: no se detectó un workspace específico. Llama list_workspaces si necesitas uno.`;
@@ -581,6 +641,13 @@ PASO 2 — Verifica contenido ACTIVAMENTE (no asumas, INSPECCIONA):
   - Llama lint_design si está disponible y trata sus errores como fallas reales, no sugerencias.
 
 PASO 3 — Evalúa TODOS los checkpoints C1-C5 con harness_evaluate_checkpoint:
+  Antes de evaluar, haz una verificación visual y de contenido:
+    - Llama render_html_template({ templateId }) → obtén una imagen PNG del diseño renderizado.
+      Si el render muestra overflow, texto cortado o desborde → C1 falla aunque las dimensiones sean correctas.
+    - Llama list_all_texts({ templateId }) → obtén todo el texto extraído del diseño.
+      Compara contra la instrucción original: ¿aparecen todas las palabras/frases solicitadas?
+      ¿Hay texto placeholder ("lorem ipsum", "sample text", "contenido aquí")?
+      Si falta texto solicitado o hay placeholder → C2 falla.
   Llama harness_evaluate_checkpoint UNA VEZ por cada checkpoint:
     - C1: Dimensiones correctas Y contenido dentro de los límites del frame (sin overflow/desborde). passed=true solo si ambas cosas se cumplen.
     - C2: Contenido HTML no vacío. passed=true si los frames tienen HTML con texto real.
@@ -743,7 +810,7 @@ const REVIEWER_TOOL_NAMES = new Set([
   // ── Versioning & Diffs ──
   "list_versions", "diff_versions", "get_frame_changes",
   // ── Visual Export (for verification) ──
-  "export_frame", "export_template", "render_batch",
+  "export_frame", "export_template", "render_batch", "render_html_template",
   // ── Format Comparison ──
   "compare_adaptations",
   // ── Profile Analysis ──
@@ -783,6 +850,38 @@ const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
   description: t.function.description,
   input_schema: t.function.parameters,
 }));
+
+/**
+ * Normalize MCP tool results before feeding back to the LLM.
+ *
+ * MCP returns: { result: { content: [{ type: "text", text: "..." }] } }
+ * We need: just the text, truncated if too long.
+ *
+ * Without this, the model sees raw JSON wrappers as noise and
+ * tool calling degrades after 2-3 rounds.
+ */
+function normalizeToolResult(raw: string, toolName: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    // MCP format: { jsonrpc: "2.0", result: { content: [{ text: "..." }] } }
+    const mcpText = parsed?.result?.content?.[0]?.text;
+    if (mcpText) {
+      try {
+        const inner = JSON.parse(mcpText);
+        const summary = JSON.stringify(inner, null, 0);
+        return summary.length > 2000 ? summary.slice(0, 1997) + "..." : summary;
+      } catch {
+        return mcpText.length > 2000 ? mcpText.slice(0, 1997) + "..." : mcpText;
+      }
+    }
+    // Direct object (non-MCP wrapper)
+    const direct = JSON.stringify(parsed);
+    return direct.length > 2000 ? direct.slice(0, 1997) + "..." : direct;
+  } catch {
+    const str = String(raw);
+    return str.length > 2000 ? str.slice(0, 1997) + "..." : str;
+  }
+}
 
 async function executeToolCall(name: string, args: Record<string, any>, signal?: AbortSignal): Promise<string> {
   try {
@@ -868,7 +967,7 @@ async function spawnSubagent(params: {
 
   // 3. Subagent conversation — fresh, no Leader history
   // Include sessionId in the first message so the subagent can use it immediately
-  const subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
+  let subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
   const MAX_SUB_ROUNDS = 15;
   // Tracks every templateId the implementer actually CREATED or WROTE TO via
   // a real tool call — never from read-only calls (get_template, get_frame,
@@ -887,13 +986,23 @@ async function spawnSubagent(params: {
 
   for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
     if (signal?.aborted) return JSON.stringify({ delegated: true, role: params.role, sessionId, result: "(detenido por el usuario)", stopped: true, rounds: round });
+
+    // ── Trim subagent conversation to prevent context overflow ──
+    if (subConv.length > 15 && round > 3) {
+      subConv = [
+        subConv[0],
+        { role: "user", content: "[Conversación recortada. Continúa tu tarea.]" },
+        ...subConv.slice(-10),
+      ];
+    }
+
     let data: any;
 
     if (isAnthropic) {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools) }),
+        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } }),
       }, { signal });
       if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
       data = await resp.json();
@@ -901,7 +1010,7 @@ async function spawnSubagent(params: {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools }),
+        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools, tool_choice: "auto" }),
       }, { signal });
       if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
       data = await resp.json();
@@ -952,8 +1061,8 @@ async function spawnSubagent(params: {
 
     // Execute each tool call within the subagent's own loop
     for (const tc of toolCalls) {
-      const resultStr = await executeToolCall(tc.name, tc.args, signal);
-      // Track every template genuinely created or written to. Deliberately
+      const rawResult = await executeToolCall(tc.name, tc.args, signal);
+      const resultStr = normalizeToolResult(rawResult, tc.name);
       // restricted to mutation tools — the old fallback captured templateId
       // from the ARGS of any tool call at all (including get_template,
       // get_frame, list_frames…), so an implementer that merely inspected a
@@ -1098,7 +1207,15 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   // looking at, so tool calls and delegated subagents stop guessing.
   useEffect(() => { currentContext = { workspaceId, templateId }; }, [workspaceId, templateId]);
 
-  const systemPrompt = buildSystemPrompt();
+  // ── Bootstrap: load memory (styles, templates, sessions, skills) on mount ──
+  const [bootstrapCtx, setBootstrapCtx] = useState<BootstrapContext | null>(null);
+  useEffect(() => {
+    if (workspaceId) {
+      bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => setBootstrapCtx(null));
+    }
+  }, [workspaceId]);
+
+  const systemPrompt = buildSystemPrompt(bootstrapCtx ?? undefined);
 
   const send = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -1118,6 +1235,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
     const prov = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
     const isAnthropic = provider === "anthropic";
     const MAX_TOOL_ROUNDS = 12;
+    let contextDumped = false;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1125,13 +1243,37 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
           break;
         }
+
+        // ── Trim conversation to prevent context overflow ──
+        const MAX_CONVERSATION_MESSAGES = 20;
+        if (conversation.length > MAX_CONVERSATION_MESSAGES) {
+          conversation = [
+            ...conversation.slice(0, 2),
+            { role: "user", content: "[Conversación recortada para mantener contexto. Continúa donde estabas.]" },
+            ...conversation.slice(-15),
+          ];
+        }
+
+        // ── Proactive context dump when conversation grows large ──
+        const estimatedTokens = JSON.stringify(conversation).length / 4;
+        if (estimatedTokens > 4000 && !contextDumped && currentContext.workspaceId) {
+          try {
+            await mcpCall("harness_dump_context", {
+              agentType: "leader",
+              conversation: JSON.stringify(conversation.slice(-10)),
+              workspaceId: currentContext.workspaceId,
+            }).catch(() => {});
+            contextDumped = true;
+          } catch { /* non-fatal */ }
+        }
+
         let data: any;
 
         if (isAnthropic) {
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS) }),
+            body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS), tool_choice: { type: "auto" } }),
           }, { signal });
           if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
@@ -1139,7 +1281,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-            body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS }),
+            body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS, tool_choice: "auto" }),
           }, { signal });
           if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
           data = await resp.json();
@@ -1165,6 +1307,14 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         }
 
         if (toolCalls.length === 0) {
+          // ── Detect fake tool calls: model wrote tool names as text ──
+          const TOOL_NAME_PATTERNS = /\b(create_template|create_html_template|set_html|set_css|harness_delegate|studio_create|studio_move|harness_complete|create_frame|delete_frame|render_html)\b/;
+          const jsonBlockPattern = /\{\s*"tool"\s*:/i;
+          const looksLikeToolCall = TOOL_NAME_PATTERNS.test(textContent) || jsonBlockPattern.test(textContent);
+          if (looksLikeToolCall && round < 3) {
+            conversation.push({ role: "user", content: "⚠️ Escribiste nombres de herramientas como texto en lugar de ejecutarlas. NO escribas 'create_template(...)' ni JSON con tools. Usa function calling real (tool_calls). Si necesitas crear un diseño, llama la herramienta create_html_template con tus tool_calls." });
+            continue;
+          }
           if (textContent.trim()) setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now() }]);
           break;
         }
@@ -1188,7 +1338,8 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           if (signal.aborted) break;
           const tc = toolCalls[ti];
           setToolEvents(prev => [...prev, { tool: tc.name, status: "running" }]);
-          const resultStr = await executeToolCall(tc.name, tc.args, signal);
+          const rawResult = await executeToolCall(tc.name, tc.args, signal);
+          const resultStr = normalizeToolResult(rawResult, tc.name);
           const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
           setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr.slice(0, 200) } : e));
 
