@@ -152,7 +152,9 @@ export async function handler(event) {
     try {
       encrypted = encrypt(key);
     } catch (e) {
-      return jsonBody(500, { error: e.message || "Encryption failed." });
+      // Never leak the env var name to the client — the user can't fix it.
+      console.error("[keys] Encryption failed:", e.message);
+      return jsonBody(500, { error: "Server encryption is not configured. Ask the admin to set WORKSPACE_SECRET_ENCRYPTION_KEY (≥24 chars)." });
     }
 
     // Upsert: one key per provider per user
