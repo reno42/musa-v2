@@ -58,16 +58,17 @@ CREATE POLICY "manage_own_task_queue" ON task_queue
   FOR ALL USING (account_id IS NULL OR account_id = auth.uid())
   WITH CHECK (account_id IS NULL OR account_id = auth.uid());
 
+-- workspaces.owner_id is TEXT, auth.uid() returns UUID — cast to text
 DROP POLICY IF EXISTS "manage_own_workspace_config" ON workspace_config;
 CREATE POLICY "manage_own_workspace_config" ON workspace_config
   FOR ALL USING (
     workspace_id IN (
-      SELECT id FROM workspaces WHERE owner_id = auth.uid()
+      SELECT id FROM workspaces WHERE owner_id = auth.uid()::text
     )
   )
   WITH CHECK (
     workspace_id IN (
-      SELECT id FROM workspaces WHERE owner_id = auth.uid()
+      SELECT id FROM workspaces WHERE owner_id = auth.uid()::text
     )
   );
 
