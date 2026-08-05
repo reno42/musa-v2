@@ -217,6 +217,64 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
 
+  // ── Account profile + workspace access (Settings → "Tus datos") ──
+  interface ProfileForm {
+    display_name: string; first_name: string; last_name: string;
+    phone: string; website: string; brand_name: string;
+  }
+  const EMPTY_PROFILE: ProfileForm = { display_name: "", first_name: "", last_name: "", phone: "", website: "", brand_name: "" };
+  const [profile, setProfile] = useState<ProfileForm>(EMPTY_PROFILE);
+  const [profileSaved, setProfileSaved] = useState<ProfileForm>(EMPTY_PROFILE);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMsg, setProfileMsg] = useState("");
+  const [members, setMembers] = useState<Array<{ id: string; email?: string; display_name?: string; role?: string; joinedAt?: string }>>([]);
+  const profileDirty = JSON.stringify(profile) !== JSON.stringify(profileSaved);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      const res = await apiFetch<any>("/account/me");
+      const d = res?.data;
+      if (!d) return;
+      const form: ProfileForm = {
+        display_name: d.display_name || "", first_name: d.first_name || "", last_name: d.last_name || "",
+        phone: d.phone || "", website: d.website || "", brand_name: d.brand_name || "",
+      };
+      setProfile(form);
+      setProfileSaved(form);
+    } catch { /* signed out or server without Supabase — card just stays empty */ }
+  }, []);
+
+  const loadMembers = useCallback(async () => {
+    try {
+      const res = await apiFetch<any>(`/workspaces/${DEFAULT_WORKSPACE_ID}/members`);
+      setMembers(res?.data || []);
+    } catch { setMembers([]); }
+  }, []);
+
+  useEffect(() => { void loadProfile(); void loadMembers(); }, [loadProfile, loadMembers]);
+  useEffect(() => {
+    const handler = () => { void loadProfile(); void loadMembers(); };
+    window.addEventListener("futuraria:auth-token", handler);
+    return () => window.removeEventListener("futuraria:auth-token", handler);
+  }, [loadProfile, loadMembers]);
+
+  const handleSaveProfile = async () => {
+    setProfileSaving(true);
+    setProfileMsg("");
+    try {
+      const res = await apiFetch<any>("/account/me", { method: "PATCH", body: JSON.stringify(profile) });
+      if (res?.success === false) throw new Error(res.detail || res.error || "No se pudo guardar");
+      setProfileSaved(profile);
+      setProfileMsg("✓ Guardado");
+      setTimeout(() => setProfileMsg(""), 2500);
+    } catch (e: any) {
+      setProfileMsg(e?.message?.includes("PROFILE_MIGRATION_REQUIRED") || e?.message?.includes("409")
+        ? "Falta correr supabase_migrations_v16.sql en Supabase para habilitar estos campos."
+        : (e?.message || "No se pudo guardar"));
+    }
+    setProfileSaving(false);
+  };
+
   // ── Server-side BYOK key management (replaces localStorage) ──
   // Keys are encrypted server-side. The browser only knows whether a key
   // is configured and which model is selected — never the actual value.
@@ -1362,664 +1420,448 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         };
 
         return (
-        <div style={{ flex: 1, overflowY: "auto", padding: 32, maxWidth: 900, margin: "0 auto", width: "100%" }}>
-          <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", width: "100%" }}>
+          <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 22, display: "flex", alignItems: "center", gap: 10 }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            Configuración general
+            Configuración
           </h2>
 
-          {/* ── Metrics ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Usage</h3>
-          <div className="dash-metrics-bar" style={{ marginBottom: 32 }}>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{templates.length}</div>
-              <div className="dash-metric-label">Archivos</div>
-              <div className="dash-metric-sub">{totalFrames} frames</div>
-            </div>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{recipes.length}</div>
-              <div className="dash-metric-label">Key Visuals</div>
-              <div className="dash-metric-sub">{recipes.reduce((sum, r) => sum + (r.usageCount || 0), 0)} executions</div>
-            </div>
-            <div className="dash-metric-card">
-              <div className="dash-metric-value">{brands.length}</div>
-              <div className="dash-metric-label">Marcas</div>
-              <div className="dash-metric-sub">{selectedBrand ? "1 activa" : "todas"}</div>
-            </div>
-            <div className="dash-metric-card" style={{ justifyContent: "center" }}>
-              <div className="dash-metric-label" style={{ marginBottom: 4 }}>Most Used</div>
-              <div className="dash-metric-value" style={{ fontSize: 18, fontWeight: 600 }}>
-                {(() => { const most = [...templates].sort((a, b) => (b.frames?.length || 0) - (a.frames?.length || 0))[0]; return most ? (most.name.length > 24 ? most.name.slice(0, 22) + "…" : most.name) : "—"; })()}
-              </div>
-              <div className="dash-metric-sub">Most frames</div>
-            </div>
-          </div>
+          {/* ═══════════ 1 · TUS DATOS ═══════════ */}
+          <h3 className="bento-section-title">Tus datos</h3>
+          <div className="bento-grid">
 
-          {/* ── Display Mode ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Display</h3>
-          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14 }}>🎴</span>
+            {/* Perfil — editable */}
+            <div className="bento-card bento-7">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">👤 Tu perfil</div>
+                {profileMsg && (
+                  <span style={{ fontSize: 11, color: profileMsg.startsWith("✓") ? "#4ade80" : "#facc15", textAlign: "right", maxWidth: 260 }}>
+                    {profileMsg}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                <div className="bento-field">
+                  <label htmlFor="pf-first">Nombre</label>
+                  <input id="pf-first" className="bento-input" value={profile.first_name}
+                    onChange={e => setProfile(p => ({ ...p, first_name: e.target.value }))} placeholder="Renzo" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="pf-last">Apellidos</label>
+                  <input id="pf-last" className="bento-input" value={profile.last_name}
+                    onChange={e => setProfile(p => ({ ...p, last_name: e.target.value }))} placeholder="Pérez" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="pf-brand">Nombre de tu marca</label>
+                  <input id="pf-brand" className="bento-input" value={profile.brand_name}
+                    onChange={e => setProfile(p => ({ ...p, brand_name: e.target.value }))} placeholder="Futuraria" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="pf-web">Web</label>
+                  <input id="pf-web" className="bento-input" value={profile.website}
+                    onChange={e => setProfile(p => ({ ...p, website: e.target.value }))} placeholder="futuraria.com" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="pf-phone">Teléfono</label>
+                  <input id="pf-phone" className="bento-input" value={profile.phone}
+                    onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} placeholder="+51 …" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="pf-email">Correo</label>
+                  <input id="pf-email" className="bento-input" value={user?.email || ""} readOnly disabled
+                    style={{ opacity: 0.65, cursor: "not-allowed" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button type="button" className="bento-btn bento-btn--primary"
+                  onClick={handleSaveProfile} disabled={!profileDirty || profileSaving}>
+                  {profileSaving ? "Guardando…" : profileDirty ? "Guardar cambios" : "Guardado"}
+                </button>
+              </div>
+            </div>
+
+            {/* Workspace */}
+            <div className="bento-card bento-5">
+              <div className="bento-title">🏢 Espacio de trabajo</div>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Card View</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                  {cardMode === "grid" ? "Grid layout (current)" : "Cover Flow (perspective slider)"}
+                <div className="bento-row">
+                  <span className="bento-row-label">Nombre</span>
+                  <span className="bento-row-value">
+                    {workspaces.find(w => w.id === DEFAULT_WORKSPACE_ID)?.name || "—"}
+                  </span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">ID</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <code style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {DEFAULT_WORKSPACE_ID}
+                    </code>
+                    <button type="button" className="bento-btn" style={{ padding: "4px 10px", fontSize: 11 }}
+                      onClick={() => { navigator.clipboard?.writeText(DEFAULT_WORKSPACE_ID); addToast("ID copiado", "success"); }}>
+                      Copiar
+                    </button>
+                  </span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">Archivos</span>
+                  <span className="bento-row-value">{templates.length} · {totalFrames} frames</span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">Key Visuals · Marcas</span>
+                  <span className="bento-row-value">{recipes.length} · {brands.length}</span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">Tokens (est.)</span>
+                  <span className="bento-row-value">~{estimatedTokens.toLocaleString()}</span>
                 </div>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.03)", borderRadius: 100, padding: 3 }}>
-              <button
-                type="button"
-                onClick={() => handleCardModeChange("grid")}
-                style={{
-                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
-                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
-                  background: cardMode === "grid" ? "rgba(255,255,255,0.08)" : "transparent",
-                  color: cardMode === "grid" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
-                }}
-              >Grid</button>
-              <button
-                type="button"
-                onClick={() => handleCardModeChange("flow")}
-                style={{
-                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
-                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
-                  background: cardMode === "flow" ? "rgba(255,255,255,0.08)" : "transparent",
-                  color: cardMode === "flow" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
-                }}
-              >Flow</button>
-            </div>
-          </div>
 
-          {/* ── Onboarding ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Onboarding</h3>
-          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32, gap: 12, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14 }}>🧭</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Tour guiado</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                  Recorrido paso a paso: templates, editor, IA y grafo
+            {/* Quién tiene acceso */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">👥 Quién tiene acceso</div>
+              {members.length === 0 ? (
+                <div className="bento-sub">
+                  Solo vos. Cuando invites a alguien al espacio de trabajo, aparece acá con su rol.
                 </div>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                type="button"
-                onClick={() => { setOnboardingEnabled(!tourEnabled); setTourEnabled(v => !v); }}
-                style={{
-                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
-                  border: "none", cursor: "pointer", transition: "all 0.2s ease",
-                  background: tourEnabled ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.06)",
-                  color: tourEnabled ? "#c4b5fd" : "rgba(255,255,255,0.4)",
-                }}
-              >{tourEnabled ? "Activado" : "Desactivado"}</button>
-              <button
-                type="button"
-                onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("templates"); }}
-                style={{
-                  borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 600,
-                  border: "1px solid rgba(139,92,246,0.5)", cursor: "pointer",
-                  background: "transparent", color: "#a78bfa",
-                }}
-              >Reiniciar tour</button>
-            </div>
-          </div>
-
-          {/* ── Thumbnails ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Thumbnails</h3>
-          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>📸</span>
+              ) : (
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Preview Thumbnails</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {snapshotProgress.running
-                      ? `Capturing ${snapshotProgress.done}/${snapshotProgress.total}…`
-                      : `${templates.filter(t => t.thumbnail).length} of ${templates.length} templates have thumbnails`}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleSnapshotAll}
-                disabled={snapshotProgress.running}
-                style={{
-                  borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 500,
-                  border: "none", cursor: snapshotProgress.running ? "wait" : "pointer",
-                  background: snapshotProgress.running ? "rgba(255,255,255,0.03)" : "rgba(99,102,241,0.15)",
-                  color: snapshotProgress.running ? "rgba(255,255,255,0.3)" : "#a5b4fc",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                {snapshotProgress.running ? "Capturing…" : "Snapshot All"}
-              </button>
-            </div>
-            {snapshotProgress.running && (
-              <div style={{ marginTop: 10, height: 4, borderRadius: 100, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 100, background: "linear-gradient(90deg, #818cf8, #a78bfa)", width: `${Math.round((snapshotProgress.done / snapshotProgress.total) * 100)}%`, transition: "width 0.3s ease" }} />
-              </div>
-            )}
-          </div>
-
-          {/* ── Delete Behavior ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Delete Behavior</h3>
-          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>🗑️</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Delete Mode</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {deleteMode === "soft" ? "Move to Trash (recoverable from Storage tab)" : "Permanent delete from database"}
-                  </div>
-                </div>
-              </div>
-              <select
-                value={deleteMode}
-                onChange={e => { setDeleteMode(e.target.value as "soft" | "hard"); try { localStorage.setItem("futuraria-delete-mode", e.target.value); } catch {} }}
-                style={{
-                  padding: "6px 12px", fontSize: 12, borderRadius: 100,
-                  background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                  color: "#ccc", outline: "none", cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                <option value="soft">Move to Trash</option>
-                <option value="hard">Permanent Delete</option>
-              </select>
-            </div>
-          </div>
-          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14 }}>⚠️</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Delete Confirmation</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                  {deleteConfirmEnabled ? "Requires typing template name to confirm" : "Deletes immediately without confirmation"}
-                </div>
-              </div>
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={deleteConfirmEnabled}
-                onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
-                style={{ accentColor: "#818cf8" }}
-              />
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Enabled</span>
-            </label>
-          </div>
-
-          {/* ── Connection ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Connection</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
-            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>🗄️</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Data Persistence</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {dataConnected ? "Supabase" : dataMode === "unknown" ? "Checking…" : "In-memory (data lost on restart)"}
-                  </div>
-                </div>
-              </div>
-              <span style={{
-                fontSize: 11, fontWeight: 600,
-                padding: "4px 10px", borderRadius: 100,
-                background: dataConnected ? "rgba(34,197,94,0.12)" : dataMode === "unknown" ? "rgba(255,255,255,0.03)" : "rgba(234,179,8,0.12)",
-                color: dataConnected ? "#4ade80" : dataMode === "unknown" ? "rgba(255,255,255,0.35)" : "#facc15",
-              }}>
-                {dataConnected ? "Connected" : dataMode === "unknown" ? "Checking…" : "Memory Only"}
-              </span>
-            </div>
-            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>🔄</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Real-time Collaboration</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {storageHealth?.realtime ? "Supabase browser key configured" : "Not configured (set SUPABASE_PUBLISHABLE_KEY)"}
-                  </div>
-                </div>
-              </div>
-              <span style={{
-                fontSize: 11, fontWeight: 600,
-                padding: "4px 10px", borderRadius: 100,
-                background: storageHealth?.realtime ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
-                color: storageHealth?.realtime ? "#4ade80" : "rgba(255,255,255,0.35)",
-              }}>
-                {storageHealth?.realtime ? "Enabled" : "Inactive"}
-              </span>
-            </div>
-            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>🤖</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>MCP API</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>/mcp — Model Context Protocol</div>
-                </div>
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100, background: "rgba(34,197,94,0.12)", color: "#4ade80" }}>● Active</span>
-            </div>
-          </div>
-
-          {/* ── AI Configuration ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>AI Configuration</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
-            {/* Google Gemini — server-side encrypted key */}
-            <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingGemini || !geminiConfigured ? 10 : 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 14 }}>🧠</span>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Google Gemini</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                      Convertir imagen a diseño · almacenada en el servidor (cifrada)
+                  {members.map(m => (
+                    <div key={m.id} className="bento-row">
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span className="bento-row-value">{m.display_name || m.email || m.id}</span>
+                        {m.display_name && m.email && (
+                          <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{m.email}</span>
+                        )}
+                      </span>
+                      <span className={`bento-pill ${m.role === "owner" ? "bento-pill--ok" : "bento-pill--off"}`}>
+                        {m.role || "member"}
+                      </span>
                     </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Dispositivos / sesiones */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">💻 Dispositivos y sesiones</div>
+              {sessionsLoading ? (
+                <div className="bento-sub">Cargando…</div>
+              ) : sessions.length === 0 ? (
+                <div className="bento-sub">
+                  Todavía no hay registro de sesiones. Aparecen acá cuando un cliente MCP o un
+                  navegador se conecta usando tu API key.
+                </div>
+              ) : (
+                <div>
+                  {sessions.map((s, i) => (
+                    <div key={i} className="bento-row">
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span className="bento-row-value" title={s.user_agent}>
+                          {s.client_info || s.user_agent?.slice(0, 32) || "Desconocido"}
+                        </span>
+                        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>
+                          {new Date(s.last_seen).toLocaleString()} · {s.request_count} req
+                        </span>
+                      </span>
+                      <span className="bento-pill bento-pill--off">{s.key_label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ═══════════ 2 · TUS LLAVES ═══════════ */}
+          <h3 className="bento-section-title">Tus llaves</h3>
+          <div className="bento-grid">
+
+            {/* API key de Futuraria */}
+            <div className="bento-card bento-4 bento-card--accent">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🔑 API de Futuraria</div>
+                <span className={`bento-pill ${hasApiKey() ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {hasApiKey() ? "Activa" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">
+                Es la llave de <strong>esta</strong> app. La usan los clientes MCP (Claude Code, Hermes,
+                OpenClaw) y las herramientas de diseño.
+              </div>
+              {showApiKeyInput || !hasApiKey() ? (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <input
+                    className="bento-input" style={{ flex: 1, minWidth: 140 }}
+                    value={apiKeyValue}
+                    onChange={e => setApiKeyValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") handleSaveApiKey(); if (e.key === "Escape") setShowApiKeyInput(false); }}
+                    placeholder="fdr_…"
+                  />
+                  <button type="button" className="bento-btn bento-btn--primary" onClick={handleSaveApiKey} disabled={!apiKeyValue.trim()}>Guardar</button>
+                  {!hasApiKey() && (
+                    <button type="button" className="bento-btn" onClick={handleGenerateKey} disabled={apiKeyRotating}>
+                      {apiKeyRotating ? "Generando…" : "Generar"}
+                    </button>
+                  )}
+                  {hasApiKey() && (
+                    <button type="button" className="bento-btn" onClick={() => { setShowApiKeyInput(false); setApiKeyValue(getApiKey()); }}>Cancelar</button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <code style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+                    {getApiKey().slice(0, 6)}…{getApiKey().slice(-4)}
+                  </code>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <button type="button" className="bento-btn" onClick={() => setShowApiKeyInput(true)}>Cambiar</button>
+                    <button type="button" className="bento-btn" onClick={handleRotateKey} disabled={apiKeyRotating}>
+                      {apiKeyRotating ? "Rotando…" : "Rotar"}
+                    </button>
+                    <button type="button" className="bento-btn bento-btn--danger" onClick={handleRemoveApiKey}>Borrar</button>
                   </div>
                 </div>
-                <span style={{
-                  fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
-                  background: geminiConfigured ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
-                  color: geminiConfigured ? "#4ade80" : "#facc15",
-                }}>
+              )}
+            </div>
+
+            {/* Gemini */}
+            <div className="bento-card bento-4">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🧠 Google Gemini</div>
+                <span className={`bento-pill ${geminiConfigured ? "bento-pill--ok" : "bento-pill--warn"}`}>
                   {geminiConfigured ? "Configurada" : "Falta"}
                 </span>
               </div>
-
+              <div className="bento-sub">
+                Se usa en <strong>🪄 Convertir imagen a diseño</strong>. Cifrada en el servidor.
+                No sirve una key de DeepSeek/OpenAI acá.
+              </div>
               {editingGemini || !geminiConfigured ? (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <input
-                    type="password"
+                    type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
                     value={geminiDraft}
                     onChange={e => setGeminiDraft(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === "Enter" && geminiDraft.trim()) handleSaveGeminiKey(geminiDraft);
                       if (e.key === "Escape") { setEditingGemini(false); setGeminiDraft(""); }
                     }}
-                    placeholder="AIza… (key de Google Gemini)"
-                    style={{
-                      flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
-                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                      color: "#fff", fontSize: 12, outline: "none",
-                    }}
+                    placeholder="AIza…"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleSaveGeminiKey(geminiDraft)}
-                    disabled={!geminiDraft.trim() || keySaving}
-                    style={{
-                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
-                      border: "none", cursor: geminiDraft.trim() && !keySaving ? "pointer" : "not-allowed",
-                      background: geminiDraft.trim() && !keySaving ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
-                      color: geminiDraft.trim() && !keySaving ? "#a5b4fc" : "rgba(255,255,255,0.3)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Guardar
-                  </button>
+                  <button type="button" className="bento-btn bento-btn--primary"
+                    onClick={() => handleSaveGeminiKey(geminiDraft)} disabled={!geminiDraft.trim() || keySaving}>Guardar</button>
                   {geminiConfigured && (
-                    <button type="button" onClick={() => { setEditingGemini(false); setGeminiDraft(""); }}
-                      style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)" }}>
-                      Cancelar
-                    </button>
+                    <button type="button" className="bento-btn" onClick={() => { setEditingGemini(false); setGeminiDraft(""); }}>Cancelar</button>
                   )}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", whiteSpace: "nowrap" }}>
-                    Obtener key gratis ↗
-                  </a>
                 </div>
               ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                    🔒 Cifrada en el servidor — no visible en el navegador
-                  </span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button type="button" onClick={() => { setGeminiDraft(""); setEditingGemini(true); }}
-                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.12)", color: "#a5b4fc" }}>
-                      Cambiar
-                    </button>
-                    <button type="button" onClick={() => handleSaveGeminiKey("")}
-                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
-                      Borrar
-                    </button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <button type="button" className="bento-btn" onClick={() => { setGeminiDraft(""); setEditingGemini(true); }}>Cambiar</button>
+                    <button type="button" className="bento-btn bento-btn--danger" onClick={() => handleSaveGeminiKey("")}>Borrar</button>
                   </div>
                 </div>
               )}
-              {/* Model picker — always visible under the key row. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select
-                  value={geminiModel}
-                  onChange={e => handleSaveGeminiModel(e.target.value)}
-                  style={{
-                    flex: 1, padding: "6px 12px", borderRadius: 8,
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                    color: "#fff", fontSize: 12, outline: "none", cursor: "pointer",
-                  }}
-                >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={geminiModel} onChange={e => handleSaveGeminiModel(e.target.value)}>
                   {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
             </div>
 
-            {/* Quiver AI — image-to-SVG vectorization */}
-            <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingQuiver || !quiverConfigured ? 10 : 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 14 }}>✦</span>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Quiver AI</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                      Vectorizar imagen a SVG · text-to-SVG · almacenada en el servidor (cifrada)
-                    </div>
-                  </div>
-                </div>
-                <span style={{
-                  fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
-                  background: quiverConfigured ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
-                  color: quiverConfigured ? "#4ade80" : "#facc15",
-                }}>
+            {/* Quiver */}
+            <div className="bento-card bento-4">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">✦ Quiver AI</div>
+                <span className={`bento-pill ${quiverConfigured ? "bento-pill--ok" : "bento-pill--warn"}`}>
                   {quiverConfigured ? "Configurada" : "Falta"}
                 </span>
               </div>
-
+              <div className="bento-sub">
+                Se usa para <strong>vectorizar imagen a SVG</strong> y generar SVG desde texto
+                (pestaña IA del panel de iconos). Cifrada en el servidor.
+              </div>
               {editingQuiver || !quiverConfigured ? (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <input
-                    type="password"
+                    type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
                     value={quiverDraft}
                     onChange={e => setQuiverDraft(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === "Enter" && quiverDraft.trim()) handleSaveQuiverKey(quiverDraft);
                       if (e.key === "Escape") { setEditingQuiver(false); setQuiverDraft(""); }
                     }}
-                    placeholder="qv_… (key de Quiver AI)"
-                    style={{
-                      flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
-                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                      color: "#fff", fontSize: 12, outline: "none",
-                    }}
+                    placeholder="qv_…"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleSaveQuiverKey(quiverDraft)}
-                    disabled={!quiverDraft.trim() || keySaving}
-                    style={{
-                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
-                      border: "none", cursor: quiverDraft.trim() && !keySaving ? "pointer" : "not-allowed",
-                      background: quiverDraft.trim() && !keySaving ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
-                      color: quiverDraft.trim() && !keySaving ? "#a5b4fc" : "rgba(255,255,255,0.3)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Guardar
-                  </button>
+                  <button type="button" className="bento-btn bento-btn--primary"
+                    onClick={() => handleSaveQuiverKey(quiverDraft)} disabled={!quiverDraft.trim() || keySaving}>Guardar</button>
                   {quiverConfigured && (
-                    <button type="button" onClick={() => { setEditingQuiver(false); setQuiverDraft(""); }}
-                      style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)" }}>
-                      Cancelar
-                    </button>
+                    <button type="button" className="bento-btn" onClick={() => { setEditingQuiver(false); setQuiverDraft(""); }}>Cancelar</button>
                   )}
-                  <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", whiteSpace: "nowrap" }}>
-                    Obtener key ↗
-                  </a>
                 </div>
               ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                    🔒 Cifrada en el servidor — no visible en el navegador
-                  </span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button type="button" onClick={() => { setQuiverDraft(""); setEditingQuiver(true); }}
-                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.12)", color: "#a5b4fc" }}>
-                      Cambiar
-                    </button>
-                    <button type="button" onClick={() => handleSaveQuiverKey("")}
-                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
-                      Borrar
-                    </button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <button type="button" className="bento-btn" onClick={() => { setQuiverDraft(""); setEditingQuiver(true); }}>Cambiar</button>
+                    <button type="button" className="bento-btn bento-btn--danger" onClick={() => handleSaveQuiverKey("")}>Borrar</button>
                   </div>
                 </div>
               )}
-              {/* Model picker */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
                   value={quiverModel}
-                  onChange={e => {
-                    if (quiverConfigured) {
-                      saveProviderKey("quiver", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
-                    }
-                  }}
-                  style={{
-                    flex: 1, padding: "6px 12px", borderRadius: 8,
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                    color: "#fff", fontSize: 12, outline: "none", cursor: "pointer",
-                  }}
-                >
+                  onChange={e => { if (quiverConfigured) saveProviderKey("quiver", "", e.target.value).then(refreshKeyStatuses).catch(() => {}); }}>
                   {quiverProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
+              <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
             </div>
-            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>📊</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Token Usage (est.)</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                    {templates.length} templates × 2k + {totalFrames} frames × 500
+
+            {/* Dónde vive cada llave */}
+            <div className="bento-card bento-12">
+              <div className="bento-title">🗂 Dónde vive cada llave</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Gemini · Quiver</strong><br />
+                  Acá arriba. Cifradas en el servidor, nunca visibles en el navegador.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Proveedor del chat</strong><br />
+                  Dentro del propio chat (⚙ Configuración). Puede ser DeepSeek, OpenAI, Anthropic
+                  u OpenRouter — cada uno con su modelo.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Unsplash</strong><br />
+                  En el panel de iconos → pestaña Fotos. Guardada en este navegador.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>MCP</strong><br />
+                  Los clientes MCP se conectan a <code style={{ fontSize: 10.5 }}>/mcp</code> con la
+                  API de Futuraria. No necesitan llave propia.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ═══════════ 3 · PREFERENCIAS ═══════════ */}
+          <h3 className="bento-section-title">Preferencias</h3>
+          <div className="bento-grid">
+
+            {/* Vista */}
+            <div className="bento-card bento-4">
+              <div className="bento-title">🎴 Vista de archivos</div>
+              <div className="bento-sub">
+                {cardMode === "grid" ? "Cuadrícula" : "Cover Flow (slider en perspectiva)"}
+              </div>
+              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
+                <button type="button" data-active={cardMode === "grid"} onClick={() => handleCardModeChange("grid")}>Cuadrícula</button>
+                <button type="button" data-active={cardMode === "flow"} onClick={() => handleCardModeChange("flow")}>Flow</button>
+              </div>
+            </div>
+
+            {/* Tour */}
+            <div className="bento-card bento-4">
+              <div className="bento-title">🧭 Tour guiado</div>
+              <div className="bento-sub">Recorrido paso a paso: templates, editor, IA y grafo.</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <div className="bento-seg">
+                  <button type="button" data-active={tourEnabled}
+                    onClick={() => { setOnboardingEnabled(true); setTourEnabled(true); }}>Activado</button>
+                  <button type="button" data-active={!tourEnabled}
+                    onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
+                </div>
+                <button type="button" className="bento-btn"
+                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("templates"); }}>Reiniciar</button>
+              </div>
+            </div>
+
+            {/* Borrado */}
+            <div className="bento-card bento-4">
+              <div className="bento-title">🗑 Al borrar</div>
+              <div className="bento-sub">
+                {deleteMode === "soft" ? "Va a la papelera, recuperable desde Storage." : "Se borra de la base de datos, sin vuelta atrás."}
+              </div>
+              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
+                <button type="button" data-active={deleteMode === "soft"}
+                  onClick={() => { setDeleteMode("soft"); try { localStorage.setItem("futuraria-delete-mode", "soft"); } catch {} }}>Papelera</button>
+                <button type="button" data-active={deleteMode === "hard"}
+                  onClick={() => { setDeleteMode("hard"); try { localStorage.setItem("futuraria-delete-mode", "hard"); } catch {} }}>Permanente</button>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
+                <input
+                  type="checkbox" checked={deleteConfirmEnabled}
+                  onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
+                  style={{ accentColor: "#818cf8" }}
+                />
+                Pedir confirmación escribiendo el nombre
+              </label>
+            </div>
+
+            {/* Miniaturas */}
+            <div className="bento-card bento-5">
+              <div className="bento-title">📸 Miniaturas</div>
+              <div className="bento-sub">
+                {snapshotProgress.running
+                  ? `Capturando ${snapshotProgress.done}/${snapshotProgress.total}…`
+                  : `${templates.filter(t => t.thumbnail).length} de ${templates.length} archivos tienen miniatura.`}
+              </div>
+              {snapshotProgress.running && (
+                <div style={{ height: 4, borderRadius: 100, background: "rgba(255,255,255,0.07)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 100, background: "linear-gradient(90deg,#818cf8,#a78bfa)", width: `${Math.round((snapshotProgress.done / snapshotProgress.total) * 100)}%`, transition: "width 0.3s ease" }} />
+                </div>
+              )}
+              <button type="button" className="bento-btn bento-btn--primary" style={{ alignSelf: "flex-start" }}
+                onClick={handleSnapshotAll} disabled={snapshotProgress.running}>
+                {snapshotProgress.running ? "Capturando…" : "Capturar todas"}
+              </button>
+            </div>
+
+            {/* Estado de conexión */}
+            <div className="bento-card bento-7">
+              <div className="bento-title">🔌 Estado del sistema</div>
+              <div>
+                <div className="bento-row">
+                  <span className="bento-row-label">
+                    🗄️ Datos · {dataConnected ? "Supabase" : dataMode === "unknown" ? "verificando" : "sólo memoria"}
+                  </span>
+                  <span className={`bento-pill ${dataConnected ? "bento-pill--ok" : dataMode === "unknown" ? "bento-pill--off" : "bento-pill--warn"}`}>
+                    {dataConnected ? "Conectado" : dataMode === "unknown" ? "…" : "Sin persistir"}
+                  </span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">🔄 Colaboración en tiempo real</span>
+                  <span className={`bento-pill ${storageHealth?.realtime ? "bento-pill--ok" : "bento-pill--off"}`}>
+                    {storageHealth?.realtime ? "Activa" : "Inactiva"}
+                  </span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">🤖 API MCP · /mcp</span>
+                  <span className="bento-pill bento-pill--ok">Activa</span>
+                </div>
+              </div>
+            </div>
+
+            {/* SKILL.md */}
+            <div className="bento-card bento-12">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="bento-title">📄 SKILL.md — onboarding para agentes</div>
+                  <div className="bento-sub" style={{ marginTop: 4 }}>
+                    Dáselo a cualquier agente de IA: le enseña las herramientas de Futuraria, la
+                    estructura del proyecto y las convenciones de diseño, para que diseñe junto a vos.
                   </div>
                 </div>
-              </div>
-              <span style={{ fontSize: 16, fontWeight: 700, fontFamily: "'Instrument Serif', serif", color: "rgba(255,255,255,0.9)" }}>
-                ~{estimatedTokens.toLocaleString()} tokens
-              </span>
-            </div>
-          </div>
-
-          {/* ── Security ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Security</h3>
-
-          {/* API Key Status */}
-          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14 }}>🔑</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>API Key</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                  {hasApiKey() ? `Configured · ${getApiKey().slice(0, 4)}…${getApiKey().slice(-4)}` : "Not configured — MCP tools and AI features require a key"}
-                </div>
+                <button type="button" className="bento-btn bento-btn--primary" onClick={handleDownloadSkill}>Descargar</button>
               </div>
             </div>
-            <span style={{
-              fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
-              background: hasApiKey() ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
-              color: hasApiKey() ? "#4ade80" : "#facc15",
-            }}>
-              {hasApiKey() ? "Active" : "Missing"}
-            </span>
-          </div>
-
-          {/* API Key Input / Rotate */}
-          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
-            {showApiKeyInput || !hasApiKey() ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  autoFocus
-                  value={apiKeyValue}
-                  onChange={e => setApiKeyValue(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") handleSaveApiKey(); if (e.key === "Escape") setShowApiKeyInput(false); }}
-                  placeholder="Paste your API key (fdr_…)"
-                  style={{
-                    flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                    color: "#fff", fontSize: 12, outline: "none",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveApiKey}
-                  disabled={!apiKeyValue.trim()}
-                  style={{
-                    borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
-                    border: "none", cursor: apiKeyValue.trim() ? "pointer" : "not-allowed",
-                    background: apiKeyValue.trim() ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
-                    color: apiKeyValue.trim() ? "#a5b4fc" : "rgba(255,255,255,0.3)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Save
-                </button>
-                {!hasApiKey() && (
-                  <button
-                    type="button"
-                    onClick={handleGenerateKey}
-                    disabled={apiKeyRotating}
-                    style={{
-                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
-                      border: "none", cursor: apiKeyRotating ? "wait" : "pointer",
-                      background: "rgba(34,197,94,0.12)", color: "#4ade80",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {apiKeyRotating ? "Generating…" : "Generate Key"}
-                  </button>
-                )}
-                {hasApiKey() && (
-                  <button
-                    type="button"
-                    onClick={() => { setShowApiKeyInput(false); setApiKeyValue(getApiKey()); }}
-                    style={{
-                      borderRadius: 100, padding: "8px 12px", fontSize: 12,
-                      border: "none", cursor: "pointer",
-                      background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Key saved in this browser</span>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKeyInput(true)}
-                    style={{
-                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
-                      border: "none", cursor: "pointer",
-                      background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)",
-                    }}
-                  >
-                    Change
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRotateKey}
-                    disabled={apiKeyRotating}
-                    style={{
-                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
-                      border: "none", cursor: apiKeyRotating ? "wait" : "pointer",
-                      background: "rgba(99,102,241,0.1)", color: "#a5b4fc",
-                    }}
-                  >
-                    {apiKeyRotating ? "Rotating…" : "Rotate Key"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveApiKey}
-                    style={{
-                      borderRadius: 100, padding: "6px 14px", fontSize: 11, fontWeight: 500,
-                      border: "none", cursor: "pointer",
-                      background: "rgba(220,38,38,0.08)", color: "#f87171",
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* What the key unlocks */}
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", lineHeight: 1.6, marginBottom: 20, padding: "0 4px" }}>
-            Your API key unlocks: MCP design tools · AI image generation · CSV batch processing · Template creation & editing.
-            Las keys de servicios externos son tuyas y se guardan en este navegador, no en el servidor:
-            Gemini acá arriba (convertir imagen a diseño), el proveedor del chat dentro del chat, y Unsplash
-            en el panel de fotos. Cada una va por separado — una key de DeepSeek no sirve para Gemini.
-          </div>
-
-          {/* Sessions */}
-          <h3 style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Active Sessions</h3>
-          <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14, marginBottom: 32 }}>
-            {sessionsLoading ? (
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", padding: 16 }}>Loading sessions…</div>
-            ) : sessions.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 16 }}>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>No active sessions yet.</div>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginTop: 4 }}>
-                  Sessions appear here when MCP clients or browsers connect with your API key.
-                </div>
-              </div>
-            ) : (
-              <div className="dash-settings-table-wrap">
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                <thead>
-                  <tr style={{ color: "rgba(255,255,255,0.35)", textAlign: "left" }}>
-                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Client</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Key</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 500 }}>Last Seen</th>
-                    <th style={{ padding: "4px 8px", fontWeight: 500, textAlign: "right" }}>Requests</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessions.map((s, i) => (
-                    <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.7)" }} title={s.user_agent}>
-                        {s.client_info || s.user_agent?.slice(0, 30) || "Unknown"}
-                      </td>
-                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.5)" }}>{s.key_label}</td>
-                      <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.4)" }}>
-                        {new Date(s.last_seen).toLocaleString()}
-                      </td>
-                      <td style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.5)", fontFamily: "monospace" }}>
-                        {s.request_count}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-            )}
-          </div>
-
-          {/* ── Agent Onboarding ── */}
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Agent Onboarding</h3>
-          <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14, marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14 }}>📄</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>SKILL.md</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>Agent capability manifest — download for your AI</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleDownloadSkill}
-              className="liquid-glass"
-              style={{ borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", cursor: "pointer", border: "none", transition: "all 0.2s ease" }}
-            >
-              Download
-            </button>
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", lineHeight: 1.6, marginTop: 4 }}>
-            Give SKILL.md to any AI agent. It teaches them Futuraria's tools, project structure, and design conventions — so they can design alongside you.
           </div>
         </div>
         );

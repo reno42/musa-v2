@@ -2293,6 +2293,137 @@ html, body, #root { height: 100%; width: 100%; }
   }
 }
 
+/* ===== SETTINGS — BENTO LAYOUT =====
+   The settings page used to be a 900px column of full-width strips, each one
+   a `liquid-glass` panel. Two problems: it wasted the whole right half of a
+   wide screen, and the glass panels are so translucent over the animated
+   background that body text was genuinely hard to read. These cards use a
+   near-opaque surface instead of glass, and lay out as a real grid so
+   related settings sit side by side rather than stacking forever. */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.bento-card {
+  /* Solid, not glass — this is the contrast fix. */
+  background: #16161c;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0; /* let long values ellipsis instead of blowing out the column */
+}
+
+.bento-card--accent {
+  background: linear-gradient(160deg, #1b1b24 0%, #16161c 60%);
+  border-color: rgba(129, 140, 248, 0.22);
+}
+
+/* Column spans. Everything collapses to full width on narrow screens. */
+.bento-4  { grid-column: span 4; }
+.bento-5  { grid-column: span 5; }
+.bento-6  { grid-column: span 6; }
+.bento-7  { grid-column: span 7; }
+.bento-8  { grid-column: span 8; }
+.bento-12 { grid-column: span 12; }
+
+@media (max-width: 1100px) {
+  .bento-4, .bento-5, .bento-7, .bento-8 { grid-column: span 6; }
+}
+@media (max-width: 720px) {
+  .bento-4, .bento-5, .bento-6, .bento-7, .bento-8 { grid-column: span 12; }
+}
+
+.bento-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bento-sub {
+  font-size: 11.5px;
+  /* Deliberately brighter than the old rgba(255,255,255,0.35) helper text,
+     which was below a comfortable reading contrast on this background. */
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.5;
+}
+
+.bento-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 12px;
+}
+
+/* Label/value rows inside a card (workspace id, plan, etc). */
+.bento-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+}
+.bento-row:first-of-type { border-top: none; }
+.bento-row-label { font-size: 12px; color: rgba(255, 255, 255, 0.55); white-space: nowrap; }
+.bento-row-value {
+  font-size: 12px; color: rgba(255, 255, 255, 0.9);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.bento-field { display: flex; flex-direction: column; gap: 5px; }
+.bento-field > label { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+.bento-input {
+  width: 100%; box-sizing: border-box;
+  padding: 8px 12px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff; font-size: 12.5px; font-family: inherit; outline: none;
+}
+.bento-input:focus { border-color: rgba(129, 140, 248, 0.6); }
+
+.bento-pill {
+  font-size: 10.5px; font-weight: 600;
+  padding: 3px 9px; border-radius: 100px; white-space: nowrap;
+}
+.bento-pill--ok   { background: rgba(34, 197, 94, 0.15);  color: #4ade80; }
+.bento-pill--warn { background: rgba(234, 179, 8, 0.15);  color: #facc15; }
+.bento-pill--off  { background: rgba(255, 255, 255, 0.07); color: rgba(255,255,255,0.45); }
+
+.bento-btn {
+  border-radius: 100px; padding: 7px 15px;
+  font-size: 12px; font-weight: 500; font-family: inherit;
+  border: none; cursor: pointer; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.75);
+  transition: background 0.15s ease;
+}
+.bento-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.bento-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.bento-btn--primary { background: rgba(99, 102, 241, 0.22); color: #c7d2fe; }
+.bento-btn--primary:hover:not(:disabled) { background: rgba(99, 102, 241, 0.34); }
+.bento-btn--danger  { background: rgba(239, 68, 68, 0.14);  color: #fca5a5; }
+.bento-btn--danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.24); }
+
+/* Segmented on/off + mode switches. */
+.bento-seg { display: flex; gap: 3px; background: rgba(255,255,255,0.05); border-radius: 100px; padding: 3px; }
+.bento-seg > button {
+  border-radius: 100px; padding: 5px 14px; font-size: 11.5px; font-weight: 500;
+  border: none; cursor: pointer; font-family: inherit;
+  background: transparent; color: rgba(255, 255, 255, 0.45);
+  transition: all 0.15s ease;
+}
+.bento-seg > button[data-active="true"] { background: rgba(255,255,255,0.13); color: #fff; }
+
 /* ===== DASHBOARD METRICS ===== */
 .dash-metrics-bar {
   display: flex;

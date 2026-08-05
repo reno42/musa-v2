@@ -89,11 +89,61 @@ accountRoutes.post("/bootstrap", async (req, res) => {
   }
 });
 
+/** Columns added by supabase_migrations_v16.sql. Selected separately from the
+ *  base ones so an un-migrated database still returns a usable profile
+ *  instead of failing the whole request on an unknown column. */
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name";
+const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
+
 accountRoutes.get("/me", async (req, res) => {
   try {
     const sb = dbOrThrow();
-    const { data } = await sb.from("user_profiles").select("id, email, display_name, avatar_url").eq("id", req.auth!.userId).maybeSingle();
-    res.json({ success: true, data });
+    const full = await sb
+      .from("user_profiles")
+      .select(`${PROFILE_BASE_COLUMNS}, ${PROFILE_EXTRA_COLUMNS}`)
+      .eq("id", req.auth!.userId)
+      .maybeSingle();
+    if (!full.error) return res.json({ success: true, data: full.data });
+
+    // v16 not applied yet — serve what exists rather than erroring out.
+    const { data } = await sb.from("user_profiles").select(PROFILE_BASE_COLUMNS).eq("id", req.auth!.userId).maybeSingle();
+    res.json({ success: true, data, profileFieldsAvailable: false });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/** Update the signed-in user's own profile. Only ever touches their own row —
+ *  the id comes from the verified token, never from the request body. */
+accountRoutes.patch("/me", async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    const allowed = ["display_name", "first_name", "last_name", "phone", "website", "brand_name"] as const;
+    const patch: Record<string, string | null> = {};
+    for (const field of allowed) {
+      if (field in req.body) {
+        const raw = req.body[field];
+        patch[field] = typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 200) : null;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ success: false, error: "No recognised profile fields to update" });
+    }
+
+    const { error } = await sb.from("user_profiles").update(patch).eq("id", req.auth!.userId);
+    if (error) {
+      // Unknown column → the v16 migration hasn't been run yet. Say so
+      // plainly instead of surfacing a raw Postgres error.
+      if (/column .* does not exist/i.test(error.message)) {
+        return res.status(409).json({
+          success: false,
+          error: "PROFILE_MIGRATION_REQUIRED",
+          detail: "Ejecutá supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
+        });
+      }
+      throw error;
+    }
+    res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
