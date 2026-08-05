@@ -13,6 +13,8 @@
  *   [DONE]     → stream terminator
  */
 
+import { getApiHeaders } from "./apiKey";
+
 export type QuiverEvent =
   | { type: "generating"; id: string; model: string }
   | { type: "reasoning"; reasoning: string }
@@ -102,7 +104,7 @@ export function streamVectorize(
     try {
       const res = await fetch("/api/quiver/vectorize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getApiHeaders(),
         body: JSON.stringify(params),
         signal: controller.signal,
       });
@@ -175,7 +177,7 @@ export function streamGenerate(
     try {
       const res = await fetch("/api/quiver/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getApiHeaders(),
         body: JSON.stringify(params),
         signal: controller.signal,
       });
