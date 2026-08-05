@@ -6,7 +6,7 @@
  *   PUT    /api/keys/:provider  → encrypts and stores the key + optional model
  *   DELETE /api/keys/:provider  → removes the key
  *
- * Keys are AES-256-GCM encrypted with KEY_ENCRYPTION_SECRET before hitting
+ * Keys are AES-256-GCM encrypted with WORKSPACE_SECRET_ENCRYPTION_KEY before hitting
  * the database. The GET endpoint NEVER returns the raw key — only whether
  * one exists and which model is selected. This keeps keys safe even if the
  * database is leaked without the secret.
@@ -15,7 +15,7 @@
  * users can only see their own rows.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 
@@ -36,11 +36,14 @@ function jsonBody(statusCode, data) {
   return { statusCode, headers: corsHeaders(), body: JSON.stringify(data) };
 }
 
-/** Derive a 32-byte key from the env secret via SHA-256. */
+/** Derive a 32-byte key from WORKSPACE_SECRET_ENCRYPTION_KEY via scrypt.
+ *  Mirrors api/src/services/secrets.ts so one env var encrypts everything. */
 function getEncryptionKey() {
-  const secret = process.env.KEY_ENCRYPTION_SECRET;
-  if (!secret) throw new Error("KEY_ENCRYPTION_SECRET env var is not configured");
-  return createHash("sha256").update(secret).digest();
+  const secret = process.env.WORKSPACE_SECRET_ENCRYPTION_KEY;
+  if (!secret || secret.length < 24) {
+    throw new Error("WORKSPACE_SECRET_ENCRYPTION_KEY must contain at least 24 characters");
+  }
+  return scryptSync(secret, "futuraria-workspace-secrets-v1", 32);
 }
 
 function encrypt(plain) {

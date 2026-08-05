@@ -284,7 +284,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_slug_ws
 -- ============================================================
 -- TABLE 9: user_api_keys (BYOK — encrypted provider keys)
 -- Stores each user's third-party API keys (Gemini, Quiver, OpenAI,
--- etc.) encrypted with KEY_ENCRYPTION_SECRET. Keys are NEVER stored
+-- etc.) encrypted with WORKSPACE_SECRET_ENCRYPTION_KEY. Keys are NEVER stored
 -- in plain text and NEVER exposed to the browser — the GET endpoint
 -- only returns whether a key is configured, not the key itself.
 -- ============================================================
