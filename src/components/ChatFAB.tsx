@@ -121,7 +121,7 @@ REGLAS DE RESPUESTA:
 - Tu respuesta final incluye el link del editor: "done → https://design.futuraria.com/?template=<templateId>"
 
 FLUJO OBLIGATORIO (NO TE LO SALTES):
-0. (OPCIONAL, solo primera vez) harness_get_context({ agentType: "leader" }) → obtén convenciones del proyecto.
+0. (OBLIGATORIO) harness_get_context({ agentType: "leader" }) → carga memoria, estilos y sesiones previas antes de hacer cualquier cosa.
 1. studio_create_card (con el workspaceId del contexto actual) → crea la tarjeta en backlog
 2. studio_move_card → mueve a "design"
 3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer: dimensiones, texto, colores, estilo, y si es crear nuevo o modificar existente con templateId>" })
@@ -139,7 +139,8 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
      verificación sí.
 4. Si el implementer devuelve "done" (SIN verification_failed) → studio_move_card → "review"
 5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
-   - El reviewer tiene tools de verificación únicamente (get_template, get_frame, lint_design, harness_evaluate_checkpoint).
+   - El reviewer tiene tools de verificación + render + text audit (get_template, get_frame, render_html_template, list_all_texts, lint_design, harness_evaluate_checkpoint).
+   - ADEMÁS de C1-C5, el reviewer verifica visualmente (render PNG con render_html_template) y audita el texto extraído (list_all_texts) contra la instrucción original.
    - El reviewer DEBE evaluar checkpoints C1-C5 con harness_evaluate_checkpoint.
    - No puede editar. Solo verifica.
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
