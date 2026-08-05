@@ -36,14 +36,28 @@ function jsonBody(statusCode, data) {
   return { statusCode, headers: corsHeaders(), body: JSON.stringify(data) };
 }
 
-/** Derive a 32-byte key from WORKSPACE_SECRET_ENCRYPTION_KEY via scrypt.
- *  Mirrors api/src/services/secrets.ts so one env var encrypts everything. */
+/** Derive a 32-byte AES key for encrypting user BYOK secrets.
+ *
+ *  Resolution order (first non-empty, ≥24-char value wins):
+ *    1. WORKSPACE_SECRET_ENCRYPTION_KEY — dedicated secret (optional override)
+ *    2. SUPABASE_SECRET_KEY            — always present when DB is up
+ *    3. SUPABASE_SERVICE_KEY           — legacy alias
+ *    4. SUPABASE_SECRET_KEY_DE_REPO_DESIGN — Netlify fallback
+ *
+ *  This means BYOK encryption works out-of-the-box wherever Supabase is
+ *  configured. No manual env var setup is required to enable key storage.
+ *  WORKSPACE_SECRET_ENCRYPTION_KEY remains as an optional hardening layer.
+ */
 function getEncryptionKey() {
-  const secret = process.env.WORKSPACE_SECRET_ENCRYPTION_KEY;
+  const secret =
+    process.env.WORKSPACE_SECRET_ENCRYPTION_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN;
   if (!secret || secret.length < 24) {
-    throw new Error("WORKSPACE_SECRET_ENCRYPTION_KEY must contain at least 24 characters");
+    throw new Error("No encryption source available — set WORKSPACE_SECRET_ENCRYPTION_KEY or configure Supabase");
   }
-  return scryptSync(secret, "futuraria-workspace-secrets-v1", 32);
+  return scryptSync(secret, "futuraria-byok-encryption-v1", 32);
 }
 
 function encrypt(plain) {

@@ -3,9 +3,16 @@ import crypto from "node:crypto";
 const ALGORITHM = "aes-256-gcm";
 
 function encryptionKey() {
-  const secret = process.env.WORKSPACE_SECRET_ENCRYPTION_KEY;
+  // WORKSPACE_SECRET_ENCRYPTION_KEY is the dedicated override; fall back to
+  // SUPABASE_SECRET_KEY (always present when the DB is up) so workspace
+  // secrets work out-of-the-box wherever Supabase is configured.
+  const secret =
+    process.env.WORKSPACE_SECRET_ENCRYPTION_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SECRET_KEY_DE_REPO_DESIGN;
   if (!secret || secret.length < 24) {
-    throw new Error("WORKSPACE_SECRET_ENCRYPTION_KEY must contain at least 24 characters");
+    throw new Error("No encryption source available — set WORKSPACE_SECRET_ENCRYPTION_KEY or configure Supabase");
   }
   return crypto.scryptSync(secret, "futuraria-workspace-secrets-v1", 32);
 }
