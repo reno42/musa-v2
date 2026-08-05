@@ -2960,6 +2960,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [columnConfig, setColumnConfig] = useState<ColumnConfig | null>(null);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [iconPickerAnchor, setIconPickerAnchor] = useState<DOMRect | null>(null);
+
+  // Convert-image-to-design runs on Google Gemini. Its key is stored under
+  // its OWN localStorage name, deliberately separate from the chat's LLM key
+  // (futuraria-chat-llm-key) — that one may hold a DeepSeek/OpenAI/etc key,
+  // and sending it to Gemini's endpoint would just fail with a confusing
+  // auth error. Never read the two from a shared slot.
+  const [geminiKey, setGeminiKey] = useState(() => {
+    try { return localStorage.getItem("futuraria-gemini-key") || ""; } catch { return ""; }
+  });
+  const [showGeminiKeyPrompt, setShowGeminiKeyPrompt] = useState(false);
+  const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
+  useEffect(() => {
+    try { localStorage.setItem("futuraria-gemini-key", geminiKey); } catch { /* private mode */ }
+  }, [geminiKey]);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
   // Saves whichever frame(s) are currently selected — same selection
@@ -3470,10 +3484,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "image_to_design",
-          params: { templateId, imageBase64, frameId: newFrame.id, width: newFrame.width, height: newFrame.height },
+          params: {
+            templateId, imageBase64, frameId: newFrame.id,
+            width: newFrame.width, height: newFrame.height,
+            // Only ever the Gemini-specific key — never the chat's LLM key.
+            ...(geminiKey ? { geminiApiKey: geminiKey } : {}),
+          },
           id: 0,
         }),
       });
+      // No key anywhere (neither the user's nor the server's) — surface the
+      // paste-your-key prompt instead of a raw backend error string.
+      if (res.error && String(res.error.message || "").includes("NO_GEMINI_KEY")) {
+        setMcpLoading(null);
+        setGeminiKeyDraft(geminiKey);
+        setShowGeminiKeyPrompt(true);
+        return;
+      }
       if (res.error) throw new Error(res.error.message || "image_to_design falló");
       await reloadFromServer();
       addToast("✓ Diseño generado junto a la imagen original.", "success");
@@ -3481,7 +3508,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       addToast(`No se pudo convertir la imagen: ${err?.message || "error desconocido"}`, "error");
     }
     setMcpLoading(null);
-  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast]);
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiKey]);
 
   // Batchamator commits its generated duplicates the same way any other
   // frame-adding action does — append + undo-tracked + autosaved.
@@ -5317,6 +5344,59 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onInsertPhoto={handleInsertPhoto}
           insertError={iconInsertError}
         />
+      )}
+
+      {/* ═══ Gemini API key prompt (convert image → design) ═══
+          Shown only when neither the user nor the server has a key. Kept
+          visually and textually distinct from the chat's provider key so
+          the two never get pasted into the wrong slot. */}
+      {showGeminiKeyPrompt && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{
+            background: "var(--glass-bg, rgba(20,20,26,0.98))", border: "1px solid var(--glass-border, rgba(255,255,255,0.12))",
+            borderRadius: 12, padding: 20, width: 420, maxWidth: "90vw", boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+          }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#f0ebe0" }}>🪄 Convertir imagen a diseño</h3>
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9a9484", lineHeight: 1.6 }}>
+              Esta función usa <strong style={{ color: "#c8b898" }}>Google Gemini</strong> (visión). Necesita una API key de Gemini,
+              que es <strong>distinta</strong> a la del chat — si ahí tenés DeepSeek, esa no sirve acá.
+              Sacala gratis en <span style={{ color: "#c8b898" }}>aistudio.google.com/apikey</span>.
+            </p>
+            <input
+              type="password"
+              autoFocus
+              value={geminiKeyDraft}
+              onChange={e => setGeminiKeyDraft(e.target.value)}
+              placeholder="AIza... (Google Gemini API key)"
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "9px 12px", marginBottom: 12,
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 8, color: "#e0e0e0", fontSize: 13, fontFamily: "inherit", outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setShowGeminiKeyPrompt(false)}
+                style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#999", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+                Cancelar
+              </button>
+              <button type="button"
+                disabled={!geminiKeyDraft.trim()}
+                onClick={() => {
+                  setGeminiKey(geminiKeyDraft.trim());
+                  setShowGeminiKeyPrompt(false);
+                  addToast("Key guardada. Volvé a presionar 🪄 para convertir la imagen.", "success");
+                }}
+                style={{
+                  padding: "8px 14px", borderRadius: 8, border: "none",
+                  background: geminiKeyDraft.trim() ? "#c8b898" : "rgba(200,184,152,0.25)",
+                  color: geminiKeyDraft.trim() ? "#1a1a1a" : "#777",
+                  fontSize: 12.5, fontWeight: 600, cursor: geminiKeyDraft.trim() ? "pointer" : "not-allowed", fontFamily: "inherit",
+                }}>
+                Guardar key
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ═══ Save Recipe Toast ═══ */}

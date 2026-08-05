@@ -2193,7 +2193,7 @@ const MCP_TOOLS = [
   },
   {
     name: "image_to_design",
-    description: "Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Requires GEMINI_API_KEY.",
+    description: "Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Needs a Google Gemini API key — either passed as geminiApiKey, or configured server-side as GEMINI_API_KEY.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2202,6 +2202,7 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Optional frame ID. If omitted, writes to the first frame." },
         width: { type: "number", description: "Target width in px (default: image aspect ratio, fallback 1080)" },
         height: { type: "number", description: "Target height in px (default: image aspect ratio, fallback 1080)" },
+        geminiApiKey: { type: "string", description: "Optional GOOGLE GEMINI API key to use for this call (takes precedence over the server's). This is NOT the chat's LLM key — a DeepSeek/OpenAI key will not work against Gemini's endpoint." },
       },
       required: ["templateId", "imageBase64"],
     },
@@ -6925,8 +6926,20 @@ async function handleMethod(method, params, userId, auth) {
       if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
       if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "GEMINI_API_KEY not configured. Set it in Netlify environment variables." };
+      // A caller-supplied key wins over the deployment's own — this is how a
+      // user brings their own Gemini quota (see the editor's convert-to-design
+      // flow). It is used for this one request and never stored or logged.
+      // NOTE: this is specifically a GOOGLE GEMINI key. It is deliberately
+      // NOT the chat's LLM key (which may be DeepSeek/OpenAI/etc) — sending
+      // one provider's key to another's endpoint just fails with a confusing
+      // auth error, so the two are kept in separate storage on the client.
+      const apiKey = params.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw {
+          code: -32000,
+          message: "NO_GEMINI_KEY: Falta una API key de Google Gemini. Pasala en geminiApiKey, o configurá GEMINI_API_KEY en el servidor.",
+        };
+      }
 
       // Strip data URI prefix for Gemini inlineData
       const b64Match = params.imageBase64.match(/^data:image\/\w+;base64,(.+)$/);
