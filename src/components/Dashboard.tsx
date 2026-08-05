@@ -214,6 +214,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // ── Security / API Key ──
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
+
+  // Google Gemini key (powers convert-image-to-design). Its own storage
+  // slot on purpose — the chat's provider key (futuraria-chat-llm-key) may
+  // hold a DeepSeek/OpenAI key, and sending that to Gemini's endpoint only
+  // yields a confusing auth error. Same slot the editor's prompt writes to.
+  const GEMINI_KEY_SLOT = "futuraria-gemini-key";
+  const [geminiKey, setGeminiKey] = useState(() => {
+    try { return localStorage.getItem(GEMINI_KEY_SLOT) || ""; } catch { return ""; }
+  });
+  const [geminiDraft, setGeminiDraft] = useState("");
+  const [editingGemini, setEditingGemini] = useState(false);
+  const saveGeminiKey = (value: string) => {
+    const v = value.trim();
+    try { localStorage.setItem(GEMINI_KEY_SLOT, v); } catch { /* private mode */ }
+    setGeminiKey(v);
+    setEditingGemini(false);
+  };
   const [apiKeyRotating, setApiKeyRotating] = useState(false);
   const [apiKeyBannerDismissed, setApiKeyBannerDismissed] = useState(() => {
     try { return localStorage.getItem(API_KEY_BANNER_DISMISSED_KEY) === "true"; } catch { return false; }
@@ -1523,15 +1540,89 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* ── AI Configuration ── */}
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>AI Configuration</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
-            <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14 }}>🧠</span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Model</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>Gemini (via MCP JSON-RPC)</div>
+            {/* Google Gemini key — a real editable field. This used to be a
+                decorative card that read "AI-Ready" whether or not any key
+                existed, so convert-image-to-design could fail while Settings
+                claimed everything was fine. */}
+            <div className="liquid-glass" style={{ padding: "14px 18px", borderRadius: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingGemini || !geminiKey ? 10 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 14 }}>🧠</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>Google Gemini</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                      Convertir imagen a diseño · distinta a la key del chat
+                    </div>
+                  </div>
                 </div>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100,
+                  background: geminiKey ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)",
+                  color: geminiKey ? "#4ade80" : "#facc15",
+                }}>
+                  {geminiKey ? "Configurada" : "Falta"}
+                </span>
               </div>
-              <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 100, background: "rgba(99,102,241,0.12)", color: "#818cf8" }}>AI-Ready</span>
+
+              {editingGemini || !geminiKey ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    type="password"
+                    value={geminiDraft}
+                    onChange={e => setGeminiDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && geminiDraft.trim()) saveGeminiKey(geminiDraft);
+                      if (e.key === "Escape") { setEditingGemini(false); setGeminiDraft(""); }
+                    }}
+                    placeholder="AIza… (key de Google Gemini)"
+                    style={{
+                      flex: 1, minWidth: 160, padding: "8px 14px", borderRadius: 8,
+                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                      color: "#fff", fontSize: 12, outline: "none",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => saveGeminiKey(geminiDraft)}
+                    disabled={!geminiDraft.trim()}
+                    style={{
+                      borderRadius: 100, padding: "8px 16px", fontSize: 12, fontWeight: 500,
+                      border: "none", cursor: geminiDraft.trim() ? "pointer" : "not-allowed",
+                      background: geminiDraft.trim() ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
+                      color: geminiDraft.trim() ? "#a5b4fc" : "rgba(255,255,255,0.3)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Guardar
+                  </button>
+                  {geminiKey && (
+                    <button type="button" onClick={() => { setEditingGemini(false); setGeminiDraft(""); }}
+                      style={{ borderRadius: 100, padding: "8px 12px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)" }}>
+                      Cancelar
+                    </button>
+                  )}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", whiteSpace: "nowrap" }}>
+                    Obtener key gratis ↗
+                  </a>
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    {geminiKey.slice(0, 6)}…{geminiKey.slice(-4)} · guardada en este navegador
+                  </span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button type="button" onClick={() => { setGeminiDraft(geminiKey); setEditingGemini(true); }}
+                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.12)", color: "#a5b4fc" }}>
+                      Cambiar
+                    </button>
+                    <button type="button" onClick={() => saveGeminiKey("")}
+                      style={{ borderRadius: 100, padding: "6px 14px", fontSize: 12, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.1)", color: "#f87171" }}>
+                      Borrar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1679,7 +1770,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* What the key unlocks */}
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", lineHeight: 1.6, marginBottom: 20, padding: "0 4px" }}>
             Your API key unlocks: MCP design tools · AI image generation · CSV batch processing · Template creation & editing.
-            External APIs (Gemini, OpenAI, Brave, Quiver) use your own keys configured in Netlify environment variables.
+            Las keys de servicios externos son tuyas y se guardan en este navegador, no en el servidor:
+            Gemini acá arriba (convertir imagen a diseño), el proveedor del chat dentro del chat, y Unsplash
+            en el panel de fotos. Cada una va por separado — una key de DeepSeek no sirve para Gemini.
           </div>
 
           {/* Sessions */}
