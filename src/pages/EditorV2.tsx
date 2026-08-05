@@ -2986,6 +2986,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     } catch { /* not signed in or server not configured */ }
   }, []);
   useEffect(() => { void refreshKeyStatuses(); }, [refreshKeyStatuses]);
+  // Auth token is set asynchronously by AuthProvider — re-fetch key statuses
+  // once it arrives so BYOK keys survive a page reload.
+  useEffect(() => {
+    const handler = () => { void refreshKeyStatuses(); };
+    window.addEventListener("futuraria:auth-token", handler);
+    return () => window.removeEventListener("futuraria:auth-token", handler);
+  }, [refreshKeyStatuses]);
 
   const handleSaveGeminiKey = useCallback(async (value: string) => {
     const v = value.trim();

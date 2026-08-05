@@ -3,6 +3,17 @@ let accessToken = "";
 
 export function setAccessToken(token: string) {
   accessToken = token;
+  // Notify subscribers (e.g. BYOK key status fetch) that auth is now available.
+  // Components that fetch auth-gated data on mount race against the async
+  // session restoration in AuthProvider — this event lets them retry once
+  // the token is actually populated.
+  try {
+    window.dispatchEvent(new CustomEvent("futuraria:auth-token", { detail: token }));
+  } catch {}
+}
+
+export function getAccessToken(): string {
+  return accessToken;
 }
 
 /** Read the user's API key from localStorage. Returns empty string if not configured. */
