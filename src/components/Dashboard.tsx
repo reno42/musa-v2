@@ -13,6 +13,7 @@ import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
+import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
 import { WorkspaceConsole } from "./WorkspaceConsole";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
@@ -220,8 +221,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // hold a DeepSeek/OpenAI key, and sending that to Gemini's endpoint only
   // yields a confusing auth error. Same slot the editor's prompt writes to.
   const GEMINI_KEY_SLOT = "futuraria-gemini-key";
+  const GEMINI_MODEL_SLOT = "futuraria-gemini-model";
+  const geminiProvider = getProvider("google")!;
   const [geminiKey, setGeminiKey] = useState(() => {
     try { return localStorage.getItem(GEMINI_KEY_SLOT) || ""; } catch { return ""; }
+  });
+  const [geminiModel, setGeminiModel] = useState(() => {
+    try { return localStorage.getItem(GEMINI_MODEL_SLOT) || geminiProvider.models[0]; } catch { return geminiProvider.models[0]; }
   });
   const [geminiDraft, setGeminiDraft] = useState("");
   const [editingGemini, setEditingGemini] = useState(false);
@@ -230,6 +236,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try { localStorage.setItem(GEMINI_KEY_SLOT, v); } catch { /* private mode */ }
     setGeminiKey(v);
     setEditingGemini(false);
+  };
+  const saveGeminiModel = (m: string) => {
+    try { localStorage.setItem(GEMINI_MODEL_SLOT, m); } catch { /* private mode */ }
+    setGeminiModel(m);
   };
   const [apiKeyRotating, setApiKeyRotating] = useState(false);
   const [apiKeyBannerDismissed, setApiKeyBannerDismissed] = useState(() => {
@@ -1623,6 +1633,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   </div>
                 </div>
               )}
+              {/* Model picker — always visible under the key row. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select
+                  value={geminiModel}
+                  onChange={e => saveGeminiModel(e.target.value)}
+                  style={{
+                    flex: 1, padding: "6px 12px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
+                    color: "#fff", fontSize: 12, outline: "none", cursor: "pointer",
+                  }}
+                >
+                  {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
             </div>
             <div className="liquid-glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

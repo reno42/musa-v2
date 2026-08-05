@@ -31,6 +31,7 @@ import { getTemplate, saveLocal } from "../lib/templateApi";
 import { apiFetch } from "../lib/supabase";
 import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
+import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
   appendCssOverride,
@@ -2966,13 +2967,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // (futuraria-chat-llm-key) — that one may hold a DeepSeek/OpenAI/etc key,
   // and sending it to Gemini's endpoint would just fail with a confusing
   // auth error. Never read the two from a shared slot.
+  const geminiProvider = getProvider("google")!;
   const [geminiKey, setGeminiKey] = useState(() => {
     try { return localStorage.getItem("futuraria-gemini-key") || ""; } catch { return ""; }
+  });
+  const [geminiModel, setGeminiModel] = useState(() => {
+    try { return localStorage.getItem("futuraria-gemini-model") || geminiProvider.models[0]; } catch { return geminiProvider.models[0]; }
   });
   const [showGeminiKeyPrompt, setShowGeminiKeyPrompt] = useState(false);
   const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
   useEffect(() => {
     try { localStorage.setItem("futuraria-gemini-key", geminiKey); } catch { /* private mode */ }
+  }, [geminiKey]);
+  useEffect(() => {
+    try { localStorage.setItem("futuraria-gemini-model", geminiModel); } catch { /* private mode */ }
+  }, [geminiModel]);
+
+  /** Opens the AI config panel in the right sidebar — the user never has to
+   *  leave the editor to set their key/model. Returns from any caller. */
+  const openAiConfigPanel = useCallback(() => {
+    setGeminiKeyDraft(geminiKey);
+    setRightPanelTab("ai");
+    setShowRightPanel(true);
   }, [geminiKey]);
   const [saveRecipeMsg, setSaveRecipeMsg] = useState("");
 
@@ -3489,16 +3505,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             width: newFrame.width, height: newFrame.height,
             // Only ever the Gemini-specific key — never the chat's LLM key.
             ...(geminiKey ? { geminiApiKey: geminiKey } : {}),
+            geminiModel,
           },
           id: 0,
         }),
       });
-      // No key anywhere (neither the user's nor the server's) — surface the
-      // paste-your-key prompt instead of a raw backend error string.
+      // No key anywhere (neither the user's nor the server's) — open the
+      // AI config panel in the right sidebar so the user can paste their
+      // key without leaving the editor.
       if (res.error && String(res.error.message || "").includes("NO_GEMINI_KEY")) {
         setMcpLoading(null);
-        setGeminiKeyDraft(geminiKey);
-        setShowGeminiKeyPrompt(true);
+        addToast("Configurá tu API key de Gemini en el panel de la derecha.", "info");
+        openAiConfigPanel();
         return;
       }
       if (res.error) throw new Error(res.error.message || "image_to_design falló");
@@ -3508,7 +3526,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       addToast(`No se pudo convertir la imagen: ${err?.message || "error desconocido"}`, "error");
     }
     setMcpLoading(null);
-  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiKey]);
+  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiKey, geminiModel, openAiConfigPanel]);
 
   // Batchamator commits its generated duplicates the same way any other
   // frame-adding action does — append + undo-tracked + autosaved.
@@ -4171,6 +4189,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     meta: "Information",
     styleLibrary: "Biblioteca",
     batch: "Batchamator",
+    ai: "AI Settings",
   };
 
   return (
@@ -4465,16 +4484,37 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Image to Design — acts on the selected image, no upload popup */}
+          {/* Image to Design — acts on the selected image, no upload popup.
+              If no Gemini key is set, opens the AI config panel first. */}
           <button
             type="button"
             className="editor-v2-topbar-icon-btn"
-            onClick={handleConvertSelectedImageToDesign}
+            onClick={() => {
+              if (!geminiKey) { openAiConfigPanel(); return; }
+              handleConvertSelectedImageToDesign();
+            }}
             disabled={mcpLoading === "imageToDesign"}
             title="Convert selected image to Design (AI Vision)"
             style={{ background: "linear-gradient(135deg, rgba(200,184,152,0.15), rgba(168,146,106,0.15))" }}
           >
             <span style={{ fontSize: 14 }}>{mcpLoading === "imageToDesign" ? "⏳" : "🪄"}</span>
+          </button>
+
+          {/* AI Settings — provider/model/key config without leaving editor */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "ai" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "ai") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("ai");
+                setShowRightPanel(true);
+              }
+            }}
+            title="AI Settings — model & API key"
+          >
+            <span style={{ fontSize: 14 }}>⚙️</span>
           </button>
 
           {/* Lint design */}
@@ -5257,6 +5297,82 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onFrameHover={setBatchHoveredFrameId}
               onGenerate={handleBatchGenerate}
             />
+          )}
+          {rightPanelTab === "ai" && (
+            <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* ── Google Gemini (image-to-design) ── */}
+              <div>
+                <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Image → Design (Google Gemini)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo</label>
+                    <select
+                      value={geminiModel}
+                      onChange={e => setGeminiModel(e.target.value)}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>API Key</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        type="password"
+                        value={geminiKeyDraft}
+                        onChange={e => setGeminiKeyDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && geminiKeyDraft.trim()) {
+                            setGeminiKey(geminiKeyDraft.trim());
+                            addToast("✓ Gemini key guardada", "success");
+                          }
+                          if (e.key === "Escape") setGeminiKeyDraft(geminiKey);
+                        }}
+                        placeholder="AIza... (Google Gemini API key)"
+                        style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                      />
+                      <button
+                        type="button"
+                        disabled={geminiKeyDraft === geminiKey}
+                        onClick={() => { setGeminiKey(geminiKeyDraft.trim()); addToast("✓ Gemini key guardada", "success"); }}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: geminiKeyDraft !== geminiKey ? "pointer" : "not-allowed", background: geminiKeyDraft !== geminiKey ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: geminiKeyDraft !== geminiKey ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                    {geminiKey ? (
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
+                        {geminiKey.slice(0, 6)}…{geminiKey.slice(-4)} · {geminiModel}
+                      </div>
+                    ) : (
+                      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                        Obtener key gratis ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)" }} />
+
+              {/* ── Chat LLM (all providers) ── */}
+              <div>
+                <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Chat LLM (todos los proveedores)</div>
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6, marginBottom: 10 }}>
+                  La key del chat se configura en el panel del chat (botón 💬). Acá solo se muestra qué modelos hay disponibles por proveedor.
+                </p>
+                {AI_PROVIDERS.filter(p => p.id !== "google").map(p => (
+                  <div key={p.id} style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>{p.label}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {p.models.map(m => (
+                        <span key={m} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", fontFamily: "monospace" }}>{m}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

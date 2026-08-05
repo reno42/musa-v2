@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
 
 /**
  * ChatFAB — global floating chat button + right-side panel.
@@ -69,13 +70,6 @@ async function fetchWithRetry(
   }
   throw new Error("fetchWithRetry: unreachable");
 }
-
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_OPENAI_API_KEY" },
-  { id: "anthropic", label: "Anthropic", defaultModel: "claude-3-5-sonnet-20241022", endpoint: "https://api.anthropic.com/v1/messages", keyPrefix: "sk-ant-", keyEnv: "VITE_ANTHROPIC_API_KEY" },
-  { id: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat", endpoint: "https://api.deepseek.com/v1/chat/completions", keyPrefix: "sk-", keyEnv: "VITE_DEEPSEEK_API_KEY" },
-  { id: "openrouter", label: "OpenRouter", defaultModel: "anthropic/claude-3.5-sonnet", endpoint: "https://openrouter.ai/api/v1/chat/completions", keyPrefix: "sk-or-", keyEnv: "VITE_OPENROUTER_API_KEY" },
-] as const;
 
 const LS_PROVIDER_KEY = "futuraria-chat-provider";
 const LS_LLM_KEY_KEY = "futuraria-chat-llm-key";
@@ -1374,7 +1368,9 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
               <select value={provider} onChange={e => { setProvider(e.target.value); const p = PROVIDERS.find(x => x.id === e.target.value); if (p) setModel(p.defaultModel); }} style={{ ...inputBase, width: "100%", padding: "6px 12px", fontSize: 11 }}>
                 {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
-              <input value={model} onChange={e => setModel(e.target.value)} placeholder="modelo" style={{ ...inputBase, padding: "6px 12px", fontSize: 11 }} />
+              <select value={model} onChange={e => setModel(e.target.value)} style={{ ...inputBase, width: "100%", padding: "6px 12px", fontSize: 11 }}>
+                {(PROVIDERS.find(p => p.id === provider)?.models || []).map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
               <input type="password" value={llmKey} onChange={e => setLlmKey(e.target.value)} placeholder={`${PROVIDERS.find(p => p.id === provider)?.keyPrefix || "sk-"}... API key`} style={{ ...inputBase, padding: "6px 12px", fontSize: 11, fontFamily: "monospace" }} />
               <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>Guardado en tu navegador. Se envía directo al proveedor LLM.</span>
             </div>
