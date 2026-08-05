@@ -132,10 +132,15 @@ function App(): JSX.Element {
     if (route.kind === "root") {
       if (user) {
         // ── Page persistence: restore last route instead of always going to dashboard ──
+        // Covers both the editor (?template=…) and a dashboard tab
+        // (#workspace/<tab>); previously only the editor was restored, so
+        // landing on "/" always dropped the user back on Archivos.
         const lastRoute = getLastRoute();
-        if (lastRoute && lastRoute !== "/#workspace" && lastRoute.includes("template=")) {
-          // User was in the editor — restore that template
-          window.history.replaceState(null, "", lastRoute);
+        const restorable = !!lastRoute
+          && lastRoute !== "/#workspace"
+          && (lastRoute.includes("template=") || lastRoute.includes("#workspace/"));
+        if (restorable) {
+          window.history.replaceState(null, "", lastRoute!);
           const restored = readAppRoute(window.location);
           setRoute(restored);
           const ns = stateForRoute(restored);

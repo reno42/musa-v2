@@ -11,6 +11,7 @@ import { KanbanTab } from "./KanbanTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
+import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, type WorkspaceTab } from "../lib/appRoute";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
@@ -129,7 +130,36 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const [activeTab, setActiveTab] = useState<"templates" | "kanban" | "texts" | "recipes" | "storage" | "settings" | "graph" | "workspace">("templates");
+  // The active tab lives in the URL hash (#workspace/<tab>), so a refresh
+  // comes back to the same tab instead of resetting to Archivos — the editor
+  // already survived a refresh because it carries ?template=<id>, and this
+  // gives every dashboard tab the same property. Reading it here (rather
+  // than defaulting to "templates" and correcting afterwards) avoids a
+  // visible flash of the wrong tab on load.
+  const [activeTab, setActiveTabState] = useState<WorkspaceTab>(() => {
+    const route = readAppRoute(window.location);
+    return route.kind === "workspace" && route.tab ? route.tab : DEFAULT_WORKSPACE_TAB;
+  });
+
+  /** Switch tabs and record it in the URL, so refresh/back behave. */
+  const setActiveTab = useCallback((tab: WorkspaceTab) => {
+    setActiveTabState(tab);
+    try {
+      window.history.replaceState(null, "", workspaceTabUrl(tab));
+      saveCurrentRoute();
+    } catch { /* history may be unavailable in embedded contexts */ }
+  }, []);
+
+  // Keep up with browser back/forward, which changes the hash without
+  // going through setActiveTab.
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = readAppRoute(window.location);
+      if (route.kind === "workspace") setActiveTabState(route.tab || DEFAULT_WORKSPACE_TAB);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   // A view like the editor can request landing on a specific tab (e.g. "go
   // manage your storage/trash") via sessionStorage. This has to run as an
@@ -140,11 +170,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // parent, reliably wins that race and applies last.
   useEffect(() => {
     const pending = sessionStorage.getItem("dashboardInitialTab");
-    if (pending) {
+    if (pending && isWorkspaceTab(pending)) {
       sessionStorage.removeItem("dashboardInitialTab");
-      setActiveTab(pending as any);
+      setActiveTab(pending);
     }
-  }, []);
+  }, [setActiveTab]);
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
