@@ -10,6 +10,7 @@ import {
   type KnowledgeGraphEdge,
   type KnowledgeNodeKind,
 } from "../lib/designGraph";
+import { GraphDataTable } from "./GraphDataTable";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -52,13 +53,13 @@ interface SimNode {
   hoverScale: number;  // animated 1 → 1.28 on hover
 }
 
-// ── Simulation tuning ──
-const REPULSION = 800;
-const SPRING = 0.09;
-const SPRING_REST = 20;
-const GRAVITY = 0.8;
-const DAMPING = 0.88;
-const ALPHA_DECAY = 0.03;
+// ── Simulation tuning (defaults — user-adjustable via sliders) ──
+const DEFAULT_REPULSION = 800;
+const DEFAULT_SPRING = 0.09;
+const DEFAULT_SPRING_REST = 20;
+const DEFAULT_GRAVITY = 0.8;
+const DEFAULT_DAMPING = 0.88;
+const DEFAULT_ALPHA_DECAY = 0.03;
 const ALPHA_FLOOR = 0.02;
 // Physics wander removed: macroscopic drift reads as slow chaos. The float
 // the eye sees is the bounded visual Lissajous wobble applied at render time.
@@ -85,6 +86,24 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const [workspace, setWorkspace] = useState<DesignGraphWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // ── Physics controls (live-adjustable via sliders) ──
+  const [showPhysics, setShowPhysics] = useState(false);
+  const [physics, setPhysics] = useState({
+    repulsion: DEFAULT_REPULSION,
+    spring: DEFAULT_SPRING,
+    springRest: DEFAULT_SPRING_REST,
+    gravity: DEFAULT_GRAVITY,
+    damping: DEFAULT_DAMPING,
+    alphaDecay: DEFAULT_ALPHA_DECAY,
+  });
+  // Ref keeps the live values accessible inside the rAF loop without
+  // rebuilding the simulation (the effect only depends on [nodes, edges]).
+  const physicsRef = useRef(physics);
+  physicsRef.current = physics;
+
+  // ── View toggle: graph canvas vs. editable data table ──
+  const [view, setView] = useState<"graph" | "data">("graph");
 
   const hierarchy = useMemo(
     () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
@@ -219,6 +238,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     // ── Physics tick ──
     const tick = (t: number) => {
       const a = Math.max(alpha, ALPHA_FLOOR);
+      const { repulsion, spring, springRest, gravity, damping, alphaDecay } = physicsRef.current;
       // Repulsion + collision (single O(n²) pass — fine for a few hundred nodes)
       for (let i = 0; i < sim.length; i++) {
         const ni = sim[i];
@@ -228,7 +248,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
           let d2 = dx * dx + dy * dy;
           if (d2 < 1) { dx = 0.5; dy = 0.5; d2 = 0.5; }
           const d = Math.sqrt(d2);
-          const f = (REPULSION / d2) * a;
+          const f = (repulsion / d2) * a;
           const fx = (dx / d) * f, fy = (dy / d) * f;
           ni.vx -= fx; ni.vy -= fy;
           nj.vx += fx; nj.vy += fy;
@@ -244,19 +264,19 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       for (const l of links) {
         const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const rest = SPRING_REST + l.a.radius + l.b.radius;
+        const rest = springRest + l.a.radius + l.b.radius;
         const norm = 1 / Math.min(l.a.degree || 1, l.b.degree || 1) ** 0.5;
-        const f = (d - rest) * SPRING * norm * a;
+        const f = (d - rest) * spring * norm * a;
         const fx = (dx / d) * f, fy = (dy / d) * f;
         l.a.vx += fx; l.a.vy += fy;
         l.b.vx -= fx; l.b.vy -= fy;
       }
       for (const n of sim) {
         // Center gravity (the visible "float" is the render-time wobble)
-        n.vx += -n.x * GRAVITY * a;
-        n.vy += -n.y * GRAVITY * a;
+        n.vx += -n.x * gravity * a;
+        n.vy += -n.y * gravity * a;
         if (n === dragging) { n.vx = 0; n.vy = 0; continue; }
-        n.vx *= DAMPING; n.vy *= DAMPING;
+        n.vx *= damping; n.vy *= damping;
         const vmax = 14;
         if (n.vx > vmax) n.vx = vmax; else if (n.vx < -vmax) n.vx = -vmax;
         if (n.vy > vmax) n.vy = vmax; else if (n.vy < -vmax) n.vy = -vmax;
@@ -264,7 +284,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       }
       // Lock workspace root at (0,0) — the anchor of the graph
       if (wsNode) { wsNode.x = 0; wsNode.y = 0; wsNode.vx = 0; wsNode.vy = 0; }
-      alpha += (alphaTarget - alpha) * ALPHA_DECAY;
+      alpha += (alphaTarget - alpha) * alphaDecay;
     };
 
     function fitView() {
@@ -528,23 +548,145 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const designCount = nodes.filter(n => n.kind === "design").length;
 
   return (
-    <div ref={wrapRef} style={{ height: "100%", position: "relative", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
-      {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
-      {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
-      {!loading && !error && designCount === 0 && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13, gap: 8 }}>
-          <span>No hay diseños para mostrar.</span>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Asigna marcas a los archivos desde File Info.</span>
-        </div>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
+      {/* ═══ Top tab bar ═══ */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0, zIndex: 5, background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)" }}>
+        <TabBtn active={view === "graph"} onClick={() => setView("graph")}>◈ Grafo
+        </TabBtn>
+        <TabBtn active={view === "data"} onClick={() => setView("data")}>▤ Base de datos
+        </TabBtn>
+        <div style={{ flex: 1 }} />
+        {view === "graph" && (
+          <button
+            type="button"
+            onClick={() => setShowPhysics(v => !v)}
+            title="Configurar física del grafo"
+            style={{
+              padding: "5px 12px", borderRadius: 8, cursor: "pointer", fontSize: 11,
+              fontWeight: showPhysics ? 600 : 400,
+              color: showPhysics ? "#fff" : "rgba(255,255,255,0.5)",
+              background: showPhysics ? "rgba(99,102,241,0.22)" : "transparent",
+              border: showPhysics ? "1px solid rgba(99,102,241,0.5)" : "1px solid rgba(255,255,255,0.1)",
+              fontFamily: "inherit", transition: "all 0.15s",
+            }}
+          >
+            ⚙ Física
+          </button>
+        )}
+      </div>
+
+      {/* ═══ Physics panel ═══ */}
+      {view === "graph" && showPhysics && (
+        <PhysicsPanel physics={physics} onChange={setPhysics} />
       )}
-      {!loading && !error && designCount > 0 && (
-        <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
-            {clientBrandCount} marcas · {campaignCount} campañas · {designCount} archivos · arrastra para explorar
+
+      {/* ═══ Content area ═══ */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {view === "graph" ? (
+          <>
+            <div ref={wrapRef} style={{ position: "absolute", inset: 0 }}>
+              {loading && <div role="status" aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#777", fontSize: 13 }}>Cargando grafo…</div>}
+              {!loading && error && <GraphError message={error} onRetry={fetchGraph} />}
+              {!loading && !error && designCount === 0 && (
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#777", fontSize: 13, gap: 8 }}>
+                  <span>No hay diseños para mostrar.</span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Asigna marcas a los archivos desde File Info.</span>
+                </div>
+              )}
+              {!loading && !error && designCount > 0 && (
+                <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", background: "rgba(8,10,16,0.8)", padding: "4px 12px", borderRadius: 100 }}>
+                    {clientBrandCount} marcas · {campaignCount} campañas · {designCount} archivos · arrastra para explorar
+                  </span>
+                </div>
+              )}
+              <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || designCount === 0 ? "none" : "block" }} />
+            </div>
+          </>
+        ) : (
+          <GraphDataTable
+            workspaceId={workspaceId}
+            designNodes={designNodes}
+            brandAccounts={brandAccounts}
+            contacts={contacts}
+            onAfterEdit={fetchGraph}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12,
+        fontWeight: active ? 600 : 400,
+        color: active ? "#fff" : "rgba(255,255,255,0.45)",
+        background: active ? "rgba(99,102,241,0.22)" : "transparent",
+        border: active ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent",
+        fontFamily: "inherit", transition: "all 0.15s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PhysicsPanel({ physics, onChange }: {
+  physics: {
+    repulsion: number; spring: number; springRest: number;
+    gravity: number; damping: number; alphaDecay: number;
+  };
+  onChange: (next: typeof physics) => void;
+}) {
+  const sliders: Array<{
+    key: keyof typeof physics; label: string; min: number; max: number; step: number;
+  }> = [
+    { key: "gravity", label: "Gravedad", min: 0, max: 3, step: 0.05 },
+    { key: "repulsion", label: "Repulsión (fuerza)", min: 100, max: 3000, step: 50 },
+    { key: "spring", label: "Unión (resorte)", min: 0.01, max: 0.5, step: 0.01 },
+    { key: "springRest", label: "Distancia de reposo", min: 0, max: 120, step: 5 },
+    { key: "damping", label: "Amortiguación (rapidez)", min: 0.5, max: 0.99, step: 0.01 },
+    { key: "alphaDecay", label: "Enfriamiento", min: 0.005, max: 0.1, step: 0.005 },
+  ];
+  return (
+    <div style={{
+      padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)",
+      background: "rgba(16,18,26,0.96)", backdropFilter: "blur(8px)",
+      display: "flex", flexWrap: "wrap", gap: "10px 20px", flexShrink: 0, zIndex: 4,
+    }}>
+      {sliders.map(s => (
+        <label key={s.key} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 130 }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {s.label}: <span style={{ color: "#8b9cf6", fontFamily: "'SF Mono', monospace" }}>{physics[s.key].toFixed(2)}</span>
           </span>
-        </div>
-      )}
-      <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || designCount === 0 ? "none" : "block" }} />
+          <input
+            type="range"
+            min={s.min} max={s.max} step={s.step}
+            value={physics[s.key]}
+            onChange={e => onChange({ ...physics, [s.key]: parseFloat(e.target.value) })}
+            style={{ accentColor: "#6366f1", width: "100%" }}
+          />
+        </label>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange({
+          repulsion: DEFAULT_REPULSION, spring: DEFAULT_SPRING, springRest: DEFAULT_SPRING_REST,
+          gravity: DEFAULT_GRAVITY, damping: DEFAULT_DAMPING, alphaDecay: DEFAULT_ALPHA_DECAY,
+        })}
+        style={{
+          alignSelf: "flex-end", padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 10,
+          color: "rgba(255,255,255,0.5)", background: "transparent",
+          border: "1px solid rgba(255,255,255,0.15)", fontFamily: "inherit",
+        }}
+      >
+        ↺ Reset
+      </button>
     </div>
   );
 }

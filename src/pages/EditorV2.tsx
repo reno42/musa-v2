@@ -84,6 +84,7 @@ import { installAgentBridge } from "../lib/agentBridge";
 import { findCanvasObjectPosition, normalizeCanvasObject } from "../lib/canvasObjects";
 import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
 import { DocumentStore, createDocumentStore } from "../lib/documentStore";
+import { useAuth } from "../lib/auth";
 import { useToast } from "../components/Toast";
 import {
   IconArrowLeft, IconSliders, IconPalette,
@@ -266,6 +267,8 @@ p {
 
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
+  const { user, signOut } = useAuth();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   // ── DocumentStore (transactional single source of truth, replaces 77 manual pushUndo calls) ──
   const storeRef = useRef<DocumentStore | null>(null);
   if (!storeRef.current) storeRef.current = createDocumentStore();
@@ -576,6 +579,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
    * rotated away, unlike the automatic ones.
    */
   const [savingVersion, setSavingVersion] = useState(false);
+
+  const handleSignOut = useCallback(async () => {
+    setUserMenuOpen(false);
+    await signOut();
+    window.location.href = "/";
+  }, [signOut]);
+
   const handleSaveVersion = useCallback(async () => {
     if (savingVersion) return;
     setSavingVersion(true);
@@ -4833,6 +4843,66 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </button>
           )}
         </div>
+
+        {/* ═══ User Account (fixed in editor — sign out without leaving) ═══ */}
+        {user ? (
+          <div style={{ position: "relative", marginLeft: "auto" }}>
+            <button
+              type="button"
+              className="editor-v2-topbar-icon-btn"
+              onClick={() => setUserMenuOpen(v => !v)}
+              aria-label="Account menu"
+              title={user.email || "Account"}
+              style={{ gap: 6 }}
+            >
+              <span style={{
+                width: 20, height: 20, borderRadius: "50%",
+                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 700, color: "#fff", flexShrink: 0,
+              }}>
+                {(user.email || "?")[0].toUpperCase()}
+              </span>
+              <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>
+                {user.email?.split("@")[0] || "Account"}
+              </span>
+              <IconChevronDown size={11} />
+            </button>
+            {userMenuOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setUserMenuOpen(false)} />
+                <div
+                  style={{
+                    position: "absolute", top: "calc(100% + 6px)", right: 0,
+                    minWidth: 200, borderRadius: 10, padding: 6, zIndex: 50,
+                    background: "rgba(8, 8, 8, 0.92)",
+                    backdropFilter: "blur(16px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(16px) saturate(180%)",
+                    border: "1px solid rgba(200, 184, 152, 0.12)",
+                    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+                  }}
+                >
+                  <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5 }}>Sesión activa</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2, wordBreak: "break-all" }}>{user.email}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void handleSignOut(); }}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "8px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12,
+                      background: "transparent", border: "none", color: "#f87171", fontFamily: "inherit",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+                    Cerrar sesión
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* ═══ Column Config Panel ═══ */}
