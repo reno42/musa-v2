@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
@@ -62,6 +62,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(hasResetParam || isRecoveryInHash);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  // Track the previous user id so we can purge localStorage when the identity
+  // changes — not just on explicit signOut but also when Supabase fires
+  // SIGNED_IN for a different user (e.g. switching accounts in another tab).
+  const prevUserIdRef = useRef<string | null>(null);
+
+  // ── Cross-account purge: when the signed-in user changes, wipe ALL
+  // Futuraria localStorage so the new user doesn't inherit the previous
+  // user's chat history, LLM keys, workspace API key, etc. ──
+  const currentUserId = session?.user?.id ?? null;
+  useEffect(() => {
+    if (prevUserIdRef.current !== null && prevUserIdRef.current !== currentUserId) {
+      purgeUserLocalStorage();
+      setWorkspaceId(null);
+    }
+    prevUserIdRef.current = currentUserId;
+  }, [currentUserId]);
 
   useEffect(() => {
     let active = true;

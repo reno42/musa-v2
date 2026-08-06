@@ -11430,9 +11430,19 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
       const status = params.status || "backlog";
       const limit = Math.min(params.limit || 20, 50);
+      // ── Multi-tenancy: NEVER return tasks from workspaces the caller can't
+      // access. Previously this returned ALL tasks when workspaceId was
+      // omitted, leaking other accounts' data (e.g. victor@futuraria
+      // seeing renzo@futuraria's backlog). Now we always filter by the
+      // caller's accessible workspaces. ──
+      const accessibleIds = await listAccessibleWorkspaceIds(auth);
+      if (accessibleIds.length === 0) {
+        return { status, total: 0, features: [], rule: "No accessible workspaces. Create a workspace first." };
+      }
       let q = sb.from("design_kanban_tasks")
         .select("id, title, type, status, priority, deadline, brief, acceptance, assigned_to, brand_id, workspace_id, template_id, created_at")
         .eq("status", status)
+        .in("workspace_id", accessibleIds)
         .order("priority", { ascending: true })
         .order("deadline", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: false })

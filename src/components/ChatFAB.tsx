@@ -1351,6 +1351,20 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   // looking at, so tool calls and delegated subagents stop guessing.
   useEffect(() => { currentContext = { workspaceId, templateId }; }, [workspaceId, templateId]);
 
+  // ── Reset chat history when workspace changes ──
+  // The chat is workspace-scoped: switching workspace means switching user
+  // (or project), so we must not show the previous conversation. Without
+  // this, Victor could see Renzo's chat if they share a browser.
+  const prevWorkspaceRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevWorkspaceRef.current !== undefined && prevWorkspaceRef.current !== workspaceId) {
+      setMessages([{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }]);
+      setToolEvents([]);
+      setExpandedStepGroups(new Set());
+    }
+    prevWorkspaceRef.current = workspaceId;
+  }, [workspaceId]);
+
   // ── Bootstrap: load memory (styles, templates, sessions, skills) on mount ──
   const [bootstrapCtx, setBootstrapCtx] = useState<BootstrapContext | null>(null);
   useEffect(() => {
