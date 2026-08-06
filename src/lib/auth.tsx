@@ -1,14 +1,25 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
 
 /**
- * Remove ALL Futuraria user-specific data from localStorage on sign-out.
- * localStorage is shared across accounts on the same browser, so without
- * this cleanup the next user would inherit the previous user's chat history,
- * LLM provider keys, workspace API key, template cache, etc. — a real
- * cross-account data leak.
+ * localStorage key that records the id of the last user whose data was
+ * written.  Deliberately NOT prefixed with "futuraria-" / "futuraria_" so
+ * it survives the purge below and acts as a sentinel across sign-out /
+ * sign-in cycles.
+ */
+const LAST_USER_KEY = "_futuraria_last_user";
+
+/**
+ * Remove ALL Futuraria user-specific data from localStorage.
+ * localStorage is shared across accounts on the same browser, so when the
+ * identity changes the new user must NOT inherit the previous user's chat
+ * history, LLM provider keys, workspace API key, template cache, etc.
+ *
+ * IMPORTANT: this is called ONLY when a genuinely different user signs in
+ * (detected via the LAST_USER_KEY sentinel).  It is NOT called on signOut
+ * so the same user's data survives a sign-out / sign-in round-trip.
  */
 function purgeUserLocalStorage(): void {
   if (typeof window === "undefined") return;
@@ -22,6 +33,21 @@ function purgeUserLocalStorage(): void {
     }
     for (const key of keysToRemove) localStorage.removeItem(key);
   } catch { /* localStorage may be blocked — best-effort */ }
+}
+
+/**
+ * Ensure the cross-account sentinel is set / checked.
+ * Returns true when a different user was previously stored (caller should
+ * purge) or false when this is the same user / first run.
+ */
+function checkUserSwitch(userId: string): boolean {
+  try {
+    const lastUser = localStorage.getItem(LAST_USER_KEY);
+    localStorage.setItem(LAST_USER_KEY, userId);
+    return lastUser !== null && lastUser !== userId;
+  } catch {
+    return false;
+  }
 }
 
 type AuthContextValue = {
@@ -62,22 +88,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(hasResetParam || isRecoveryInHash);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  // Track the previous user id so we can purge localStorage when the identity
-  // changes — not just on explicit signOut but also when Supabase fires
-  // SIGNED_IN for a different user (e.g. switching accounts in another tab).
-  const prevUserIdRef = useRef<string | null>(null);
-
-  // ── Cross-account purge: when the signed-in user changes, wipe ALL
-  // Futuraria localStorage so the new user doesn't inherit the previous
-  // user's chat history, LLM keys, workspace API key, etc. ──
-  const currentUserId = session?.user?.id ?? null;
-  useEffect(() => {
-    if (prevUserIdRef.current !== null && prevUserIdRef.current !== currentUserId) {
-      purgeUserLocalStorage();
-      setWorkspaceId(null);
-    }
-    prevUserIdRef.current = currentUserId;
-  }, [currentUserId]);
 
   useEffect(() => {
     let active = true;
@@ -85,6 +95,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const activateSession = (nextSession: Session | null) => {
       if (!active) return;
+      // ── Cross-account purge (sentinel-based) ──
+      // Must happen SYNCHRONOUSLY before setSession so that child components
+      // (ChatFAB, Dashboard) mount on the next render with clean localStorage.
+      // If we used a useEffect for this, ChatFAB would load the previous
+      // user's chat from localStorage before the purge fires.
+      //
+      // The sentinel (_futuraria_last_user) is NOT purged (it doesn't share
+      // the "futuraria-" prefix) so it persists across sign-out / sign-in
+      // cycles.  Only a genuinely DIFFERENT user triggers the purge.
+      const newUserId = nextSession?.user?.id ?? null;
+      if (newUserId && checkUserSwitch(newUserId)) {
+        purgeUserLocalStorage();
+        setWorkspaceId(null);
+      }
       setAccessToken(nextSession?.access_token || "");
       setSession(nextSession);
     };
@@ -187,9 +211,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { client } = await initializeBrowserSupabase();
       if (client) await client.auth.signOut({ scope: "local" });
       setAccessToken("");
-      // Purge all user-specific localStorage so the next account starts clean
-      // (chat history, LLM keys, workspace API key, template cache, etc.).
-      purgeUserLocalStorage();
+      // Do NOT purge localStorage here.  The sentinel-based effect above
+      // handles cross-account cleanup when a different user signs in.
+      // Purging here would destroy the user's own data (keys, chat history)
+      // every time they log out and back in.
       setWorkspaceId(null);
     },
   }), [authRequired, configurationError, configured, loading, passwordRecovery, session, workspaceId]);
