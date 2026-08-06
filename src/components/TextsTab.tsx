@@ -338,11 +338,12 @@ export function TextsTab({ workspaceId, onOpenTemplate }: TextsTabProps) {
 
   // ── Load texts ──
   const loadTexts = useCallback(async () => {
+    if (!workspaceId) return;
     setLoading(true);
     try {
       // Lightweight REST endpoint: no iframe HTML/CSS, just text + template metadata
       const result = await apiFetch<{ success: boolean; texts: TextEntry[]; templateMeta: TemplateMeta[]; autoTagged: number; templatesUpdated: number }>(
-        `/api/workspaces/${workspaceId || "ws_user_8e9f031817184e0ab205"}/texts`,
+        `/api/workspaces/${workspaceId}/texts`,
       );
       const texts: TextEntry[] = result.texts || [];
       const metaArr: TemplateMeta[] = result.templateMeta || [];

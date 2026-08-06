@@ -10,6 +10,8 @@ type AuthContextValue = {
   loading: boolean;
   session: Session | null;
   user: User | null;
+  /** The signed-in user's personal workspace id (from /account/bootstrap). */
+  workspaceId: string | null;
   passwordRecovery: boolean;
   needsPasswordSetup: boolean;
   completePasswordRecovery: () => void;
@@ -38,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(hasResetParam || isRecoveryInHash);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -52,7 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const bootstrapAccount = (nextSession: Session | null) => {
       if (!nextSession) return;
       const headers = { Authorization: `Bearer ${nextSession.access_token}`, "Content-Type": "application/json; charset=utf-8" };
-      void fetch("/api/account/bootstrap", { method: "POST", headers, body: "{}" }).catch(() => undefined);
+      // Bootstrap creates/returns the user's personal workspace; capture its id
+      // so the dashboard loads the right (per-user) workspace instead of a
+      // hardcoded one.
+      void fetch("/api/account/bootstrap", { method: "POST", headers, body: "{}" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((payload) => {
+          const id = payload?.data?.personalWorkspaceId;
+          if (typeof id === "string" && id) setWorkspaceId(id);
+        })
+        .catch(() => undefined);
     };
 
     void initializeBrowserSupabase().then(async ({ client, authRequired: required, error }) => {
@@ -125,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     session,
     user: session?.user || null,
+    workspaceId,
     passwordRecovery,
     needsPasswordSetup: Boolean(session?.user?.user_metadata?.needs_password_setup),
     completePasswordRecovery: () => {
@@ -138,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (client) await client.auth.signOut({ scope: "local" });
       setAccessToken("");
     },
-  }), [authRequired, configurationError, configured, loading, passwordRecovery, session]);
+  }), [authRequired, configurationError, configured, loading, passwordRecovery, session, workspaceId]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

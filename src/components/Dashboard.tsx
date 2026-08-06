@@ -59,8 +59,6 @@ interface Brand {
   relationship_status?: string;
 }
 
-export const DEFAULT_WORKSPACE_ID = "ws_user_8e9f031817184e0ab205";
-
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
   onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
@@ -112,12 +110,17 @@ function brandAccent(id: string): string {
 
 export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardProps) {
   const { addToast } = useToast();
-  const { user, configured: authConfigured, authRequired, signOut } = useAuth();
+  const { user, workspaceId: personalWorkspaceId, configured: authConfigured, authRequired, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [authConfigChecked, setAuthConfigChecked] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [templates, setTemplates] = useState<Template[]>(() => readTemplateCache());
-  const [selectedWs, setSelectedWs] = useState<string | null>(DEFAULT_WORKSPACE_ID);
+  const [selectedWs, setSelectedWs] = useState<string | null>(null);
+  // Active workspace: explicit override (e.g. a newly created workspace) → the
+  // signed-in user's personal workspace → the first accessible workspace.
+  // Previously this was a hardcoded id (renzo's), which broke multi-tenancy:
+  // every user landed in the same workspace and new accounts hit 403s.
+  const activeWorkspaceId = selectedWs ?? personalWorkspaceId ?? workspaces[0]?.id ?? null;
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandCounts, setBrandCounts] = useState<Map<string, number>>(new Map());
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
@@ -274,19 +277,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     } catch { /* signed out or server without Supabase — card just stays empty */ }
   }, []);
 
-  const loadMembers = useCallback(async () => {
+  const loadMembers = useCallback(async (wsId?: string) => {
+    const id = wsId ?? activeWorkspaceId;
+    if (!id) return;
     try {
-      const res = await apiFetch<any>(`/workspaces/${DEFAULT_WORKSPACE_ID}/members`);
+      const res = await apiFetch<any>(`/workspaces/${id}/members`);
       setMembers(res?.data || []);
     } catch { setMembers([]); }
-  }, []);
+  }, [activeWorkspaceId]);
 
-  useEffect(() => { void loadProfile(); void loadMembers(); }, [loadProfile, loadMembers]);
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
   useEffect(() => {
-    const handler = () => { void loadProfile(); void loadMembers(); };
+    const handler = () => { void loadProfile(); };
     window.addEventListener("futuraria:auth-token", handler);
     return () => window.removeEventListener("futuraria:auth-token", handler);
-  }, [loadProfile, loadMembers]);
+  }, [loadProfile]);
 
   const handleSaveProfile = async () => {
     setProfileSaving(true);
@@ -413,10 +418,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   const handleGenerateKey = async () => {
+    if (!activeWorkspaceId) return;
     setApiKeyRotating(true);
     try {
       const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
-        `/workspaces/${DEFAULT_WORKSPACE_ID}/api-keys`,
+        `/workspaces/${activeWorkspaceId}/api-keys`,
         { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
       );
       if (res.success && res.data?.key) {
@@ -434,10 +440,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   const handleRotateKey = async () => {
+    if (!activeWorkspaceId) return;
     setApiKeyRotating(true);
     try {
       const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
-        `/workspaces/${DEFAULT_WORKSPACE_ID}/api-keys`,
+        `/workspaces/${activeWorkspaceId}/api-keys`,
         { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
       );
       if (res.success && res.data?.key) {
@@ -539,34 +546,35 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const handleSearch = useCallback((value: string) => {
     setSearchDisplay(value);
     searchRef.current = value;
-    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID, selectedBrand ?? undefined);
-  }, [selectedBrand]);
+    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined);
+  }, [selectedBrand, activeWorkspaceId]);
 
   const handleBrandChange = useCallback((brandId: string | null) => {
     setSelectedBrand(brandId);
-    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID, brandId ?? undefined);
-  }, []);
+    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, brandId ?? undefined);
+  }, [activeWorkspaceId]);
 
+  // ── Load the workspace list once on mount ──
   useEffect(() => {
-    // Sync URL so reload lands back on dashboard
     if (window.location.hash !== "#workspace") {
       window.history.replaceState(null, "", "/#workspace");
     }
-    // Fire all requests in PARALLEL — no sequential chaining.
-    // Templates load independently of workspaces (workspaceId is already known).
-    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
-    apiFetch<{ success: boolean; data: Brand[] }>(`/saas/workspaces/${DEFAULT_WORKSPACE_ID}/brands`)
-      .then(r => setBrands(r.data || []))
-      .catch(() => {});
     apiFetch<{ success: boolean; data: Workspace[] }>("/workspaces")
-      .then(r => {
-        setWorkspaces(r.data || []);
-        setSelectedWs(DEFAULT_WORKSPACE_ID);
-      })
+      .then(r => setWorkspaces(r.data || []))
       .catch(() => {
         addToast("Error al cargar los workspaces.", "error");
       });
   }, [addToast]);
+
+  // ── Load templates, brands and members for the active (per-user) workspace ──
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    loadTemplatesRef.current(activeWorkspaceId);
+    apiFetch<{ success: boolean; data: Brand[] }>(`/saas/workspaces/${activeWorkspaceId}/brands`)
+      .then(r => setBrands(r.data || []))
+      .catch(() => {});
+    void loadMembers(activeWorkspaceId);
+  }, [activeWorkspaceId, loadMembers]);
 
   /* Global keyboard shortcuts: arrows for flow, Alt/Cmd+Space for search */
   useEffect(() => {
@@ -707,10 +715,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   const handleCreateWithName = async () => {
+    if (!activeWorkspaceId) return;
     const name = newTplName.trim() || "Untitled";
     setCreatingTpl(false);
     setNewTplName("");
-    onCreateHtmlTemplate(DEFAULT_WORKSPACE_ID, name);
+    onCreateHtmlTemplate(activeWorkspaceId, name);
   };
 
   /* Snapshot all templates: rasterize each frame (see frameCapture.ts — replaced
@@ -737,8 +746,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     }
     setSnapshotProgress({ running: false, done: 0, total: 0 });
     addToast(`${htmlTemplates.length} thumbnails captured.`, "success");
-    loadTemplatesRef.current(DEFAULT_WORKSPACE_ID);
-  }, [templates, addToast]);
+    if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId);
+  }, [templates, addToast, activeWorkspaceId]);
 
   const handleDeleteRecipe = async (id: string) => {
     try {
@@ -750,10 +759,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   };
 
   const handleCreateFromRecipe = async (recipeId: string, recipeName: string) => {
+    if (!activeWorkspaceId) return;
     try {
       const res = await apiFetch<{ success: boolean; data: { templateId: string } }>(`/api/recipes/${recipeId}/execute`, {
         method: "POST",
-        body: JSON.stringify({ variables: {}, workspaceId: DEFAULT_WORKSPACE_ID }),
+        body: JSON.stringify({ variables: {}, workspaceId: activeWorkspaceId }),
       });
       if (res.data) {
         onSelectTemplate(res.data.templateId);
@@ -1316,7 +1326,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
-              onClick={() => onCreateHtmlTemplate(DEFAULT_WORKSPACE_ID, "Untitled")}
+              onClick={() => activeWorkspaceId && onCreateHtmlTemplate(activeWorkspaceId, "Untitled")}
               style={{ ...btnPrimary, marginTop: 16 }}
             >
               + New Template
@@ -1354,12 +1364,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Texts Tab ── */}
       {activeTab === "texts" && (
-        <TextsTab workspaceId={DEFAULT_WORKSPACE_ID} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+        <TextsTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* ── Kanban Tab ── */}
       {activeTab === "kanban" && (
-        <KanbanTab workspaceId={DEFAULT_WORKSPACE_ID} />
+        <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
       )}
 
 {/* Key Visuals / Recipes Grid */}
@@ -1424,14 +1434,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* ── Storage Tab ── */}
-      {activeTab === "storage" && <StorageTab workspaceId={DEFAULT_WORKSPACE_ID} />}
+      {activeTab === "storage" && <StorageTab workspaceId={activeWorkspaceId} />}
 
       {/* ── Settings Tab ── */}
       {activeTab === "settings" && (
         <WorkspaceConsole
           mode="settings"
-          workspaceId={DEFAULT_WORKSPACE_ID}
-          workspaceName={workspaces.find(workspace => workspace.id === DEFAULT_WORKSPACE_ID)?.name}
+          workspaceId={activeWorkspaceId}
+          workspaceName={workspaces.find(workspace => workspace.id === activeWorkspaceId)?.name}
         >
       {(() => {
         const totalFrames = templates.reduce((sum, t) => sum + (t.frames?.length || 0), 0);
@@ -1517,17 +1527,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div className="bento-row">
                   <span className="bento-row-label">Nombre</span>
                   <span className="bento-row-value">
-                    {workspaces.find(w => w.id === DEFAULT_WORKSPACE_ID)?.name || "—"}
+                    {workspaces.find(w => w.id === activeWorkspaceId)?.name || "—"}
                   </span>
                 </div>
                 <div className="bento-row">
                   <span className="bento-row-label">ID</span>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                     <code style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {DEFAULT_WORKSPACE_ID}
+                      {activeWorkspaceId || "—"}
                     </code>
                     <button type="button" className="bento-btn" style={{ padding: "4px 10px", fontSize: 11 }}
-                      onClick={() => { navigator.clipboard?.writeText(DEFAULT_WORKSPACE_ID); addToast("ID copiado", "success"); }}>
+                      onClick={() => { navigator.clipboard?.writeText(activeWorkspaceId || ""); addToast("ID copiado", "success"); }}>
                       Copiar
                     </button>
                   </span>
@@ -1903,7 +1913,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "graph" && (
         <div data-tour="graph-view" style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <GraphTab
-            workspaceId={DEFAULT_WORKSPACE_ID}
+            workspaceId={activeWorkspaceId}
             onOpenTemplate={(id) => {
               onSelectTemplate(id);
             }}
@@ -1914,8 +1924,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "workspace" && (
         <WorkspaceConsole
           mode="crm"
-          workspaceId={DEFAULT_WORKSPACE_ID}
-          workspaceName={workspaces.find(workspace => workspace.id === DEFAULT_WORKSPACE_ID)?.name}
+          workspaceId={activeWorkspaceId}
+          workspaceName={workspaces.find(workspace => workspace.id === activeWorkspaceId)?.name}
           onOpenTemplate={(id) => onSelectTemplate(id)}
         />
       )}

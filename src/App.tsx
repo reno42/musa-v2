@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
-import { Dashboard, DEFAULT_WORKSPACE_ID } from "./components/Dashboard";
+import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { ChatFAB } from "./components/ChatFAB";
 import { useToast } from "./components/Toast";
@@ -92,6 +92,7 @@ function App(): JSX.Element {
     configurationError,
     loading: authLoading,
     user,
+    workspaceId,
     passwordRecovery,
     needsPasswordSetup,
     completePasswordRecovery,
@@ -293,7 +294,7 @@ function App(): JSX.Element {
             onCreateHtmlTemplate={handleCreateHtmlTemplate}
           />
         </ErrorBoundary>
-        <ChatFAB workspaceId={DEFAULT_WORKSPACE_ID} />
+        <ChatFAB workspaceId={workspaceId ?? undefined} />
       </>
     );
   }
@@ -307,7 +308,7 @@ function App(): JSX.Element {
           onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
         />
       </ErrorBoundary>
-      <ChatFAB workspaceId={DEFAULT_WORKSPACE_ID} templateId={templateId!} />
+      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} />
     </>
   );
 }
