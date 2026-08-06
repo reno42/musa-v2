@@ -120,7 +120,7 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
  */
 templateRoutes.get("/", async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 300);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const search = (req.query.search as string || "").toLowerCase();
     const workspaceId = req.query.workspaceId as string || undefined;

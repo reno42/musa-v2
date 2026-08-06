@@ -193,11 +193,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   // ── Infinite scroll ──
-  const PAGE_SIZE = 30;
+  const PAGE_SIZE = 300;
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef(0); // tracks offset for the current workspace + brand combo
+  // Ref bridge for observer callback — avoids stale closure over hasMore/loadingMore/wsId/brandId
+  const obsRef = useRef({ hasMore: true, loadingMore: false, wsId: null as string | null, brandId: null as string | null });
+  obsRef.current = { hasMore, loadingMore, wsId: activeWorkspaceId, brandId: selectedBrand };
 
   // Persist column count
   const handleColumnsChange = useCallback((cols: number) => {
@@ -607,17 +610,20 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   }, [activeWorkspaceId, loadMembers]);
 
   // ── Infinite scroll observer ──
+  // Uses obsRef.current to avoid stale closures — the observer callback always
+  // reads the latest hasMore/loadingMore/wsId/brandId values.
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || activeTab !== "templates") return;
+    if (!sentinel) return;
     const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && hasMore && !loadingMore) {
-        loadTemplates(activeWorkspaceId ?? undefined, selectedBrand ?? undefined, pageRef.current);
+      const { hasMore: hm, loadingMore: lm, wsId, brandId } = obsRef.current;
+      if (entry.isIntersecting && hm && !lm) {
+        loadTemplates(wsId ?? undefined, brandId ?? undefined, pageRef.current);
       }
     }, { rootMargin: "300px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [activeTab, activeWorkspaceId, selectedBrand, hasMore, loadingMore, loadTemplates]);
+  }, [activeTab, loadTemplates]);
 
   /* Global keyboard shortcuts: arrows for flow, Alt/Cmd+Space for search */
   useEffect(() => {
@@ -1428,14 +1434,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 : templates
               ).map(t => renderTemplateCard(t))}
             </div>
-            {/* Infinite scroll sentinel */}
-            <div ref={sentinelRef} style={{ height: 1 }} />
-            {loadingMore && (
-              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", padding: "12px 0 20px", fontSize: 11 }}>
-                Cargando más archivos…
-              </div>
-            )}
           </>
+        )}
+        {/* Infinite scroll sentinel — always rendered so observer can attach after loading */}
+        <div ref={sentinelRef} style={{ height: 1 }} />
+        {loadingMore && (
+          <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", padding: "12px 0 20px", fontSize: 11 }}>
+            Cargando más archivos…
+          </div>
         )}
       </div>
       )}
