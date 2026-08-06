@@ -185,6 +185,26 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [flowIndex, setFlowIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Card grid zoom (columns per row) ──
+  const [cardColumns, setCardColumns] = useState(() => {
+    try { const v = localStorage.getItem("futuraria-card-columns"); return v ? Number(v) : 4; } catch { return 4; }
+  });
+  // ── Date-range filter ──
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  // ── Infinite scroll ──
+  const PAGE_SIZE = 30;
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef(0); // tracks offset for the current workspace + brand combo
+
+  // Persist column count
+  const handleColumnsChange = useCallback((cols: number) => {
+    setCardColumns(cols);
+    try { localStorage.setItem("futuraria-card-columns", String(cols)); } catch {}
+  }, []);
+
   /* Check auth config once on mount */
   useEffect(() => {
     fetch("/api/auth/config", { headers: { Accept: "application/json" } })
@@ -476,34 +496,44 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     forceRender();
   }, []);
 
-  const loadTemplates = useCallback(async (wsId?: string, brandId?: string) => {
-    // Stale-while-revalidate: skip the loading spinner when we already have
-    // data to show. The user sees their files instantly; the fetch updates
-    // silently in the background.
+  const loadTemplates = useCallback(async (wsId?: string, brandId?: string, offset = 0) => {
+    const isReset = offset === 0;
     const hasStaleData = loadingRef.current === false;
-    if (!hasStaleData) setLoading(true);
+    if (!hasStaleData && isReset) setLoading(true);
+    if (!isReset) setLoadingMore(true);
     try {
       const params = new URLSearchParams();
       if (wsId) params.set("workspaceId", wsId);
       if (brandId) params.set("brandId", brandId);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(offset));
       if (searchRef.current) params.set("search", searchRef.current);
       const qs = params.toString();
-      const res = await apiFetch<{ success: boolean; data: Template[] }>(`/templates${qs ? `?${qs}` : ""}`);
-      const data = res.data || [];
-      // Sort by most recently updated first (server does this, but double-check client-side)
+      const res = await apiFetch<{ success: boolean; data: Template[]; total: number }>(`/templates?${qs}`);
+      const data = (res.data || []);
+      // Sort by most recently updated first
       data.sort((a, b) =>
         new Date(b.metadata?.updatedAt || 0).getTime() - new Date(a.metadata?.updatedAt || 0).getTime()
       );
-      setTemplates(data);
-      writeTemplateCache(data);
-      loadMetaCovers(wsId);
+      if (isReset) {
+        setTemplates(data);
+        writeTemplateCache(data);
+        pageRef.current = data.length;
+        setHasMore(data.length >= PAGE_SIZE);
+        loadMetaCovers(wsId);
+      } else {
+        setTemplates(prev => [...prev, ...data]);
+        pageRef.current = offset + data.length;
+        setHasMore(data.length >= PAGE_SIZE);
+      }
     } catch {
-      // Keep stale data visible on network error — don't blank the screen
-      if (!hasStaleData) setTemplates([]);
+      if (isReset && !hasStaleData) setTemplates([]);
+      if (!isReset) setHasMore(false);
       addToast("Error al cargar las plantillas.", "error");
     }
     setLoading(false);
-  }, [setLoading, addToast]);
+    setLoadingMore(false);
+  }, [setLoading, addToast, PAGE_SIZE]);
 
   // Fetch cover metadata AND brand template counts after template load (prefer cover_image_url over thumbnail)
   const loadMetaCovers = useCallback(async (wsId?: string) => {
@@ -524,7 +554,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     } catch { /* covers are optional; fail silently */ }
   }, []);
 
-  loadTemplatesRef.current = loadTemplates;
+  loadTemplatesRef.current = (wsId?: string, brandId?: string) => loadTemplates(wsId, brandId, 0);
 
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
@@ -575,6 +605,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       .catch(() => {});
     void loadMembers(activeWorkspaceId);
   }, [activeWorkspaceId, loadMembers]);
+
+  // ── Infinite scroll observer ──
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || activeTab !== "templates") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && hasMore && !loadingMore) {
+        loadTemplates(activeWorkspaceId ?? undefined, selectedBrand ?? undefined, pageRef.current);
+      }
+    }, { rootMargin: "300px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [activeTab, activeWorkspaceId, selectedBrand, hasMore, loadingMore, loadTemplates]);
 
   /* Global keyboard shortcuts: arrows for flow, Alt/Cmd+Space for search */
   useEffect(() => {
@@ -1247,77 +1290,91 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* Template Grid */}
       {activeTab === "templates" && (
-      <div data-tour="templates-grid" style={{ flex: 1, overflowY: "auto", padding: "20px 20px 20px 20px" }}>
-        {/* ── Brand filter chips ── */}
-        {brands.length > 0 && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8, marginBottom: 20,
-            flexWrap: "wrap", padding: "0 0 8px 0",
-          }}>
-            <span style={{
-              fontSize: 11, color: "rgba(255,255,255,0.3)", textTransform: "uppercase",
-              letterSpacing: "0.05em", marginRight: 4, whiteSpace: "nowrap",
-            }}>
-              Marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} con diseños):
-            </span>
-            <button
-              type="button"
-              onClick={() => handleBrandChange(null)}
-              className="liquid-glass"
+      <div data-tour="templates-grid" style={{
+        flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
+        background: "#06080d",
+      }}>
+        {/* ── Filter bar: brand dropdown · date range · zoom slider ── */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 12, marginBottom: 18,
+          flexWrap: "wrap", padding: "0 0 10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
+        }}>
+          {/* Brand dropdown */}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>
+            Marca
+            <select
+              value={selectedBrand || ""}
+              onChange={e => handleBrandChange(e.target.value || null)}
               style={{
-                borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
-                cursor: "pointer", border: "none",
-                background: !selectedBrand ? "rgba(108,92,231,0.25)" : "rgba(255,255,255,0.03)",
-                color: !selectedBrand ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)",
-                transition: "all 0.2s ease",
+                padding: "5px 10px", borderRadius: 8, fontSize: 12,
+                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
+                color: "rgba(255,255,255,0.85)", fontFamily: "inherit",
+                cursor: "pointer", outline: "none",
               }}
             >
-              Todas
-            </button>
-            {brands.map(b => {
-              const count = brandCounts.get(b.id) || 0;
-              const hasDesigns = count > 0;
-              return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => { if (hasDesigns) handleBrandChange(b.id); }}
-                  className="liquid-glass"
-                  title={hasDesigns ? `${count} template${count > 1 ? "s" : ""}` : "Sin diseños aún"}
-                  style={{
-                    borderRadius: 100, padding: "5px 14px", fontSize: 12, fontWeight: 500,
-                    cursor: hasDesigns ? "pointer" : "default",
-                    border: "none",
-                    background: selectedBrand === b.id
-                      ? "rgba(108,92,231,0.25)"
-                      : hasDesigns ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.015)",
-                    color: selectedBrand === b.id
-                      ? "rgba(255,255,255,0.95)"
-                      : hasDesigns ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.25)",
-                    opacity: hasDesigns ? 1 : 0.5,
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  <span style={{
-                    display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                    background: brandAccent(b.id), marginRight: 4, verticalAlign: "middle",
-                    opacity: hasDesigns ? 1 : 0.4,
-                  }} />
-                  {b.name}
-                  {hasDesigns && (
-                    <span style={{
-                      marginLeft: 4, fontSize: 10, fontWeight: 600,
-                      color: "rgba(255,255,255,0.35)", background: "rgba(255,255,255,0.05)",
-                      borderRadius: 100, padding: "1px 7px",
-                    }}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+              <option value="">Todas las marcas ({brands.filter(b => (brandCounts.get(b.id) || 0) > 0).length} activas)</option>
+              {brands.map(b => {
+                const count = brandCounts.get(b.id) || 0;
+                return (
+                  <option key={b.id} value={b.id}>
+                    {b.name}{count > 0 ? ` (${count})` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+
+          {/* Date range */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              aria-label="Fecha desde"
+              style={{
+                padding: "4px 8px", borderRadius: 6, fontSize: 11,
+                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
+                color: "rgba(255,255,255,0.75)", fontFamily: "inherit",
+                outline: "none", width: 120,
+              }}
+            />
+            <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>–</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              aria-label="Fecha hasta"
+              style={{
+                padding: "4px 8px", borderRadius: 6, fontSize: 11,
+                background: "rgba(15, 18, 28, 0.9)", border: "1px solid rgba(255,255,255,0.1)",
+                color: "rgba(255,255,255,0.75)", fontFamily: "inherit",
+                outline: "none", width: 120,
+              }}
+            />
           </div>
-        )}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Zoom slider */}
+          <label style={{
+            display: "flex", alignItems: "center", gap: 8, fontSize: 11,
+            color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
+          }}>
+            Vista: {cardColumns} col
+            <input
+              type="range"
+              min={2} max={6} step={1}
+              value={cardColumns}
+              onChange={e => handleColumnsChange(parseInt(e.target.value))}
+              title={`${cardColumns} columnas por fila`}
+              style={{ accentColor: "#6366f1", width: 80 }}
+            />
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'SF Mono', monospace" }}>
+              {cardColumns <= 3 ? "🔍" : cardColumns >= 5 ? "🔎" : "▪"}
+            </span>
+          </label>
+        </div>
+
         {loading ? (
           <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 60 }}>Loading…</div>
         ) : templates.length === 0 ? (
@@ -1355,9 +1412,30 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             )}
           </div>
         ) : (
-          <div className="dash-template-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 28 }}>
-            {templates.map(t => renderTemplateCard(t))}
-          </div>
+          <>
+            <div className="dash-template-grid" style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(auto-fill, minmax(${cardColumns <= 3 ? 380 : cardColumns <= 4 ? 280 : 190}px, 1fr))`,
+              gap: 18,
+            }}>
+              {(dateFrom || dateTo
+                ? templates.filter(t => {
+                    const d = new Date(t.metadata.updatedAt).getTime();
+                    if (dateFrom && d < new Date(dateFrom).getTime()) return false;
+                    if (dateTo && d > new Date(dateTo + "T23:59:59").getTime()) return false;
+                    return true;
+                  })
+                : templates
+              ).map(t => renderTemplateCard(t))}
+            </div>
+            {/* Infinite scroll sentinel */}
+            <div ref={sentinelRef} style={{ height: 1 }} />
+            {loadingMore && (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", padding: "12px 0 20px", fontSize: 11 }}>
+                Cargando más archivos…
+              </div>
+            )}
+          </>
         )}
       </div>
       )}
@@ -2054,11 +2132,11 @@ const cardStyle: React.CSSProperties = {
   position: "relative", height: 200, borderRadius: 14,
   overflow: "hidden", cursor: "pointer",
   transition: "all 0.25s ease",
-  background: "rgba(255, 255, 255, 0.01)",
+  background: "rgba(255, 255, 255, 0.03)",
   backdropFilter: "blur(4px)",
   WebkitBackdropFilter: "blur(4px)",
-  border: "1px solid rgba(255, 255, 255, 0.06)",
-  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)",
+  border: "1px solid rgba(255, 255, 255, 0.1)",
+  boxShadow: "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)",
 };
 
 const cardOverlay: React.CSSProperties = {
