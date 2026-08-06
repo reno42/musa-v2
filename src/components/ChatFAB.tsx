@@ -1218,12 +1218,44 @@ const inputBase: React.CSSProperties = {
   outline: "none", fontFamily: "inherit", width: "100%", boxSizing: "border-box",
 };
 
+/**
+ * Does this assistant text look like the model *narrating* tool calls rather
+ * than actually emitting them?
+ *
+ * Real tool activity never reaches the transcript as text — it renders in the
+ * toolEvents strip — so any assistant message that names a tool alongside a
+ * result marker is fabricated.
+ *
+ * The previous version of this check used `\b(studio_create|harness_delegate|…)\b`,
+ * which silently never fired: `_` is a word character in JS regex, so
+ * `\bstudio_create\b` does NOT match `studio_create_card`. The tools the model
+ * actually fakes are precisely the suffixed ones, so the guard was dead code.
+ * Matching the full snake_case token (and allowing any suffix) is what makes it
+ * work.
+ */
+const FAKE_TOOL_CALL_RE =
+  /(?:^|[\s`*✓✔√•\-])(studio_[a-z_]+|harness_[a-z_]+|create_(?:html_)?(?:template|frame)[a-z_]*|set_(?:html|css)|delete_frame[a-z_]*|render_html[a-z_]*|list_templates|get_active_styles)\s*(?:\(|→|->|:|=>)/i;
+
+export function looksLikeNarratedToolCall(text: string): boolean {
+  if (!text) return false;
+  return FAKE_TOOL_CALL_RE.test(text) || /\{\s*"tool"\s*:/i.test(text);
+}
+
 function loadMessages(): Message[] {
   try {
     const raw = localStorage.getItem(LS_MESSAGES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(-MAX_STORED_MESSAGES);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Drop any previously-stored fabricated transcripts. They were saved
+        // as ordinary assistant messages, so every later request replayed them
+        // to the model as an example of "this is how I answer" — the pattern
+        // reinforced itself and survived reloads. Healing here means an
+        // already-poisoned session recovers without the user clearing chat.
+        const clean = parsed.filter((m: Message) =>
+          !(m.role === "assistant" && looksLikeNarratedToolCall(m.content)));
+        if (clean.length > 0) return clean.slice(-MAX_STORED_MESSAGES);
+      }
     }
   } catch {}
   return [{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }];
@@ -1334,7 +1366,13 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
     if (!leaderKey) { setShowSettings(true); setAccordion("config"); return; }
 
     const userMsg: Message = { role: "user", content: input.trim(), ts: Date.now() };
-    let conversation: any[] = [...messages.filter(m => m.role !== "system"), userMsg].map(m => ({ role: m.role, content: m.content }));
+    // Past assistant turns that merely *described* tool calls are excluded:
+    // feeding them back presents fabricated transcripts to the model as its
+    // own prior behaviour, which is what made the narration self-reinforcing.
+    let conversation: any[] = [
+      ...messages.filter(m => m.role !== "system" && !(m.role === "assistant" && looksLikeNarratedToolCall(m.content))),
+      userMsg,
+    ].map(m => ({ role: m.role, content: m.content }));
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setSending(true);
@@ -1419,13 +1457,27 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         }
 
         if (toolCalls.length === 0) {
-          // ── Detect fake tool calls: model wrote tool names as text ──
-          const TOOL_NAME_PATTERNS = /\b(create_template|create_html_template|set_html|set_css|harness_delegate|studio_create|studio_move|harness_complete|create_frame|delete_frame|render_html)\b/;
-          const jsonBlockPattern = /\{\s*"tool"\s*:/i;
-          const looksLikeToolCall = TOOL_NAME_PATTERNS.test(textContent) || jsonBlockPattern.test(textContent);
-          if (looksLikeToolCall && round < 3) {
-            conversation.push({ role: "user", content: "⚠️ Escribiste nombres de herramientas como texto en lugar de ejecutarlas. NO escribas 'create_template(...)' ni JSON con tools. Usa function calling real (tool_calls). Si necesitas crear un diseño, llama la herramienta create_html_template con tus tool_calls." });
-            continue;
+          // ── Model wrote tool names as text instead of emitting tool_calls ──
+          if (looksLikeNarratedToolCall(textContent)) {
+            if (round < 3) {
+              // Deliberately do NOT push the fabricated text into `conversation`
+              // (or into `messages`): replaying it teaches the model that this
+              // is an acceptable answer shape, which is how the behaviour used
+              // to lock in permanently.
+              conversation.push({
+                role: "user",
+                content: "⚠️ Escribiste nombres de herramientas como texto en lugar de ejecutarlas, y los resultados que inventaste no son reales. Ninguna tarjeta ni diseño fue creado. Usa function calling de verdad (tool_calls) — no escribas 'studio_create_card → {...}' ni JSON. Volvé a intentarlo ejecutando las tools.",
+              });
+              continue;
+            }
+            // Out of retries: never show the fabricated transcript as if it
+            // were a result — the user would believe work happened.
+            setMessages(prev => [...prev, {
+              role: "assistant",
+              ts: Date.now(),
+              content: "No pude ejecutar las herramientas: el modelo escribió los comandos como texto en vez de llamarlos, así que **no se creó ninguna tarjeta ni diseño**. Probá con otro modelo para el rol Leader (⚙ Configuración del chat) — necesita soportar function calling.",
+            }]);
+            break;
           }
           if (textContent.trim()) setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now() }]);
           break;
