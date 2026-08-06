@@ -3,6 +3,27 @@ import type { Session, User } from "@supabase/supabase-js";
 import { initializeBrowserSupabase, isSupabaseAuthConfigured } from "./supabaseClient";
 import { setAccessToken } from "./apiKey";
 
+/**
+ * Remove ALL Futuraria user-specific data from localStorage on sign-out.
+ * localStorage is shared across accounts on the same browser, so without
+ * this cleanup the next user would inherit the previous user's chat history,
+ * LLM provider keys, workspace API key, template cache, etc. — a real
+ * cross-account data leak.
+ */
+function purgeUserLocalStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith("futuraria-") || key.startsWith("futuraria_"))) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) localStorage.removeItem(key);
+  } catch { /* localStorage may be blocked — best-effort */ }
+}
+
 type AuthContextValue = {
   configured: boolean;
   authRequired: boolean;
@@ -150,6 +171,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { client } = await initializeBrowserSupabase();
       if (client) await client.auth.signOut({ scope: "local" });
       setAccessToken("");
+      // Purge all user-specific localStorage so the next account starts clean
+      // (chat history, LLM keys, workspace API key, template cache, etc.).
+      purgeUserLocalStorage();
+      setWorkspaceId(null);
     },
   }), [authRequired, configurationError, configured, loading, passwordRecovery, session, workspaceId]);
 
