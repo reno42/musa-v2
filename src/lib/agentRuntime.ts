@@ -21,6 +21,9 @@ export interface WorkContract {
   requiredTexts?: string[];
   requiredTextsByFrame?: string[][];
   requiredStyle?: string;
+  /** If the leader already knows the exact brand/guideline ID (from bootstrap),
+   *  the implementer can skip name-based search and use this directly. */
+  brandId?: string;
 }
 
 export interface WorkManifest {
