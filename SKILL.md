@@ -619,7 +619,17 @@ tools/call: apply_csv_to_frames({
 
 **Pattern 9: Create and manage reusable brand guidelines**
 ```
-// Step 1: Publish design system as a brand guideline (creates brand_guidelines row)
+// Style identity is scoped to one workspace. Normalize a name by trimming it,
+// collapsing repeated whitespace, and lowercasing it. Direct
+// create_brand_guideline and rename MUST fail with a conflict when that
+// normalized name already exists. Publishing a recapture is the deliberate
+// exception: an exact normalized-name match updates the single canonical row.
+// Never create a second row, pick a prefix/fuzzy match, or merge by fingerprint.
+
+// Step 1: Publish a design system. The operation must preserve its source
+// template as a resolvable reference in the same workspace. If the human enters
+// an existing exact normalized name, publish recaptures and updates that one
+// canonical style; it does not create a duplicate.
 tools/call: generate_design_artifacts({ templateId: tplId, action: "publish", brandName: "Acme Corp" })
   → { brandId, designMd, tokensJson, sharedCss, _published: true }
 
@@ -635,30 +645,63 @@ tools/call: get_design_artifacts({ templateId: tplId2 })
 tools/call: list_brand_guidelines({ workspaceId: wsId })
   → { brands: [{ id, name, description, sourceTemplateIds, ... }], count: N }
 
-// Step 5: Update a brand when the design system evolves
-tools/call: update_brand_guideline({ brandId: "brand_abc123", tokensJson: "...", designMd: "..." })
+// Step 5: Update explicitly by ID. Rename conflicts fail, and an update may
+// not remove the final resolvable source template.
+tools/call: update_brand_guideline({ brandId: "brand_abc123", tokensJson: "...", designMd: "...", sourceTemplateIds: [tplId] })
   → { success: true, brand: { ... } }
 
 // Step 6: Fetch a specific brand directly
 tools/call: get_brand_guideline({ brandId: "brand_abc123" })
   → { success: true, brand: { id, name, tokensJson, designMd, sharedCss, ... } }
 
-// Step 7: Remove a brand (templates retain their snapshots)
+// Step 7: Remove after explicit confirmation. Its lock and source associations
+// are cleaned; templates may retain their last applied snapshot.
 tools/call: delete_brand_guideline({ brandId: "brand_abc123" })
   → { success: true, deleted: "brand_abc123" }
 ```
 
-**Pattern 10: Style Library — Lock, Discover, Merge, and Upload Styles**
+**Pattern 10: Style Library — Resolve, CRUD, Lock, Merge, and Upload Styles**
 ```
 // ── STYLE PROTOCOL (AI agents MUST follow) ──
-// Before designing ANYTHING in a workspace, check for locked styles:
+// Before designing ANYTHING in a workspace, list the library and check locks:
+tools/call: list_brand_guidelines({ workspaceId: wsId })
 tools/call: get_active_styles({ workspaceId: wsId })
   → If hasLockedStyles === true:
       You MUST use the returned tokens/designMd/sharedCss for all design work.
       Do NOT invent your own colors, fonts, or spacing.
       Apply the locked style's tokens to every frame you create.
   → If hasLockedStyles === false:
-      You may design freely, but check list_brand_guidelines first.
+      Resolve any style named by the human against list_brand_guidelines.
+
+// ── RESOLVE a requested style ──
+// Automatic selection requires an exact normalized-name match. Normalization is:
+// trim leading/trailing whitespace, collapse repeated whitespace, lowercase.
+// Prefix, suffix, and fuzzy matches are suggestions only and require confirmation.
+// A matched style is valid only when it has >= 1 sourceTemplateId that resolves
+// to a template in this same workspace. Missing, orphaned, or otherwise invalid
+// requested styles MUST return blocked -> style_not_found/style_invalid. Never
+// fall back to free styling, blank output, a CRM brand, or an invented style.
+
+// ── CREATE from a captured reference ──
+// Creation requires at least one valid reference template and is atomic: artifact
+// extraction, guideline creation, and source association all succeed or none do.
+tools/call: create_brand_guideline({
+  workspaceId: wsId,
+  name: "Futuraria_SocialMedia",
+  sourceTemplateIds: [tplId],
+  tokensJson: "...",
+  designMd: "...",
+  sharedCss: "..."
+})
+  → A normalized-name collision is a conflict, not an implicit update.
+
+// ── READ, UPDATE, RENAME, DELETE from Style Library ──
+// Read/list is scoped to the current workspace. Edit by brandId; a rename that
+// collides after normalization fails. Direct CRUD update/rename uses brandId.
+// A publish recapture may instead update the canonical row by an exact normalized
+// name the human entered or confirmed. An update may not leave zero valid
+// sourceTemplateIds. Delete requires confirmation and clears its lock.
+// If the last source template is deleted, the style is deleted in the same operation.
 
 // ── LOCK a style (human or AI can do this) ──
 tools/call: set_style_lock({ workspaceId: wsId, brandId: "brand_abc", locked: true })
@@ -668,12 +711,12 @@ tools/call: set_style_lock({ workspaceId: wsId, brandId: "brand_abc", locked: tr
 tools/call: set_style_lock({ workspaceId: wsId, brandId: "brand_abc", locked: false })
   → { success: true, locked: false, totalLockedStyles: 0 }
 
-// ── FIND duplicate styles (20 posts with same visual style) ──
+// ── FIND visually similar styles ──
 tools/call: find_duplicate_styles({ workspaceId: wsId })
   → { duplicateGroups: 2, groups: [{ fingerprint: "a1b2c3...", count: 5, brands: [...] }] }
-  → Recommendation: "Found 2 group(s) of duplicate styles. Use merge_brand_guidelines to consolidate."
+  → Fingerprints only suggest candidates. They never merge automatically.
 
-// ── MERGE duplicates into one canonical style ──
+// ── MERGE after explicit human confirmation ──
 tools/call: merge_brand_guidelines({
   workspaceId: wsId,
   targetBrandId: "brand_abc",       // The one to keep
@@ -694,9 +737,12 @@ tools/call: download_style_template()
     Style Library → Upload or create_brand_guideline.
 
 // ── UPLOAD a style from external AI output (v1 or v2 format) ──
+// The human must choose a valid reference template. Import + reference association
+// is atomic; an upload without a reference is rejected and creates no empty style.
 tools/call: create_brand_guideline({
   workspaceId: wsId,
   name: "Glassmorphism Dark",
+  sourceTemplateIds: [tplId],
   tokensJson: '{ "$schema": "...", "color": { "canvas": { "$value": "#0a0a0f" } }, ... }',
 })
   → { id: "brand_xyz", name: "Glassmorphism Dark" }
@@ -705,12 +751,17 @@ tools/call: create_brand_guideline({
   → designMd and sharedCss are optional — they can be auto-generated from tokens.
 ```
 
+In the editor, **Style Library → Estilos** exposes the same lifecycle: create
+from a chosen reference, inspect, edit/rename by ID, and delete with confirmation.
+The UI must surface name conflicts and invalid references; it must never present
+an orphaned style as usable or turn a failed import into a zero-template card.
+
 **Style Fingerprint Technology:**
 - Each style gets a `styleFingerprint` — SHA-256 hash of sorted design tokens ONLY (colors, fonts, spacing, radii, shadows)
 - Ignores text content, images, and layout
 - Two templates with the same visual style but different text → SAME fingerprint
-- When you `publish` a design, the system auto-merges if a matching fingerprint exists
-- This prevents duplicate styles when publishing 20 posts with the same brand
+- A matching fingerprint is advisory: show merge candidates and wait for explicit confirmation
+- A fingerprint never overrides normalized-name uniqueness and never triggers a silent merge
 - **v2 Format Support:** Fingerprint computation handles BOTH v1 (flat DTCG with `typography.fontFamily`) and v2 (rich format with `typography.families[]` + `typography.scale[]`) — backwards-compatible with all existing stored tokens
 
 **Pattern 9: Import SVG and convert to design elements**

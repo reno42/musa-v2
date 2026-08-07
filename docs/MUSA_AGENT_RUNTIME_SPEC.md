@@ -45,7 +45,8 @@
 │    agentType: "leader",                                      │
 │    loadPreviousSessions: true                                │
 │  })                                                          │
-│  get_active_styles({workspaceId}) → load saved styles        │
+│  list_brand_guidelines({workspaceId}) → load style library   │
+│  get_active_styles({workspaceId}) → load locked styles       │
 │  list_templates({workspaceId,     → load recent templates    │
 │    limit: 5, sort: "recent"})                                │
 │  get_agent_guide({agentType:      → load playbook if exists  │
@@ -107,12 +108,13 @@
 │                                                              │
 │  AUTO-SAVE (during session):                                 │
 │    - harness_log_entry() after every significant action       │
-│    - register_brand() when a new style is created             │
+│    - create_brand_guideline() with a valid source template    │
 │    - harness_dump_context() when conversation > 40% capacity  │
 │                                                              │
 │  AUTO-LOAD (next session, via Layer 1 Bootstrap):            │
 │    - Recent sessions from harness_get_context()              │
-│    - Active styles from get_active_styles()                  │
+│    - Style library from list_brand_guidelines()              │
+│    - Locked styles from get_active_styles()                  │
 │    - Recent templates from list_templates()                   │
 │    - Playbooks from get_agent_guide()                        │
 │                                                              │
@@ -126,6 +128,27 @@
 │    4. Agent references skills instead of re-discovering      │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+### 2.1 Style identity and resolution invariant
+
+- Bootstrap loads both `list_brand_guidelines` and `get_active_styles`. The
+  latter returns an object with `styles`, `hasLockedStyles`, and `instruction`;
+  it is not itself the complete library.
+- A style identity is unique by workspace plus exact normalized name. Normalize
+  with trim, repeated-whitespace collapse, and lowercase. Fuzzy/prefix results
+  are candidates requiring human confirmation, never automatic selections.
+- Before applying a named style, the agent verifies at least one
+  `sourceTemplateId` resolves in the same workspace. Missing or invalid styles
+  block the task; there is no free-style, blank, or invented fallback.
+- Create/import stores guideline and chosen source reference atomically. Direct
+  `create_brand_guideline` and rename conflict on an occupied normalized name.
+  A `generate_design_artifacts(action="publish")` recapture updates the single
+  canonical row when the human entered or confirmed its exact normalized name;
+  direct CRUD update/rename operates by `brandId`. No update may remove the final
+  valid reference.
+- Delete requires confirmation and clears locks/associations. Deleting the last
+  source template deletes its style in the same operation.
+- A fingerprint may suggest merge candidates, but merge is always explicit.
 
 ---
 
@@ -344,14 +367,18 @@ async function bootstrapSession(): Promise<BootstrapContext> {
         }));
       }
       
-      // 3. Load active styles
-      const styles = await mcpCall("get_active_styles", {
+      // 3. Load the complete library plus lock state
+      const library = await mcpCall("list_brand_guidelines", {
         workspaceId: currentContext.workspaceId,
       });
-      if (Array.isArray(styles)) {
-        ctx.styles = styles.slice(0, 20).map((s: any) => ({
+      const active = await mcpCall("get_active_styles", {
+        workspaceId: currentContext.workspaceId,
+      });
+      const lockedIds = new Set((active?.styles || []).map((s: any) => s.id));
+      if (Array.isArray(library?.brands)) {
+        ctx.styles = library.brands.slice(0, 20).map((s: any) => ({
           name: s.name || s.id,
-          description: s.description || "",
+          description: `${lockedIds.has(s.id) ? "[locked] " : ""}${s.description || ""}`,
         }));
       }
       

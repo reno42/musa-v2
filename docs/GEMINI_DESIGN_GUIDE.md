@@ -221,14 +221,35 @@ generate_design_artifacts({ templateId:"tpl_xyz", action:"publish", brandName:"M
 |-------------|-------------------|-------------------|----------|
 | `generate_design_artifacts` | `templateId` | `action`("generate"\|"publish"), `brandName` | Extrae tokens + DESIGN.md + CSS |
 | `get_design_artifacts` | `templateId` | — | Recupera artefactos guardados |
-| `create_brand_guideline` | `workspaceId`, `name` | `description`, `tokensJson`, `designMd`, `sharedCss` | Crea brand en DB |
+| `create_brand_guideline` | `workspaceId`, `name`, `sourceTemplateIds` | `description`, `tokensJson`, `designMd`, `sharedCss` | Crea un estilo con referencia válida; falla si el nombre normalizado ya existe |
 | `get_brand_guideline` | `brandId` | — | Obtiene brand |
 | `list_brand_guidelines` | `workspaceId` | — | Lista brands |
+| `update_brand_guideline` | `brandId` | `name`, `tokensJson`, `designMd`, `sharedCss`, `sourceTemplateIds` | Edita/renombra por ID sin poder vaciar la última referencia |
+| `delete_brand_guideline` | `brandId` | — | Elimina tras confirmación y limpia lock/asociaciones |
 | `apply_brand_to_template` | `templateId`, `brandId` | — | Vincula brand a template |
 | `get_active_styles` | `workspaceId` | — | Estilos bloqueados (AI debe usarlos) |
 | `set_style_lock` | `workspaceId`, `brandId`, `locked` | — | Bloquea/desbloquea estilo |
 | `download_style_template` | — | — | Descarga template v2 para Gemini |
 | `generate_ui_components` | `templateId` | `targetFrameId`, `components` | Genera kit UI: `button-primary`, `button-secondary`, `button-ghost`, `card`, `navbar`, `form-input`, `hero` |
+
+#### Reglas canónicas de Style Library
+
+- La identidad es `workspaceId + nombre normalizado`. Normalizar significa
+  recortar extremos, colapsar espacios repetidos y convertir a minúsculas.
+- `create_brand_guideline` directo y rename fallan con conflicto si esa identidad
+  ya está ocupada. La recaptura mediante `generate_design_artifacts(action="publish")`
+  actualiza el único registro canónico cuando el humano escribió o confirmó un
+  nombre normalizado exacto. Update/rename directo sigue operando por `brandId`.
+- Prefijos y coincidencias fuzzy son candidatos que requieren confirmación;
+  nunca autorizan selección o merge automático.
+- Todo estilo conserva al menos un `sourceTemplateId` resolvible del mismo
+  workspace. Create/import exige elegir la referencia y se guarda de forma
+  atómica; update no puede vaciarla.
+- Borrar la última plantilla fuente elimina también el estilo. Borrar el estilo
+  requiere confirmación y limpia su lock y asociaciones.
+- Un estilo solicitado que no existe o está huérfano devuelve `blocked`; jamás
+  cae a estilo libre, salida blanca ni una marca inventada.
+- El fingerprint solo sugiere similitud. El merge siempre es explícito.
 
 ### 📋 Batch y CSV
 
@@ -457,8 +478,12 @@ Cuando uses `download_style_template`, recibirás un JSON con esta estructura. G
 1. Descarga el template: `download_style_template()` → guarda como `.json`
 2. Adjunta el JSON + imágenes de referencia a Gemini
 3. Gemini analiza las imágenes y LLENA los `$value` del JSON
-4. El humano sube el JSON lleno: `create_brand_guideline({ tokensJson: "..." })`
-5. El sistema calcula el fingerprint automáticamente
+4. El humano elige una plantilla fuente válida del mismo workspace
+5. Sube el JSON lleno con nombre y referencia:
+   `create_brand_guideline({ workspaceId, name, sourceTemplateIds: [templateId], tokensJson: "..." })`
+6. El sistema crea guideline + asociación de forma atómica y calcula el
+   fingerprint. Si el nombre normalizado está ocupado o la referencia no es
+   válida, no crea nada.
 
 ### Tokens → Elementos visuales (mapeo)
 
@@ -621,6 +646,7 @@ update_frame_content({ frameId:"f3", selector:"h1", patch:{ text:"Nuevo título 
 6. **Espacio negativo:** Márgenes de 80-120px en bordes, 40-80px entre elementos
 7. **Jerarquía con tamaño:** Lo más grande = lo más importante. El headline DEBE ser el elemento más dominante
 8. **Consistencia entre frames:** Si es un carrusel, todos los slides comparten masthead, footer, y paleta de colores
+9. **Resuelve el estilo pedido:** Coincidencia exacta por nombre normalizado y al menos una plantilla fuente válida; si no, bloquea y pide confirmación
 
 ### ❌ NUNCA hagas esto:
 

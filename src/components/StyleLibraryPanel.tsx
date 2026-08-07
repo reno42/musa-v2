@@ -38,6 +38,22 @@ interface BrandStyle {
   updatedAt?: string;
 }
 
+interface WorkspaceTemplate {
+  id: string;
+  name: string;
+}
+
+interface StyleDraft {
+  name: string;
+  description: string;
+  tokensJson: string;
+  designMd: string;
+  sharedCss: string;
+  sourceTemplateIds: string[];
+}
+
+type DraftErrors = Partial<Record<keyof StyleDraft | "form", string>>;
+
 interface KeyVisual {
   id: string;
   name: string;
@@ -53,14 +69,148 @@ const panelStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.04)", borderRadius: 8,
   border: "1px solid rgba(255,255,255,0.08)", padding: 12,
-  cursor: "pointer", transition: "border 0.15s",
+  cursor: "default", transition: "border 0.15s",
 };
 
 const btnStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.08)", color: "#ccc",
   border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
-  padding: "8px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+  padding: "8px 14px", minHeight: 40, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
 };
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", minHeight: 40, padding: "8px 12px",
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.14)",
+  borderRadius: 6, color: "#e0e0e0", fontSize: 12,
+  fontFamily: "inherit",
+};
+
+const emptyDraft = (): StyleDraft => ({
+  name: "", description: "", tokensJson: "", designMd: "", sharedCss: "", sourceTemplateIds: [],
+});
+
+const normalizeStyleName = (name: string): string => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+const hasStyleArtifacts = (style: Pick<BrandStyle, "tokensJson" | "designMd" | "sharedCss">): boolean =>
+  Boolean(style.tokensJson?.trim() || style.designMd?.trim() || style.sharedCss?.trim());
+
+const isUsableStyle = (style: BrandStyle, availableTemplateIds: Set<string>): boolean =>
+  hasStyleArtifacts(style)
+  && Array.isArray(style.sourceTemplateIds)
+  && style.sourceTemplateIds.length > 0
+  && style.sourceTemplateIds.every(templateId => availableTemplateIds.has(templateId));
+
+function errorMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  if (/duplicate|already exists|unique|conflict/i.test(message)) {
+    return "Ya existe un estilo con ese nombre en este workspace.";
+  }
+  return message || fallback;
+}
+
+async function callStyleMcp<T = any>(method: string, params: Record<string, unknown>): Promise<T> {
+  const response = await apiFetch<any>("/mcp", {
+    method: "POST",
+    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+  });
+  if (response?.error) throw new Error(response.error.message || "MCP error");
+  const result = response?.result;
+  if (result?.isError) {
+    throw new Error(result?.content?.[0]?.text || "MCP error");
+  }
+  const text = result?.content?.[0]?.text;
+  if (typeof text === "string") {
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`Respuesta inválida de ${method}`);
+    }
+  }
+  if (result === undefined) throw new Error(`Sin respuesta de ${method}`);
+  return result as T;
+}
+
+function StyleFormFields({
+  idPrefix, draft, errors, templates, onChange, nameRef,
+}: {
+  idPrefix: string;
+  draft: StyleDraft;
+  errors: DraftErrors;
+  templates: WorkspaceTemplate[];
+  onChange: (next: StyleDraft) => void;
+  nameRef?: React.Ref<HTMLInputElement>;
+}): React.ReactElement {
+  const setField = <K extends keyof StyleDraft>(field: K, value: StyleDraft[K]) => onChange({ ...draft, [field]: value });
+  const toggleTemplate = (templateId: string) => {
+    const next = draft.sourceTemplateIds.includes(templateId)
+      ? draft.sourceTemplateIds.filter(id => id !== templateId)
+      : [...draft.sourceTemplateIds, templateId];
+    setField("sourceTemplateIds", next);
+  };
+  const errorId = (field: keyof StyleDraft | "form") => `${idPrefix}-${field}-error`;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {errors.form && <div id={errorId("form")} role="alert" style={{ color: "#fca5a5", fontSize: 11 }}>{errors.form}</div>}
+      <div>
+        <label htmlFor={`${idPrefix}-name`} style={{ fontSize: 11, color: "#aaa", marginBottom: 4, display: "block" }}>Nombre del estilo *</label>
+        <input
+          ref={nameRef}
+          id={`${idPrefix}-name`}
+          value={draft.name}
+          onChange={event => setField("name", event.target.value)}
+          aria-invalid={Boolean(errors.name)}
+          aria-describedby={errors.name ? errorId("name") : undefined}
+          autoComplete="off"
+          style={inputStyle}
+        />
+        {errors.name && <div id={errorId("name")} role="alert" style={{ color: "#fca5a5", fontSize: 11, marginTop: 4 }}>{errors.name}</div>}
+      </div>
+      <div>
+        <label htmlFor={`${idPrefix}-description`} style={{ fontSize: 11, color: "#aaa", marginBottom: 4, display: "block" }}>Descripción</label>
+        <textarea id={`${idPrefix}-description`} value={draft.description} onChange={event => setField("description", event.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
+      </div>
+      <fieldset style={{ margin: 0, padding: 10, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6 }} aria-describedby={errors.sourceTemplateIds ? errorId("sourceTemplateIds") : undefined}>
+        <legend style={{ padding: "0 4px", fontSize: 11, color: "#aaa" }}>Diseños fuente * ({draft.sourceTemplateIds.length} seleccionados)</legend>
+        {templates.length === 0 ? (
+          <div role="status" style={{ color: "#fca5a5", fontSize: 11 }}>No hay diseños disponibles en este workspace.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 144, overflowY: "auto" }}>
+            {templates.map(template => (
+              <label key={template.id} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 40, cursor: "pointer", fontSize: 11 }}>
+                <input type="checkbox" checked={draft.sourceTemplateIds.includes(template.id)} onChange={() => toggleTemplate(template.id)} />
+                <span>{template.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        {errors.sourceTemplateIds && <div id={errorId("sourceTemplateIds")} role="alert" style={{ color: "#fca5a5", fontSize: 11 }}>{errors.sourceTemplateIds}</div>}
+      </fieldset>
+      <div>
+        <label htmlFor={`${idPrefix}-tokens`} style={{ fontSize: 11, color: "#aaa", marginBottom: 4, display: "block" }}>tokens.json</label>
+        <textarea
+          id={`${idPrefix}-tokens`}
+          value={draft.tokensJson}
+          onChange={event => setField("tokensJson", event.target.value)}
+          aria-invalid={Boolean(errors.tokensJson)}
+          aria-describedby={errors.tokensJson ? errorId("tokensJson") : undefined}
+          placeholder='{ "color": { ... } }'
+          rows={4}
+          style={{ ...inputStyle, fontFamily: "monospace", fontSize: 10, resize: "vertical" }}
+        />
+        {errors.tokensJson && <div id={errorId("tokensJson")} role="alert" style={{ color: "#fca5a5", fontSize: 11 }}>{errors.tokensJson}</div>}
+      </div>
+      <div>
+        <label htmlFor={`${idPrefix}-css`} style={{ fontSize: 11, color: "#aaa", marginBottom: 4, display: "block" }}>shared.css</label>
+        <textarea id={`${idPrefix}-css`} value={draft.sharedCss} onChange={event => setField("sharedCss", event.target.value)} placeholder=":root { --color-... }" rows={4} style={{ ...inputStyle, fontFamily: "monospace", fontSize: 10, resize: "vertical" }} />
+      </div>
+      <div>
+        <label htmlFor={`${idPrefix}-design`} style={{ fontSize: 11, color: "#aaa", marginBottom: 4, display: "block" }}>DESIGN.md</label>
+        <textarea id={`${idPrefix}-design`} value={draft.designMd} onChange={event => setField("designMd", event.target.value)} placeholder="# Referencia visual..." rows={4} style={{ ...inputStyle, fontFamily: "monospace", fontSize: 10, resize: "vertical" }} />
+      </div>
+    </div>
+  );
+}
 
 export function StyleLibraryPanel({
   workspaceId, onToast, onPublish, publishing,
@@ -68,8 +218,11 @@ export function StyleLibraryPanel({
   onAssetUploaded, onManageStorage, selectedImageSrc,
 }: Props) {
   const [styles, setStyles] = useState<BrandStyle[]>([]);
+  const [workspaceTemplates, setWorkspaceTemplates] = useState<WorkspaceTemplate[]>([]);
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [stylesError, setStylesError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
   const [tab, setTab] = useState<"library" | "keyvisuals" | "assets">("library");
   const [showUpload, setShowUpload] = useState(false);
   const [showDuplicates, setShowDuplicates] = useState(false);
@@ -77,10 +230,17 @@ export function StyleLibraryPanel({
   const [dupLoading, setDupLoading] = useState(false);
   const [capturingName, setCapturingName] = useState(false);
   const [captureName, setCaptureName] = useState("");
-  const [uploadData, setUploadData] = useState({
-    name: "", tokensJson: "", designMd: "", sharedCss: "",
-  });
+  const [captureError, setCaptureError] = useState("");
+  const [uploadData, setUploadData] = useState<StyleDraft>(emptyDraft);
+  const [uploadErrors, setUploadErrors] = useState<DraftErrors>({});
+  const [uploading, setUploading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<StyleDraft>(emptyDraft);
+  const [editErrors, setEditErrors] = useState<DraftErrors>({});
+  const [busyStyleId, setBusyStyleId] = useState<string | null>(null);
+  const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editNameRef = useRef<HTMLInputElement>(null);
 
   const [keyVisuals, setKeyVisuals] = useState<KeyVisual[]>([]);
   const [kvLoading, setKvLoading] = useState(false);
@@ -89,36 +249,29 @@ export function StyleLibraryPanel({
   // ── Load all styles + lock state ──
   const loadStyles = useCallback(async () => {
     setLoading(true);
+    setStylesError("");
     try {
-      // Load all brands
-      const brandsRes = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "list_brand_guidelines",
-          params: { workspaceId }, id: 0,
-        }),
-      });
-      const bText = brandsRes?.result?.content?.[0]?.text;
-      const bData = bText ? (typeof bText === "string" ? JSON.parse(bText) : bText) : null;
-      const allStyles = bData?.brands || [];
+      const [brandsData, activeData, templatesData] = await Promise.all([
+        callStyleMcp<{ brands?: BrandStyle[] }>("list_brand_guidelines", { workspaceId, includeArtifacts: true }),
+        callStyleMcp<{ styles?: BrandStyle[] }>("get_active_styles", { workspaceId }),
+        callStyleMcp<{ data?: WorkspaceTemplate[]; templates?: WorkspaceTemplate[] }>("list_templates", { workspaceId, limit: 1000 }),
+      ]);
+      const allStyles = Array.isArray(brandsData?.brands) ? brandsData.brands : [];
+      const active = Array.isArray(activeData?.styles) ? activeData.styles : [];
+      const templates = Array.isArray(templatesData?.data)
+        ? templatesData.data
+        : Array.isArray(templatesData?.templates) ? templatesData.templates : [];
+      const availableTemplateIds = new Set(templates.map(template => template.id));
       setStyles(allStyles);
-
-      // Load active (locked) styles
-      const activeRes = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "get_active_styles",
-          params: { workspaceId }, id: 0,
-        }),
-      });
-      const aText = activeRes?.result?.content?.[0]?.text;
-      const aData = aText ? (typeof aText === "string" ? JSON.parse(aText) : aText) : null;
-      const active = aData?.styles || [];
-      setLockedIds(new Set(active.map((s: any) => s.id)));
-    } catch (e) {
-      onToast?.("Failed to load styles", "error");
+      setLockedIds(new Set(active.filter(style => isUsableStyle(style, availableTemplateIds)).map(style => style.id)));
+      setWorkspaceTemplates(templates.filter(template => template?.id && template?.name));
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo cargar la biblioteca de estilos.");
+      setStylesError(message);
+      onToast?.(message, "error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [workspaceId, onToast]);
 
   useEffect(() => { loadStyles(); }, [loadStyles]);
@@ -166,43 +319,39 @@ export function StyleLibraryPanel({
   }, [onToast]);
 
   // ── Toggle lock ──
-  const toggleLock = useCallback(async (brandId: string, currentlyLocked: boolean) => {
+  const toggleLock = useCallback(async (style: BrandStyle, currentlyLocked: boolean) => {
+    const availableTemplateIds = new Set(workspaceTemplates.map(template => template.id));
+    if (!isUsableStyle(style, availableTemplateIds)) {
+      setCardErrors(previous => ({ ...previous, [style.id]: "Este estilo está incompleto y no puede usarse hasta que tenga artifacts y un diseño fuente." }));
+      return;
+    }
     try {
-      await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "set_style_lock",
-          params: { workspaceId, brandId, locked: !currentlyLocked },
-          id: 0,
-        }),
-      });
+      setBusyStyleId(style.id);
+      setCardErrors(previous => ({ ...previous, [style.id]: "" }));
+      await callStyleMcp("set_style_lock", { workspaceId, brandId: style.id, locked: !currentlyLocked });
       setLockedIds(prev => {
         const next = new Set(prev);
-        if (currentlyLocked) next.delete(brandId);
-        else next.add(brandId);
+        if (currentlyLocked) next.delete(style.id);
+        else next.add(style.id);
         return next;
       });
       onToast?.(
         currentlyLocked ? "Style unlocked" : "Style locked — AI will use this style",
         currentlyLocked ? "info" : "success"
       );
-    } catch {
-      onToast?.("Failed to toggle lock", "error");
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo cambiar el bloqueo del estilo.");
+      setCardErrors(previous => ({ ...previous, [style.id]: message }));
+      onToast?.(message, "error");
+    } finally {
+      setBusyStyleId(null);
     }
-  }, [workspaceId, onToast]);
+  }, [workspaceId, workspaceTemplates, onToast]);
 
   // ── Download template ──
   const downloadTemplate = useCallback(async () => {
     try {
-      const res = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "download_style_template",
-          params: {}, id: 0,
-        }),
-      });
-      const text = res?.result?.content?.[0]?.text;
-      const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+      const data = await callStyleMcp<{ content?: string; filename?: string }>("download_style_template", {});
       if (data?.content) {
         const blob = new Blob([data.content], { type: "application/json" });
         downloadBlob(blob, data.filename || "tokens-template.json");
@@ -213,39 +362,64 @@ export function StyleLibraryPanel({
     }
   }, [onToast]);
 
+  const validateDraft = useCallback((draft: StyleDraft, currentId?: string): DraftErrors => {
+    const errors: DraftErrors = {};
+    const normalizedName = normalizeStyleName(draft.name);
+    if (!normalizedName) {
+      errors.name = "Escribe un nombre para el estilo.";
+    } else if (styles.some(style => style.id !== currentId && normalizeStyleName(style.name) === normalizedName)) {
+      errors.name = "Ya existe un estilo con ese nombre en este workspace.";
+    }
+    if (draft.sourceTemplateIds.length === 0) {
+      errors.sourceTemplateIds = "Selecciona al menos un diseño fuente.";
+    }
+    if (!hasStyleArtifacts(draft)) {
+      errors.form = "Agrega al menos una referencia: tokens JSON, DESIGN.md o CSS compartido.";
+    }
+    if (draft.tokensJson.trim()) {
+      try {
+        JSON.parse(draft.tokensJson);
+      } catch {
+        errors.tokensJson = "El JSON de tokens no es válido.";
+      }
+    }
+    return errors;
+  }, [styles]);
+
   // ── Upload style ──
   const handleUpload = useCallback(async () => {
-    if (!uploadData.name.trim()) {
-      onToast?.("Enter a style name", "error");
-      return;
-    }
+    const errors = validateDraft(uploadData);
+    setUploadErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     try {
-      const res = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "create_brand_guideline",
-          params: {
-            workspaceId,
-            name: uploadData.name.trim(),
-            tokensJson: uploadData.tokensJson || undefined,
-            designMd: uploadData.designMd || undefined,
-            sharedCss: uploadData.sharedCss || undefined,
-          },
-          id: 0,
-        }),
+      setUploading(true);
+      setStatusMessage("");
+      const data = await callStyleMcp<{ id?: string; brand?: BrandStyle }>("create_brand_guideline", {
+        workspaceId,
+        name: uploadData.name.trim(),
+        description: uploadData.description.trim() || undefined,
+        tokensJson: uploadData.tokensJson.trim() || undefined,
+        designMd: uploadData.designMd.trim() || undefined,
+        sharedCss: uploadData.sharedCss.trim() || undefined,
+        sourceTemplateIds: uploadData.sourceTemplateIds,
       });
-      const text = res?.result?.content?.[0]?.text;
-      const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
       if (data?.id || data?.brand?.id) {
-        onToast?.(`Style "${uploadData.name}" uploaded!`, "success");
-        setUploadData({ name: "", tokensJson: "", designMd: "", sharedCss: "" });
+        const message = `Estilo "${uploadData.name.trim()}" creado.`;
+        onToast?.(message, "success");
+        setStatusMessage(message);
+        setUploadData(emptyDraft());
+        setUploadErrors({});
         setShowUpload(false);
-        loadStyles();
+        await loadStyles();
       }
-    } catch {
-      onToast?.("Upload failed", "error");
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo crear el estilo.");
+      setUploadErrors({ form: message });
+      onToast?.(message, "error");
+    } finally {
+      setUploading(false);
     }
-  }, [workspaceId, uploadData, onToast, loadStyles]);
+  }, [workspaceId, uploadData, onToast, loadStyles, validateDraft]);
 
   // ── Handle file upload (tokens.json or .md) ──
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -279,19 +453,105 @@ export function StyleLibraryPanel({
     e.target.value = ""; // reset
   }, [uploadData.name, onToast]);
 
+  const beginEdit = useCallback((style: BrandStyle) => {
+    setEditingId(style.id);
+    setEditData({
+      name: style.name || "",
+      description: style.description || "",
+      tokensJson: style.tokensJson || "",
+      designMd: style.designMd || "",
+      sharedCss: style.sharedCss || "",
+      sourceTemplateIds: Array.isArray(style.sourceTemplateIds) ? [...style.sourceTemplateIds] : [],
+    });
+    setEditErrors({});
+    setCardErrors(previous => ({ ...previous, [style.id]: "" }));
+    window.setTimeout(() => editNameRef.current?.focus(), 0);
+  }, []);
+
+  const saveEdit = useCallback(async () => {
+    if (!editingId) return;
+    const errors = validateDraft(editData, editingId);
+    setEditErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    setBusyStyleId(editingId);
+    try {
+      await callStyleMcp("update_brand_guideline", {
+        workspaceId,
+        brandId: editingId,
+        name: editData.name.trim(),
+        description: editData.description.trim(),
+        tokensJson: editData.tokensJson.trim(),
+        designMd: editData.designMd.trim(),
+        sharedCss: editData.sharedCss.trim(),
+        sourceTemplateIds: editData.sourceTemplateIds,
+      });
+      const message = `Estilo "${editData.name.trim()}" actualizado.`;
+      setStatusMessage(message);
+      onToast?.(message, "success");
+      setEditingId(null);
+      setEditData(emptyDraft());
+      await loadStyles();
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo actualizar el estilo.");
+      setEditErrors({ form: message });
+      onToast?.(message, "error");
+    } finally {
+      setBusyStyleId(null);
+    }
+  }, [editingId, editData, loadStyles, onToast, validateDraft, workspaceId]);
+
+  const deleteStyle = useCallback(async (style: BrandStyle) => {
+    const confirmed = window.confirm(`¿Eliminar el estilo "${style.name}"? Los diseños existentes conservarán su última copia del estilo.`);
+    if (!confirmed) return;
+    setBusyStyleId(style.id);
+    setCardErrors(previous => ({ ...previous, [style.id]: "" }));
+    try {
+      await callStyleMcp("delete_brand_guideline", { workspaceId, brandId: style.id });
+      if (editingId === style.id) {
+        setEditingId(null);
+        setEditData(emptyDraft());
+      }
+      const message = `Estilo "${style.name}" eliminado.`;
+      setStatusMessage(message);
+      onToast?.(message, "success");
+      await loadStyles();
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo eliminar el estilo.");
+      setCardErrors(previous => ({ ...previous, [style.id]: message }));
+      onToast?.(message, "error");
+    } finally {
+      setBusyStyleId(null);
+    }
+  }, [editingId, loadStyles, onToast, workspaceId]);
+
+  const publishCapturedStyle = useCallback(async () => {
+    const name = captureName.trim();
+    if (!name) {
+      setCaptureError("Escribe un nombre para el estilo.");
+      return;
+    }
+    const matches = styles.filter(style => normalizeStyleName(style.name) === normalizeStyleName(name));
+    if (matches.length > 1) {
+      setCaptureError("Hay más de un estilo con ese nombre. Consolídalos antes de recapturar.");
+      return;
+    }
+    setCaptureError("");
+    const ok = await onPublish!(name);
+    if (ok) {
+      setStatusMessage(matches.length === 1
+        ? `Estilo "${matches[0].name}" recapturado y actualizado.`
+        : `Estilo "${name}" capturado.`);
+      setCapturingName(false);
+      setCaptureName("");
+      await loadStyles();
+    }
+  }, [captureName, loadStyles, onPublish, styles]);
+
   // ── Find duplicates ──
   const findDuplicates = useCallback(async () => {
     setDupLoading(true);
     try {
-      const res = await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "find_duplicate_styles",
-          params: { workspaceId }, id: 0,
-        }),
-      });
-      const text = res?.result?.content?.[0]?.text;
-      const data = text ? (typeof text === "string" ? JSON.parse(text) : text) : null;
+      const data = await callStyleMcp<{ groups?: any[] }>("find_duplicate_styles", { workspaceId });
       setDupGroups(data?.groups || []);
       if ((data?.groups || []).length === 0) {
         onToast?.("No duplicate styles found — all unique!", "success");
@@ -304,18 +564,12 @@ export function StyleLibraryPanel({
 
   // ── Merge duplicates ──
   const handleMerge = useCallback(async (targetId: string, sourceIds: string[]) => {
+    if (!window.confirm(`¿Fusionar ${sourceIds.length} estilo(s) en el seleccionado? Los registros de origen se eliminarán.`)) return;
     try {
-      await apiFetch<any>("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          jsonrpc: "2.0", method: "merge_brand_guidelines",
-          params: {
-            workspaceId,
-            targetBrandId: targetId,
-            sourceBrandIds: sourceIds,
-          },
-          id: 0,
-        }),
+      await callStyleMcp("merge_brand_guidelines", {
+        workspaceId,
+        targetBrandId: targetId,
+        sourceBrandIds: sourceIds,
       });
       onToast?.(`Merged ${sourceIds.length} styles into one`, "success");
       loadStyles();
@@ -370,6 +624,7 @@ export function StyleLibraryPanel({
     borderBottom: active ? "2px solid #c8b898" : "2px solid transparent",
     borderRadius: 0, border: "none", flex: 1,
   });
+  const availableTemplateIds = new Set(workspaceTemplates.map(template => template.id));
 
   return (
     <div style={panelStyle}>
@@ -386,30 +641,35 @@ export function StyleLibraryPanel({
       )}
 
       {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
-        <button style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")} title="Brand Guidelines extraídas de tus diseños">
+      <div role="tablist" aria-label="Biblioteca" style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+        <button type="button" role="tab" id="style-library-tab" aria-selected={tab === "library"} aria-controls="style-library-panel" style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")} title="Brand Guidelines extraídas de tus diseños">
           🎨 Estilos
         </button>
-        <button style={tabBtnStyle(tab === "keyvisuals")} onClick={() => setTab("keyvisuals")} title="Key Visuals — diseños completos reutilizables">
+        <button type="button" role="tab" id="style-keyvisuals-tab" aria-selected={tab === "keyvisuals"} aria-controls="style-keyvisuals-panel" style={tabBtnStyle(tab === "keyvisuals")} onClick={() => setTab("keyvisuals")} title="Key Visuals — diseños completos reutilizables">
           🖼 Plantillas
         </button>
-        <button style={tabBtnStyle(tab === "assets")} onClick={() => setTab("assets")} title="Assets de marca: logos, patrones, fondos">
+        <button type="button" role="tab" id="style-assets-tab" aria-selected={tab === "assets"} aria-controls="style-assets-panel" style={tabBtnStyle(tab === "assets")} onClick={() => setTab("assets")} title="Assets de marca: logos, patrones, fondos">
           📦 Recursos
         </button>
       </div>
 
       {/* Content */}
-      <div style={tab === "assets" ? { flex: 1, overflow: "hidden", display: "flex" } : { flex: 1, overflow: "auto", padding: 12 }}>
+      <div id={`style-${tab}-panel`} role="tabpanel" aria-labelledby={`style-${tab}-tab`} aria-busy={tab === "library" && loading} style={tab === "assets" ? { flex: 1, overflow: "hidden", display: "flex" } : { flex: 1, overflow: "auto", padding: 12 }}>
         {tab === "library" ? (
           /* ── Estilos Tab ── */
           loading ? (
-            <div style={{ textAlign: "center", padding: 40, color: "#666" }}>Loading styles...</div>
+            <div role="status" aria-live="polite" style={{ textAlign: "center", padding: 40, color: "#888" }}>Cargando estilos…</div>
           ) : (
           <div>
+            <div aria-live="polite" role="status" style={{ minHeight: statusMessage ? 24 : 0, color: "#86efac", fontSize: 11, marginBottom: statusMessage ? 8 : 0 }}>
+              {statusMessage}
+            </div>
+            {stylesError && <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginBottom: 10 }}>{stylesError}</div>}
             <div style={{ marginBottom: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
               {onPublish && !capturingName && (
                 <button
-                  onClick={() => setCapturingName(true)}
+                  type="button"
+                  onClick={() => { setCapturingName(true); setCaptureError(""); }}
                   disabled={publishing || selectedFrameCount === 0}
                   title={selectedFrameCount === 0 ? "Selecciona uno o varios frames en el lienzo primero" : undefined}
                   style={{ ...btnStyle, opacity: publishing || selectedFrameCount === 0 ? 0.5 : 1, cursor: selectedFrameCount === 0 ? "not-allowed" : "pointer" }}
@@ -417,14 +677,15 @@ export function StyleLibraryPanel({
                   {publishing ? "⏳ Capturando..." : `📸 Capturar estilo${selectedFrameCount > 0 ? ` (${selectedFrameCount} frame${selectedFrameCount > 1 ? "s" : ""})` : ""}`}
                 </button>
               )}
-              <button onClick={downloadTemplate} style={btnStyle}>
+              <button type="button" onClick={downloadTemplate} style={btnStyle}>
                 📄 tokens-template.json
               </button>
-              <button onClick={() => setShowUpload(v => !v)} style={btnStyle}>
+              <button type="button" aria-expanded={showUpload} aria-controls="style-manual-upload" onClick={() => { setShowUpload(v => !v); setUploadErrors({}); }} style={btnStyle}>
                 ⬆ {showUpload ? "Cancelar subida" : "Subir estilo manual"}
               </button>
               {styles.length > 1 && (
                 <button
+                  type="button"
                   onClick={() => { const next = !showDuplicates; setShowDuplicates(next); if (next) findDuplicates(); }}
                   style={btnStyle}
                 >
@@ -439,38 +700,36 @@ export function StyleLibraryPanel({
                 background: "rgba(200,184,152,0.06)", border: "1px solid rgba(200,184,152,0.2)",
               }}>
                 <div style={{ fontSize: 11, color: "#999", marginBottom: 6 }}>
-                  Nombre del estilo — usa <code>Marca_Propósito</code> (ej: <code>Futuraria_SocialMedia</code>,{" "}
-                  <code>Futuraria_BrandGuidelines</code>). No uses el nombre del frame ni del archivo: si ya existe
-                  un estilo con este nombre exacto, se actualiza; si no, se crea uno nuevo.
+                  Nombre del estilo — usa <code>Marca_Propósito</code>. Los nombres se comparan sin distinguir
+                  mayúsculas ni espacios externos. Si ya existe, recapturar actualiza explícitamente ese registro.
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
+                  <label htmlFor="style-capture-name" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>Nombre del estilo</label>
                   <input
+                    id="style-capture-name"
                     autoFocus
                     value={captureName}
-                    onChange={e => setCaptureName(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") document.getElementById("style-capture-confirm")?.click(); if (e.key === "Escape") { setCapturingName(false); setCaptureName(""); } }}
+                    onChange={e => { setCaptureName(e.target.value); setCaptureError(""); }}
+                    onKeyDown={e => { if (e.key === "Enter") publishCapturedStyle(); if (e.key === "Escape") { setCapturingName(false); setCaptureName(""); setCaptureError(""); } }}
+                    aria-invalid={Boolean(captureError)}
+                    aria-describedby={captureError ? "style-capture-error" : undefined}
                     placeholder="Marca_Propósito"
-                    style={{
-                      flex: 1, padding: "6px 10px", background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
-                      color: "#e0e0e0", fontSize: 12, outline: "none", fontFamily: "inherit",
-                    }}
+                    style={{ ...inputStyle, flex: 1 }}
                   />
                   <button
                     id="style-capture-confirm"
+                    type="button"
                     disabled={!captureName.trim() || publishing}
-                    onClick={async () => {
-                      const ok = await onPublish!(captureName.trim());
-                      if (ok) { setCapturingName(false); setCaptureName(""); loadStyles(); }
-                    }}
+                    onClick={publishCapturedStyle}
                     style={{ ...btnStyle, background: "rgba(200,184,152,0.2)", borderColor: "rgba(200,184,152,0.3)", opacity: !captureName.trim() || publishing ? 0.5 : 1 }}
                   >
                     {publishing ? "…" : "Guardar"}
                   </button>
-                  <button onClick={() => { setCapturingName(false); setCaptureName(""); }} style={btnStyle}>
+                  <button type="button" onClick={() => { setCapturingName(false); setCaptureName(""); setCaptureError(""); }} style={btnStyle}>
                     Cancelar
                   </button>
                 </div>
+                {captureError && <div id="style-capture-error" role="alert" style={{ color: "#fca5a5", fontSize: 11, marginTop: 6 }}>{captureError}</div>}
               </div>
             )}
             {onPublish && !capturingName && (
@@ -482,7 +741,7 @@ export function StyleLibraryPanel({
             )}
 
             {showUpload && (
-              <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div id="style-manual-upload" style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12 }}>💡 Cómo funciona</div>
                 <div style={{ fontSize: 11, color: "#999", lineHeight: 1.5, marginBottom: 8 }}>
                   1. Descarga <code>tokens-template.json</code> arriba<br/>
@@ -491,12 +750,15 @@ export function StyleLibraryPanel({
                   4. Guarda el resultado como <code>.json</code> y súbelo aquí
                 </div>
 
-                <div
+                <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
+                  aria-describedby="style-upload-file-help"
                   style={{
+                    width: "100%", minHeight: 72, background: "transparent", color: "inherit",
                     border: "2px dashed rgba(255,255,255,0.15)", borderRadius: 8,
                     padding: 20, textAlign: "center", cursor: "pointer", marginBottom: 12,
-                    transition: "border 0.15s",
+                    fontFamily: "inherit",
                   }}
                   onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = "#c8b898"; }}
                   onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
@@ -522,10 +784,11 @@ export function StyleLibraryPanel({
                   }}
                 >
                   <div style={{ fontSize: 22, marginBottom: 4 }}>📁</div>
-                  <div style={{ fontSize: 12, color: "#888" }}>
+                  <div id="style-upload-file-help" style={{ fontSize: 12, color: "#aaa" }}>
                     Suelta archivos aquí o haz clic para buscar<br/>
                     <span style={{ fontSize: 10 }}>Soporta: .json (tokens), .md (design ref), .css (variables)</span>
                   </div>
+                </button>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -533,94 +796,28 @@ export function StyleLibraryPanel({
                     onChange={handleFileUpload}
                     style={{ display: "none" }}
                   />
-                </div>
 
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>Nombre del estilo *</label>
-                  <input
-                    value={uploadData.name}
-                    onChange={e => setUploadData(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Marca_Propósito"
-                    style={{
-                      width: "100%", padding: "8px 12px",
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: 6, color: "#e0e0e0", fontSize: 12,
-                      outline: "none", fontFamily: "inherit",
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                      tokens.json {uploadData.tokensJson ? "✓" : ""}
-                    </label>
-                    <textarea
-                      value={uploadData.tokensJson}
-                      onChange={e => setUploadData(prev => ({ ...prev, tokensJson: e.target.value }))}
-                      placeholder='{ "color": { ... } }'
-                      rows={3}
-                      style={{
-                        width: "100%", padding: "8px 12px",
-                        background: "rgba(255,255,255,0.06)",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                        outline: "none", fontFamily: "monospace", resize: "vertical",
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                      shared.css {uploadData.sharedCss ? "✓" : ""}
-                    </label>
-                    <textarea
-                      value={uploadData.sharedCss}
-                      onChange={e => setUploadData(prev => ({ ...prev, sharedCss: e.target.value }))}
-                      placeholder=":root { --color-... }"
-                      rows={3}
-                      style={{
-                        width: "100%", padding: "8px 12px",
-                        background: "rgba(255,255,255,0.06)",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                        outline: "none", fontFamily: "monospace", resize: "vertical",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{ fontSize: 11, color: "#888", marginBottom: 4, display: "block" }}>
-                    DESIGN.md {uploadData.designMd ? "✓" : ""}
-                  </label>
-                  <textarea
-                    value={uploadData.designMd}
-                    onChange={e => setUploadData(prev => ({ ...prev, designMd: e.target.value }))}
-                    placeholder="# Style Name..."
-                    rows={4}
-                    style={{
-                      width: "100%", padding: "8px 12px",
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: 6, color: "#e0e0e0", fontSize: 10,
-                      outline: "none", fontFamily: "monospace", resize: "vertical",
-                    }}
-                  />
-                </div>
+                <StyleFormFields
+                  idPrefix="style-upload"
+                  draft={uploadData}
+                  errors={uploadErrors}
+                  templates={workspaceTemplates}
+                  onChange={next => { setUploadData(next); setUploadErrors({}); }}
+                />
 
                 <button
+                  type="button"
                   onClick={handleUpload}
-                  disabled={!uploadData.name.trim()}
+                  disabled={uploading}
                   style={{
                     ...btnStyle,
-                    opacity: !uploadData.name.trim() ? 0.4 : 1,
+                    opacity: uploading ? 0.5 : 1,
                     background: "rgba(200,184,152,0.2)",
                     borderColor: "rgba(200,184,152,0.3)",
                     width: "100%", fontWeight: 600,
                   }}
                 >
-                  ⬆ Subir estilo
+                  {uploading ? "Guardando…" : "Crear estilo"}
                 </button>
               </div>
             )}
@@ -637,44 +834,55 @@ export function StyleLibraryPanel({
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {styles.map(style => {
                   const isLocked = lockedIds.has(style.id);
+                  const usable = isUsableStyle(style, availableTemplateIds);
                   const colors = extractColors(style.tokensJson);
                   const fonts = extractFonts(style.tokensJson);
+                  const isBusy = busyStyleId === style.id;
+                  const isEditing = editingId === style.id;
                   return (
-                    <div
+                    <section
                       key={style.id}
+                      aria-labelledby={`style-name-${style.id}`}
                       style={{
                         ...cardStyle,
-                        borderColor: isLocked ? "rgba(200,184,152,0.5)" : "rgba(255,255,255,0.08)",
-                        background: isLocked ? "rgba(200,184,152,0.05)" : "rgba(255,255,255,0.04)",
+                        borderColor: !usable ? "rgba(248,113,113,0.45)" : isLocked ? "rgba(200,184,152,0.5)" : "rgba(255,255,255,0.08)",
+                        background: !usable ? "rgba(248,113,113,0.04)" : isLocked ? "rgba(200,184,152,0.05)" : "rgba(255,255,255,0.04)",
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>
+                        <div id={`style-name-${style.id}`} style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                           {style.name}
                         </div>
                         <button
-                          onClick={() => toggleLock(style.id, isLocked)}
+                          type="button"
+                          onClick={() => toggleLock(style, isLocked)}
+                          disabled={!usable || isBusy}
+                          aria-pressed={isLocked}
                           style={{
                             background: isLocked ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)",
                             border: "1px solid rgba(255,255,255,0.1)",
-                            borderRadius: 4, padding: "3px 8px",
-                            fontSize: 11, cursor: "pointer", color: isLocked ? "#dcd0b5" : "#888",
+                            borderRadius: 4, padding: "6px 10px", minHeight: 40,
+                            fontSize: 11, cursor: !usable || isBusy ? "not-allowed" : "pointer", color: isLocked ? "#dcd0b5" : "#aaa",
+                            opacity: !usable || isBusy ? 0.5 : 1,
                             fontFamily: "inherit", whiteSpace: "nowrap",
                           }}
-                          title={isLocked ? "Click to unlock" : "Click to lock — AI must use this style"}
+                          title={!usable ? "Completa el estilo antes de bloquearlo" : isLocked ? "Desbloquear estilo" : "Bloquear: la IA deberá usar este estilo"}
                         >
-                          {isLocked ? "🔒 Locked" : "🔓 Lock"}
+                          {isLocked ? "🔒 Bloqueado" : "🔓 Bloquear"}
                         </button>
                       </div>
 
+                      {!usable && <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginBottom: 8 }}>Estilo inválido: necesita artifacts y al menos un diseño fuente. No se enviará a la IA.</div>}
+                      {style.description && <p style={{ color: "#aaa", fontSize: 11, lineHeight: 1.5, margin: "0 0 8px", overflowWrap: "anywhere" }}>{style.description}</p>}
+
                       {colors.length > 0 && (
-                        <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                        <div aria-label="Colores del estilo" style={{ display: "flex", gap: 4, marginBottom: 6 }}>
                           {colors.map((hex, i) => (
-                            <div key={i} style={{
+                            <div key={`${hex}-${i}`} role="img" aria-label={`Color ${hex}`} style={{
                               width: 24, height: 24, borderRadius: 4,
                               background: hex,
                               border: "1px solid rgba(255,255,255,0.15)",
-                            }} title={hex} />
+                            }} />
                           ))}
                         </div>
                       )}
@@ -685,13 +893,35 @@ export function StyleLibraryPanel({
                         </div>
                       )}
 
-                      <div style={{ fontSize: 10, color: "#666" }}>
-                        {(style.sourceTemplateIds || []).length} template(s)
+                      <div style={{ fontSize: 10, color: "#888", lineHeight: 1.5 }}>
+                        {(style.sourceTemplateIds || []).length} diseño(s) fuente
                         {style.styleFingerprint && (
                           <span> · FP: {style.styleFingerprint.substring(0, 8)}...</span>
                         )}
+                        {style.updatedAt && <span> · Actualizado {new Date(style.updatedAt).toLocaleDateString()}</span>}
                       </div>
-                    </div>
+
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button type="button" onClick={() => isEditing ? setEditingId(null) : beginEdit(style)} disabled={isBusy} aria-expanded={isEditing} aria-controls={`style-edit-${style.id}`} style={{ ...btnStyle, flex: 1 }}>
+                          {isEditing ? "Cerrar edición" : "Editar"}
+                        </button>
+                        <button type="button" onClick={() => deleteStyle(style)} disabled={isBusy} style={{ ...btnStyle, flex: 1, color: "#fca5a5", borderColor: "rgba(248,113,113,0.3)" }}>
+                          {isBusy ? "Procesando…" : "Eliminar"}
+                        </button>
+                      </div>
+
+                      {cardErrors[style.id] && <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginTop: 8 }}>{cardErrors[style.id]}</div>}
+
+                      {isEditing && (
+                        <div id={`style-edit-${style.id}`} style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                          <StyleFormFields idPrefix={`style-edit-${style.id}`} draft={editData} errors={editErrors} templates={workspaceTemplates} onChange={next => { setEditData(next); setEditErrors({}); }} nameRef={editNameRef} />
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button type="button" onClick={saveEdit} disabled={isBusy} style={{ ...btnStyle, flex: 1, background: "rgba(200,184,152,0.2)" }}>{isBusy ? "Guardando…" : "Guardar cambios"}</button>
+                            <button type="button" onClick={() => { setEditingId(null); setEditData(emptyDraft()); setEditErrors({}); }} disabled={isBusy} style={{ ...btnStyle, flex: 1 }}>Cancelar</button>
+                          </div>
+                        </div>
+                      )}
+                    </section>
                   );
                 })}
               </div>

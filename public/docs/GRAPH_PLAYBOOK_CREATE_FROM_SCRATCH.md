@@ -6,6 +6,155 @@
 
 ---
 
+## 0 · Cómo diseña un humano (secuencia obligatoria)
+
+> Esta es la sección que se afina a mano. Todo lo de abajo es el esquema
+> técnico del grafo; esto es **el criterio de diseño** que el agente debe
+> seguir. Si el resultado no tiene la calidad esperada, casi siempre es
+> porque se saltó un paso de acá.
+
+Un diseño no es "escribir HTML". Es esta secuencia, en este orden:
+
+1. **Creá el frame.** Nunca diseñes sobre un frame ajeno salvo que el humano
+   nombre uno específico.
+2. **Pintá el fondo** con el color pedido. Si el humano dice "blanco" o
+   "transparente", el fondo es `#FFFFFF` — no lo dejes sin color.
+3. **Armá las figuras con primitivas primero**: rectángulo y triángulo cubren
+   la mayoría.
+4. **Si la figura es compleja, descomponéla en la mayor cantidad de
+   rectángulos posible.** Que se superpongan no es un problema — es
+   preferible. No intentes resolverla de una sola pieza.
+5. **Usá pluma/bezier sólo para lo que no se puede hacer con primitivas** —
+   el resto de la silueta.
+6. **Seleccioná todo y usá el buscatrazos (pathfinder)** para fusionar o
+   cortar hasta obtener la forma final.
+7. **Recién ahí aplicá** color de relleno, stroke, color de stroke y bordes.
+8. **Colocá las fotos**, acomodá tamaños, stroke, color de stroke y bordes.
+9. **Colocá los textos.**
+10. **Acomodá el orden en z** al final, cuando ya sabés qué tapa a qué.
+
+**Regla:** no saltes del paso 1 al 9. Un diseño que es sólo un fondo y texto
+encima casi siempre significa que se omitieron los pasos 3–8.
+
+---
+
+## 0.1 · Modelo de datos: qué significa cada id
+
+Antes de ejecutar nada, resolvé estas entidades. Confundirlas es la causa
+más común de trabajo perdido o creado en el lugar equivocado.
+
+| Entidad | Qué es | Regla que no se rompe |
+|---|---|---|
+| `usuario_id` | Id único de la cuenta | — |
+| `workspace_id` | Id único del workspace propio | Nunca igual a `usuario_id` |
+| `usuario_invitado_id` | Id de alguien que invité a mi workspace | — |
+| `workspace_donde_soy_invitado` | Lista de workspaces ajenos donde tengo acceso | **Nunca** igual a mi `workspace_id` |
+| `workspace_actual` | Desde dónde el humano manda la orden | Puede ser propio o invitado |
+| `workspace_donde_disenar` | Dónde el humano quiere el diseño | **No siempre es `workspace_actual`** |
+| `marca_id` | Cada workspace tiene marcas; cada marca tiene id | Nunca igual a `usuario_id` ni `workspace_id` |
+| `estilo_id` | Cada marca puede tener varios estilos | Si una marca no tiene estilos, aún no automatiza |
+| `archivo_id` | Un workspace tiene varios archivos; un archivo tiene varios frames | **Todos los diseños de un mismo pedido van al mismo archivo**, salvo que el humano diga lo contrario |
+| `frame_id` | Cada frame vive dentro de un archivo | **Cada pedido de diseño = un frame nuevo**, salvo que nombre uno existente |
+
+---
+
+## 0.2 · Medidas del frame
+
+Las medidas son libres, pero elegí según la plataforma y el caso de uso que
+mencione el humano. **Ante la duda, validá con él antes de crear.**
+
+| Contenido | Medidas (px) | Relación |
+|---|---|---|
+| Foto de perfil | 320 × 320 | 1:1 (se ve en círculo) |
+| Post cuadrado (feed) | 1080 × 1080 | 1:1 |
+| Post horizontal (feed) | 1080 × 566–608 | 1.91:1 |
+| Post vertical clásico | 1080 × 1350 | 4:5 |
+| Post vertical nuevo | 1080 × 1440 | 3:4 |
+| Carrusel | 1080 × 1080 ó 1080 × 1350 | 1:1 / 4:5 |
+| Stories | 1080 × 1920 | 9:16 |
+| Reels | 1080 × 1920 | 9:16 |
+| Portada de destacadas | 640 × 640 | 1:1 |
+| Portada de Reel | 420 × 654 | 1:1.55 |
+| Reels ultra anchos | 5120 × 1080 | 5:1 |
+
+Si el humano dice "post" sin más, lo más probable es 1080×1080 — pero
+confirmá. Si dice "presentación", es un slide horizontal.
+
+---
+
+## 0.3 · Resolución de estilo (cascada, en este orden)
+
+El sistema guarda estilos con nombre, id, artefactos y al menos una plantilla
+fuente resolvible. La identidad es única dentro de cada workspace por nombre
+normalizado: `trim`, espacios repetidos colapsados y minúsculas. Esa
+normalización es para igualdad exacta; **no elimina prefijos ni sufijos**.
+
+Cuando el humano pide "estilo X":
+
+1. **Biblioteca del workspace actual** — buscá una coincidencia exacta del
+   nombre normalizado. Antes de usarla, comprobá que conserve al menos un
+   `sourceTemplateId` resolvible del mismo workspace.
+2. **Candidatos** — coincidencias por prefijo, sufijo o similitud son solo
+   sugerencias. Mostralas y esperá confirmación; nunca elijas una por tu cuenta.
+3. **Archivos del workspace** — si no existe el estilo, podés proponer un
+   archivo como referencia. Solo después de que el humano lo confirme se
+   extrae y crea el estilo de forma atómica: artefactos, registro y asociación
+   con la plantilla fuente se guardan juntos o no se guarda nada.
+4. **Otros workspaces** — pueden aportar candidatos si el humano tiene acceso,
+   pero no cuentan como referencia válida hasta copiar/crear la referencia en
+   el workspace destino con autorización explícita.
+5. **Si no existe o está huérfano/inválido** — devolvé
+   `blocked -> style_not_found` o `blocked -> style_invalid` y preguntá a cuál
+   se refiere. **No inventes el estilo, no uses estilo libre y no generes un
+   diseño blanco como fallback.**
+
+`create_brand_guideline` directo o renombrar hacia un nombre normalizado ya
+ocupado falla con conflicto. La recaptura mediante
+`generate_design_artifacts(action="publish")` es la excepción deliberada: si el
+humano escribió o confirmó un nombre que coincide exactamente después de
+normalizar, actualiza el único registro canónico con ese nombre. El CRUD directo
+de update/rename sigue operando por ID. Los fingerprints visuales sugieren
+candidatos de merge, pero el merge siempre requiere confirmación y nunca ocurre
+automáticamente.
+
+Todo estilo debe conservar una plantilla fuente válida. Una actualización no
+puede vaciar `sourceTemplateIds`; borrar la última plantilla fuente elimina el
+estilo en la misma operación. Eliminar un estilo requiere confirmación y limpia
+su lock y asociaciones.
+
+Si el humano **no menciona** estilo: usá el estilo de su marca. Si su marca
+todavía no tiene estilo, usá estilo libre.
+Si el humano dice **"sin estilos"**: estilo libre, no busques nada.
+
+---
+
+## 0.4 · Tema
+
+El tema es de qué habla el contenido. Los temas **no se guardan** — se
+investigan y redactan por pedido.
+
+- El humano da sólo el tema → investigás, redactás, después diseñás.
+- El humano da tema **y** textos → diseñás directamente con esos textos.
+
+---
+
+## 0.5 · Ejemplos resueltos
+
+**"Crea un post que diga hola renzo 5 en un archivo nuevo sin estilos"**
+→ En este workspace · archivo **nuevo** (id nuevo) · un frame ·
+probablemente 1080×1080 (validar) · estilo **libre** porque dice "sin
+estilos" · el texto dice exactamente `hola renzo 5`.
+
+**"Busca en el archivo Jockey demo el template o frame llamado Disc 5, duplicalo y hazlo en versión light"**
+→ Empezá por este workspace · listá **todos** los archivos y buscá uno que
+matchee "Jockey demo" (las palabras pueden estar en cualquier orden) · si no
+aparece, repetí en los workspaces donde el humano es invitado · si tampoco,
+**pará y pedí el enlace** · con el enlace confirmá que tenés acceso; si no lo
+tenés, decílo y pedíselo · recién entonces duplicá el frame y hacé la
+variante light.
+
+---
+
 ## Schema
 
 ### Entity Types

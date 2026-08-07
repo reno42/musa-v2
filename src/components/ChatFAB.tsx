@@ -475,16 +475,16 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "check_accessibility", description: "Audita accesibilidad del template (WCAG 2.1 AA).", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, frameId: { type: "string" } } } } },
   { type: "function", function: { name: "get_brands", description: "Lista todas las marcas registradas.", parameters: { type: "object", properties: { workspaceId: { type: "string" } } } } },
   { type: "function", function: { name: "apply_brand", description: "Aplica una marca a un template (colores, fuentes, logos).", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string" } } } } },
-  { type: "function", function: { name: "create_brand_guideline", description: "Crea una guía de marca (brand guideline).", parameters: { type: "object", required: ["name"], properties: { name: { type: "string" }, workspaceId: { type: "string" }, colors: { type: "object" }, typography: { type: "object" }, spacing: { type: "object" }, logo: { type: "string" } } } } },
-  { type: "function", function: { name: "get_brand_guideline", description: "Obtiene una guía de marca por ID.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" } } } } },
-  { type: "function", function: { name: "list_brand_guidelines", description: "Lista todas las guías de marca.", parameters: { type: "object", properties: { workspaceId: { type: "string" } } } } },
-  { type: "function", function: { name: "update_brand_guideline", description: "Actualiza una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" }, name: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, mode: { type: "string", enum: ["replace", "append"] } } } } },
-  { type: "function", function: { name: "delete_brand_guideline", description: "Elimina una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" } } } } },
+  { type: "function", function: { name: "create_brand_guideline", description: "Crea un estilo válido desde templates reales. Exige al menos un artifact sustantivo entre tokensJson, designMd o sharedCss; el backend lo valida. El nombre debe ser único en el workspace; preferí generate_design_artifacts(action='publish') para extraerlo de un diseño.", parameters: { type: "object", required: ["workspaceId", "name", "sourceTemplateIds"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, sourceHash: { type: "string" }, styleFingerprint: { type: "string" }, sourceTemplateIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" }, description: "Templates con material real del mismo workspace." } } } } },
+  { type: "function", function: { name: "get_brand_guideline", description: "Obtiene una guía de marca por ID dentro de su workspace.", parameters: { type: "object", required: ["workspaceId", "brandId"], properties: { workspaceId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" } } } } },
+  { type: "function", function: { name: "list_brand_guidelines", description: "Lista resúmenes compactos. Los artifacts completos se omiten por defecto; para usar un estilo descubierto llama get_brand_guideline por ID.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" }, includeArtifacts: { type: "boolean", description: "Incluye documentos completos solo si son imprescindibles. Default false." } } } } },
+  { type: "function", function: { name: "update_brand_guideline", description: "Actualiza un estilo sin permitir nombres duplicados ni dejarlo sin referencias o artifacts.", parameters: { type: "object", required: ["workspaceId", "brandId"], properties: { workspaceId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" }, name: { type: "string" }, description: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, sourceHash: { type: "string" }, styleFingerprint: { type: "string" }, sourceTemplateIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" } }, mode: { type: "string", enum: ["replace", "append"] } } } } },
+  { type: "function", function: { name: "delete_brand_guideline", description: "Elimina una guía de marca del workspace y limpia su lock.", parameters: { type: "object", required: ["workspaceId", "brandId"], properties: { workspaceId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" } } } } },
   { type: "function", function: { name: "apply_brand_to_template", description: "Aplica una guía de marca completa a un template.", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" } } } } },
   { type: "function", function: { name: "get_active_styles", description: "Obtiene los estilos activos bloqueados en un workspace.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" } } } } },
-  { type: "function", function: { name: "set_style_lock", description: "Bloquea/desbloquea estilos para prevenir cambios accidentales.", parameters: { type: "object", required: ["templateId", "styleId", "locked"], properties: { templateId: { type: "string" }, styleId: { type: "string" }, locked: { type: "boolean" } } } } },
-  { type: "function", function: { name: "find_duplicate_styles", description: "Encuentra estilos duplicados en un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
-  { type: "function", function: { name: "merge_brand_guidelines", description: "Combina dos guías de marca en una sola.", parameters: { type: "object", required: ["sourceId", "targetId"], properties: { sourceId: { type: "string" }, targetId: { type: "string" } } } } },
+  { type: "function", function: { name: "set_style_lock", description: "Bloquea/desbloquea un estilo del workspace.", parameters: { type: "object", required: ["workspaceId", "brandId", "locked"], properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, locked: { type: "boolean" } } } } },
+  { type: "function", function: { name: "find_duplicate_styles", description: "Encuentra estilos visualmente duplicados en un workspace.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" } } } } },
+  { type: "function", function: { name: "merge_brand_guidelines", description: "Combina estilos del mismo workspace en uno canónico.", parameters: { type: "object", required: ["workspaceId", "targetBrandId", "sourceBrandIds"], properties: { workspaceId: { type: "string" }, targetBrandId: { type: "string" }, sourceBrandIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" } } } } } },
   { type: "function", function: { name: "download_style_template", description: "Descarga una plantilla de estilos para subir custom styles.", parameters: { type: "object", properties: { format: { type: "string", enum: ["json", "css", "dtcg"] } } } } },
   // ═══════════════════════════════════════════════
   //  Design System Analysis
@@ -658,9 +658,10 @@ ANTES de tocar ninguna tool de diseño. Tú NO hablas con el humano — el Leade
 todo lo que puedas y devolverle hallazgos + tu mejor suposición, nunca inventar el estilo por tu cuenta:
 
   1. BIBLIOTECA — list_brand_guidelines({workspaceId}) y/o get_active_styles({workspaceId}).
-     Compara el nombre sin importar mayúsculas/espacios ni sufijos: "futuraria" debe hacer match con
-     "Futuraria_SocialMedia" o "Futuraria_BrandGuidelines". Si hay match → úsalo directamente y sigue
-     con tu tarea normal (MODO A/B más abajo). No hace falta seguir buscando.
+     Haz match EXACTO por identidad canónica: trim, espacios consecutivos colapsados y minúsculas.
+     "Futuraria Social" coincide con "  futuraria   social ", pero "Futuraria" NO coincide con
+     "Futuraria_SocialMedia". list_brand_guidelines devuelve solo resúmenes: si hay match exacto, llama
+     get_brand_guideline({workspaceId, brandId}) para cargar sus artifacts antes de usarlo y luego sigue.
   2. ARCHIVOS — si NO hubo match en la biblioteca, llama list_templates({workspaceId, search: "<nombre>"})
      por si existe un template/archivo con ese nombre del cual se pueda extraer un estilo.
   3. MARCAS CRM — si tampoco hubo match, llama get_brands({workspaceId}) por si el CRM tiene una marca
@@ -676,9 +677,11 @@ todo lo que puedas y devolverle hallazgos + tu mejor suposición, nunca inventar
      biblioteca con ese nombre, el PASO 1 de esta misma búsqueda lo encontrará directo la próxima vez —
      no vuelvas a preguntar por el mismo nombre.
 
-Si en algún momento TÚ mismo creas o actualizas un estilo (register_brand / create_brand_guideline), nómbralo
-SIEMPRE como Marca_Propósito (ej: "Futuraria_SocialMedia", no "Futuraria" ni el nombre del frame/template) y
-pasa el workspaceId del contexto explícitamente — nunca lo omitas.
+Si en algún momento TÚ mismo crea o actualiza un estilo, usa generate_design_artifacts({ templateId,
+action: "publish", brandName }) sobre un template real con material. create_brand_guideline es solo para
+artifacts ya extraídos y exige workspaceId, nombre único, sourceTemplateIds no vacíos y al menos un artifact
+sustantivo; nunca crees un estilo solo con nombre. Nómbralo como Marca_Propósito y resuelve el nombre por match
+canónico exacto antes de crear; un conflicto se actualiza explícitamente por brandId, no se duplica.
 
 DETERMINA EL MODO leyendo el contexto:
 

@@ -2876,7 +2876,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_brand_guideline",
-    description: "Create a reusable brand guideline record (stored in brand_guidelines table). Brand guidelines contain design tokens, DESIGN.md, and shared.css that can be shared across templates in a workspace. Use this to establish a canonical brand identity that persists independently of any single template.",
+    description: "Create a reusable style from real source templates. Names are unique per workspace (trimmed, whitespace-normalized, case-insensitive). Prefer generate_design_artifacts(action: 'publish') when extracting a style from a design.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2887,9 +2887,10 @@ const MCP_TOOLS = [
         designMd: { type: "string", description: "Markdown DESIGN.md content" },
         sharedCss: { type: "string", description: "Shared CSS variables and utility classes" },
         sourceHash: { type: "string", description: "SHA-256 hash of source frames for staleness detection" },
-        sourceTemplateIds: { type: "array", items: { type: "string" }, description: "Template IDs that contributed to this brand" },
+        styleFingerprint: { type: "string", description: "Optional deterministic style fingerprint" },
+        sourceTemplateIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" }, description: "At least one non-empty template from this workspace that contributed the style" },
       },
-      required: ["workspaceId", "name"],
+      required: ["workspaceId", "name", "sourceTemplateIds"],
     },
   },
   {
@@ -2898,18 +2899,20 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string", description: "Workspace ID that owns the style" },
         brandId: { type: "string", description: "Brand Guideline ID" },
       },
-      required: ["brandId"],
+      required: ["workspaceId", "brandId"],
     },
   },
   {
     name: "list_brand_guidelines",
-    description: "List all brand guidelines in a workspace. Returns id, name, description, and metadata for each brand. Use this to discover available brand identities before applying one.",
+    description: "List compact brand guideline summaries in a workspace. Artifacts are omitted by default to protect agent context; pass includeArtifacts=true only when the caller needs full documents. After discovery, prefer get_brand_guideline for one exact style.",
     inputSchema: {
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
+        includeArtifacts: { type: "boolean", description: "Include full tokensJson, designMd and sharedCss documents. Default false." },
       },
       required: ["workspaceId"],
     },
@@ -2920,6 +2923,7 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string", description: "Workspace ID that owns the style" },
         brandId: { type: "string", description: "Brand Guideline ID" },
         name: { type: "string", description: "Updated brand name" },
         description: { type: "string", description: "Updated description" },
@@ -2927,10 +2931,11 @@ const MCP_TOOLS = [
         designMd: { type: "string", description: "Updated DESIGN.md" },
         sharedCss: { type: "string", description: "Updated shared CSS" },
         sourceHash: { type: "string", description: "Updated source hash" },
-        sourceTemplateIds: { type: "array", items: { type: "string" }, description: "Updated source template IDs" },
+        styleFingerprint: { type: "string", description: "Updated deterministic style fingerprint" },
+        sourceTemplateIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" }, description: "Updated non-empty source template IDs. Omitting preserves current references." },
         mode: { type: "string", enum: ["replace", "append"], description: "replace (default) overwrites fields. append concatenates tokensJson, designMd, and sharedCss to the end of existing content — useful for incrementally building a brand guideline without reading the current value first." },
       },
-      required: ["brandId"],
+      required: ["workspaceId", "brandId"],
     },
   },
   {
@@ -2939,9 +2944,10 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        workspaceId: { type: "string", description: "Workspace ID that owns the style" },
         brandId: { type: "string", description: "Brand Guideline ID to delete" },
       },
-      required: ["brandId"],
+      required: ["workspaceId", "brandId"],
     },
   },
   {
@@ -2999,7 +3005,7 @@ const MCP_TOOLS = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         targetBrandId: { type: "string", description: "The brand ID to keep (receives merged data)" },
-        sourceBrandIds: { type: "array", items: { type: "string" }, description: "Brand IDs to merge into target and then delete" },
+        sourceBrandIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" }, description: "Brand IDs from the same workspace to merge into target and then delete" },
       },
       required: ["workspaceId", "targetBrandId", "sourceBrandIds"],
     },
@@ -3898,6 +3904,12 @@ async function checkAuth(event) {
 const MCP_ADMIN_METHODS = new Set(["create_api_key", "revoke_api_key", "list_api_keys"]);
 const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export|assemble|subscribe|unsubscribe|check|measure|preview|search)_/;
 
+const STYLE_LIBRARY_METHODS = new Set([
+  "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
+  "update_brand_guideline", "delete_brand_guideline", "apply_brand_to_template",
+  "get_active_styles", "set_style_lock", "find_duplicate_styles", "merge_brand_guidelines",
+]);
+
 async function authorizeMcpCall(method, inputParams, auth) {
   const params = { ...(inputParams || {}) };
   if (auth.isAdmin) return params;
@@ -3920,6 +3932,27 @@ async function authorizeMcpCall(method, inputParams, auth) {
     if (!templateWorkspace) throw { code: -32004, message: `Template not found: ${templateId}` };
     if (workspaceId && workspaceId !== templateWorkspace) throw { code: -32003, message: "Template belongs to another workspace" };
     workspaceId = templateWorkspace;
+  }
+
+  // Brand guideline IDs are opaque and their service uses service_role for API
+  // keys. Resolve them before dispatch so get/update/delete/merge cannot cross
+  // tenant boundaries by guessing an ID.
+  if (STYLE_LIBRARY_METHODS.has(method)) {
+    const brandIds = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (/^(?:brandId|targetBrandId)$/i.test(key) && typeof value === "string") brandIds.push(value);
+      if (/^(?:brandIds|sourceBrandIds)$/i.test(key) && Array.isArray(value)) {
+        brandIds.push(...value.filter(id => typeof id === "string"));
+      }
+    }
+    for (const brandId of [...new Set(brandIds)]) {
+      const brand = await brands.getBrand(brandId);
+      if (!brand) throw { code: -32004, message: `Style not found: ${brandId}` };
+      if (workspaceId && workspaceId !== brand.workspaceId) {
+        throw { code: -32003, message: "Style belongs to another workspace" };
+      }
+      workspaceId = brand.workspaceId;
+    }
   }
   if (workspaceId) params.workspaceId ||= workspaceId;
 
@@ -4129,6 +4162,33 @@ function validateEditableWrite(html, css, allowGroups, context) {
 /** Route JSON-RPC method calls to template/workspace services */
 const assertHarnessAccess = (sb, auth, userId, scope) =>
   assertHarnessAccessBase(sb, auth, userId, scope, canAccessWorkspace);
+
+function styleRpcError(error) {
+  if (error?.code === "STYLE_NAME_EXISTS") {
+    return { code: -32009, message: error.message || "A style with this name already exists in the workspace" };
+  }
+  if (error?.code === "STYLE_INVALID") {
+    return { code: -32602, message: error.message || "The style would violate Style Library invariants" };
+  }
+  if (error?.code && typeof error.code === "number") return error;
+  return { code: -32000, message: error?.message || "Style Library operation failed" };
+}
+
+function requireStyleWorkspace(params) {
+  const workspaceId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
+  if (!workspaceId) throw { code: -32602, message: "workspaceId is required for Style Library operations" };
+  return workspaceId;
+}
+
+async function requireStyleInWorkspace(brandId, workspaceId) {
+  if (!brandId || typeof brandId !== "string") {
+    throw { code: -32602, message: "brandId is required. Call list_brand_guidelines({ workspaceId }) first." };
+  }
+  const brand = await brands.getBrand(brandId);
+  if (!brand) throw { code: -32004, message: `Style not found: ${brandId}` };
+  if (brand.workspaceId !== workspaceId) throw { code: -32003, message: "Style belongs to another workspace" };
+  return brand;
+}
 
 const RUNTIME_EVENT_TYPES = new Set(["start", "request", "tool", "retry", "compaction", "done", "error", "cancelled"]);
 const RUNTIME_SESSION_STATUSES = new Set(["completed", "failed", "cancelled", "timed_out", "blocked"]);
@@ -8701,20 +8761,17 @@ async function handleMethod(method, params, userId, auth) {
         // updated after the fact (useful elsewhere as "this template's most
         // recent style"), but it no longer decides create-vs-update.
         var brandRecord = null;
-        var autoMerged = false;
+        var updatedExisting = false;
         if (params.brandName) {
           var workspaceId = tpl.workspaceId || "default";
-          var wantedName = String(params.brandName).trim().toLowerCase();
-
-          var existingBrands = await brands.listBrandsByWorkspace(workspaceId);
-          var nameMatch = existingBrands.find(function (eb) {
-            return (eb.name || "").trim().toLowerCase() === wantedName;
-          }) || null;
+          var cleanBrandName = brands.cleanStyleName(params.brandName);
+          if (!cleanBrandName) throw { code: -32602, message: "brandName must not be blank" };
+          var nameMatch = await brands.findBrandByName(workspaceId, cleanBrandName);
 
           if (nameMatch) {
             // Same name already exists in this workspace — this is a
             // deliberate re-capture/refinement of that exact style.
-            autoMerged = true;
+            updatedExisting = true;
             var mergedIds = (nameMatch.sourceTemplateIds || []).slice();
             if (mergedIds.indexOf(params.templateId) === -1) {
               mergedIds.push(params.templateId);
@@ -8729,16 +8786,34 @@ async function handleMethod(method, params, userId, auth) {
             });
             brandRecord = await brands.getBrand(nameMatch.id);
           } else {
-            brandRecord = await brands.createBrand({
-              workspaceId: workspaceId,
-              name: params.brandName,
-              tokensJson: artifacts.tokensJson,
-              designMd: artifacts.designMd,
-              sharedCss: artifacts.sharedCss,
-              sourceHash: artifacts.sourceHash,
-              styleFingerprint: artifacts.styleFingerprint,
-              sourceTemplateIds: [params.templateId],
-            });
+            try {
+              brandRecord = await brands.createBrand({
+                workspaceId: workspaceId,
+                name: cleanBrandName,
+                tokensJson: artifacts.tokensJson,
+                designMd: artifacts.designMd,
+                sharedCss: artifacts.sharedCss,
+                sourceHash: artifacts.sourceHash,
+                styleFingerprint: artifacts.styleFingerprint,
+                sourceTemplateIds: [params.templateId],
+              });
+            } catch (error) {
+              // A concurrent publish may have inserted the normalized name
+              // after our lookup. Resolve it and update explicitly by ID.
+              if (error?.code !== "STYLE_NAME_EXISTS") throw styleRpcError(error);
+              nameMatch = await brands.findBrandByName(workspaceId, cleanBrandName);
+              if (!nameMatch) throw styleRpcError(error);
+              updatedExisting = true;
+              const mergedIds = [...new Set([...(nameMatch.sourceTemplateIds || []), params.templateId])];
+              brandRecord = await brands.updateBrand(nameMatch.id, {
+                sourceTemplateIds: mergedIds,
+                tokensJson: artifacts.tokensJson,
+                designMd: artifacts.designMd,
+                sharedCss: artifacts.sharedCss,
+                sourceHash: artifacts.sourceHash,
+                styleFingerprint: artifacts.styleFingerprint,
+              });
+            }
           }
           // Link template to whichever brand this publish resolved to —
           // informational only (e.g. "what style did this template last
@@ -8753,8 +8828,12 @@ async function handleMethod(method, params, userId, auth) {
           _published: true,
           sourceHash: artifacts.sourceHash,
           styleFingerprint: artifacts.styleFingerprint,
-          autoMerged: autoMerged,
-          mergedIntoBrand: autoMerged ? (brandRecord ? brandRecord.name : null) : null,
+          updatedExisting: updatedExisting,
+          // Deprecated compatibility alias. This is a canonical name match,
+          // not a fingerprint merge.
+          autoMerged: updatedExisting,
+          matchedExistingStyle: updatedExisting ? (brandRecord ? brandRecord.name : null) : null,
+          mergedIntoBrand: updatedExisting ? (brandRecord ? brandRecord.name : null) : null,
           designMd: artifacts.designMd,
           tokensJson: artifacts.tokensJson,
           sharedCss: artifacts.sharedCss,
@@ -10385,35 +10464,41 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── create_brand_guideline: store a reusable brand identity ──
     case "create_brand_guideline": {
-      var brand = await brands.createBrand({
-        workspaceId: params.workspaceId,
-        name: params.name,
-        description: params.description,
-        tokensJson: params.tokensJson,
-        designMd: params.designMd,
-        sharedCss: params.sharedCss,
-        sourceHash: params.sourceHash,
-        sourceTemplateIds: params.sourceTemplateIds,
-      });
-      return { success: true, brand: brand };
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var brand = await brands.createBrand({
+          workspaceId,
+          name: params.name,
+          description: params.description,
+          tokensJson: params.tokensJson,
+          designMd: params.designMd,
+          sharedCss: params.sharedCss,
+          sourceHash: params.sourceHash,
+          styleFingerprint: params.styleFingerprint || (params.tokensJson ? computeFingerprintFromTokensJson(params.tokensJson) : undefined),
+          sourceTemplateIds: params.sourceTemplateIds,
+        });
+        return { success: true, brand: brand };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
     }
 
     // ── get_brand_guideline: retrieve a brand by ID ──
     case "get_brand_guideline": {
-      if (!params.brandId || typeof params.brandId !== "string") {
-        throw { code: -32000, message: "brandId is required (received: " + JSON.stringify(params.brandId) + "). Call list_brand_guidelines first to discover available brand IDs." };
-      }
-      var brand = await brands.getBrand(params.brandId);
-      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+      const workspaceId = requireStyleWorkspace(params);
+      var brand = await requireStyleInWorkspace(params.brandId, workspaceId);
       return { success: true, brand: brand };
     }
 
     // ── list_brand_guidelines: list all brands in a workspace ──
     case "list_brand_guidelines": {
-      var list = await brands.listBrandsByWorkspace(params.workspaceId);
+      const workspaceId = requireStyleWorkspace(params);
+      const includeArtifacts = params.includeArtifacts === true;
+      var list = await brands.listBrandsByWorkspace(workspaceId);
       return {
         success: true,
-        workspaceId: params.workspaceId,
+        workspaceId,
+        includeArtifacts,
         count: list.length,
         brands: list.map(function (b) {
           return {
@@ -10421,9 +10506,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             name: b.name,
             description: b.description,
             sourceHash: b.sourceHash,
+            styleFingerprint: b.styleFingerprint,
             sourceTemplateIds: b.sourceTemplateIds,
+            artifactPreview: {
+              hasTokens: !!(b.tokensJson && b.tokensJson.trim()),
+              hasDesignMd: !!(b.designMd && b.designMd.trim()),
+              hasSharedCss: !!(b.sharedCss && b.sharedCss.trim()),
+            },
             createdAt: b.createdAt,
             updatedAt: b.updatedAt,
+            ...(includeArtifacts ? {
+              tokensJson: b.tokensJson,
+              designMd: b.designMd,
+              sharedCss: b.sharedCss,
+            } : {}),
           };
         }),
       };
@@ -10431,15 +10527,11 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── update_brand_guideline: modify an existing brand ──
     case "update_brand_guideline": {
-      var updates = {};
-      const appendMode = params.mode === "append";
-
-      // If append mode, fetch existing content first to concatenate
-      var existingBrand = null;
-      if (appendMode) {
-        existingBrand = await brands.getBrand(params.brandId);
-        if (!existingBrand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
-      }
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var existingBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        var updates = {};
+        const appendMode = params.mode === "append";
 
       if (params.name !== undefined) updates.name = params.name;
       if (params.description !== undefined) updates.description = params.description;
@@ -10480,35 +10572,52 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
       }
 
-      if (params.sourceHash !== undefined) updates.sourceHash = params.sourceHash;
-      if (params.sourceTemplateIds !== undefined) {
-        if (appendMode && existingBrand?.sourceTemplateIds) {
-          // Merge arrays, deduplicate
-          const existing = new Set(existingBrand.sourceTemplateIds);
-          for (const id of params.sourceTemplateIds) existing.add(id);
-          updates.sourceTemplateIds = [...existing];
-        } else {
-          updates.sourceTemplateIds = params.sourceTemplateIds;
+        if (params.sourceHash !== undefined) updates.sourceHash = params.sourceHash;
+        if (params.styleFingerprint !== undefined) updates.styleFingerprint = params.styleFingerprint;
+        if (params.sourceTemplateIds !== undefined) {
+          if (appendMode && existingBrand.sourceTemplateIds) {
+            const existing = new Set(existingBrand.sourceTemplateIds);
+            for (const id of params.sourceTemplateIds) existing.add(id);
+            updates.sourceTemplateIds = [...existing];
+          } else {
+            updates.sourceTemplateIds = params.sourceTemplateIds;
+          }
         }
+        var brand = await brands.updateBrand(params.brandId, updates);
+        if (!brand) throw { code: -32004, message: "Style not found: " + params.brandId };
+        return { success: true, brand: brand, mode: appendMode ? "append" : "replace" };
+      } catch (error) {
+        throw styleRpcError(error);
       }
-      var brand = await brands.updateBrand(params.brandId, updates);
-      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
-      return { success: true, brand: brand, mode: appendMode ? "append" : "replace" };
     }
 
     // ── delete_brand_guideline: remove a brand permanently ──
     case "delete_brand_guideline": {
-      await brands.deleteBrand(params.brandId);
-      return { success: true, deleted: params.brandId };
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        await requireStyleInWorkspace(params.brandId, workspaceId);
+        const deleted = await brands.deleteBrand(params.brandId);
+        if (!deleted) throw { code: -32004, message: `Style not found: ${params.brandId}` };
+
+        const styleWorkspace = store.getWorkspace(workspaceId);
+        if (styleWorkspace?.metadata?.styleLocks) {
+          const styleLocks = { ...styleWorkspace.metadata.styleLocks };
+          delete styleLocks[params.brandId];
+          store.updateWorkspace(workspaceId, {
+            metadata: { ...styleWorkspace.metadata, styleLocks },
+          });
+        }
+        return { success: true, deleted: params.brandId, workspaceId };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
     }
 
     // ── apply_brand_to_template: link template to brand ──
     case "apply_brand_to_template": {
-      var brand = await brands.getBrand(params.brandId);
-      if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
-
       var tpl = await templates.getTemplate(params.templateId);
-      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      if (!tpl) throw { code: -32004, message: "Template not found: " + params.templateId };
+      var brand = await requireStyleInWorkspace(params.brandId, tpl.workspaceId);
       if (brand.workspaceId !== tpl.workspaceId) {
         throw { code: -32003, message: "Brand guideline does not belong to the template workspace" };
       }
@@ -10553,14 +10662,15 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── get_active_styles: return locked styles for a workspace ──
     case "get_active_styles": {
-      var allBrands = await brands.listBrandsByWorkspace(params.workspaceId);
+      const workspaceId = requireStyleWorkspace(params);
+      var allBrands = await brands.listBrandsByWorkspace(workspaceId);
       // Read styleLocks from workspace metadata via store
-      var ws = store.getWorkspace(params.workspaceId);
+      var ws = store.getWorkspace(workspaceId);
       var locks = (ws && ws.metadata && ws.metadata.styleLocks) || {};
       var lockedIds = Object.keys(locks).filter(function (id) { return locks[id] === true; });
       var activeStyles = allBrands.filter(function (b) { return lockedIds.indexOf(b.id) !== -1; });
       return {
-        workspaceId: params.workspaceId,
+        workspaceId,
         hasLockedStyles: activeStyles.length > 0,
         lockedCount: activeStyles.length,
         styles: activeStyles.map(function (b) {
@@ -10581,24 +10691,24 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── set_style_lock: toggle lock on a brand ──
     case "set_style_lock": {
-      var lockBrand = await brands.getBrand(params.brandId);
-      if (!lockBrand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
+      const workspaceId = requireStyleWorkspace(params);
+      var lockBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
 
-      var lockWs = store.getWorkspace(params.workspaceId);
-      if (!lockWs) throw { code: -32000, message: "Workspace not found: " + params.workspaceId };
+      var lockWs = store.getWorkspace(workspaceId);
+      if (!lockWs) throw { code: -32004, message: "Workspace not found: " + workspaceId };
 
       var wsMeta = lockWs.metadata || {};
       wsMeta.styleLocks = wsMeta.styleLocks || {};
       wsMeta.styleLocks[params.brandId] = params.locked;
 
-      store.updateWorkspace(params.workspaceId, { metadata: wsMeta });
+      store.updateWorkspace(workspaceId, { metadata: wsMeta });
 
       // Return list of currently locked styles
       var lockedNow = Object.keys(wsMeta.styleLocks).filter(function (id) { return wsMeta.styleLocks[id] === true; });
 
       return {
         success: true,
-        workspaceId: params.workspaceId,
+        workspaceId,
         brandId: params.brandId,
         brandName: lockBrand.name,
         locked: params.locked,
@@ -10609,7 +10719,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── find_duplicate_styles: group brands by fingerprint ──
     case "find_duplicate_styles": {
-      var dupBrands = await brands.listBrandsByWorkspace(params.workspaceId);
+      const workspaceId = requireStyleWorkspace(params);
+      var dupBrands = await brands.listBrandsByWorkspace(workspaceId);
       var groups = {};
       dupBrands.forEach(function (b) {
         // Try to compute fingerprint from stored tokens, or use sourceHash as fallback
@@ -10638,7 +10749,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         });
 
       return {
-        workspaceId: params.workspaceId,
+        workspaceId,
         totalBrands: dupBrands.length,
         duplicateGroups: duplicateGroups.length,
         groups: duplicateGroups,
@@ -10651,50 +10762,72 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── merge_brand_guidelines: merge N brands into 1 ──
     case "merge_brand_guidelines": {
-      var targetBrand = await brands.getBrand(params.targetBrandId);
-      if (!targetBrand) throw { code: -32000, message: "Target brand not found: " + params.targetBrandId };
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        if (!Array.isArray(params.sourceBrandIds) || params.sourceBrandIds.length === 0) {
+          throw { code: -32602, message: "sourceBrandIds must contain at least one style ID" };
+        }
+        var targetBrand = await requireStyleInWorkspace(params.targetBrandId, workspaceId);
+        const sourceBrands = [];
+        for (const sourceId of [...new Set(params.sourceBrandIds)]) {
+          if (sourceId === params.targetBrandId) continue;
+          sourceBrands.push(await requireStyleInWorkspace(sourceId, workspaceId));
+        }
+        if (sourceBrands.length === 0) {
+          throw { code: -32602, message: "Merge requires at least one source style different from the target" };
+        }
 
-      // Collect all sourceTemplateIds from sources
-      var allTemplateIds = (targetBrand.sourceTemplateIds || []).slice();
-      var mergedNames = [];
-
-      for (var mi = 0; mi < params.sourceBrandIds.length; mi++) {
-        var srcId = params.sourceBrandIds[mi];
-        if (srcId === params.targetBrandId) continue; // skip self
-        var srcBrand = await brands.getBrand(srcId);
-        if (!srcBrand) continue;
-        // Collect template IDs
-        (srcBrand.sourceTemplateIds || []).forEach(function (tid) {
-          if (allTemplateIds.indexOf(tid) === -1) allTemplateIds.push(tid);
+        const allTemplateIds = [...new Set([
+          ...(targetBrand.sourceTemplateIds || []),
+          ...sourceBrands.flatMap(source => source.sourceTemplateIds || []),
+        ])];
+        // Preserve the target's canonical content, filling any missing artifact
+        // from a source before validating the merged final state.
+        const mergedArtifacts = {};
+        for (const field of ["tokensJson", "designMd", "sharedCss", "sourceHash", "styleFingerprint"]) {
+          mergedArtifacts[field] = targetBrand[field]
+            || sourceBrands.find(source => source[field])?.[field];
+        }
+        const updatedTarget = await brands.updateBrand(params.targetBrandId, {
+          ...mergedArtifacts,
+          sourceTemplateIds: allTemplateIds,
         });
-        mergedNames.push(srcBrand.name);
-        // Re-point templates from src to target
-        if (srcBrand.sourceTemplateIds) {
-          for (var ti = 0; ti < srcBrand.sourceTemplateIds.length; ti++) {
-            var srcTpl = await templates.getTemplate(srcBrand.sourceTemplateIds[ti]);
-            if (srcTpl && srcTpl.brandId === srcId) {
-              await templates.updateTemplate(srcBrand.sourceTemplateIds[ti], { brandId: params.targetBrandId });
+        if (!updatedTarget) throw { code: -32004, message: `Target style not found: ${params.targetBrandId}` };
+
+        const mergeWorkspace = store.getWorkspace(workspaceId);
+        const styleLocks = { ...(mergeWorkspace?.metadata?.styleLocks || {}) };
+        const transferLock = sourceBrands.some(source => styleLocks[source.id] === true);
+        for (const source of sourceBrands) {
+          for (const templateId of source.sourceTemplateIds || []) {
+            const sourceTemplate = await templates.getTemplate(templateId);
+            if (sourceTemplate?.brandId === source.id) {
+              await templates.updateTemplate(templateId, { brandId: params.targetBrandId });
             }
           }
+          const deleted = await brands.deleteBrand(source.id);
+          if (!deleted) throw { code: -32000, message: `Failed to delete merged source style: ${source.id}` };
+          delete styleLocks[source.id];
         }
-        // Delete the source brand
-        await brands.deleteBrand(srcId);
+        if (transferLock) styleLocks[params.targetBrandId] = true;
+        if (mergeWorkspace) {
+          store.updateWorkspace(workspaceId, {
+            metadata: { ...(mergeWorkspace.metadata || {}), styleLocks },
+          });
+        }
+
+        return {
+          success: true,
+          workspaceId,
+          targetBrandId: params.targetBrandId,
+          targetBrandName: updatedTarget.name,
+          mergedFrom: sourceBrands.map(source => source.name),
+          mergedCount: sourceBrands.length,
+          totalTemplateIds: allTemplateIds.length,
+          sourceTemplateIds: allTemplateIds,
+        };
+      } catch (error) {
+        throw styleRpcError(error);
       }
-
-      // Update target brand with combined template IDs
-      await brands.updateBrand(params.targetBrandId, {
-        sourceTemplateIds: allTemplateIds,
-      });
-
-      return {
-        success: true,
-        targetBrandId: params.targetBrandId,
-        targetBrandName: targetBrand.name,
-        mergedFrom: mergedNames,
-        mergedCount: mergedNames.length,
-        totalTemplateIds: allTemplateIds.length,
-        sourceTemplateIds: allTemplateIds,
-      };
     }
 
     // ── download_style_template: return DTCG tokens.json template for external AI ──

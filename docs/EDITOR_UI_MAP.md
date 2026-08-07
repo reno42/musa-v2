@@ -142,7 +142,7 @@ lienzo). De izquierda a derecha:
 
 **Estilo y marca:**
 - **Style Library** — abre el modal de biblioteca de estilos
-- **Publicar** — extrae y guarda este diseño como estilo reutilizable
+- **Publicar** — extrae y guarda este diseño como estilo reutilizable, conservándolo como referencia fuente
 - **Fonts** — abre el selector de Google Fonts
 
 **Exportar / importar:**
@@ -220,7 +220,7 @@ MCP (`add_element`):
 | Nombre propuesto | Disparador | Qué es |
 |---|---|---|
 | **Popup de Column Guides** | Ícono de columnas en la barra superior | Config de columnas de layout (count/gutter/margin) sobre el frame activo |
-| **Style Library** (modal) | Botón "Library" en la barra superior | Biblioteca de estilos guardados, reutilizables entre templates |
+| **Style Library** (modal) | Botón "Library" en la barra superior | CRUD de estilos guardados y reutilizables, siempre vinculados a una plantilla fuente válida |
 | **Selector de Google Fonts** (dropdown) | Botón "Fonts" en la barra superior, y también el campo "Font" dentro de Typography | Busca/aplica fuentes de Google Fonts |
 | **Icon Picker (Phosphor)** (modal) | Ícono de formas en la barra superior | Buscar e insertar íconos del set Phosphor |
 | **Batch-a-mator** (modal) | Botón "B" en la barra superior | Genera múltiples diseños desde un CSV |
@@ -231,6 +231,31 @@ MCP (`add_element`):
 | **Image Upload** (modal) | Botón "Upload Images" en la barra superior | Sube imágenes a la librería de assets del workspace |
 | **Chat FAB** (`ChatFAB.tsx`) | Círculo morado flotante, esquina inferior derecha | Abre el chat con el agente/IA de este template |
 | **Botón de ayuda / reporte de bugs** (`BugReportButton.tsx`) | Círculo "?" flotante, esquina inferior derecha, junto al chat | Ayuda y reporte de errores |
+
+### 7.1 CRUD de Style Library
+
+- **Crear/capturar:** el humano elige una o más referencias del workspace. La
+  extracción, creación del estilo y asociación con `sourceTemplateIds` son una
+  sola operación: si algo falla, no aparece una tarjeta con `0 templates`.
+- **Importar:** JSON/CSS/MD también exige elegir una plantilla de referencia.
+  Un archivo de tokens por sí solo no autoriza un estilo huérfano.
+- **Leer:** cada tarjeta muestra nombre, lock, fuentes resolubles y cantidad de
+  templates válidos. Un ID inexistente no cuenta; un estilo inválido no se
+  ofrece al agente como utilizable.
+- **Editar/renombrar:** el CRUD directo se actualiza por ID y no puede quitar la
+  última fuente. Una recaptura por Publicar puede actualizar el registro canónico
+  cuando el humano escribió o confirmó su mismo nombre normalizado exacto.
+- **Eliminar:** requiere confirmación y limpia lock y asociaciones. Si se borra
+  la última plantilla fuente, el estilo se elimina en la misma operación.
+
+Los nombres son únicos por workspace después de `trim`, colapsar espacios
+repetidos y pasar a minúsculas. `create_brand_guideline` directo o renombrar hacia
+un nombre ocupado muestra conflicto; nunca crea una segunda tarjeta. Publicar con
+el mismo nombre normalizado exacto es una recaptura y actualiza la tarjeta
+canónica. Coincidencias por prefijo/fuzzy y fingerprints son sugerencias que
+requieren confirmación y jamás producen una selección o merge silencioso. Si el
+estilo pedido no existe o está inválido, el agente queda bloqueado: no usa estilo
+libre ni genera una salida blanca.
 
 ---
 

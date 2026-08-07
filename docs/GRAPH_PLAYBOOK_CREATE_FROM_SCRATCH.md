@@ -84,18 +84,43 @@ confirmá. Si dice "presentación", es un slide horizontal.
 
 ## 0.3 · Resolución de estilo (cascada, en este orden)
 
-El sistema guarda estilos como tokens, con nombre e id. Cuando el humano
-pide "estilo X":
+El sistema guarda estilos con nombre, id, artefactos y al menos una plantilla
+fuente resolvible. La identidad es única dentro de cada workspace por nombre
+normalizado: `trim`, espacios repetidos colapsados y minúsculas. Esa
+normalización es para igualdad exacta; **no elimina prefijos ni sufijos**.
 
-1. **Biblioteca** — buscá el estilo por nombre (ignorando mayúsculas,
-   espacios y sufijos: "futuraria" matchea "Futuraria_SocialMedia").
-2. **Archivos del workspace** — si no está en la biblioteca, buscá un archivo
-   cuyo nombre coincida o se parezca. Si lo encontrás: **extraé el estilo,
-   guardalo en la biblioteca**, y usalo con normalidad. La próxima vez ya
-   estará en el paso 1.
-3. **Otros workspaces** donde el humano tenga acceso.
-4. **Si no existe en ninguno** — pará y preguntá a cuál se refiere, pidiéndole
-   el enlace. **No inventes un estilo** y le pongas ese nombre.
+Cuando el humano pide "estilo X":
+
+1. **Biblioteca del workspace actual** — buscá una coincidencia exacta del
+   nombre normalizado. Antes de usarla, comprobá que conserve al menos un
+   `sourceTemplateId` resolvible del mismo workspace.
+2. **Candidatos** — coincidencias por prefijo, sufijo o similitud son solo
+   sugerencias. Mostralas y esperá confirmación; nunca elijas una por tu cuenta.
+3. **Archivos del workspace** — si no existe el estilo, podés proponer un
+   archivo como referencia. Solo después de que el humano lo confirme se
+   extrae y crea el estilo de forma atómica: artefactos, registro y asociación
+   con la plantilla fuente se guardan juntos o no se guarda nada.
+4. **Otros workspaces** — pueden aportar candidatos si el humano tiene acceso,
+   pero no cuentan como referencia válida hasta copiar/crear la referencia en
+   el workspace destino con autorización explícita.
+5. **Si no existe o está huérfano/inválido** — devolvé
+   `blocked -> style_not_found` o `blocked -> style_invalid` y preguntá a cuál
+   se refiere. **No inventes el estilo, no uses estilo libre y no generes un
+   diseño blanco como fallback.**
+
+`create_brand_guideline` directo o renombrar hacia un nombre normalizado ya
+ocupado falla con conflicto. La recaptura mediante
+`generate_design_artifacts(action="publish")` es la excepción deliberada: si el
+humano escribió o confirmó un nombre que coincide exactamente después de
+normalizar, actualiza el único registro canónico con ese nombre. El CRUD directo
+de update/rename sigue operando por ID. Los fingerprints visuales sugieren
+candidatos de merge, pero el merge siempre requiere confirmación y nunca ocurre
+automáticamente.
+
+Todo estilo debe conservar una plantilla fuente válida. Una actualización no
+puede vaciar `sourceTemplateIds`; borrar la última plantilla fuente elimina el
+estilo en la misma operación. Eliminar un estilo requiere confirmación y limpia
+su lock y asociaciones.
 
 Si el humano **no menciona** estilo: usá el estilo de su marca. Si su marca
 todavía no tiene estilo, usá estilo libre.

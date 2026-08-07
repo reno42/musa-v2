@@ -26,7 +26,8 @@
 |----------|-----------|---------|
 | `EXTRACTS_FROM` | Artifact → Source | Design system derived from these templates |
 | `PUBLISHES_TO` | Artifact → Artifact | Manual published as new template |
-| `AUTO_MERGED_WITH` | Artifact → Artifact | Fingerprint match → merged into existing brand |
+| `MERGE_CANDIDATE` | Artifact → Artifact | Fingerprint similarity suggested for human review |
+| `MERGED_WITH` | Artifact → Artifact | Explicitly confirmed merge into the canonical style |
 | `VALIDATES_AGAINST` | Evaluation → Artifact | Brand consistency check |
 | `PARENT_OF` | Artifact → Artifact | Manual is child of extraction |
 
@@ -80,9 +81,10 @@ graph TB
     V1 -->|yes| A3["A3: generate_design_artifacts<br/>action=publish + brandName"]
     V1 -->|no| A4["A4: generate_brand_manual<br/>or use manual from extraction"]
 
-    A3 --> V2{"V2: Auto-merge?"}
-    V2 -->|match| A5["A5: Merge into existing brand<br/>append sourceTemplateIds"]
-    V2 -->|new| A6["A6: Create new brand<br/>register in brand_guidelines"]
+    A3 --> V2{"V2: Name + source valid?"}
+    V2 -->|new exact name| A6["A6: Create new brand<br/>with source template"]
+    V2 -->|exact-name recapture| A5["A5: Update canonical brand<br/>preserve sourceTemplateIds"]
+    V2 -->|fuzzy/invalid| B1["B1: Blocked<br/>no partial write"]
 
     A5 --> A7["A7: Link template.brandId"]
     A6 --> A7
@@ -170,13 +172,17 @@ graph TB
 
 | Node | Tool | Params | Expected Output |
 |------|------|--------|-----------------|
-| A3 | `generate_design_artifacts` | `{ templateId, action: "publish", brandName }` | `{ _published, brandId, styleFingerprint, autoMerged }` |
+| A3 | `generate_design_artifacts` | `{ templateId, action: "publish", brandName }` | `{ _published, brandId, styleFingerprint }` |
 
-**Auto-merge logic** (inside A3):
-- Compute `styleFingerprint` from extracted tokens
-- Check existing brands in workspace for matching fingerprint
-- If match → `autoMerged: true`, append `sourceTemplateIds`
-- If no match → create new brand record
+**Identity and publish logic** (inside A3):
+- Normalize `brandName` with trim, repeated-whitespace collapse, and lowercase
+- Require an exact normalized-name match; prefix/fuzzy matches are only candidates
+- Direct `create_brand_guideline` and rename fail on an occupied normalized name
+- `generate_design_artifacts(action="publish")` treats a human-entered or
+  confirmed exact normalized-name match as recapture of the one canonical row
+- Direct CRUD update/rename still operates by `brandId`
+- Require at least one resolvable source template in the same workspace
+- Compute `styleFingerprint` only to suggest an explicit merge; never auto-merge
 
 ### Phase 4: Brand Manual Generation
 
@@ -252,18 +258,27 @@ on_fail: |
   Return artifacts as ephemeral response
 ```
 
-### V2: Auto-Merge Detection
+### V2: Name and Source Validation
 ```yaml
 check: |
-  Does workspace have existing brand with matching styleFingerprint?
-  Fingerprint: hash of colors + typography + spacing + radii + shadows
-on_match: |
-  autoMerged: true
-  Append templateId to existing brand.sourceTemplateIds
-  Update tokens (latest extraction wins)
+  Is normalized brandName unique in this workspace?
+  Does every sourceTemplateId resolve in this same workspace?
+  Will the style retain at least one valid source after the operation?
+on_exact_name_recapture: |
+  For action=publish, resolve the exact normalized name to its canonical brandId
+  Append/deduplicate templateId without dropping the final valid source
+  Update artifacts atomically
 on_new: |
   Create new brand_guidelines record
   Set brand.sourceTemplateIds = [templateId]
+on_conflict_or_invalid: |
+  Direct create/rename conflicts when the normalized name is occupied
+  Fuzzy matches never count as a recapture
+  Abort without a partial guideline or source association
+  Return conflict, style_not_found, or style_invalid as appropriate
+fingerprint: |
+  Hash colors + typography + spacing + radii + shadows
+  Suggest merge candidates only; merge requires explicit confirmation
 ```
 
 ### V3: Manual Quality
@@ -323,13 +338,15 @@ Recovery:
   4. If createTemplate fails: manual is still returned as HTML string
 ```
 
-### ER4: Auto-Merge Incorrect
+### ER4: Name Conflict or Invalid Source
 ```
-Symptom: Two brands merged that should be separate (false positive)
+Symptom: Direct create/rename conflicts, or the requested style has no valid source template
 Recovery:
-  1. Check styleFingerprint overlap ratio
-  2. If fingerprint match is coincidental: provide different brandName
-  3. Manual override: delete brand record, re-publish with unique name
+  1. Resolve identity by exact normalized name, never by prefix/fuzzy match
+  2. For publish recapture, confirm the exact name; update the canonical match
+  3. For direct CRUD update/rename, select the existing brandId explicitly
+  4. Otherwise choose a unique name or a valid same-workspace reference
+  5. Do not fall back to free/blank design; remain blocked until resolved
 ```
 
 ### ER5: Font Import Not Available
@@ -389,8 +406,8 @@ interface BrandExtractionReport {
   };
   brand: {
     brandId: string | null;
-    autoMerged: boolean;
-    mergedIntoBrand: string | null;
+    operation: "created" | "updated";
+    sourceTemplateIds: string[];
     registeredAt: string;
   } | null;
   manual: {
@@ -430,7 +447,10 @@ interface BrandExtractionReport {
 ### Step 4: Publish to Brand Guidelines
 ```json
 { "method": "tools/call", "params": { "name": "generate_design_artifacts", "arguments": { "templateId": "tpl_...", "action": "publish", "brandName": "My Brand" } } }
-// Returns: { _published: true, brandId, styleFingerprint, autoMerged }
+// Returns: { _published: true, brandId, styleFingerprint }
+// An exact normalized-name match recaptures and updates the canonical style.
+// An invalid source aborts the publish. Fuzzy/fingerprint matches are suggestions
+// only; merge is a separate, explicitly confirmed action.
 ```
 
 ### Step 5: Generate Brand Manual
@@ -458,8 +478,8 @@ interface BrandExtractionReport {
 | DAG as work lineage | E1→S1→V0→P1/P2→A1/A2→V1→A3/A4→A8→T1 |
 | Deterministic output | `sourceHash` + `styleFingerprint` ensure same input → same extraction |
 | Provenance | TemplateIds → sourceHash → manualTemplateId trace in PG node |
-| Auto-merge (ratchet on data) | Fingerprint matching prevents duplicate brands; new templates enrich existing |
-| Evaluation at boundaries | V0 (validity), V1 (publish decision), V2 (auto-merge), V3 (manual quality), V4 (brand consistency) |
+| Stable style identity | Workspace + exact normalized name is unique; fingerprint is advisory only |
+| Evaluation at boundaries | V0 (validity), V1 (publish decision), V2 (name/source validation), V3 (manual quality), V4 (brand consistency) |
 | Bounded context | Each node receives only needed fields; extraction doesn't dump full template content |
 | Best-effort vs critical | Manual generation is best-effort (non-blocking); extraction is critical |
 | Idempotent design | Same templates → same extraction → same manual; re-running is safe |
