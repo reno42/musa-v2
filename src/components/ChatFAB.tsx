@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
   LLM_MAX_TOKENS,
@@ -1255,6 +1256,30 @@ async function spawnSubagent(params: {
   // 3. Subagent conversation — fresh, no Leader history
   // Include sessionId in the first message so the subagent can use it immediately
   let subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
+
+  // ── Diagnostic: capture subConv structure on 400 errors (Phase F) ──
+  const captureSubConvDiagnostic = async (errorMsg: string, roundIdx: number) => {
+    if (!hasDurableSession) return;
+    const structure = subConv.map((msg: any, i: number) => {
+      const tc = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      return {
+        i,
+        role: msg.role,
+        tcCount: tc.length,
+        tcIds: tc.map((c: any) => c?.id).filter(Boolean).join(",") || undefined,
+        tcId: msg.tool_call_id || undefined,
+        contentPreview: typeof msg.content === "string" ? msg.content.slice(0, 100) : Array.isArray(msg.content) ? `[${msg.content.length} blocks]` : String(msg.content || "").slice(0, 100),
+      };
+    });
+    try {
+      await mcpCall("harness_log_entry", {
+        sessionId,
+        entryType: "diagnostic",
+        content: JSON.stringify({ error: errorMsg.slice(0, 300), round: roundIdx + 1, messages: structure }),
+      });
+    } catch { /* best-effort diagnostic */ }
+  };
+
   // Tracks every templateId the implementer actually CREATED or WROTE TO via
   // a real tool call — never from read-only calls (get_template, get_frame,
   // list_templates, etc.), so inspecting a reference/style template is never
@@ -1326,6 +1351,7 @@ async function spawnSubagent(params: {
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
+        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round);
         throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
       }
       data = await resp.json();
@@ -1337,6 +1363,7 @@ async function spawnSubagent(params: {
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
+        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round);
         throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
       }
       data = await resp.json();
@@ -1496,6 +1523,33 @@ async function spawnSubagent(params: {
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
     }
     if (isAnthropic && anthropicResults.length > 0) subConv.push({ role: "user", content: anthropicResults });
+
+    // ── Per-round trace for governance panel (Phase G) ──
+    if (hasDurableSession) {
+      const roundTokens = providerUsage
+        ? { in: providerUsage.inputTokens, out: providerUsage.outputTokens }
+        : { in: estimatedInputForRound, out: 0 };
+      const traceEntry = {
+        type: "round",
+        round: round + 1,
+        assistantText: textContent?.slice(0, 300) || null,
+        toolCalls: toolCalls.map((tc: any) => ({ name: tc.name, id: tc.id, argsPreview: JSON.stringify(tc.args || {}).slice(0, 200) })),
+        toolResults: toolCalls.map((tc: any, idx: number) => {
+          const resultMsg = isAnthropic ? anthropicResults[idx] : subConv[subConv.length - toolCalls.length + idx];
+          const rc = typeof resultMsg?.content === "string" ? resultMsg.content : "";
+          return { tool_call_id: tc.id, len: rc.length, preview: rc.slice(0, 200) };
+        }),
+        tokens: { input: roundTokens.in, output: roundTokens.out, cumulative: inputTokens + outputTokens },
+        truncated: false,
+      };
+      try {
+        await mcpCall("harness_log_entry", {
+          sessionId,
+          entryType: "subagent_trace",
+          content: JSON.stringify(traceEntry),
+        });
+      } catch { /* best-effort trace */ }
+    }
   }
 
   // Max rounds reached
@@ -1697,6 +1751,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const leaderKey = providerKeys[leaderProvider] || "";
   const [showSettings, setShowSettings] = useState(!leaderKey);
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
+  
+  // ── Governance panel state ──
+  const [governanceSessions, setGovernanceSessions] = useState<GovernanceSession[]>([]);
+  const [showGovernance, setShowGovernance] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -2078,6 +2136,19 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           let parsedFinalResult: any = null;
           if (tc.name === "harness_delegate_task") {
             try { parsedFinalResult = JSON.parse(finalResultStr); } catch { /* opaque result */ }
+            // Track session for governance panel
+            if (parsedFinalResult?.sessionId) {
+              setGovernanceSessions(prev => {
+                if (prev.some(s => s.sessionId === parsedFinalResult.sessionId)) return prev;
+                return [...prev.slice(-49), {
+                  sessionId: parsedFinalResult.sessionId,
+                  taskId: tc.args?.taskId,
+                  role: parsedFinalResult.role || "unknown",
+                  status: parsedFinalResult.verification_failed ? "failed" : parsedFinalResult.outcome || "unknown",
+                  ts: Date.now(),
+                }];
+              });
+            }
           }
           const finalIsError = finalResultStr.includes('"error"') || finalResultStr.includes('"code":-')
             || parsedFinalResult?.verification_failed === true
@@ -2218,6 +2289,20 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
           <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)", flex: 1 }}>Chat</span>
+
+          <button type="button" aria-label="Gobernanza" onClick={() => setShowGovernance(true)} title="Panel de Gobernanza — trazas de subagentes" style={{
+            background: governanceSessions.length > 0 ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.05)",
+            border: "none", color: governanceSessions.length > 0 ? "#a78bfa" : "rgba(255,255,255,0.4)",
+            cursor: "pointer", fontSize: 14, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
+            position: "relative",
+          }}>
+            🏛️
+            {governanceSessions.length > 0 && (
+              <span style={{ position: "absolute", top: -2, right: -4, fontSize: 8, background: "#a78bfa", color: "#fff", borderRadius: 8, padding: "0 4px", fontWeight: 700, lineHeight: "14px" }}>
+                {governanceSessions.length}
+              </span>
+            )}
+          </button>
 
           <button type="button" aria-label="Cerrar chat" onClick={() => setOpen(false)} style={{
             background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",
@@ -2463,6 +2548,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           </div>
         </div>
       </div>
+
+      {/* Governance Panel */}
+      {showGovernance && (
+        <GovernancePanel
+          sessions={governanceSessions}
+          onClose={() => setShowGovernance(false)}
+        />
+      )}
     </>
   );
 }

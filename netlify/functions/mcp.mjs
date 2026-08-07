@@ -3472,7 +3472,7 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         sessionId: { type: "string", description: "Session to log to" },
-        entryType: { type: "string", enum: ["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump"], description: "Type of entry" },
+        entryType: { type: "string", enum: ["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump", "diagnostic", "subagent_trace"], description: "Type of entry" },
         content: { type: "string", description: "Markdown content of the entry" },
         filesTouched: { type: "array", items: { type: "string" }, description: "Files modified" },
         verdict: { type: "string", description: "If entryType=verdict: APPROVED or CHANGES_REQUESTED" },
