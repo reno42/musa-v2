@@ -1130,6 +1130,38 @@ async function spawnSubagent(params: {
         { role: "user", content: "[Conversación recortada. Continúa tu tarea.]" },
         ...subConv.slice(-10),
       ];
+      // REQ-005: subConv.slice(-10) can orphan tool_result messages
+      // whose assistant (with tool_use/tool_calls) was trimmed off.
+      // LLMs reject orphaned tool results → 400. Walk forward from
+      // index 2 and strip any tool_result whose matching tool call
+      // doesn't exist in the kept messages.
+      const keptHasToolId = (id: string): boolean => {
+        for (let k = 0; k < subConv.length; k++) {
+          const m = subConv[k];
+          if (Array.isArray(m?.content)) {
+            if (m.content.some((b: any) => b.type === "tool_use" && b.id === id)) return true;
+          }
+          if (Array.isArray(m?.tool_calls)) {
+            if (m.tool_calls.some((tc: any) => tc.id === id)) return true;
+          }
+        }
+        return false;
+      };
+      let si = 2; // start after subConv[0] + truncation message
+      while (si < subConv.length) {
+        const msg = subConv[si];
+        let toolId: string | undefined;
+        if (Array.isArray(msg?.content)) {
+          toolId = msg.content.find((b: any) => b.type === "tool_result")?.tool_use_id;
+        }
+        if (msg?.role === "tool") toolId = msg.tool_call_id;
+        if (!toolId) break; // not a tool result — safe, stop stripping
+        if (!keptHasToolId(toolId)) {
+          subConv.splice(si, 1); // orphaned — remove, re-check same index
+        } else {
+          break; // found a non-orphaned one — rest is safe
+        }
+      }
     }
 
     let data: any;
