@@ -1373,9 +1373,17 @@ async function spawnSubagent(params: {
         // Push the partial assistant response so the model sees where it
         // stopped, then ask it to resume. The model will re-emit the
         // truncated tool call (or complete it) instead of starting fresh.
-        if (isAnthropic) { subConv.push({ role: "assistant", content: data.content || [] }); }
-        else { subConv.push(data.choices[0].message); }
-        subConv.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped — complete the tool call you were generating." });
+        if (isAnthropic) {
+          subConv.push({ role: "assistant", content: data.content || [] });
+          subConv.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped — complete the tool call you were generating." });
+        } else {
+          // OpenAI API rejects assistant messages with tool_calls not
+          // followed by tool results. Skip the truncated message and
+          // embed any partial text context in the continue prompt.
+          const partialText = data.choices?.[0]?.message?.content || "";
+          const extra = partialText ? ` Context before cut-off: "${partialText.slice(-300)}"` : "";
+          subConv.push({ role: "user", content: `Your previous response was cut off by the token limit. Continue exactly from where you stopped — complete the tool call you were generating.${extra}` });
+        }
         continue;
       }
       const reason = `El proveedor truncó la respuesta por límite de tokens tras ${continueRetries} intento(s) de continuación; no se ejecutaron argumentos potencialmente incompletos.`;
@@ -1857,9 +1865,16 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         if (responseStoppedIncomplete(data, isAnthropic)) {
           if (leaderContinueRetries < MAX_CONTINUE_RETRIES) {
             leaderContinueRetries++;
-            if (isAnthropic) { conversation.push({ role: "assistant", content: data.content || [] }); }
-            else { conversation.push(data.choices[0].message); }
-            conversation.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped." });
+            if (isAnthropic) {
+              conversation.push({ role: "assistant", content: data.content || [] });
+              conversation.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped." });
+            } else {
+              // OpenAI API rejects assistant messages with tool_calls not
+              // followed by tool results. Skip the truncated message.
+              const partialText = data.choices?.[0]?.message?.content || "";
+              const extra = partialText ? ` Context before cut-off: "${partialText.slice(-300)}"` : "";
+              conversation.push({ role: "user", content: `Your previous response was cut off by the token limit. Continue exactly from where you stopped.${extra}` });
+            }
             continue;
           }
           setMessages(prev => [...prev, {
