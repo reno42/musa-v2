@@ -12,6 +12,89 @@ export const LLM_MAX_TOKENS = 8192;
  *  output instead of treating it as a terminal failure. */
 export const MAX_CONTINUE_RETRIES = 2;
 
+// ═══════════════════════════════════════════════
+// Pre-flight conversation validation (Level 6)
+// ═══════════════════════════════════════════════
+
+export interface ConversationValidation {
+  ok: boolean;
+  /** Index of the message where orphaned tool_calls were detected. */
+  orphanedAt?: number;
+  /** Human-readable explanation of the violation. */
+  detail?: string;
+  /** tool_call_ids that never received corresponding tool results. */
+  pendingIds?: string[];
+}
+
+/** Validates that assistant messages with tool_calls are always followed by
+ *  the required number of tool-result messages before the next assistant
+ *  message or the end of the conversation. OpenAI-compatible APIs reject
+ *  conversations that violate this invariant with a 400 error.
+ *
+ *  Call this BEFORE every API request to catch structural corruption
+ *  locally instead of wasting tokens on a guaranteed 400. */
+export function validateConversationStructure(
+  messages: any[],
+  isAnthropic: boolean,
+): ConversationValidation {
+  const pending = new Map<string, number>(); // tool_call_id → message index
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") continue;
+
+    // ── Extract tool-call IDs from this assistant message ──
+    const newCallIds: string[] = [];
+    if (!isAnthropic && msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        if (tc?.id) newCallIds.push(tc.id);
+      }
+    }
+    if (isAnthropic && msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block?.type === "tool_use" && block?.id) newCallIds.push(block.id);
+      }
+    }
+
+    // ── Check: orphaned tool_calls from a PREVIOUS assistant message? ──
+    if (newCallIds.length > 0 && pending.size > 0) {
+      return {
+        ok: false,
+        orphanedAt: i,
+        detail: `New tool_calls at index ${i} (${newCallIds.join(",")}) while ${pending.size} previous tool_calls still need responses: ${[...pending.keys()].join(",")}`,
+        pendingIds: [...pending.keys()],
+      };
+    }
+
+    // ── Track new pending tool calls ──
+    for (const id of newCallIds) pending.set(id, i);
+
+    // ── Resolve tool results ──
+    if (!isAnthropic && msg.role === "tool" && typeof msg.tool_call_id === "string") {
+      pending.delete(msg.tool_call_id);
+    }
+    if (isAnthropic && msg.role === "user" && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block?.type === "tool_result" && typeof block?.tool_use_id === "string") {
+          pending.delete(block.tool_use_id);
+        }
+      }
+    }
+  }
+
+  // ── Check: any tool_calls that never got results? ──
+  if (pending.size > 0) {
+    return {
+      ok: false,
+      orphanedAt: messages.length - 1,
+      detail: `${pending.size} tool_calls never received responses (at end of conversation): ${[...pending.keys()].join(",")}`,
+      pendingIds: [...pending.keys()],
+    };
+  }
+
+  return { ok: true };
+}
+
 export interface WorkContract {
   mode?: "create" | "edit";
   expectedTemplateCount?: number;

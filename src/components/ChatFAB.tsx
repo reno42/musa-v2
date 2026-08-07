@@ -29,6 +29,7 @@ import {
   sanitizeRuntimeText,
   selectProviderTools,
   serializeValidJson,
+  validateConversationStructure,
   validateDesignToolPayload,
   validateWorkContract,
   type ArtifactSnapshot,
@@ -1147,6 +1148,25 @@ async function spawnSubagent(params: {
     tools = REVIEWER_TOOLS;
   }
   tools = selectProviderTools(tools, providerId);
+
+  // ── System prompt snapshot (Level 8) – log resolved prompt + tool list ──
+  if (hasDurableSession) {
+    try {
+      await mcpCall("harness_log_entry", {
+        sessionId,
+        entryType: "diagnostic",
+        content: JSON.stringify({
+          type: "system_prompt",
+          role: params.role,
+          promptPreview: systemPrompt.slice(0, 3000),
+          promptLen: systemPrompt.length,
+          toolCount: tools.length,
+          toolNames: tools.map((t: any) => t?.function?.name || t?.name).filter(Boolean).slice(0, 60),
+        }),
+      });
+    } catch { /* best-effort */ }
+  }
+
   const runController = new AbortController();
   let deadlineExpired = false;
   let continueRetries = 0;
@@ -1257,9 +1277,12 @@ async function spawnSubagent(params: {
   // Include sessionId in the first message so the subagent can use it immediately
   let subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
 
-  // ── Diagnostic: capture subConv structure on 400 errors (Phase F) ──
-  const captureSubConvDiagnostic = async (errorMsg: string, roundIdx: number) => {
+  // ── Diagnostic: capture subConv structure + request body on errors (Levels 5+6) ──
+  let lastRequestBody = "";
+  const captureSubConvDiagnostic = async (errorMsg: string, roundIdx: number, requestBody?: string) => {
     if (!hasDurableSession) return;
+    // Pre-flight validation result
+    const validation = validateConversationStructure(subConv, isAnthropic);
     const structure = subConv.map((msg: any, i: number) => {
       const tc = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
       return {
@@ -1271,11 +1294,19 @@ async function spawnSubagent(params: {
         contentPreview: typeof msg.content === "string" ? msg.content.slice(0, 100) : Array.isArray(msg.content) ? `[${msg.content.length} blocks]` : String(msg.content || "").slice(0, 100),
       };
     });
+    const body = requestBody || lastRequestBody;
     try {
       await mcpCall("harness_log_entry", {
         sessionId,
         entryType: "diagnostic",
-        content: JSON.stringify({ error: errorMsg.slice(0, 300), round: roundIdx + 1, messages: structure }),
+        content: JSON.stringify({
+          error: errorMsg.slice(0, 300),
+          round: roundIdx + 1,
+          preflight: validation.ok ? "ok" : { orphanedAt: validation.orphanedAt, detail: validation.detail, pendingIds: validation.pendingIds },
+          messages: structure,
+          requestBodyPreview: body ? body.slice(0, 3000) : undefined,
+          requestBodyLen: body ? body.length : 0,
+        }),
       });
     } catch { /* best-effort diagnostic */ }
   };
@@ -1305,6 +1336,7 @@ async function spawnSubagent(params: {
     // Tool schemas and the system prompt are most of this request. Compact only
     // when the complete provider body approaches the model context budget.
     if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+      const beforeLen = subConv.length;
       let compacted = compactConversationAtomic(subConv, {
         maxMessages: 40,
         preserveFirstMessages: 1,
@@ -1318,6 +1350,25 @@ async function spawnSubagent(params: {
         }).messages;
       }
       subConv = compacted;
+      // ── Compaction audit (Level 9) ──
+      if (hasDurableSession) {
+        const dropped = beforeLen - subConv.length;
+        try {
+          await mcpCall("harness_log_entry", {
+            sessionId,
+            entryType: "diagnostic",
+            content: JSON.stringify({
+              type: "compaction",
+              role: params.role,
+              round: round + 1,
+              before: beforeLen,
+              after: subConv.length,
+              dropped,
+              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000 ? "still_over_budget" : "ok",
+            }),
+          });
+        } catch { /* best-effort */ }
+      }
       emitProgress("compacted", {
         round: round + 1,
         reason: "context_budget",
@@ -1344,26 +1395,42 @@ async function spawnSubagent(params: {
     };
 
     if (isAnthropic) {
+      // ── Pre-flight validation (Level 6) ──
+      const preflight = validateConversationStructure(subConv, true);
+      if (!preflight.ok) {
+        await captureSubConvDiagnostic(`Pre-flight validation FAILED: ${preflight.detail}`, round);
+        throw new Error(`Pre-flight conversation validation failed at round ${round + 1}: ${preflight.detail}`);
+      }
+      const reqBody = JSON.stringify({ model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } });
+      lastRequestBody = reqBody;
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } }),
+        body: reqBody,
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
-        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round);
+        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round, reqBody);
         throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
       }
       data = await resp.json();
     } else {
+      // ── Pre-flight validation (Level 6) ──
+      const preflight = validateConversationStructure(subConv, false);
+      if (!preflight.ok) {
+        await captureSubConvDiagnostic(`Pre-flight validation FAILED: ${preflight.detail}`, round);
+        throw new Error(`Pre-flight conversation validation failed at round ${round + 1}: ${preflight.detail}`);
+      }
+      const reqBody = JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: LLM_MAX_TOKENS, tools, tool_choice: "auto" });
+      lastRequestBody = reqBody;
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: LLM_MAX_TOKENS, tools, tool_choice: "auto" }),
+        body: reqBody,
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
-        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round);
+        await captureSubConvDiagnostic(`Subagent ${classified.status} (${classified.category}): ${classified.body}`, round, reqBody);
         throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
       }
       data = await resp.json();
@@ -1401,6 +1468,11 @@ async function spawnSubagent(params: {
         }
       }
     }
+
+    // ── Finish reason (Level 10) – raw provider signal ──
+    const roundFinishReason: string = isAnthropic
+      ? (data?.stop_reason || "")
+      : (data?.choices?.[0]?.finish_reason || "");
 
     if (responseStoppedIncomplete(data, isAnthropic)) {
       if (continueRetries < MAX_CONTINUE_RETRIES) {
@@ -1540,7 +1612,8 @@ async function spawnSubagent(params: {
           return { tool_call_id: tc.id, len: rc.length, preview: rc.slice(0, 200) };
         }),
         tokens: { input: roundTokens.in, output: roundTokens.out, cumulative: inputTokens + outputTokens },
-        truncated: false,
+        truncated: responseStoppedIncomplete(data, isAnthropic),
+        finishReason: roundFinishReason || undefined,
       };
       try {
         await mcpCall("harness_log_entry", {
@@ -1847,6 +1920,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
         // ── Trim conversation to prevent context overflow ──
         if (estimateFullRequestTokens(systemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+          const leaderBeforeLen = conversation.length;
           let compacted = compactConversationAtomic(conversation, {
             maxMessages: 40,
             preserveFirstMessages: 2,
@@ -1860,6 +1934,23 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }).messages;
           }
           conversation = compacted;
+          // ── Leader compaction audit (Level 9) ──
+          if (currentContext.sessionId) {
+            try {
+              await mcpCall("harness_log_entry", {
+                sessionId: currentContext.sessionId,
+                entryType: "diagnostic",
+                content: JSON.stringify({
+                  type: "compaction",
+                  role: "leader",
+                  round: round + 1,
+                  before: leaderBeforeLen,
+                  after: conversation.length,
+                  dropped: leaderBeforeLen - conversation.length,
+                }),
+              }).catch(() => {});
+            } catch { /* best-effort */ }
+          }
         }
 
         // ── Proactive context dump when conversation grows large ──
@@ -1880,26 +1971,80 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         let data: any;
 
         if (isAnthropic) {
+          // ── Pre-flight validation (Level 6) ──
+          const preflight = validateConversationStructure(conversation, true);
+          if (!preflight.ok) {
+            setMessages(prev => [...prev, { role: "assistant", content: `Error interno: conversación corrupta antes de enviar a Anthropic (ronda ${round + 1}). Detectado por pre-flight — se evitó un 400.`, ts: Date.now() }]);
+            if (currentContext.sessionId) {
+              await mcpCall("harness_log_entry", {
+                sessionId: currentContext.sessionId, entryType: "diagnostic",
+                content: JSON.stringify({ type: "preflight_failure", role: "leader", round: round + 1, detail: preflight.detail, orphanedAt: preflight.orphanedAt, pendingIds: preflight.pendingIds }),
+              }).catch(() => {});
+            }
+            break;
+          }
+          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } });
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } }),
+            body: reqBody,
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
-            if (resp.status === 400) { leaderHttpError = classifyHttpError(resp.status, body); break; }
+            if (resp.status === 400) {
+              // ── Leader diagnostic on 400 (Level 5) ──
+              if (currentContext.sessionId) {
+                await mcpCall("harness_log_entry", {
+                  sessionId: currentContext.sessionId, entryType: "diagnostic",
+                  content: JSON.stringify({
+                    type: "leader_400", round: round + 1,
+                    messages: conversation.map((m: any, i: number) => ({ i, role: m.role, tcCount: Array.isArray(m.tool_calls) ? m.tool_calls.length : 0, tcId: m.tool_call_id || undefined, contentPreview: typeof m.content === "string" ? m.content.slice(0, 100) : `[${Array.isArray(m.content) ? m.content.length : 0} blocks]` })),
+                    requestBodyPreview: reqBody.slice(0, 3000),
+                    requestBodyLen: reqBody.length,
+                  }),
+                }).catch(() => {});
+              }
+              leaderHttpError = classifyHttpError(resp.status, body); break;
+            }
             throw new Error(`Anthropic ${resp.status}: ${body}`);
           }
           data = await resp.json();
         } else {
+          // ── Pre-flight validation (Level 6) ──
+          const preflight = validateConversationStructure(conversation, false);
+          if (!preflight.ok) {
+            setMessages(prev => [...prev, { role: "assistant", content: `Error interno: conversación corrupta antes de enviar a ${prov.label} (ronda ${round + 1}). Detectado por pre-flight — se evitó un 400.`, ts: Date.now() }]);
+            if (currentContext.sessionId) {
+              await mcpCall("harness_log_entry", {
+                sessionId: currentContext.sessionId, entryType: "diagnostic",
+                content: JSON.stringify({ type: "preflight_failure", role: "leader", round: round + 1, detail: preflight.detail, orphanedAt: preflight.orphanedAt, pendingIds: preflight.pendingIds }),
+              }).catch(() => {});
+            }
+            break;
+          }
+          const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" }),
+            body: reqBody,
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
-            if (resp.status === 400) { leaderHttpError = classifyHttpError(resp.status, body); break; }
+            if (resp.status === 400) {
+              // ── Leader diagnostic on 400 (Level 5) ──
+              if (currentContext.sessionId) {
+                await mcpCall("harness_log_entry", {
+                  sessionId: currentContext.sessionId, entryType: "diagnostic",
+                  content: JSON.stringify({
+                    type: "leader_400", round: round + 1,
+                    messages: conversation.map((m: any, i: number) => ({ i, role: m.role, tcCount: Array.isArray(m.tool_calls) ? m.tool_calls.length : 0, tcId: m.tool_call_id || undefined, contentPreview: typeof m.content === "string" ? m.content.slice(0, 100) : `[${Array.isArray(m.content) ? m.content.length : 0} blocks]` })),
+                    requestBodyPreview: reqBody.slice(0, 3000),
+                    requestBodyLen: reqBody.length,
+                  }),
+                }).catch(() => {});
+              }
+              leaderHttpError = classifyHttpError(resp.status, body); break;
+            }
             throw new Error(`${prov.label} ${resp.status}: ${body}`);
           }
           data = await resp.json();
@@ -1928,6 +2073,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             }
           }
         }
+
+        // ── Leader finish reason (Level 10) ──
+        const leaderFinishReason: string = isAnthropic
+          ? (data?.stop_reason || "")
+          : (data?.choices?.[0]?.finish_reason || "");
 
         if (responseStoppedIncomplete(data, isAnthropic)) {
           if (leaderContinueRetries < MAX_CONTINUE_RETRIES) {
@@ -2186,6 +2336,37 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           else { conversation.push({ role: "tool", tool_call_id: tc.id, content: finalResultStr }); }
         }
         if (isAnthropic && anthropicResults.length > 0) conversation.push({ role: "user", content: anthropicResults });
+
+        // ── Leader per-round trace (Level 7) ──
+        if (currentContext.sessionId && toolCalls.length > 0) {
+          try {
+            // Reconstruct results from conversation since the leader pushes
+            // tool results directly (not via a separate tracking var)
+            const leaderToolResults = toolCalls.map((tc) => {
+              const resultMsg = isAnthropic
+                ? anthropicResults.find((r: any) => r?.tool_use_id === tc.id)
+                : conversation.find((m: any) => m?.role === "tool" && m?.tool_call_id === tc.id);
+              const rc = typeof resultMsg?.content === "string" ? resultMsg.content : "";
+              return { tool_call_id: tc.id, len: rc.length, preview: rc.slice(0, 200) };
+            });
+            const traceEntry = {
+              type: "round",
+              role: "leader",
+              round: round + 1,
+              assistantText: textContent?.slice(0, 300) || null,
+              toolCalls: toolCalls.map((tc: any) => ({ name: tc.name, id: tc.id, argsPreview: JSON.stringify(tc.args || {}).slice(0, 200) })),
+              toolResults: leaderToolResults,
+              truncated: responseStoppedIncomplete(data, isAnthropic),
+              finishReason: leaderFinishReason || undefined,
+              conversationLen: conversation.length,
+            };
+            await mcpCall("harness_log_entry", {
+              sessionId: currentContext.sessionId,
+              entryType: "subagent_trace",
+              content: JSON.stringify(traceEntry),
+            }).catch(() => {});
+          } catch { /* best-effort */ }
+        }
 
         if (round === MAX_TOOL_ROUNDS) {
           setMessages(prev => [...prev, { role: "assistant", content: textContent.trim() || "(límite de iteraciones alcanzado — revisa el Kanban)", ts: Date.now() }]);

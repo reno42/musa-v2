@@ -13,21 +13,40 @@ export interface GovernanceSession {
 
 interface TraceEntry {
   type: "round";
+  role?: string;
   round: number;
   assistantText: string | null;
   toolCalls: Array<{ name: string; id: string; argsPreview: string }>;
   toolResults: Array<{ tool_call_id: string; len: number; preview: string }>;
   tokens: { input: number; output: number; cumulative: number };
   truncated: boolean;
+  finishReason?: string;
+  conversationLen?: number;
 }
 
 interface DiagnosticEntry {
-  error: string;
-  round: number;
-  messages: Array<{
+  error?: string;
+  round?: number;
+  messages?: Array<{
     i: number; role: string; tcCount: number;
     tcIds?: string; tcId?: string; contentPreview: string;
   }>;
+  type?: string;
+  role?: string;
+  promptPreview?: string;
+  promptLen?: number;
+  toolCount?: number;
+  toolNames?: string[];
+  before?: number;
+  after?: number;
+  dropped?: number;
+  reason?: string;
+  detail?: string;
+  orphanedAt?: number;
+  pendingIds?: string[];
+  requestBodyPreview?: string;
+  requestBodyLen?: number;
+  preflight?: any;
 }
 
 interface SessionData {
@@ -165,13 +184,55 @@ export function GovernancePanel({ sessions, onClose }: {
                     {sd?.diagnostics.map((d, di) => (
                       <div key={`diag-${di}`} style={{ marginBottom: 10, borderRadius: 8, border: "1px solid rgba(248,113,113,0.2)", padding: 10, background: "rgba(248,113,113,0.05)" }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: "#f87171", marginBottom: 4 }}>
-                          🔍 Diagnóstico — Ronda {d.round}
+                          🔍 {d.type ? `${d.type.replace(/_/g, " ")} — ` : ""}Diagnóstico — Ronda {d.round ?? "?"}
                         </div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginBottom: 6, wordBreak: "break-word" }}>
-                          {d.error.slice(0, 200)}
-                        </div>
-                        <div style={{ fontSize: 9, fontFamily: "monospace", color: "rgba(255,255,255,0.35)", maxHeight: 200, overflow: "auto" }}>
-                          {d.messages.map((m, mi) => (
+                        {d.error && (
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginBottom: 6, wordBreak: "break-word" }}>
+                            {d.error.slice(0, 200)}
+                          </div>
+                        )}
+                        {/* Compaction audit */}
+                        {d.type === "compaction" && (
+                          <div style={{ fontSize: 10, color: "#fbbf24", marginBottom: 4 }}>
+                            📦 Compactación: {d.before} → {d.after} msgs ({d.dropped} eliminados)
+                            {d.role ? ` · ${d.role}` : ""}
+                            {d.reason ? ` · ${d.reason}` : ""}
+                          </div>
+                        )}
+                        {/* System prompt snapshot */}
+                        {d.type === "system_prompt" && (
+                          <div style={{ marginBottom: 6 }}>
+                            <div style={{ fontSize: 10, color: "#a78bfa" }}>
+                              📋 System prompt ({d.role}): {d.promptLen?.toLocaleString()} chars · {d.toolCount} tools
+                            </div>
+                            <div style={{ fontSize: 8, color: "rgba(255,255,255,0.25)", maxHeight: 60, overflow: "auto" }}>
+                              {d.toolNames?.join(", ")}
+                            </div>
+                          </div>
+                        )}
+                        {/* Pre-flight failure */}
+                        {d.type === "preflight_failure" && (
+                          <div style={{ fontSize: 10, color: "#f87171", marginBottom: 4 }}>
+                            ⚠️ Pre-flight FAILED: {d.detail}
+                            {d.orphanedAt != null ? ` en índice ${d.orphanedAt}` : ""}
+                            {d.pendingIds?.length ? ` · huérfanos: ${d.pendingIds.join(",")}` : ""}
+                          </div>
+                        )}
+                        {/* Request body preview */}
+                        {d.requestBodyPreview && (
+                          <div style={{ fontSize: 8, fontFamily: "monospace", color: "rgba(255,255,255,0.25)", marginBottom: 4, padding: "4px 6px", background: "rgba(255,255,255,0.02)", borderRadius: 3, maxHeight: 100, overflow: "auto" }}>
+                            📤 Request body ({d.requestBodyLen?.toLocaleString()} chars): {d.requestBodyPreview.slice(0, 500)}
+                          </div>
+                        )}
+                        {/* Preflight in diagnostic */}
+                        {d.preflight && d.preflight !== "ok" && (
+                          <div style={{ fontSize: 10, color: "#fbbf24", marginBottom: 4 }}>
+                            🔎 Post-mortem preflight: huérfanos en índice {d.preflight.orphanedAt}: {d.preflight.detail}
+                          </div>
+                        )}
+                        {d.messages && (
+                          <div style={{ fontSize: 9, fontFamily: "monospace", color: "rgba(255,255,255,0.35)", maxHeight: 200, overflow: "auto" }}>
+                            {d.messages.map((m, mi) => (
                             <div key={mi} style={{
                               padding: "2px 0",
                               color: m.role === "assistant" && m.tcCount > 0 ? "#fbbf24" :
@@ -181,7 +242,8 @@ export function GovernancePanel({ sessions, onClose }: {
                               [{m.i}] {m.role}{m.tcCount > 0 ? ` (${m.tcCount} tc: ${m.tcIds})` : ""}{m.tcId ? ` ← ${m.tcId}` : ""} {m.contentPreview.slice(0, 40)}
                             </div>
                           ))}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     ))}
 
@@ -207,6 +269,9 @@ export function GovernancePanel({ sessions, onClose }: {
                           >
                             <span style={{ fontSize: 9, transition: "transform 0.2s", transform: isRoundOpen ? "rotate(0deg)" : "rotate(-90deg)" }}>▾</span>
                             <span style={{ fontWeight: 600, color: "rgba(255,255,255,0.7)" }}>Ronda {t.round}</span>
+                            {t.role && t.role !== "implementer" && (
+                              <span style={{ ...pill, background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>{t.role}</span>
+                            )}
                             <span style={{ ...pill, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>
                               {fmtTokens(t.tokens.input)} in / {fmtTokens(t.tokens.output)} out
                             </span>
@@ -214,6 +279,8 @@ export function GovernancePanel({ sessions, onClose }: {
                               {t.toolCalls.length} tool{t.toolCalls.length !== 1 ? "s" : ""}
                             </span>
                             {t.truncated && <span style={{ ...pill, background: "rgba(248,113,113,0.2)", color: "#f87171" }}>truncado</span>}
+                            {t.finishReason && !t.truncated && <span style={{ ...pill, background: "rgba(52,211,153,0.12)", color: "#34d399" }}>{t.finishReason}</span>}
+                            {t.finishReason && t.truncated && <span style={{ ...pill, background: "rgba(248,113,113,0.12)", color: "#f87171" }}>{t.finishReason}</span>}
                             <span style={{ marginLeft: "auto", fontSize: 9, color: "rgba(255,255,255,0.25)" }}>
                               {fmtTokens(t.tokens.cumulative)} acum
                             </span>
