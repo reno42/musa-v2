@@ -12,6 +12,9 @@ import * as cheerio from "cheerio";
 import { extractDesignSystem, generateAllArtifacts, generateTokensJson, generateDesignMd, generateSharedCss, computeFrameHash, computeSourceHash, computeStyleFingerprint, computeFingerprintFromTokensJson, generateStyleTemplate, mergeExtractions, fillSemanticGaps, discoverStructuralComponents, generateManualFrames } from "./design-extractor.mjs";
 import { profileFrame, profileTemplatePool } from "./template-profiler.mjs";
 import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mjs";
+import { buildHtmlCarousel } from "./html-carousel.mjs";
+import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
+import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
@@ -1056,13 +1059,44 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "create_html_carousel",
+    description: "Create one multi-frame HTML carousel at custom dimensions in a single validated call. Use this for social carousels and any multi-frame design that is not a 1920x1080 presentation. Frames are persisted side by side with exactly the requested width and height.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the carousel in" },
+        name: { type: "string", description: "Carousel template name" },
+        width: { type: "number", description: "Width of every frame, from 1 to 10000 pixels" },
+        height: { type: "number", description: "Height of every frame, from 1 to 10000 pixels" },
+        brandId: { type: "string", description: "Optional saved brand guideline to link and copy onto the template" },
+        frames: {
+          type: "array",
+          minItems: 2,
+          maxItems: 40,
+          description: "All carousel frames. Every frame must contain final, substantial HTML and CSS.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Frame name" },
+              html: { type: "string", description: "Complete frame HTML (minimum 40 characters)" },
+              css: { type: "string", description: "Complete frame CSS (minimum 20 characters)" },
+            },
+            required: ["name", "html", "css"],
+          },
+        },
+      },
+      required: ["workspaceId", "name", "width", "height", "frames"],
+    },
+  },
+  {
     name: "create_deck",
-    description: "Create a complete deck (design system, brand manual, PPT-style document) in ONE call. Deterministic scaffolding: 1920x1080 frames laid side by side (never overlapping), cover on the corporate color, page numbering NN/TT, and consistent title/body fonts on every slide. You only send the creative part: free HTML/CSS composition per slide (rendered inside the content zone) and optionally a free cover composition. CSS vars available in your slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.",
+    description: "Create a complete 1920x1080 presentation deck in ONE call. The generated cover is always the first frame, so total frames = 1 cover + slides.length. Use create_html_carousel instead for social or custom dimensions. Deterministic scaffolding places frames side by side, adds page numbering, and keeps title/body fonts consistent. CSS vars available in slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.",
     inputSchema: {
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to create the deck in" },
         name: { type: "string", description: "Deck name, e.g. 'Design System — Acme'" },
+        brandId: { type: "string", description: "Optional saved brand guideline. Its sharedCss is inserted into every generated frame." },
         brand: {
           type: "object",
           description: "Brand constraints (deterministic)",
@@ -1085,7 +1119,7 @@ const MCP_TOOLS = [
         },
         slides: {
           type: "array",
-          description: "One entry per slide. title is placed deterministically; html/css is your free composition inside the 1728x760 content zone.",
+          description: "Content slides after the generated cover. A 3-frame deck therefore requires exactly 2 entries here. title is placed deterministically; html/css is your free composition inside the 1728x760 content zone.",
           items: {
             type: "object",
             properties: {
@@ -1093,6 +1127,7 @@ const MCP_TOOLS = [
               html: { type: "string", description: "Free HTML composition for the content zone" },
               css: { type: "string", description: "CSS for your composition (scoped per frame)" },
             },
+            required: ["html", "css"],
           },
         },
       },
@@ -3485,12 +3520,13 @@ const MCP_TOOLS = [
       type: "object",
       properties: {
         taskId: { type: "string", description: "Task being evaluated" },
+        sessionId: { type: "string", description: "Active reviewer session for this task" },
         checkpointId: { type: "string", description: "Checkpoint identifier (e.g. 'C1', 'C2')" },
         description: { type: "string", description: "What this checkpoint checks" },
         passed: { type: "boolean", description: "Pass or fail" },
         notes: { type: "string", description: "Evidence or failure reason" },
       },
-      required: ["taskId", "checkpointId", "description", "passed"],
+      required: ["taskId", "sessionId", "checkpointId", "description", "passed"],
     },
   },
   {
@@ -3507,15 +3543,48 @@ const MCP_TOOLS = [
   },
   {
     name: "harness_complete_feature",
-    description: "Mark a task as done. Only callable if all checkpoints on the task have passed=true (the hard rule). Sets status='done', completed_at=now(), closes the active session. Reviewer approval is verified via checkpoints.",
+    description: "Reviewer-only completion gate. Requires an active reviewer session, a real harness_submit_for_review marker from the implementer, and fresh passing C1-C5 checkpoints.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string", description: "Task to complete" },
-        sessionId: { type: "string", description: "Implementer session to close" },
+        sessionId: { type: "string", description: "Active reviewer session that evaluated C1-C5" },
       },
-      required: ["taskId"],
+      required: ["taskId", "sessionId"],
     },
+  },
+  {
+    name: "harness_record_runtime_event",
+    description: "Append one sanitized, idempotent runtime transition for a harness session. Never send prompts, tool arguments, HTML/CSS, or credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        clientEventId: { type: "string", description: "Stable client id for idempotency" },
+        eventType: { type: "string", enum: ["start", "request", "tool", "retry", "compaction", "done", "error", "cancelled"] },
+        round: { type: "integer", minimum: 0 }, maxRounds: { type: "integer", minimum: 1 }, attempt: { type: "integer", minimum: 1 },
+        provider: { type: "string" }, model: { type: "string" }, toolName: { type: "string" }, callId: { type: "string" },
+        elapsedMs: { type: "integer", minimum: 0 }, inputTokens: { type: "integer", minimum: 0 }, outputTokens: { type: "integer", minimum: 0 }, cumulativeTokens: { type: "integer", minimum: 0 },
+        tokenCountKind: { type: "string", enum: ["actual", "estimated"] }, contextChars: { type: "integer", minimum: 0 },
+        templateIds: { type: "array", items: { type: "string" } }, error: { type: "string" }, metadata: { type: "object" },
+      },
+      required: ["sessionId", "clientEventId", "eventType"],
+    },
+  },
+  {
+    name: "harness_get_runtime_events",
+    description: "Read sanitized runtime events for one authorized session using a monotonic cursor.",
+    inputSchema: { type: "object", properties: { sessionId: { type: "string" }, afterId: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 200 } }, required: ["sessionId"] },
+  },
+  {
+    name: "harness_list_sessions",
+    description: "List authorized harness sessions for a task, optionally filtered by status.",
+    inputSchema: { type: "object", properties: { taskId: { type: "string" }, status: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 } }, required: ["taskId"] },
+  },
+  {
+    name: "harness_finish_session",
+    description: "CAS-close an active/paused session. completed is reviewer-only; implementers must call harness_submit_for_review so the review-cycle marker is recorded.",
+    inputSchema: { type: "object", properties: { sessionId: { type: "string" }, status: { type: "string", enum: ["completed", "failed", "cancelled", "timed_out", "blocked"], description: "completed is accepted only for reviewer sessions" }, reason: { type: "string" }, summary: { type: "string" } }, required: ["sessionId", "status"] },
   },
   // ── Harness: cronjob management (3 tools) ──
   {
@@ -4058,6 +4127,41 @@ function validateEditableWrite(html, css, allowGroups, context) {
 }
 
 /** Route JSON-RPC method calls to template/workspace services */
+const assertHarnessAccess = (sb, auth, userId, scope) =>
+  assertHarnessAccessBase(sb, auth, userId, scope, canAccessWorkspace);
+
+const RUNTIME_EVENT_TYPES = new Set(["start", "request", "tool", "retry", "compaction", "done", "error", "cancelled"]);
+const RUNTIME_SESSION_STATUSES = new Set(["completed", "failed", "cancelled", "timed_out", "blocked"]);
+
+function sanitizeRuntimeServerText(value, maxLength = 1000) {
+  const text = String(value ?? "");
+  if (/(?:\bprompt\b|tool[_ ]?arguments?|api[_ -]?key|<\/?(?:html|style)\b|```(?:html|css))/i.test(text)) {
+    return "[redacted unsafe runtime detail]";
+  }
+  return text
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|fdr_ws_[A-Za-z0-9_-]+)\b/g, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [redacted]")
+    .replace(/<[^>]{0,500}>/g, "[markup omitted]")
+    .slice(0, maxLength);
+}
+
+function safeRuntimeInteger(value, maximum = 2_147_483_647) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? Math.min(number, maximum) : null;
+}
+
+function sanitizeRuntimeMetadata(metadata) {
+  const allowed = new Set(["reason", "outcome", "status", "category", "droppedMessages", "compactedMessages"]);
+  const safe = {};
+  if (!metadata || Array.isArray(metadata) || typeof metadata !== "object") return safe;
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!allowed.has(key) || !["string", "number", "boolean"].includes(typeof value)) continue;
+    safe[key] = typeof value === "string" ? sanitizeRuntimeServerText(value, 200) : value;
+  }
+  return safe;
+}
+
 async function handleMethod(method, params, userId, auth) {
   // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
   const autoSnapshot = (templateId, trigger, tplData) => {
@@ -4311,6 +4415,69 @@ async function handleMethod(method, params, userId, auth) {
         hint: "Use get_template({ id }) to inspect the full content, or open the editor to preview visually.",
       };
     }
+    case "create_html_carousel": {
+      let carousel;
+      try {
+        carousel = buildHtmlCarousel(params, () => `frame_${uuid().slice(0, 12)}`);
+      } catch (error) {
+        throw { code: error?.code || -32602, message: error?.message || "Invalid create_html_carousel payload" };
+      }
+
+      let linkedBrand = null;
+      if (carousel.brandId) {
+        linkedBrand = await brands.getBrand(carousel.brandId);
+        if (!linkedBrand) throw { code: -32000, message: `Brand guideline not found: ${carousel.brandId}` };
+        if (linkedBrand.workspaceId !== carousel.workspaceId) {
+          throw { code: -32003, message: "Brand guideline does not belong to the requested workspace" };
+        }
+      }
+
+      const carouselUpdates = {
+        engine: "html",
+        html: "",
+        css: "",
+        frames: carousel.frames,
+      };
+      if (linkedBrand) {
+        try {
+          carouselUpdates.css = applyBrandCss(carouselUpdates.css, linkedBrand.id, linkedBrand.sharedCss);
+          carouselUpdates.frames = applyBrandCssToFrames(carouselUpdates.frames, linkedBrand.id, linkedBrand.sharedCss);
+        } catch (error) {
+          throw { code: -32602, message: error?.message || "Brand CSS could not be applied" };
+        }
+        carouselUpdates.brandId = linkedBrand.id;
+        carouselUpdates.designArtifacts = {
+          tokensJson: linkedBrand.tokensJson,
+          designMd: linkedBrand.designMd,
+          sharedCss: linkedBrand.sharedCss,
+          generatedFromHash: linkedBrand.sourceHash,
+          generatedAt: linkedBrand.updatedAt,
+        };
+      }
+
+      const carouselTpl = await templates.createTemplate(
+        carousel.name, carousel.width, carousel.height,
+        undefined, userId, carousel.workspaceId,
+      );
+      if (!carouselTpl.id) throw { code: -32000, message: "Carousel creation failed: no ID returned from store" };
+
+      try {
+        const persisted = await templates.updateTemplate(carouselTpl.id, carouselUpdates);
+        if (!persisted) throw new Error("Template update returned no result");
+      } catch (error) {
+        await templates.deleteTemplate(carouselTpl.id).catch(() => {});
+        throw { code: -32000, message: `Carousel creation failed before content could be persisted: ${error?.message || "unknown persistence error"}` };
+      }
+
+      autoSnapshot(carouselTpl.id, "create_html_carousel");
+      return {
+        templateId: carouselTpl.id,
+        totalFrames: carousel.frames.length,
+        width: carousel.width,
+        height: carousel.height,
+        brandId: linkedBrand?.id || null,
+      };
+    }
     case "create_deck": {
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const deckName = (params.name || "").trim();
@@ -4321,6 +4488,21 @@ async function handleMethod(method, params, userId, auth) {
       } catch (e) {
         throw { code: -32602, message: e.message };
       }
+      let deckBrand = null;
+      let deckRootCss = "";
+      if (params.brandId) {
+        deckBrand = await brands.getBrand(params.brandId);
+        if (!deckBrand) throw { code: -32000, message: `Brand guideline not found: ${params.brandId}` };
+        if (deckBrand.workspaceId !== params.workspaceId) {
+          throw { code: -32003, message: "Brand guideline does not belong to the requested workspace" };
+        }
+        try {
+          deckRootCss = applyBrandCss("", deckBrand.id, deckBrand.sharedCss);
+          deck.frames = applyBrandCssToFrames(deck.frames, deckBrand.id, deckBrand.sharedCss);
+        } catch (error) {
+          throw { code: -32602, message: error?.message || "Brand CSS could not be applied" };
+        }
+      }
       const deckTpl = await templates.createTemplate(
         deckName, DECK_FRAME_W, DECK_FRAME_H,
         undefined, userId, params.workspaceId,
@@ -4329,8 +4511,18 @@ async function handleMethod(method, params, userId, auth) {
       await templates.updateTemplate(deckTpl.id, {
         engine: "html",
         html: "",
-        css: "",
+        css: deckRootCss,
         frames: deck.frames,
+        ...(deckBrand ? {
+          brandId: deckBrand.id,
+          designArtifacts: {
+            tokensJson: deckBrand.tokensJson,
+            designMd: deckBrand.designMd,
+            sharedCss: deckBrand.sharedCss,
+            generatedFromHash: deckBrand.sourceHash,
+            generatedAt: deckBrand.updatedAt,
+          },
+        } : {}),
       });
       autoSnapshot(deckTpl.id, "create_deck");
       const siteUrl = (process.env.URL || "").replace(/\/$/, "");
@@ -4339,6 +4531,7 @@ async function handleMethod(method, params, userId, auth) {
         name: deckName,
         frames: deck.frames.map(f => f.name),
         totalFrames: deck.total,
+        brandId: deckBrand?.id || null,
         editorUrl: `${siteUrl}/?template=${deckTpl.id}&v=2`,
       };
     }
@@ -4820,13 +5013,17 @@ async function handleMethod(method, params, userId, auth) {
 
     // ── create_html_template ──
     case "create_html_template": {
+      const htmlTemplateName = typeof params.name === "string" ? params.name.trim() : "";
+      const htmlWorkspaceId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
+      if (!htmlTemplateName) throw { code: -32602, message: "create_html_template requires a non-empty name" };
+      if (!htmlWorkspaceId) throw { code: -32602, message: "create_html_template requires workspaceId" };
       const tpl = await templates.createTemplate(
-        params.name,
+        htmlTemplateName,
         params.width || 1080,
         params.height || 1080,
         null, // no canvas for HTML templates
         null, // userId (will be set by templates service)
-        params.workspaceId
+        htmlWorkspaceId
       );
       if (!tpl) throw { code: -32000, message: "Failed to create HTML template" };
 
@@ -4844,7 +5041,7 @@ async function handleMethod(method, params, userId, auth) {
       return {
         id: tpl.id,
         name: tpl.name,
-        workspaceId: params.workspaceId,
+        workspaceId: htmlWorkspaceId,
         width: tpl.width,
         height: tpl.height,
         engine: "html",
@@ -10312,6 +10509,18 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
       var tpl = await templates.getTemplate(params.templateId);
       if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      if (brand.workspaceId !== tpl.workspaceId) {
+        throw { code: -32003, message: "Brand guideline does not belong to the template workspace" };
+      }
+
+      let brandedCss;
+      let brandedFrames;
+      try {
+        brandedCss = applyBrandCss(tpl.css || "", brand.id, brand.sharedCss);
+        brandedFrames = applyBrandCssToFrames(tpl.frames || [], brand.id, brand.sharedCss);
+      } catch (error) {
+        throw { code: -32602, message: error?.message || "Brand CSS could not be applied" };
+      }
 
       // Copy brand artifacts onto template
       var designArtifacts = {
@@ -10325,6 +10534,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       await templates.updateTemplate(params.templateId, {
         brandId: brand.id,
         designArtifacts: designArtifacts,
+        css: brandedCss,
+        frames: brandedFrames,
       });
 
       return {
@@ -10357,7 +10568,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             id: b.id,
             name: b.name,
             tokensJson: b.tokensJson,
-            designMd: b.designMd ? b.designMd.substring(0, 2000) : null,
+            designMd: b.designMd || null,
             sharedCss: b.sharedCss,
             sourceTemplateIds: b.sourceTemplateIds || [],
           };
@@ -11418,6 +11629,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_get_context": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase. Run supabase_migrations/harness.sql first." };
+      if (params.taskId || params.sessionId) {
+        await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId, sessionId: params.sessionId });
+      }
 
       const accountId = UUID_RE.test(userId || "") ? userId : null;
       let agentDef = null;
@@ -11496,6 +11710,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_claim_feature": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId });
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
       // Hard rule: only 1 in_progress (draft or design) per account.
@@ -11548,6 +11763,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_release_feature": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId });
       const toStatus = params.toStatus || "backlog";
       const { data: cur } = await sb.from("design_kanban_tasks").select("id, status").eq("id", params.taskId).maybeSingle();
       if (!cur) throw { code: -32000, message: "Task not found: " + params.taskId };
@@ -11566,7 +11782,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_start_session": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
-      const accountId = UUID_RE.test(userId || "") ? userId : null;
+      const startAccess = await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId });
+      const callerAccountId = UUID_RE.test(userId || "") ? userId : null;
+      const accountId = startAccess.task.account_id || callerAccountId;
+      if (!accountId) throw { code: -32003, message: "Cannot start session without a tenant account." };
 
       let agentDef = null;
       if (accountId) {
@@ -11580,7 +11799,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         agentDef = def;
       }
 
-      const { data: task } = await sb.from("design_kanban_tasks").select("*").eq("id", params.taskId).maybeSingle();
+      const { data: task, error: taskError } = await sb.from("design_kanban_tasks").select("*").eq("id", params.taskId).maybeSingle();
+      if (taskError) throw { code: -32000, message: "Task lookup failed: " + taskError.message };
+      if (!task) throw { code: -32000, message: "Cannot start session: task not found: " + params.taskId };
+      if (auth?.authType !== "workspace_key" && !auth?.isAdmin && task.account_id && task.account_id !== callerAccountId) {
+        throw { code: -32003, message: "Cannot start session: task belongs to a different account." };
+      }
 
       const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
       const context_summary = JSON.stringify({
@@ -11626,12 +11850,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_log_entry": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
       const { data: sess, error: serr } = await sb.from("harness_sessions")
         .select("id, account_id, agent_name, role").eq("id", params.sessionId).maybeSingle();
       if (!sess) throw { code: -32000, message: "Session not found: " + params.sessionId };
-      if (sess.account_id && accountId && sess.account_id !== accountId) {
+      if (auth?.authType !== "workspace_key" && !auth?.isAdmin && sess.account_id && sess.account_id !== accountId) {
         throw { code: -32000, message: "Session belongs to a different account. Multi-tenant isolation prevents cross-account writes." };
       }
 
@@ -11657,6 +11882,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_dump_context": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
       const accountId = UUID_RE.test(userId || "") ? userId : null;
       const { data: sess } = await sb.from("harness_sessions")
         .select("id, account_id, agent_name, role").eq("id", params.sessionId).maybeSingle();
@@ -11678,6 +11904,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_get_entries": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
       const limit = Math.min(params.limit || 50, 100);
       let q = sb.from("harness_entries")
         .select("*").eq("session_id", params.sessionId)
@@ -11739,6 +11966,15 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_evaluate_checkpoint": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      if (!params.sessionId) throw { code: -32602, message: "sessionId is required for checkpoint evaluation" };
+      if (!(params.description || "").trim()) throw { code: -32602, message: "checkpoint description is required" };
+      const reviewAccess = await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId, sessionId: params.sessionId });
+      if (reviewAccess.session.task_id !== params.taskId || reviewAccess.session.role !== "reviewer" || reviewAccess.session.status !== "active") {
+        throw { code: -32003, message: "Checkpoint evaluation requires the active reviewer session for this task" };
+      }
+      if (!["C1", "C2", "C3", "C4", "C5"].includes(params.checkpointId)) {
+        throw { code: -32602, message: "checkpointId must be one of C1, C2, C3, C4 or C5" };
+      }
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
       const cpId = "hc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -11774,18 +12010,32 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_submit_for_review": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
-
-      const { data: sess } = await sb.from("harness_sessions").select("*").eq("id", params.sessionId).maybeSingle();
-      if (!sess) throw { code: -32000, message: "Session not found: " + params.sessionId };
+      if (!(params.summary || "").trim()) throw { code: -32602, message: "summary is required for review submission" };
+      const submitAccess = await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
+      const sess = submitAccess.session;
+      if (sess.role !== "implementer" || sess.status !== "active") {
+        throw { code: -32003, message: "Only an active implementer session can submit for review" };
+      }
 
       const { data: task } = await sb.from("design_kanban_tasks").select("id, status").eq("id", sess.task_id).maybeSingle();
       if (!task) throw { code: -32000, message: "Task not found for session." };
+      const submittedAt = new Date().toISOString();
+      const { error: invalidateErr } = await sb.from("harness_checkpoints").delete().eq("task_id", sess.task_id);
+      if (invalidateErr) throw { code: -32000, message: "Checkpoint invalidation failed: " + invalidateErr.message };
       const { error: updErr } = await sb.from("design_kanban_tasks")
-        .update({ status: "review", updated_at: new Date().toISOString() })
+        .update({ status: "review", checkpoint_json: {}, updated_at: submittedAt })
         .eq("id", sess.task_id);
       if (updErr) throw { code: -32000, message: "Status update failed: " + updErr.message };
+      const { data: closedSubmitSession, error: closeSubmitError } = await sb.from("harness_sessions").update({
+        status: "completed",
+        ended_at: submittedAt,
+        next_step: "Submitted for review. Implementer session closed.",
+      }).eq("id", params.sessionId).eq("status", "active").select("id, ended_at").maybeSingle();
+      if (closeSubmitError || !closedSubmitSession) {
+        throw { code: -32000, message: "Implementer session close failed during review submission: " + (closeSubmitError?.message || "session was no longer active") };
+      }
 
-      await sb.from("harness_entries").insert({
+      const { error: markerError } = await sb.from("harness_entries").insert({
         id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
         account_id: sess.account_id,
         session_id: params.sessionId,
@@ -11793,7 +12043,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         role: sess.role,
         entry_type: "review",
         content: params.summary,
+        created_at: submittedAt,
       });
+      if (markerError) throw { code: -32000, message: "Review submission marker failed: " + markerError.message };
 
       await sb.from("design_kanban_activity_log").insert({
         id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
@@ -11807,37 +12059,76 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "harness_complete_feature": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      if (!params.sessionId) throw { code: -32602, message: "sessionId is required for completion" };
+      const completeAccess = await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId, sessionId: params.sessionId });
+      if (completeAccess.session.task_id !== params.taskId) {
+        throw { code: -32602, message: "sessionId does not belong to taskId" };
+      }
+      if (completeAccess.session.role !== "reviewer" || completeAccess.session.status !== "active") {
+        throw { code: -32003, message: "Completion requires the active reviewer session for this task" };
+      }
+      if (completeAccess.task.status !== "review") {
+        throw { code: -32000, message: "Completion requires task status review" };
+      }
 
       const { data: cps } = await sb.from("harness_checkpoints")
-        .select("checkpoint_id, passed").eq("task_id", params.taskId);
-      const failed = (cps || []).filter(c => c.passed === false);
-      if ((cps || []).length === 0) {
-        throw { code: -32000, message: "Cannot complete: no checkpoints have been evaluated yet. The reviewer must run harness_evaluate_checkpoint for C1-C5 before completion." };
+        .select("checkpoint_id, passed, reviewed_at").eq("task_id", params.taskId);
+      const { data: implementerSessions, error: implementerSessionError } = await sb.from("harness_sessions")
+        .select("id, account_id, task_id, role, status, ended_at").eq("task_id", params.taskId).eq("role", "implementer")
+        .eq("status", "completed").not("ended_at", "is", null)
+        .order("ended_at", { ascending: false }).limit(50);
+      if (implementerSessionError) throw { code: -32000, message: "Implementer session lookup failed: " + implementerSessionError.message };
+      const implementerSessionIds = (implementerSessions || []).map(session => session.id);
+      let reviewEntries = [];
+      if (implementerSessionIds.length > 0) {
+        let markerQuery = sb.from("harness_entries")
+          .select("session_id, account_id, entry_type, created_at")
+          .in("session_id", implementerSessionIds).eq("entry_type", "review")
+          .order("created_at", { ascending: false }).limit(50);
+        if (completeAccess.task.account_id) markerQuery = markerQuery.eq("account_id", completeAccess.task.account_id);
+        const { data, error: markerLookupError } = await markerQuery;
+        if (markerLookupError) throw { code: -32000, message: "Review submission marker lookup failed: " + markerLookupError.message };
+        reviewEntries = data || [];
       }
-      if (failed.length > 0) {
-        throw { code: -32000, message: `Cannot complete: ${failed.length} checkpoint(s) failed: ` + failed.map(c => c.checkpoint_id).join(", ") };
+      const latestSubmit = selectLatestReviewSubmission(implementerSessions || [], reviewEntries);
+      if (!latestSubmit) {
+        throw { code: -32000, message: "Cannot complete: no harness_submit_for_review marker exists for a completed implementer session in this review cycle." };
+      }
+      const requiredCheckpointIds = ["C1", "C2", "C3", "C4", "C5"];
+      const latestById = new Map((cps || []).map(checkpoint => [checkpoint.checkpoint_id, checkpoint]));
+      const missing = requiredCheckpointIds.filter(id => !latestById.has(id));
+      const failed = requiredCheckpointIds.filter(id => latestById.get(id)?.passed !== true);
+      const stale = requiredCheckpointIds.filter(id => {
+        const reviewedAt = latestById.get(id)?.reviewed_at;
+        return !reviewedAt || new Date(reviewedAt).getTime() < new Date(latestSubmit.reviewCycleAt).getTime();
+      });
+      if (missing.length > 0 || failed.length > 0 || stale.length > 0) {
+        const details = [
+          missing.length > 0 ? `missing: ${missing.join(", ")}` : "",
+          failed.length > 0 ? `not passed: ${failed.join(", ")}` : "",
+          stale.length > 0 ? `stale: ${stale.join(", ")}` : "",
+        ].filter(Boolean).join("; ");
+        throw { code: -32000, message: `Cannot complete: reviewer must explicitly evaluate C1, C2, C3, C4 and C5 with passed=true (${details}).` };
       }
 
       const now = new Date().toISOString();
       const { data: task, error: tErr } = await sb.from("design_kanban_tasks")
         .update({ status: "done", completed_at: now, updated_at: now })
-        .eq("id", params.taskId).select().maybeSingle();
-      if (tErr) throw { code: -32000, message: "Completion failed: " + tErr.message };
+        .eq("id", params.taskId).eq("status", "review").select().maybeSingle();
+      if (tErr || !task) throw { code: -32000, message: "Completion CAS failed: " + (tErr?.message || "task was no longer in review") };
 
-      if (params.sessionId) {
-        await sb.from("harness_sessions")
-          .update({ status: "completed", ended_at: now, next_step: "Task completed. Session closed." })
-          .eq("id", params.sessionId);
-        await sb.from("harness_entries").insert({
+      await sb.from("harness_sessions")
+        .update({ status: "completed", ended_at: now, next_step: "Task completed. Session closed." })
+        .eq("task_id", params.taskId).eq("status", "active");
+      await sb.from("harness_entries").insert({
           id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
           account_id: task?.account_id || null,
           session_id: params.sessionId,
           agent_name: "harness",
-          role: "implementer",
+          role: "reviewer",
           entry_type: "summary",
           content: `Task ${params.taskId} marked done at ${now}. All checkpoints passed.`,
         });
-      }
 
       await sb.from("design_kanban_activity_log").insert({
         id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
@@ -11846,6 +12137,130 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       });
 
       return { success: true, task, message: "Task is DONE. All checkpoints passed and session closed." };
+    }
+
+    case "harness_record_runtime_event": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness runtime telemetry requires Supabase and migration v17." };
+      if (!RUNTIME_EVENT_TYPES.has(params.eventType)) throw { code: -32602, message: "Invalid runtime eventType" };
+      const clientEventId = sanitizeRuntimeServerText(params.clientEventId, 200).trim();
+      if (!clientEventId) throw { code: -32602, message: "clientEventId is required" };
+      const access = await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
+      const accountId = access.session.account_id || access.task.account_id;
+      if (!accountId) throw { code: -32003, message: "Runtime event session has no tenant account" };
+
+      const { data: existing } = await sb.from("harness_runtime_events")
+        .select("*").eq("account_id", accountId).eq("client_event_id", clientEventId).maybeSingle();
+      if (existing) return { success: true, idempotent: true, event: existing, cursor: existing.cursor };
+
+      const event = {
+        id: "hre_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10),
+        client_event_id: clientEventId,
+        account_id: accountId,
+        session_id: access.session.id,
+        task_id: access.session.task_id,
+        role: access.session.role,
+        event_type: params.eventType,
+        round: safeRuntimeInteger(params.round, 10_000),
+        max_rounds: safeRuntimeInteger(params.maxRounds, 10_000),
+        attempt: params.attempt === undefined ? null : Math.max(1, safeRuntimeInteger(params.attempt, 100) || 1),
+        provider: sanitizeRuntimeServerText(params.provider, 80) || null,
+        model: sanitizeRuntimeServerText(params.model, 120) || null,
+        tool_name: sanitizeRuntimeServerText(params.toolName, 120) || null,
+        call_id: sanitizeRuntimeServerText(params.callId, 200) || null,
+        elapsed_ms: safeRuntimeInteger(params.elapsedMs),
+        input_tokens: safeRuntimeInteger(params.inputTokens),
+        output_tokens: safeRuntimeInteger(params.outputTokens),
+        cumulative_tokens: safeRuntimeInteger(params.cumulativeTokens),
+        token_count_kind: ["actual", "estimated"].includes(params.tokenCountKind) ? params.tokenCountKind : null,
+        context_chars: safeRuntimeInteger(params.contextChars, 50_000_000),
+        template_ids: Array.isArray(params.templateIds)
+          ? [...new Set(params.templateIds.filter(id => typeof id === "string" && id.startsWith("tpl_")).slice(0, 50))]
+          : [],
+        error_message: params.error ? sanitizeRuntimeServerText(params.error, 1000) : null,
+        metadata: sanitizeRuntimeMetadata(params.metadata),
+      };
+      const { data: inserted, error } = await sb.from("harness_runtime_events").insert(event).select().single();
+      if (error) {
+        const { data: raced } = await sb.from("harness_runtime_events")
+          .select("*").eq("account_id", accountId).eq("client_event_id", clientEventId).maybeSingle();
+        if (raced) return { success: true, idempotent: true, event: raced, cursor: raced.cursor };
+        throw { code: -32000, message: "Runtime event insert failed: " + error.message };
+      }
+      return { success: true, idempotent: false, event: inserted, cursor: inserted.cursor };
+    }
+
+    case "harness_get_runtime_events": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness runtime telemetry requires Supabase and migration v17." };
+      const runtimeAccess = await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
+      const accountId = runtimeAccess.session.account_id || runtimeAccess.task.account_id;
+      if (!accountId) throw { code: -32003, message: "Runtime session has no tenant account" };
+      const limit = Math.min(Math.max(safeRuntimeInteger(params.limit, 200) || 50, 1), 200);
+      const afterId = safeRuntimeInteger(params.afterId) || 0;
+      let query = sb.from("harness_runtime_events").select("*")
+        .eq("account_id", accountId).eq("session_id", params.sessionId).gt("cursor", afterId)
+        .order("cursor", { ascending: true }).limit(limit);
+      const { data: events, error } = await query;
+      if (error) throw { code: -32000, message: "Runtime event read failed: " + error.message };
+      const rows = events || [];
+      return { sessionId: params.sessionId, afterId, events: rows, nextCursor: rows.at(-1)?.cursor || afterId, hasMore: rows.length === limit };
+    }
+
+    case "harness_list_sessions": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      const sessionListAccess = await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId });
+      const accountId = sessionListAccess.task.account_id || sessionListAccess.accountId;
+      if (!accountId) throw { code: -32003, message: "Task has no tenant account" };
+      const limit = Math.min(Math.max(safeRuntimeInteger(params.limit, 100) || 20, 1), 100);
+      let query = sb.from("harness_sessions").select("id, task_id, agent_name, role, status, started_at, ended_at")
+        .eq("account_id", accountId).eq("task_id", params.taskId).order("started_at", { ascending: false }).limit(limit);
+      if (params.status) query = query.eq("status", sanitizeRuntimeServerText(params.status, 40));
+      const { data: sessions, error } = await query;
+      if (error) throw { code: -32000, message: "Session list failed: " + error.message };
+      return { taskId: params.taskId, sessions: sessions || [], total: (sessions || []).length };
+    }
+
+    case "harness_finish_session": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
+      if (!RUNTIME_SESSION_STATUSES.has(params.status)) throw { code: -32602, message: "Invalid terminal session status" };
+      const access = await assertHarnessAccess(sb, auth, userId, { sessionId: params.sessionId });
+      if (params.status === "completed" && access.session.role !== "reviewer") {
+        throw { code: -32003, message: "Only reviewer sessions may use harness_finish_session(completed). Implementers must call harness_submit_for_review." };
+      }
+      if (!["active", "paused"].includes(access.session.status)) {
+        return { success: true, idempotent: true, session: access.session };
+      }
+      const now = new Date().toISOString();
+      const reason = params.reason ? sanitizeRuntimeServerText(params.reason, 500) : null;
+      const { data: session, error } = await sb.from("harness_sessions").update({
+        status: params.status,
+        ended_at: access.session.ended_at || now,
+        next_step: reason,
+      }).eq("id", params.sessionId).in("status", ["active", "paused"]).select().maybeSingle();
+      if (error) throw { code: -32000, message: "Session finish failed: " + error.message };
+      if (!session) {
+        const { data: currentSession, error: rereadError } = await sb.from("harness_sessions")
+          .select("id, account_id, task_id, agent_name, role, status, started_at, ended_at")
+          .eq("id", params.sessionId).maybeSingle();
+        if (rereadError || !currentSession) throw { code: -32000, message: "Session finish race re-read failed: " + (rereadError?.message || "session missing") };
+        return { success: true, idempotent: true, session: currentSession };
+      }
+      const summary = params.summary ? sanitizeRuntimeServerText(params.summary, 1000) : "";
+      if (summary) {
+        await sb.from("harness_entries").insert({
+          id: "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+          account_id: access.session.account_id || access.task.account_id,
+          session_id: params.sessionId,
+          agent_name: "harness",
+          role: access.session.role,
+          entry_type: "summary",
+          content: summary,
+        });
+      }
+      return { success: true, session };
     }
 
     case "harness_list_cronjobs": {
@@ -12828,4 +13243,3 @@ export const handler = async (event) => {
     };
   }
 };
-

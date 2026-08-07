@@ -7,11 +7,12 @@ import { apiFetch } from "./supabase";
  * @example
  *   const result = await mcpCall("set_blur", { templateId: "tpl_...", blur: 6 });
  */
-export async function mcpCall(method: string, params: Record<string, any>) {
+export async function mcpCall(method: string, params: Record<string, any>, signal?: AbortSignal) {
   console.debug("[mcpCall]", method, params);
   try {
     const json = await apiFetch<any>("/mcp", {
       method: "POST",
+      signal,
       body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
     });
     console.debug("[mcpCall] response:", { hasError: !!json.error, hasResult: !!json.result, keys: json ? Object.keys(json) : [] });

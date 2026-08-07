@@ -1,6 +1,38 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import {
+  MAX_SUBAGENT_ROUNDS,
+  CREATOR_TOOL_NAMES,
+  MUTATION_TOOL_NAMES,
+  buildWorkManifest,
+  captureArtifactIds,
+  captureCreatedFrameCount,
+  classifyHttpError,
+  compactConversationAtomic,
+  collectMutationStyleEvidence,
+  createSerialPromiseQueue,
+  estimateFullRequestTokens,
+  evaluateCompleteness,
+  extractStyleReferences,
+  fetchWithRetry,
+  formatDuration,
+  formatTokens,
+  normalizeToolResult as normalizeAgentToolResult,
+  parseToolArguments,
+  parseReviewerVerdict,
+  readProviderUsage,
+  responseStoppedIncomplete,
+  sanitizeRuntimeText,
+  selectProviderTools,
+  serializeValidJson,
+  validateDesignToolPayload,
+  validateWorkContract,
+  type ArtifactSnapshot,
+  type AgentRunStats,
+  type SubagentProgress,
+  type WorkContract,
+} from "../lib/agentRuntime";
 
 /**
  * ChatFAB — global floating chat button + right-side panel.
@@ -20,56 +52,6 @@ type Role = "user" | "assistant" | "system";
  *  wants scrolling through in full size. They render collapsed by default,
  *  muted, grouped between the actual conversational turns. */
 interface Message { role: Role; content: string; ts?: number; kind?: "step" }
-
-/**
- * fetchWithRetry — wraps fetch with AbortController timeout AND exponential backoff retry.
- * Prevents UI freezes (timeout) and transient API failures (retry).
- * - Timeout: 90s per attempt (LLM calls can be slow with large tool schemas)
- * - Retries: 2 (3 total attempts), backoff: 1s, 2s
- * - Only retries on network errors and 429/500/502/503/504
- */
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit,
-  opts: { timeoutMs?: number; maxRetries?: number; signal?: AbortSignal } = {},
-): Promise<Response> {
-  const timeoutMs = opts.timeoutMs ?? 90_000;
-  const maxRetries = opts.maxRetries ?? 2;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (opts.signal?.aborted) throw new DOMException("Stopped by user", "AbortError");
-    const controller = new AbortController();
-    const onExternalAbort = () => controller.abort();
-    opts.signal?.addEventListener("abort", onExternalAbort);
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const resp = await fetch(url, { ...options, signal: controller.signal });
-      clearTimeout(timeoutId);
-      // Retry on server errors and rate limiting
-      if (resp.status >= 500 || resp.status === 429) {
-        if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-          continue;
-        }
-      }
-      return resp;
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      // A deliberate user stop should never be retried.
-      if (opts.signal?.aborted) throw new DOMException("Stopped by user", "AbortError");
-      const isAbort = err?.name === "AbortError";
-      const isNetwork = !isAbort;
-      if (attempt < maxRetries && (isNetwork || isAbort)) {
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-        continue;
-      }
-      throw err;
-    } finally {
-      opts.signal?.removeEventListener("abort", onExternalAbort);
-    }
-  }
-  throw new Error("fetchWithRetry: unreachable");
-}
 
 const LS_PROVIDER_KEY = "futuraria-chat-provider";
 const LS_LLM_KEY_KEY = "futuraria-chat-llm-key";
@@ -223,7 +205,12 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
 0. (OBLIGATORIO) harness_get_context({ agentType: "leader" }) → carga memoria, estilos y sesiones previas antes de hacer cualquier cosa.
 1. studio_create_card (con el workspaceId del contexto actual) → crea la tarjeta en backlog
 2. studio_move_card → mueve a "design"
-3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<QUÉ debe hacer el implementer: dimensiones, texto, colores, estilo, y si es crear nuevo o modificar existente con templateId>" })
+3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<brief completo>", contract: { mode: "create"|"edit", expectedTemplateCount, expectedFrameCount, requiredWidth, requiredHeight, requiredTexts, requiredTextsByFrame, requiredStyle } })
+   - "3 slides", "carrusel de 3" o "deck de 3" = expectedTemplateCount: 1 y expectedFrameCount: 3.
+   - En create_deck, la portada se genera aparte: un deck de 3 frames lleva 2 entries en slides. En create_html_carousel, frames.length es el total exacto.
+   - "3 posts/archivos separados" = expectedTemplateCount: 3 y expectedFrameCount: 3.
+   - Siempre llena el contrato con cantidades, dimensiones, textos exactos y estilo pedido.
+   - Si el humano pide estilo libre/sin estilo, usa requiredStyle: "__free_style__"; nunca lo omitas ni envíes vacío.
    - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
    - No puedes predecir qué hará. Solo le das la instrucción y esperas.
    - El resultado incluye templateId (y templateIds si creó varios) si se creó algún template.
@@ -238,6 +225,7 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
      verificación sí.
 4. Si el implementer devuelve "done" (SIN verification_failed) → studio_move_card → "review"
 5. harness_delegate_task({ role: "reviewer", taskId: "<cardId>", instruction: "Verifica: <criterios>" })
+   - Pasa también contract y templateIds con TODOS los IDs verificados del implementer; nunca solo el más reciente.
    - El reviewer tiene tools de verificación + render + text audit (get_template, get_frame, render_html_template, list_all_texts, lint_design, harness_evaluate_checkpoint).
    - ADEMÁS de C1-C5, el reviewer verifica visualmente (render PNG con render_html_template) y audita el texto extraído (list_all_texts) contra la instrucción original.
    - El reviewer DEBE evaluar checkpoints C1-C5 con harness_evaluate_checkpoint.
@@ -320,13 +308,11 @@ async function bootstrapSession(): Promise<BootstrapContext> {
         ctx.previousSessions = context.sessions.slice(0, 3).map((s: any) => ({ id: s.id, summary: s.summary || s.task_title || "Sin resumen" }));
       }
       const styles = await mcpCall("get_active_styles", { workspaceId: currentContext.workspaceId }).catch(() => null);
-      if (Array.isArray(styles)) {
-        ctx.styles = styles.slice(0, 20).map((s: any) => ({ name: s.name || s.id, description: s.description || "" }));
-      }
+      const styleItems = Array.isArray(styles) ? styles : Array.isArray(styles?.styles) ? styles.styles : [];
+      ctx.styles = styleItems.slice(0, 20).map((s: any) => ({ name: s.name || s.id, description: s.description || "" }));
       const templates = await mcpCall("list_templates", { workspaceId: currentContext.workspaceId }).catch(() => null);
-      if (Array.isArray(templates)) {
-        ctx.recentTemplates = templates.slice(0, 5).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
-      }
+      const templateItems = Array.isArray(templates) ? templates : Array.isArray(templates?.data) ? templates.data : Array.isArray(templates?.templates) ? templates.templates : [];
+      ctx.recentTemplates = templateItems.slice(0, 5).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
       try {
         const playbook = await mcpCall("get_playbook", { name: "multi-agent" }).catch(() => null);
         if (playbook?.content) {
@@ -377,7 +363,8 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "list_templates", description: "Lista templates de un workspace con filtros opcionales.", parameters: { type: "object", properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, status: { type: "string" } } } } },
   { type: "function", function: { name: "create_template", description: "Crea un nuevo template (diseño) en un workspace.", parameters: { type: "object", required: ["workspaceId", "name"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, format: { type: "string" }, width: { type: "number" }, height: { type: "number" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "create_html_template", description: "Crea un template HTML con contenido inicial.", parameters: { type: "object", required: ["workspaceId", "name"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, html: { type: "string" }, css: { type: "string" }, width: { type: "number" }, height: { type: "number" } } } } },
-  { type: "function", function: { name: "create_deck", description: "Crea un deck (conjunto de slides/frames) desde datos estructurados.", parameters: { type: "object", required: ["workspaceId", "name"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, slides: { type: "array" }, brandId: { type: "string" } } } } },
+  { type: "function", function: { name: "create_html_carousel", description: "Crea un carrusel HTML multi-frame atómico con dimensiones personalizadas. Úsalo para carruseles sociales; todos los frames deben traer HTML/CSS finales.", parameters: { type: "object", required: ["workspaceId", "name", "width", "height", "frames"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, width: { type: "number", minimum: 1, maximum: 10000 }, height: { type: "number", minimum: 1, maximum: 10000 }, brandId: { type: "string" }, frames: { type: "array", minItems: 2, maxItems: 40, items: { type: "object", required: ["name", "html", "css"], properties: { name: { type: "string" }, html: { type: "string" }, css: { type: "string" } } } } } } } },
+  { type: "function", function: { name: "create_deck", description: "Crea una presentación fija 1920x1080. Siempre añade una portada; total frames = slides.length + 1. Para carrusel/social usa create_html_carousel.", parameters: { type: "object", required: ["workspaceId", "name", "brand", "slides"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, brandId: { type: "string", description: "Brand guideline guardada; su sharedCss se aplica a cada frame." }, brand: { type: "object", required: ["color"], properties: { name: { type: "string" }, color: { type: "string" }, titleFont: { type: "string" }, bodyFont: { type: "string" }, background: { type: "string" } } }, cover: { type: "object", properties: { html: { type: "string" }, css: { type: "string" } } }, slides: { type: "array", description: "Slides de contenido después de la portada automática. Un deck de 3 frames requiere 2 entries.", items: { type: "object", required: ["html", "css"], properties: { title: { type: "string" }, html: { type: "string" }, css: { type: "string" } } } } } } } },
   { type: "function", function: { name: "update_template", description: "Actualiza metadata de un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, name: { type: "string" }, status: { type: "string" }, tags: { type: "array", items: { type: "string" } }, width: { type: "number" }, height: { type: "number" } } } } },
   { type: "function", function: { name: "delete_template", description: "Elimina un template permanentemente.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
   { type: "function", function: { name: "rename_template", description: "Renombra un template.", parameters: { type: "object", required: ["templateId", "name"], properties: { templateId: { type: "string" }, name: { type: "string" } } } } },
@@ -494,7 +481,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "update_brand_guideline", description: "Actualiza una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" }, name: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, mode: { type: "string", enum: ["replace", "append"] } } } } },
   { type: "function", function: { name: "delete_brand_guideline", description: "Elimina una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" } } } } },
   { type: "function", function: { name: "apply_brand_to_template", description: "Aplica una guía de marca completa a un template.", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" } } } } },
-  { type: "function", function: { name: "get_active_styles", description: "Obtiene los estilos activos aplicados a un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, frameId: { type: "string" } } } } },
+  { type: "function", function: { name: "get_active_styles", description: "Obtiene los estilos activos bloqueados en un workspace.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" } } } } },
   { type: "function", function: { name: "set_style_lock", description: "Bloquea/desbloquea estilos para prevenir cambios accidentales.", parameters: { type: "object", required: ["templateId", "styleId", "locked"], properties: { templateId: { type: "string" }, styleId: { type: "string" }, locked: { type: "boolean" } } } } },
   { type: "function", function: { name: "find_duplicate_styles", description: "Encuentra estilos duplicados en un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
   { type: "function", function: { name: "merge_brand_guidelines", description: "Combina dos guías de marca en una sola.", parameters: { type: "object", required: ["sourceId", "targetId"], properties: { sourceId: { type: "string" }, targetId: { type: "string" } } } } },
@@ -552,18 +539,22 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_claim_feature", description: "Toma una tarea del backlog. Falla si ya hay otra activa.", parameters: { type: "object", required: ["taskId"], properties: { taskId: { type: "string" }, assignedTo: { type: "string" } } } } },
   { type: "function", function: { name: "harness_release_feature", description: "Libera una tarea (vuelve a backlog).", parameters: { type: "object", required: ["taskId"], properties: { taskId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_start_session", description: "Inicia una sesión de subagente con rol y plan. Devuelve sessionId y context_summary.", parameters: { type: "object", required: ["taskId", "role"], properties: { taskId: { type: "string" }, role: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"] }, plan: { type: "string" } } } } },
-  { type: "function", function: { name: "harness_log_entry", description: "Anota un evento en la bitácora de la sesión (plan, progress, blocker, etc).", parameters: { type: "object", required: ["sessionId", "content"], properties: { sessionId: { type: "string" }, entryType: { type: "string", enum: ["plan", "progress", "blocker", "decision", "note", "dump"] }, content: { type: "string" } } } } },
+  { type: "function", function: { name: "harness_log_entry", description: "Anota un evento en la bitácora de la sesión.", parameters: { type: "object", required: ["sessionId", "entryType", "content"], properties: { sessionId: { type: "string" }, entryType: { type: "string", enum: ["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump"] }, content: { type: "string" } } } } },
   { type: "function", function: { name: "harness_dump_context", description: "Vuelca el contexto actual del agente a la BD para liberar memoria.", parameters: { type: "object", required: ["sessionId", "content"], properties: { sessionId: { type: "string" }, content: { type: "string" } } } } },
   { type: "function", function: { name: "harness_get_entries", description: "Lee la bitácora de una sesión (entries del implementer).", parameters: { type: "object", required: ["sessionId"], properties: { sessionId: { type: "string" } } } } },
-  { type: "function", function: { name: "harness_submit_for_review", description: "Implementer pide review. Status de la tarea pasa a review.", parameters: { type: "object", required: ["sessionId"], properties: { sessionId: { type: "string" }, summary: { type: "string" } } } } },
-  { type: "function", function: { name: "harness_evaluate_checkpoint", description: "Reviewer evalúa un checkpoint C1-C5 con passed true/false y notas.", parameters: { type: "object", required: ["taskId", "checkpointId", "passed"], properties: { taskId: { type: "string" }, checkpointId: { type: "string", description: "ej: C1, C2, C2_item_1" }, description: { type: "string" }, passed: { type: "boolean" }, notes: { type: "string" } } } } },
-  { type: "function", function: { name: "harness_complete_feature", description: "Marca una tarea como done. Falla si hay checkpoints sin evaluar.", parameters: { type: "object", required: ["taskId"], properties: { taskId: { type: "string" } } } } },
+  { type: "function", function: { name: "harness_submit_for_review", description: "Implementer pide review, cierra su sesión e invalida checkpoints previos.", parameters: { type: "object", required: ["sessionId", "summary"], properties: { sessionId: { type: "string" }, summary: { type: "string" } } } } },
+  { type: "function", function: { name: "harness_evaluate_checkpoint", description: "Reviewer evalúa exactamente un checkpoint C1-C5 en su sesión activa.", parameters: { type: "object", required: ["taskId", "sessionId", "checkpointId", "description", "passed"], properties: { taskId: { type: "string" }, sessionId: { type: "string" }, checkpointId: { type: "string", enum: ["C1", "C2", "C3", "C4", "C5"] }, description: { type: "string", description: "Criterio objetivo y evidencia evaluada" }, passed: { type: "boolean" }, notes: { type: "string" } } } } },
+  { type: "function", function: { name: "harness_complete_feature", description: "Gate exclusivo del reviewer: exige marker real de harness_submit_for_review y C1-C5 frescos antes de completar.", parameters: { type: "object", required: ["taskId", "sessionId"], properties: { taskId: { type: "string" }, sessionId: { type: "string", description: "Sesión reviewer activa que evaluó C1-C5" } } } } },
+  { type: "function", function: { name: "harness_record_runtime_event", description: "Registra una transición de runtime saneada e idempotente; nunca envíes prompts, argumentos ni HTML/CSS.", parameters: { type: "object", required: ["sessionId", "clientEventId", "eventType"], properties: { sessionId: { type: "string" }, clientEventId: { type: "string" }, eventType: { type: "string", enum: ["start", "request", "tool", "retry", "compaction", "done", "error", "cancelled"] }, round: { type: "number" }, maxRounds: { type: "number" }, attempt: { type: "number" }, provider: { type: "string" }, model: { type: "string" }, toolName: { type: "string" }, callId: { type: "string" }, elapsedMs: { type: "number" }, inputTokens: { type: "number" }, outputTokens: { type: "number" }, cumulativeTokens: { type: "number" }, tokenCountKind: { type: "string", enum: ["actual", "estimated"] }, contextChars: { type: "number" }, templateIds: { type: "array", items: { type: "string" } }, error: { type: "string" }, metadata: { type: "object" } } } } },
+  { type: "function", function: { name: "harness_get_runtime_events", description: "Lee eventos de runtime saneados con cursor.", parameters: { type: "object", required: ["sessionId"], properties: { sessionId: { type: "string" }, afterId: { type: "number" }, limit: { type: "number" } } } } },
+  { type: "function", function: { name: "harness_list_sessions", description: "Lista sesiones de una task autorizada.", parameters: { type: "object", required: ["taskId"], properties: { taskId: { type: "string" }, status: { type: "string" }, limit: { type: "number" } } } } },
+  { type: "function", function: { name: "harness_finish_session", description: "CAS-cierra una sesión. completed es solo para reviewer; implementer debe usar harness_submit_for_review.", parameters: { type: "object", required: ["sessionId", "status"], properties: { sessionId: { type: "string" }, status: { type: "string", enum: ["completed", "failed", "cancelled", "timed_out", "blocked"], description: "completed solo para reviewer" }, reason: { type: "string" }, summary: { type: "string" } } } } },
   { type: "function", function: { name: "harness_list_cronjobs", description: "Lista los cronjobs programados.", parameters: { type: "object", properties: {} } } },
   { type: "function", function: { name: "harness_create_cronjob", description: "Crea un cronjob automático.", parameters: { type: "object", required: ["name", "schedule"], properties: { name: { type: "string" }, schedule: { type: "string", description: "cron expression" }, action: { type: "string" }, featureType: { type: "string" }, workspaceId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_toggle_cronjob", description: "Activa/desactiva un cronjob.", parameters: { type: "object", required: ["cronjobId", "enabled"], properties: { cronjobId: { type: "string" }, enabled: { type: "boolean" } } } } },
   { type: "function", function: { name: "harness_report_error", description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.", parameters: { type: "object", required: ["tool", "error_message"], properties: { tool: { type: "string", description: "Nombre de la tool que falló" }, args: { type: "object", description: "Argumentos con los que se llamó" }, error_message: { type: "string", description: "Mensaje de error o resultado" }, step: { type: "number" }, totalSteps: { type: "number" }, round: { type: "number" }, provider: { type: "string" }, source: { type: "string", description: "chatfab, mcp, manual" } } } } },
   { type: "function", function: { name: "harness_list_errors", description: "Lee errores recientes de harness_error_logs. Útil después de una cascada para ver qué falló y por qué.", parameters: { type: "object", properties: { limit: { type: "number", description: "Máximo de errores a retornar (default 20)" }, tool: { type: "string", description: "Filtrar por nombre de tool" } } } } },
-  { type: "function", function: { name: "harness_delegate_task", description: "DELEGA a un subagente real. Esto spawnea una llamada LLM SEPARADA con contexto aislado y tools restringidas al rol. El Leader NUNCA hace diseño directamente — SIEMPRE delega con esta tool. Retorna un resumen (done/blocked para implementer, APPROVED/CHANGES_REQUESTED para reviewer).", parameters: { type: "object", required: ["role", "instruction"], properties: { role: { type: "string", enum: ["implementer", "reviewer"], description: "implementer ejecuta diseño con tools de diseño, reviewer verifica con tools de solo lectura" }, taskId: { type: "string", description: "ID de la tarjeta Kanban (card_xxx)" }, instruction: { type: "string", description: "Instrucción específica para el subagente. Ej implementer: 'Crea frame 1080x1080 con texto Hola Ren en estilo Futuraria (morado #7B2FF7, Orbitron).' Ej reviewer: 'Verifica: dimensiones 1080x1080, tipografía legible, paleta consistente.'" }, templateId: { type: "string", description: "Template ID si ya existe (tpl_xxx)" } } } } },
+  { type: "function", function: { name: "harness_delegate_task", description: "DELEGA a un subagente real. Esto spawnea una llamada LLM SEPARADA con contexto aislado y tools restringidas al rol. El Leader NUNCA hace diseño directamente — SIEMPRE delega con esta tool. Retorna un resultado verificable.", parameters: { type: "object", required: ["role", "instruction", "contract"], properties: { role: { type: "string", enum: ["implementer", "reviewer"], description: "implementer ejecuta diseño con tools de diseño, reviewer verifica con tools de solo lectura" }, taskId: { type: "string", description: "ID de la tarjeta Kanban (card_xxx)" }, instruction: { type: "string", description: "Instrucción específica para el subagente." }, contract: { type: "object", description: "Contrato verificable. mode=create exige dimensiones y un ID devuelto por una tool creadora de esta sesión. En multi-frame, requiredTextsByFrame tiene una entrada por frame.", required: ["mode", "expectedTemplateCount", "expectedFrameCount", "requiredWidth", "requiredHeight", "requiredTexts", "requiredTextsByFrame", "requiredStyle"], properties: { mode: { type: "string", enum: ["create", "edit"] }, expectedTemplateCount: { type: "number" }, expectedFrameCount: { type: "number" }, requiredWidth: { type: "number" }, requiredHeight: { type: "number" }, requiredTexts: { type: "array", items: { type: "string" } }, requiredTextsByFrame: { type: "array", items: { type: "array", items: { type: "string" } } }, requiredStyle: { type: "string" } } }, templateId: { type: "string", description: "Template ID si ya existe (tpl_xxx)" }, templateIds: { type: "array", items: { type: "string" }, description: "Todos los artifacts que el reviewer debe verificar." } } } } },
   // ═══════════════════════════════════════════════
   //  Musa Daily Batch — Queue items for automated processing
   // ═══════════════════════════════════════════════
@@ -694,12 +685,13 @@ DETERMINA EL MODO leyendo el contexto:
 MODO A — Crear diseño nuevo (si el contexto dice "No se pasó templateId: esto es un diseño NUEVO"):
   PASO 1: Si el contexto incluye "workspaceId=...", úsalo directamente — NO llames list_workspaces.
     Solo si NO hay workspaceId en el contexto, llama list_workspaces y toma el primero.
-  PASO 2: Llama create_html_template con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
+    Si encontraste una brand guideline: para create_html_carousel pasa su brandId Y aplica sus tokensJson/sharedCss reales en el CSS de CADA frame; para create_deck pasa brandId y traduce esos tokens al objeto brand. Si no puedes mapear o aplicar el estilo solicitado, responde blocked; nunca done.
+  PASO 2: Para una presentación 1920x1080 llama create_deck UNA VEZ; recuerda que crea portada automática, así que total frames = slides.length + 1. Para carrusel/social o dimensiones personalizadas llama create_html_carousel UNA VEZ con width, height y todos los frames completos. Para archivos/posts separados, llama create_html_template una vez por archivo con workspaceId, name, width, height, html COMPLETO y css COMPLETO.
     ⚠️ CRÍTICO: El html y css deben estar COMPLETOS. No dejes placeholders ni vacíos.
     Escribe TODO el HTML con los textos exactos. Escribe TODO el CSS con colores, fuentes, layout.
     ⚠️ El contenido debe caber DENTRO de width×height. Nada puede desbordar el frame.
   PASO 3: Llama harness_submit_for_review con tu sessionId y un resumen breve.
-  ⚠️ SI LA INSTRUCCIÓN PIDE VARIOS DISEÑOS (ej: "crea 3 posts"): llama create_html_template
+  ⚠️ SI LA INSTRUCCIÓN PIDE VARIOS ARCHIVOS SEPARADOS (ej: "crea 3 posts separados"): llama create_html_template
     UNA VEZ POR CADA diseño, cada llamada con su HTML/CSS COMPLETO propio — nunca un template
     vacío "de prueba" ni un placeholder que pienses borrar después. Tu resumen final DEBE
     mencionar el ID real de cada uno de los templates que creaste (todos, no solo el primero).
@@ -734,12 +726,13 @@ const REVIEWER_PROMPT = `Eres un Reviewer del Harness de Futuraria Design. El Le
 
 WORKFLOW OBLIGATORIO (exactamente estos pasos):
 
-PASO 1 — Obtén el template a verificar:
-  Llama get_template con el templateId del contexto.
-  Si no hay templateId, llama list_templates y busca el más reciente por created_at.
+PASO 1 — Obtén TODOS los templates a verificar:
+  Usa exclusivamente los templateIds explícitos del contexto y llama get_template para CADA uno.
+  Si no hay templateIds explícitos, no adivines ni elijas el más reciente: devuelve CHANGES_REQUESTED.
 
 PASO 2 — Verifica contenido ACTIVAMENTE (no asumas, INSPECCIONA):
-  - ¿El template tiene frames? Si tiene 0 frames → C2 falla.
+  - Compara cantidad de templates y frames contra el contrato. Si falta uno solo, C2 falla.
+  - ¿Cada template tiene frames? Si tiene 0 frames → C2 falla.
   - ¿Los frames tienen HTML no vacío? Llama get_frame para cada frame y verifica que html no sea vacío ni un div sin contenido.
   - ¿Las dimensiones del template coinciden con lo solicitado? (ej: width=1080 height=1080)
   - ¿El texto solicitado aparece en el HTML del frame?
@@ -767,7 +760,7 @@ PASO 3 — Evalúa TODOS los checkpoints C1-C5 con harness_evaluate_checkpoint:
     - C3: Paleta/estilo solicitado aplicado — y si se pidió un estilo con NOMBRE, que ese estilo exista de verdad en la biblioteca (ver PASO 2). passed=false si se improvisó un estilo que no está guardado bajo ese nombre.
     - C4: Estructura HTML válida. passed=true si las etiquetas están balanceadas.
     - C5: CSS funcional. passed=true si no hay propiedades rotas y el layout es coherente.
-  Argumentos: harness_evaluate_checkpoint({ taskId: "<taskId>", checkpointId: "C1", description: "...", passed: true/false, notes: "..." })
+  Argumentos: harness_evaluate_checkpoint({ taskId: "<taskId>", sessionId: "<tu sessionId>", checkpointId: "C1", description: "...", passed: true/false, notes: "..." })
 
 PASO 4 — Emite veredicto:
   - Si TODOS los C1-C5 pasaron → responde: APPROVED
@@ -803,7 +796,8 @@ const LEADER_TOOL_NAMES = new Set([
   // ── Feature lifecycle ──
   "harness_list_features", "harness_claim_feature", "harness_release_feature", "harness_complete_feature",
   // ── Session ──
-  "harness_get_entries", "harness_submit_for_review",
+  "harness_get_entries", "harness_get_runtime_events", "harness_list_sessions",
+  "harness_finish_session", "harness_submit_for_review",
   // ── Cronjobs ──
   "harness_list_cronjobs", "harness_create_cronjob", "harness_toggle_cronjob",
   // ── Read-only inspection ──
@@ -834,7 +828,7 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   // ── Workspace ──
   "list_workspaces",
   // ── Template CRUD ──
-  "create_html_template", "create_template", "create_deck",
+  "create_html_template", "create_html_carousel", "create_template", "create_deck",
   "update_template", "rename_template", "tag_template", "untag_template",
   "duplicate_template", "delete_template",
   // ── Frame CRUD ──
@@ -964,72 +958,24 @@ const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
   input_schema: t.function.parameters,
 }));
 
-/**
- * Normalize MCP tool results before feeding back to the LLM.
- *
- * MCP returns: { result: { content: [{ type: "text", text: "..." }] } }
- * We need: just the text, truncated if too long.
- *
- * Without this, the model sees raw JSON wrappers as noise and
- * tool calling degrades after 2-3 rounds.
- */
-function normalizeToolResult(raw: string, toolName: string): string {
-  try {
-    const parsed = JSON.parse(raw);
-    // MCP format: { jsonrpc: "2.0", result: { content: [{ text: "..." }] } }
-    const mcpText = parsed?.result?.content?.[0]?.text;
-    if (mcpText) {
-      try {
-        const inner = JSON.parse(mcpText);
-        const summary = JSON.stringify(inner, null, 0);
-        return summary.length > 2000 ? summary.slice(0, 1997) + "..." : summary;
-      } catch {
-        return mcpText.length > 2000 ? mcpText.slice(0, 1997) + "..." : mcpText;
-      }
-    }
-    // Direct object (non-MCP wrapper)
-    const direct = JSON.stringify(parsed);
-    return direct.length > 2000 ? direct.slice(0, 1997) + "..." : direct;
-  } catch {
-    const str = String(raw);
-    return str.length > 2000 ? str.slice(0, 1997) + "..." : str;
-  }
-}
+type SubagentProgressHandler = (progress: SubagentProgress) => void;
 
-async function executeToolCall(name: string, args: Record<string, any>, signal?: AbortSignal): Promise<string> {
+async function executeToolCall(
+  name: string,
+  args: Record<string, any>,
+  signal?: AbortSignal,
+  onProgress?: SubagentProgressHandler,
+): Promise<string> {
   try {
     if (name === "harness_delegate_task") {
-      return await spawnSubagent(args as any, signal);
+      return await spawnSubagent(args as any, signal, onProgress);
     }
-    const result = await mcpCall(name, resolveArgs(name, args));
-    return JSON.stringify(result, null, 2).slice(0, 4000);
+    const result = await mcpCall(name, resolveArgs(name, args), signal);
+    return serializeValidJson(result, 32_000);
   } catch (e: any) {
     return JSON.stringify({ error: e?.message || "tool call failed" });
   }
 }
-
-/** REQ-004: Mutation tools whose ARGS may contain a templateId worth
- *  capturing. Read-only tools (get_template, list_frames, find_templates…)
- *  are deliberately excluded — an implementer inspecting a reference
- *  template must not have that ID accepted as "the deliverable".
- *
- *  This is the complete list of tools that CREATE or MODIFY templates.
- *  When a new mutation tool is added, append it here. */
-const MUTATION_TOOL_NAMES = new Set([
-  // Creators
-  "create_html_template", "create_template", "create_deck", "create_frame",
-  "create_html_frame", "import_template", "import_design", "assemble_template",
-  "duplicate_template", "create_from_recipe", "generate_from_prompt",
-  "generate_ui_components", "image_to_design",
-  // Modifiers
-  "set_html", "set_css", "update_template", "update_frame_content",
-  "update_html_frame", "set_frame_layers", "enhance_template",
-  "apply_csv_to_frames", "apply_variables", "apply_brand_to_template",
-  "auto_fix_brand", "add_font_to_template", "adapt_format", "adapt_all_formats",
-  "save_version", "restore_version", "rename_template", "tag_template",
-  "untag_template", "duplicate_frame", "replace_asset", "set_css_variable",
-  "create_variable", "link_variable", "update_thumbnail",
-]);
 
 /**
  * Spawn a subagent — a SEPARATE LLM call with role-specific system prompt
@@ -1041,7 +987,13 @@ async function spawnSubagent(params: {
   taskId?: string;
   instruction: string;
   templateId?: string;
-}, signal?: AbortSignal): Promise<string> {
+  templateIds?: string[];
+  contract?: WorkContract;
+}, signal?: AbortSignal, onProgress?: SubagentProgressHandler): Promise<string> {
+  const contractValidation = validateWorkContract(params.contract);
+  if (!contractValidation.ok) {
+    return serializeValidJson({ delegated: false, outcome: "error", verification_failed: true, error: contractValidation.error });
+  }
   // ── Per-role LLM config: each subagent role can use a different provider+model ──
   const roleLLM = resolveRoleLLM(params.role);
   if (!roleLLM) {
@@ -1051,6 +1003,43 @@ async function spawnSubagent(params: {
   }
   const { providerId, model, apiKey: llmKey, endpoint, isAnthropic } = roleLLM;
   const prov = PROVIDERS.find(p => p.id === providerId) || PROVIDERS[0];
+  const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const startedAt = Date.now();
+  const deadlineMs = params.role === "implementer" ? 5 * 60_000 : 3 * 60_000;
+  const capturedTemplateIds: string[] = [];
+  const createdArtifactIds: string[] = [];
+  const createdFramesByArtifact = new Map<string, number>();
+  const createdFrameCount = () => [...createdFramesByArtifact.values()].reduce((sum, count) => sum + count, 0);
+  const addCapturedTemplateId = (id: string | undefined | null) => {
+    if (id && !capturedTemplateIds.includes(id)) capturedTemplateIds.push(id);
+  };
+  let madeAnyToolCall = false;
+  let madeMutationToolCall = false;
+  const consultedStyleEvidence: string[] = [];
+  const consultedStyles: Array<{ id?: string; name?: string }> = [];
+  const styleEvidence: string[] = [];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let sawEstimatedUsage = false;
+  let currentRound = 0;
+  let eventSequence = 0;
+  let hasDurableSession = false;
+  onProgress?.({
+    runId,
+    state: "starting",
+    role: params.role,
+    round: 0,
+    maxRounds: MAX_SUBAGENT_ROUNDS,
+    elapsedMs: 0,
+    provider: providerId,
+    model: model || prov.defaultModel,
+    inputTokens: 0,
+    outputTokens: 0,
+    cumulativeTokens: 0,
+    tokenCountKind: "estimated",
+    templateIds: [...(params.templateIds || [])],
+    emittedAt: startedAt,
+  });
 
   // Carry the known WORKSPACE into the delegated instruction so the subagent
   // doesn't have to blindly call list_workspaces and guess — same fix as
@@ -1069,24 +1058,38 @@ async function spawnSubagent(params: {
     params.templateId
       ? `[templateId=${params.templateId} — el Leader decidió explícitamente que esto es sobre este template existente. Si tu tarea es agregar algo nuevo, crea un FRAME NUEVO dentro de él con create_frame/create_html_frame — nunca sobrescribas frames existentes salvo que la instrucción nombre ese frame específico.]`
       : `[No se pasó templateId: esto es un diseño NUEVO. Crea un template nuevo — nunca reutilices ni modifiques uno existente.]`,
+    params.templateIds?.length ? `[Artifacts a verificar: ${params.templateIds.join(", ")}]` : "",
+    params.contract ? `[Contrato verificable: ${serializeValidJson(params.contract, 4000)}]` : "",
   ].filter(Boolean).join("\n");
   const instruction = `${params.instruction}\n\n${contextNote}`;
 
   // 1. Start session in Supabase
   let sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
   let taskContext = instruction;
-  try {
-    const sessResult = await mcpCall("harness_start_session", {
-      taskId: params.taskId || "standalone",
-      role: params.role,
-      agentName: params.role,
-      plan: instruction,
-    });
-    sessionId = sessResult?.session?.id || sessionId;
-    if (sessResult?.session?.context_summary) {
-      taskContext = `${sessResult.session.context_summary}\n\n${contextNote}`;
+  if (params.taskId) {
+    try {
+      const sessResult = await mcpCall("harness_start_session", {
+        taskId: params.taskId,
+        role: params.role,
+        agentName: params.role,
+        plan: instruction,
+      });
+      sessionId = sessResult?.session?.id || sessionId;
+      hasDurableSession = true;
+      if (sessResult?.session?.context_summary) {
+        taskContext = `${sessResult.session.context_summary}\n\n${contextNote}`;
+      }
+    } catch (error: any) {
+      return serializeValidJson({
+        delegated: false,
+        role: params.role,
+        outcome: "error",
+        verification_failed: true,
+        error: `No se pudo iniciar la sesión real de la task ${params.taskId}: ${error?.message || "error desconocido"}`,
+        templateIds: [],
+      });
     }
-  } catch { /* non-fatal */ }
+  }
 
   // 2. Pick role-specific prompt and tools (inject sessionId for implementer)
   let systemPrompt: string;
@@ -1100,11 +1103,115 @@ async function spawnSubagent(params: {
     systemPrompt = REVIEWER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
     tools = REVIEWER_TOOLS;
   }
+  tools = selectProviderTools(tools, providerId);
+  const runController = new AbortController();
+  let deadlineExpired = false;
+  const forwardParentAbort = () => runController.abort(new DOMException("Stopped by user", "AbortError"));
+  if (signal?.aborted) forwardParentAbort();
+  else signal?.addEventListener("abort", forwardParentAbort, { once: true });
+  const deadlineTimer = window.setTimeout(() => {
+    deadlineExpired = true;
+    runController.abort(new DOMException("Subagent deadline exceeded", "TimeoutError"));
+  }, Math.max(1, deadlineMs - (Date.now() - startedAt)));
+  const runSignal = runController.signal;
+  const telemetryQueue = createSerialPromiseQueue();
+  const enqueueTelemetry = (method: string, args: Record<string, unknown>) => {
+    void telemetryQueue.enqueue(() => mcpCall(method, args)).catch(() => undefined);
+  };
+
+  const runStats = (rounds = currentRound): AgentRunStats => ({
+    runId,
+    role: params.role,
+    elapsedMs: Date.now() - startedAt,
+    rounds,
+    maxRounds: MAX_SUBAGENT_ROUNDS,
+    provider: providerId,
+    model: model || prov.defaultModel,
+    inputTokens,
+    outputTokens,
+    cumulativeTokens: inputTokens + outputTokens,
+    tokenCountKind: inputTokens + outputTokens === 0 || sawEstimatedUsage ? "estimated" : "actual",
+    templateIds: [...capturedTemplateIds],
+    sessionId,
+  });
+  const emitProgress = (
+    state: SubagentProgress["state"],
+    details: Partial<SubagentProgress> = {},
+  ) => {
+    const stats = runStats(details.round ?? currentRound);
+    const progress: SubagentProgress = {
+      ...stats,
+      state,
+      round: stats.rounds,
+      emittedAt: Date.now(),
+      ...details,
+      templateIds: [...capturedTemplateIds],
+    };
+    onProgress?.(progress);
+    if (!hasDurableSession) return;
+    const eventType = {
+      starting: "start",
+      thinking: "request",
+      executing_tool: "tool",
+      retrying: "retry",
+      compacted: "compaction",
+      done: "done",
+      error: "error",
+      cancelled: "cancelled",
+    }[state];
+    const clientEventId = `${runId}:${String(++eventSequence).padStart(4, "0")}`;
+    enqueueTelemetry("harness_record_runtime_event", {
+      sessionId,
+      clientEventId,
+      eventType,
+      round: progress.round,
+      maxRounds: progress.maxRounds,
+      attempt: progress.attempt,
+      provider: progress.provider,
+      model: progress.model,
+      toolName: progress.currentTool,
+      callId: progress.callId,
+      elapsedMs: progress.elapsedMs,
+      inputTokens: progress.inputTokens,
+      outputTokens: progress.outputTokens,
+      cumulativeTokens: progress.cumulativeTokens,
+      tokenCountKind: progress.tokenCountKind,
+      contextChars: progress.contextChars,
+      templateIds: progress.templateIds,
+      error: progress.reason ? sanitizeRuntimeText(progress.reason, 500) : undefined,
+      metadata: state === "retrying" ? { reason: progress.reason } : undefined,
+    });
+  };
+  const finishSessionBestEffort = (status: "completed" | "failed" | "cancelled" | "timed_out", reason: string) => {
+    if (!hasDurableSession) return;
+    enqueueTelemetry("harness_finish_session", {
+      sessionId,
+      status,
+      reason: sanitizeRuntimeText(reason, 500),
+      summary: `${params.role} ${status} after ${currentRound}/${MAX_SUBAGENT_ROUNDS} rounds`,
+    });
+  };
+  const finishResult = (
+    payload: Record<string, unknown>,
+    state: "done" | "error" | "cancelled",
+    reason?: string,
+    terminalStatus?: "failed" | "cancelled" | "timed_out",
+    closeReviewerCompleted = false,
+  ) => {
+    emitProgress(state, reason ? { reason } : {});
+    if (terminalStatus) finishSessionBestEffort(terminalStatus, reason || state);
+    else if (closeReviewerCompleted) {
+      finishSessionBestEffort("completed", "Reviewer requested changes; review session closed.");
+    }
+    window.clearTimeout(deadlineTimer);
+    signal?.removeEventListener("abort", forwardParentAbort);
+    return serializeValidJson({ ...payload, stats: runStats() });
+  };
+  emitProgress("starting");
 
   // 3. Subagent conversation — fresh, no Leader history
   // Include sessionId in the first message so the subagent can use it immediately
   let subConv: any[] = [{ role: "user", content: `${instruction}\n\n[Tu sessionId: ${sessionId}]` }];
-  const MAX_SUB_ROUNDS = 15;
   // Tracks every templateId the implementer actually CREATED or WROTE TO via
   // a real tool call — never from read-only calls (get_template, get_frame,
   // list_templates, etc.), so inspecting a reference/style template is never
@@ -1114,102 +1221,153 @@ async function spawnSubagent(params: {
   // Leader silently reported) whatever the implementer happened to touch
   // first — a throwaway scratch template, or just the style it read for
   // reference — while the real deliverables went completely unverified.
-  const capturedTemplateIds: string[] = [];
-  const addCapturedTemplateId = (id: string | undefined | null) => {
-    if (id && !capturedTemplateIds.includes(id)) capturedTemplateIds.push(id);
-  };
-  let madeAnyToolCall = false;
+  try {
+  for (let round = 0; round < MAX_SUBAGENT_ROUNDS; round++) {
+    currentRound = round + 1;
+    if (runSignal.aborted && !deadlineExpired) {
+      const reason = "El subagente fue detenido antes de completar la verificación.";
+      return finishResult({ delegated: true, role: params.role, sessionId, result: "(detenido por el usuario)", stopped: true, outcome: "partial", verification_failed: true, verification_error: reason, rounds: round }, "cancelled", reason, "cancelled");
+    }
+    const remainingDeadlineMs = deadlineMs - (Date.now() - startedAt);
+    if (remainingDeadlineMs <= 0) {
+      const reason = `El subagente superó el deadline de ${formatDuration(deadlineMs)}.`;
+      return finishResult({ delegated: true, role: params.role, sessionId, outcome: "error", verification_failed: true, verification_error: reason, rounds: round }, "error", reason, "timed_out");
+    }
 
-  for (let round = 0; round <= MAX_SUB_ROUNDS; round++) {
-    if (signal?.aborted) return JSON.stringify({ delegated: true, role: params.role, sessionId, result: "(detenido por el usuario)", stopped: true, rounds: round });
-
-    // ── Trim subagent conversation to prevent context overflow ──
-    if (subConv.length > 15 && round > 3) {
-      subConv = [
-        subConv[0],
-        { role: "user", content: "[Conversación recortada. Continúa tu tarea.]" },
-        ...subConv.slice(-10),
-      ];
-      // REQ-005: subConv.slice(-10) can orphan tool_result messages
-      // whose assistant (with tool_use/tool_calls) was trimmed off.
-      // LLMs reject orphaned tool results → 400. Walk forward from
-      // index 2 and strip any tool_result whose matching tool call
-      // doesn't exist in the kept messages.
-      const keptHasToolId = (id: string): boolean => {
-        for (let k = 0; k < subConv.length; k++) {
-          const m = subConv[k];
-          if (Array.isArray(m?.content)) {
-            if (m.content.some((b: any) => b.type === "tool_use" && b.id === id)) return true;
-          }
-          if (Array.isArray(m?.tool_calls)) {
-            if (m.tool_calls.some((tc: any) => tc.id === id)) return true;
-          }
-        }
-        return false;
-      };
-      let si = 2; // start after subConv[0] + truncation message
-      while (si < subConv.length) {
-        const msg = subConv[si];
-        let toolId: string | undefined;
-        if (Array.isArray(msg?.content)) {
-          toolId = msg.content.find((b: any) => b.type === "tool_result")?.tool_use_id;
-        }
-        if (msg?.role === "tool") toolId = msg.tool_call_id;
-        if (!toolId) break; // not a tool result — safe, stop stripping
-        if (!keptHasToolId(toolId)) {
-          subConv.splice(si, 1); // orphaned — remove, re-check same index
-        } else {
-          break; // found a non-orphaned one — rest is safe
-        }
+    // Tool schemas and the system prompt are most of this request. Compact only
+    // when the complete provider body approaches the model context budget.
+    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+      let compacted = compactConversationAtomic(subConv, {
+        maxMessages: 40,
+        preserveFirstMessages: 1,
+        manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
+      }).messages;
+      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+        compacted = compactConversationAtomic(compacted, {
+          maxMessages: 24,
+          preserveFirstMessages: 1,
+          manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
+        }).messages;
       }
+      subConv = compacted;
+      emitProgress("compacted", {
+        round: round + 1,
+        reason: "context_budget",
+        contextChars: JSON.stringify(subConv).length,
+      });
     }
 
     let data: any;
+    const providerTools = isAnthropic ? toolsForAnthropic(tools) : tools;
+    const estimatedInputForRound = estimateFullRequestTokens(systemPrompt, subConv, providerTools);
+    emitProgress("thinking", {
+      round: round + 1,
+      contextChars: systemPrompt.length + JSON.stringify(subConv).length + JSON.stringify(providerTools).length,
+    });
+    const retryOptions = {
+      signal: runSignal,
+      timeoutMs: 75_000,
+      maxRetries: 2,
+      maxTimeoutRetries: 1,
+      totalDeadlineMs: remainingDeadlineMs,
+      onRetry: (notice: { attempt: number; reason: "timeout" | "network" | "rate_limit" | "server_error"; delayMs: number }) => {
+        emitProgress("retrying", { round: round + 1, attempt: notice.attempt, reason: notice.reason });
+      },
+    };
 
     if (isAnthropic) {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } }),
-      }, { signal });
-      if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+      }, retryOptions);
+      if (!resp.ok) {
+        const classified = classifyHttpError(resp.status, await resp.text());
+        throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
+      }
       data = await resp.json();
     } else {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
         body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools, tool_choice: "auto" }),
-      }, { signal });
-      if (!resp.ok) throw new Error(`Subagent ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+      }, retryOptions);
+      if (!resp.ok) {
+        const classified = classifyHttpError(resp.status, await resp.text());
+        throw new Error(`Subagent ${classified.status} (${classified.category}): ${classified.body}`);
+      }
       data = await resp.json();
+    }
+    const providerUsage = readProviderUsage(data, isAnthropic);
+    if (providerUsage) {
+      inputTokens += providerUsage.inputTokens;
+      outputTokens += providerUsage.outputTokens;
+    } else {
+      sawEstimatedUsage = true;
+      inputTokens += estimatedInputForRound;
+      outputTokens += Math.max(1, Math.ceil(JSON.stringify(data).length / 4));
     }
 
     let textContent = "";
-    let toolCalls: { id: string; name: string; args: any }[] = [];
+    let toolCalls: { id: string; name: string; args: any; argsError?: string }[] = [];
 
     if (isAnthropic) {
       for (const block of data?.content || []) {
         if (block.type === "text") textContent += block.text;
-        else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, args: block.input || {} });
+        else if (block.type === "tool_use") {
+          const validInput = block.input && !Array.isArray(block.input) && typeof block.input === "object";
+          toolCalls.push({ id: block.id, name: block.name, args: validInput ? block.input : null, argsError: validInput ? undefined : "Invalid Anthropic tool input." });
+        }
       }
     } else {
       const msg = data?.choices?.[0]?.message;
       if (msg) {
         textContent = msg.content || "";
         for (const tc of msg.tool_calls || []) {
-          try { toolCalls.push({ id: tc.id, name: tc.function.name, args: JSON.parse(tc.function.arguments || "{}") }); }
-          catch { toolCalls.push({ id: tc.id, name: tc.function.name, args: {} }); }
+          const parsedArgs = parseToolArguments(tc.function.arguments);
+          toolCalls.push(parsedArgs.ok
+            ? { id: tc.id, name: tc.function.name, args: parsedArgs.value }
+            : { id: tc.id, name: tc.function.name, args: null, argsError: parsedArgs.error });
         }
       }
     }
 
+    if (responseStoppedIncomplete(data, isAnthropic)) {
+      const reason = "El proveedor truncó la respuesta por límite de tokens; no se ejecutaron argumentos potencialmente incompletos.";
+      return finishResult({
+        delegated: true, role: params.role, sessionId, outcome: "partial",
+        verification_failed: true,
+        verification_error: reason,
+        templateId: capturedTemplateIds[0] || null,
+        templateIds: capturedTemplateIds,
+        createdArtifactIds,
+        contract: params.contract || {},
+        styleEvidence,
+        consultedStyleEvidence,
+        consultedStyles,
+        madeMutationToolCall,
+        rounds: round + 1,
+      }, "error", reason, "failed");
+    }
+
     // No more tool calls → subagent finished
     if (toolCalls.length === 0) {
-      return JSON.stringify({
+      const unsuccessful = params.role === "implementer" && !madeMutationToolCall;
+      const reason = unsuccessful ? "El implementer terminó sin ejecutar una mutación de diseño verificable." : undefined;
+      const reviewerVerdict = params.role === "reviewer" ? parseReviewerVerdict(textContent) : "unknown";
+      return finishResult({
         delegated: true, role: params.role, sessionId,
         result: textContent.trim().slice(0, 500) || "(sin respuesta del subagente)",
         templateId: capturedTemplateIds[0] || null,
         templateIds: capturedTemplateIds,
+        createdArtifactIds,
+        contract: params.contract || {},
+        styleEvidence,
+        consultedStyleEvidence,
+        consultedStyles,
+        madeMutationToolCall,
+        outcome: unsuccessful ? "verification_failed" : "success",
+        verification_failed: unsuccessful,
         // No design tool was ever called — the implementer's text is pure
         // prose with nothing behind it. This is the pattern that produces
         // fully fabricated templateIds/session summaries: a weak-tool-use
@@ -1217,60 +1375,130 @@ async function spawnSubagent(params: {
         // instead of actually emitting tool_calls. The Leader must never
         // trust "done"-sounding text when this flag is set.
         noToolCallsMade: !madeAnyToolCall,
+        reviewerVerdict,
         rounds: round + 1,
-      });
+      }, unsuccessful ? "error" : "done", reason, unsuccessful ? "failed" : undefined, reviewerVerdict === "CHANGES_REQUESTED");
     }
 
     madeAnyToolCall = true;
 
     // Push assistant message into subagent conversation
-    if (isAnthropic) { subConv.push(data.content); }
+    if (isAnthropic) { subConv.push({ role: "assistant", content: data.content || [] }); }
     else { subConv.push(data.choices[0].message); }
 
     // Execute each tool call within the subagent's own loop
+    const anthropicResults: any[] = [];
     for (const tc of toolCalls) {
-      const rawResult = await executeToolCall(tc.name, tc.args, signal);
-      const resultStr = normalizeToolResult(rawResult, tc.name);
-      // REQ-004: Generic templateId capture for ALL tools — replaces the
-      // old rigid if/else that only recognized ~8 tool names. Two paths:
-      //   1. From the RESULT — always safe. Only creator/mutation tools
-      //      return an id/templateId in their JSON output; read-only tools
-      //      (get_template, list_frames…) return data payloads without a
-      //      top-level `id` that addCapturedTemplateId would accept.
-      //   2. From the ARGS — restricted to mutation tools. Capturing args
-      //      from read-only tools would let a mere inspection call
-      //      (get_template on a reference style) be silently accepted as
-      //      "the deliverable" — the exact bug the old rigid list prevented.
-      try {
-        const parsed = JSON.parse(resultStr);
-        addCapturedTemplateId(parsed?.id);
-        addCapturedTemplateId(parsed?.templateId);
-        addCapturedTemplateId(parsed?.data?.id);
-        addCapturedTemplateId(parsed?.data?.templateId);
-      } catch { /* non-JSON result — skip */ }
-      if (MUTATION_TOOL_NAMES.has(tc.name)) {
-        addCapturedTemplateId(tc.args?.templateId);
-        addCapturedTemplateId(tc.args?.template_id);
-        addCapturedTemplateId(tc.args?.id);
+      if (runSignal.aborted) throw runSignal.reason || new DOMException("Subagent aborted", "AbortError");
+      emitProgress("executing_tool", {
+        round: round + 1,
+        currentTool: tc.name,
+        callId: tc.id,
+        attempt: 1,
+      });
+      const payloadValidation = tc.argsError
+        ? null
+        : validateDesignToolPayload(tc.name, tc.args, params.contract || {});
+      const rawResult = tc.argsError
+        ? serializeValidJson({ error: tc.argsError, code: "invalid_tool_arguments", executed: false })
+        : payloadValidation && !payloadValidation.ok
+          ? serializeValidJson({ error: payloadValidation.error, code: "invalid_design_payload", executed: false })
+        : await executeToolCall(tc.name, tc.args, runSignal);
+      const resultStr = normalizeAgentToolResult(rawResult);
+      const toolFailed = tc.argsError || (payloadValidation !== null && !payloadValidation.ok) || resultStr.includes('"error"') || resultStr.includes('"code":-');
+      if (!toolFailed) {
+        if (["get_active_styles", "list_brand_guidelines", "get_brand_guideline", "get_brands"].includes(tc.name)) {
+          for (const candidate of extractStyleReferences(resultStr)) {
+            if (candidate.name && !consultedStyleEvidence.includes(candidate.name)) consultedStyleEvidence.push(candidate.name);
+            if (candidate.id && !consultedStyleEvidence.includes(candidate.id)) consultedStyleEvidence.push(candidate.id);
+            if (!consultedStyles.some(style => style.id === candidate.id && style.name === candidate.name)) {
+              consultedStyles.push(candidate);
+            }
+          }
+        }
+        const ids = captureArtifactIds(tc.name, tc.args, resultStr);
+        ids.forEach(addCapturedTemplateId);
+        if (CREATOR_TOOL_NAMES.has(tc.name)) {
+          for (const id of ids) if (!createdArtifactIds.includes(id)) createdArtifactIds.push(id);
+          const count = captureCreatedFrameCount(tc.name, resultStr);
+          if (count > 0 && ids[0]) createdFramesByArtifact.set(ids[0], count);
+        }
+        if (ids.length > 0 || MUTATION_TOOL_NAMES.has(tc.name)) {
+          madeMutationToolCall = true;
+          for (const evidence of collectMutationStyleEvidence(tc.name, tc.args, consultedStyles)) {
+            if (!styleEvidence.includes(evidence)) styleEvidence.push(evidence);
+          }
+        }
       }
-      if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
+      if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: resultStr }); }
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
     }
+    if (isAnthropic && anthropicResults.length > 0) subConv.push({ role: "user", content: anthropicResults });
   }
 
   // Max rounds reached
-  return JSON.stringify({
+  const roundLimitReason = `El subagente alcanzó el límite exacto de ${MAX_SUBAGENT_ROUNDS} rondas sin demostrar completitud.`;
+  return finishResult({
     delegated: true, role: params.role, sessionId,
     result: "(subagente alcanzó límite de iteraciones)",
     templateId: capturedTemplateIds[0] || null,
     templateIds: capturedTemplateIds,
+    createdArtifactIds,
+    contract: params.contract || {},
+    styleEvidence,
+    consultedStyleEvidence,
+    consultedStyles,
+    madeMutationToolCall,
+    outcome: "verification_failed",
+    verification_failed: true,
+    verification_error: roundLimitReason,
     noToolCallsMade: !madeAnyToolCall,
     hitRoundLimit: true,
-    rounds: MAX_SUB_ROUNDS + 1,
-  });
+    rounds: MAX_SUBAGENT_ROUNDS,
+  }, "error", roundLimitReason, "failed");
+  } catch (error: any) {
+    const isTimeout = deadlineExpired || error?.name === "TimeoutError";
+    const isAbort = !isTimeout && (signal?.aborted || error?.name === "AbortError");
+    const reason = sanitizeRuntimeText(error?.message || (isAbort ? "Stopped by user" : "Subagent failed"), 1000);
+    return finishResult({
+      delegated: true,
+      role: params.role,
+      sessionId,
+      outcome: isAbort ? "partial" : "error",
+      stopped: isAbort,
+      verification_failed: true,
+      verification_error: reason,
+      templateId: capturedTemplateIds[0] || null,
+      templateIds: capturedTemplateIds,
+      createdArtifactIds,
+      contract: params.contract || {},
+      styleEvidence,
+      consultedStyleEvidence,
+      consultedStyles,
+      madeMutationToolCall,
+      rounds: currentRound,
+    }, isAbort ? "cancelled" : "error", reason, isAbort ? "cancelled" : isTimeout ? "timed_out" : "failed");
+  }
 }
 
-interface ToolEvent { tool: string; status: "running" | "done" | "error"; result?: string }
+interface ToolEvent {
+  id: string;
+  tool: string;
+  status: "running" | "done" | "error";
+  result?: string;
+  progress?: SubagentProgress;
+}
+
+const SUBAGENT_PROGRESS_LABELS: Record<SubagentProgress["state"], string> = {
+  starting: "iniciando",
+  thinking: "pensando",
+  executing_tool: "ejecutando tool",
+  retrying: "reintentando",
+  compacted: "compactando contexto",
+  done: "completado",
+  error: "falló",
+  cancelled: "cancelado",
+};
 
 const inputBase: React.CSSProperties = {
   background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
@@ -1395,7 +1623,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
-  const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  const [clockNow, setClockNow] = useState(Date.now());
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
   // ── Multi-model per role: each role can use a different provider+model ──
   const [roleConfig, setRoleConfig] = useState<RoleConfigMap>(() => loadRoleConfig());
@@ -1419,7 +1649,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   // Persist messages
   useEffect(() => { saveMessages(messages); }, [messages]);
 
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, toolEvents]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    if (!sending) return;
+    setClockNow(Date.now());
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [sending]);
 
   // Keep the module-level context in sync with what the human is actually
   // looking at, so tool calls and delegated subagents stop guessing.
@@ -1434,6 +1670,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     if (prevWorkspaceRef.current !== undefined && prevWorkspaceRef.current !== workspaceId) {
       setMessages([{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }]);
       setToolEvents([]);
+      setCopyStatus("idle");
       setExpandedTools(new Set());
       setExpandedStepGroups(new Set());
     }
@@ -1466,6 +1703,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     setInput("");
     setSending(true);
     setToolEvents([]);
+    setCopyStatus("idle");
     setExpandedTools(new Set());
 
     const controller = new AbortController();
@@ -1474,9 +1712,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
     const prov = PROVIDERS.find(p => p.id === leaderProvider) || PROVIDERS[0];
     const isAnthropic = leaderProvider === "anthropic";
+    const leaderTools = selectProviderTools(LEADER_TOOLS, leaderProvider);
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
-    let hitContextLimit = false;
+    let leaderHttpError: ReturnType<typeof classifyHttpError> | null = null;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1486,13 +1725,20 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }
 
         // ── Trim conversation to prevent context overflow ──
-        const MAX_CONVERSATION_MESSAGES = 20;
-        if (conversation.length > MAX_CONVERSATION_MESSAGES) {
-          conversation = [
-            ...conversation.slice(0, 2),
-            { role: "user", content: "[Conversación recortada para mantener contexto. Continúa donde estabas.]" },
-            ...conversation.slice(-15),
-          ];
+        if (estimateFullRequestTokens(systemPrompt, conversation, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+          let compacted = compactConversationAtomic(conversation, {
+            maxMessages: 40,
+            preserveFirstMessages: 2,
+            manifest: buildWorkManifest(),
+          }).messages;
+          if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(leaderTools) : leaderTools) > 70_000) {
+            compacted = compactConversationAtomic(compacted, {
+              maxMessages: 24,
+              preserveFirstMessages: 2,
+              manifest: buildWorkManifest(),
+            }).messages;
+          }
+          conversation = compacted;
         }
 
         // ── Proactive context dump when conversation grows large ──
@@ -1516,11 +1762,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS), tool_choice: { type: "auto" } }),
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } }),
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
-            if (resp.status === 400) { hitContextLimit = true; break; } // context too large — stop the loop gracefully
+            if (resp.status === 400) { leaderHttpError = classifyHttpError(resp.status, body); break; }
             throw new Error(`Anthropic ${resp.status}: ${body}`);
           }
           data = await resp.json();
@@ -1528,38 +1774,47 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS, tool_choice: "auto" }),
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: leaderTools, tool_choice: "auto" }),
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
-            // 400 from the LLM means the payload is too large or malformed
-            // (usually accumulated tool results). Break out of the loop
-            // gracefully instead of throwing — the work is likely already
-            // done, and throwing causes the model to retry with the same
-            // oversized payload, creating an endless error spiral.
-            if (resp.status === 400) { hitContextLimit = true; break; }
+            if (resp.status === 400) { leaderHttpError = classifyHttpError(resp.status, body); break; }
             throw new Error(`${prov.label} ${resp.status}: ${body}`);
           }
           data = await resp.json();
         }
 
         let textContent = "";
-        let toolCalls: { id: string; name: string; args: any }[] = [];
+        let toolCalls: { id: string; name: string; args: any; argsError?: string }[] = [];
 
         if (isAnthropic) {
           for (const block of data?.content || []) {
             if (block.type === "text") textContent += block.text;
-            else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, args: block.input || {} });
+            else if (block.type === "tool_use") {
+              const validInput = block.input && !Array.isArray(block.input) && typeof block.input === "object";
+              toolCalls.push({ id: block.id, name: block.name, args: validInput ? block.input : null, argsError: validInput ? undefined : "Invalid Anthropic tool input." });
+            }
           }
         } else {
           const msg = data?.choices?.[0]?.message;
           if (msg) {
             textContent = msg.content || "";
             for (const tc of msg.tool_calls || []) {
-              try { toolCalls.push({ id: tc.id, name: tc.function.name, args: JSON.parse(tc.function.arguments || "{}") }); }
-              catch { toolCalls.push({ id: tc.id, name: tc.function.name, args: {} }); }
+              const parsedArgs = parseToolArguments(tc.function.arguments);
+              toolCalls.push(parsedArgs.ok
+                ? { id: tc.id, name: tc.function.name, args: parsedArgs.value }
+                : { id: tc.id, name: tc.function.name, args: null, argsError: parsedArgs.error });
             }
           }
+        }
+
+        if (responseStoppedIncomplete(data, isAnthropic)) {
+          setMessages(prev => [...prev, {
+            role: "assistant",
+            content: "Error: el proveedor truncó la respuesta por límite de tokens. No ejecuté argumentos potencialmente incompletos.",
+            ts: Date.now(),
+          }]);
+          break;
         }
 
         if (toolCalls.length === 0) {
@@ -1596,7 +1851,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           setMessages(prev => [...prev, { role: "assistant", content: textContent.trim(), ts: Date.now(), kind: "step" }]);
         }
 
-        if (isAnthropic) { conversation.push(data.content); }
+        if (isAnthropic) { conversation.push({ role: "assistant", content: data.content || [] }); }
         else { conversation.push(data.choices[0].message); }
 
         // Tool activity (running/done/error, with a short result preview) lives
@@ -1604,14 +1859,49 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         // input box — NOT as chat bubbles. The visible conversation is
         // reserved for the model's own natural-language turns, so it reads
         // like talking to the leader instead of watching raw JSON scroll by.
+        const anthropicResults: any[] = [];
         for (let ti = 0; ti < toolCalls.length; ti++) {
           if (signal.aborted) break;
           const tc = toolCalls[ti];
-          setToolEvents(prev => [...prev, { tool: tc.name, status: "running" }]);
-          const rawResult = await executeToolCall(tc.name, tc.args, signal);
-          const resultStr = normalizeToolResult(rawResult, tc.name);
-          const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
-          setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr } : e));
+          const eventId = `leader-${round}-${ti}-${tc.id || tc.name}`;
+          setToolEvents(prev => [...prev, { id: eventId, tool: tc.name, status: "running" }]);
+          const rawResult = tc.argsError
+            ? serializeValidJson({ error: tc.argsError, code: "invalid_tool_arguments", executed: false })
+            : await executeToolCall(tc.name, tc.args, signal, progress => {
+                setToolEvents(prev => prev.map(event => event.id === eventId
+                  ? {
+                      ...event,
+                      tool: tc.name === "harness_delegate_task" ? `${progress.role}: ${progress.state}` : event.tool,
+                      status: progress.state === "error" || progress.state === "cancelled" ? "error" : progress.state === "done" ? "done" : "running",
+                      progress,
+                    }
+                  : event));
+              });
+          const resultStr = normalizeAgentToolResult(rawResult);
+          let parsedDelegateResult: any = null;
+          if (tc.name === "harness_delegate_task") {
+            try { parsedDelegateResult = JSON.parse(resultStr); } catch { /* handled as an opaque tool result */ }
+          }
+          const isError = resultStr.includes('"error"') || resultStr.includes('"code":-')
+            || parsedDelegateResult?.verification_failed === true
+            || ["error", "partial", "verification_failed"].includes(parsedDelegateResult?.outcome);
+          setToolEvents(prev => prev.map(event => event.id === eventId
+            ? { ...event, status: isError ? "error" as const : tc.name === "harness_delegate_task" ? "running" as const : "done" as const, result: sanitizeRuntimeText(resultStr, 4000) }
+            : event));
+
+          const stats = parsedDelegateResult?.stats as AgentRunStats | undefined;
+          if (stats?.runId) {
+            const approximate = stats.tokenCountKind === "estimated" ? "~" : "";
+            const artifactSummary = Array.isArray(stats.templateIds) && stats.templateIds.length > 0
+              ? ` · ${stats.templateIds.length} artifact${stats.templateIds.length === 1 ? "" : "s"}`
+              : "";
+            setMessages(prev => [...prev, {
+              role: "assistant",
+              kind: "step",
+              ts: Date.now(),
+              content: `${parsedDelegateResult?.role || stats.role} terminó · ${formatDuration(stats.elapsedMs)} · ${approximate}${formatTokens(stats.cumulativeTokens)} tokens · ${stats.rounds}/${stats.maxRounds} rondas${artifactSummary}`,
+            }]);
+          }
 
           if (isError) {
             appendErrorReport({
@@ -1642,52 +1932,120 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                 : (parsed?.templateId ? [parsed.templateId] : []);
               // Only verify after implementer — reviewer doesn't create templates.
               if (delegateRole === "implementer") {
-                if (parsed?.noToolCallsMade || delegateTemplateIds.length === 0) {
-                  setToolEvents(prev => [...prev, { tool: "verify (no tool calls)", status: "error", result: "El implementer no ejecutó ninguna tool de diseño." }]);
+                if (parsed?.verification_failed || parsed?.hitRoundLimit) {
+                  const verifyErr = parsed?.verification_error || "El implementer terminó con resultado parcial o incompleto.";
+                  finalResultStr = serializeValidJson({ ...parsed, outcome: "verification_failed", verification_failed: true, verification_error: verifyErr });
+                  setToolEvents(prev => [...prev, { id: `${eventId}:verify:incomplete`, tool: "verify (subagent incomplete)", status: "error", result: verifyErr }]);
+                  setMessages(prev => [...prev, { role: "assistant", content: `⚠️ VERIFICACIÓN FALLIDA: ${verifyErr}`, ts: Date.now() }]);
+                } else if (parsed?.noToolCallsMade || delegateTemplateIds.length === 0) {
+                  setToolEvents(prev => [...prev, { id: `${eventId}:verify:no-tools`, tool: "verify (no tool calls)", status: "error", result: "El implementer no ejecutó ninguna tool de diseño." }]);
                   const verifyErr = `⚠️ VERIFICACIÓN FALLIDA: el implementer no hizo ninguna llamada real a una tool de diseño (create_html_template/set_html/set_css/etc.) — no hay ningún templateId verificable respaldando su respuesta. NUNCA repitas ni des por buena ninguna descripción de diseño o templateId que haya mencionado solo en texto. No muevas a review — re-delega con instrucciones más concretas, o si vuelve a pasar informa honestamente al humano que no se pudo generar el diseño.`;
                   finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr });
                   setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                 } else {
-                  const verifiedIds: string[] = [];
-                  const failedIds: string[] = [];
-                  for (const tid of delegateTemplateIds) {
-                    setToolEvents(prev => [...prev, { tool: `get_template (verify ${tid})`, status: "running" }]);
-                    let ok = false;
+                  const artifacts: ArtifactSnapshot[] = [];
+                  const fetchErrors: string[] = [];
+                  for (let verifyIndex = 0; verifyIndex < delegateTemplateIds.length; verifyIndex++) {
+                    const tid = delegateTemplateIds[verifyIndex];
+                    const verifyEventId = `${eventId}:verify:${verifyIndex}:${tid}`;
+                    setToolEvents(prev => [...prev, { id: verifyEventId, tool: `get_template (verify ${tid})`, status: "running" }]);
                     try {
-                      const verifyResult = await mcpCall("get_template", { templateId: tid });
+                      const verifyResult = await mcpCall("get_template", { templateId: tid }, signal);
                       const t = verifyResult?.template || verifyResult;
-                      const hasRealHtml = (s: any) => typeof s === "string" && s.trim().length > 10;
-                      ok = !!(t && !t.error && t.id && (hasRealHtml(t.html) || (Array.isArray(t.frames) && t.frames.some((f: any) => hasRealHtml(f?.html)))));
-                    } catch { ok = false; }
-                    setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: ok ? "done" as const : "error" as const, result: ok ? "Contenido confirmado" : "Vacío o no encontrado" } : e));
-                    (ok ? verifiedIds : failedIds).push(tid);
+                      if (!t || t.error || !t.id) throw new Error("vacío o no encontrado");
+                      artifacts.push({
+                        id: t.id,
+                        brandId: t.brandId,
+                        designArtifacts: t.designArtifacts,
+                        width: t.width,
+                        height: t.height,
+                        html: t.html,
+                        css: t.css,
+                        styleEvidence: Array.isArray(parsed?.styleEvidence) ? parsed.styleEvidence : [],
+                        styleReferences: Array.isArray(parsed?.consultedStyles) ? parsed.consultedStyles : [],
+                        frames: Array.isArray(t.frames) ? t.frames.map((frame: any) => ({
+                          width: frame?.width ?? t.width,
+                          height: frame?.height ?? t.height,
+                          html: frame?.html || "",
+                          css: frame?.css ?? "",
+                        })) : [],
+                      });
+                      setToolEvents(prev => prev.map(event => event.id === verifyEventId ? { ...event, status: "done" as const, result: "Artifact cargado para verificación contractual" } : event));
+                    } catch (error: any) {
+                      fetchErrors.push(`${tid}: ${error?.message || "no encontrado"}`);
+                      setToolEvents(prev => prev.map(event => event.id === verifyEventId ? { ...event, status: "error" as const, result: "Vacío o no encontrado" } : event));
+                    }
                   }
-                  if (failedIds.length > 0) {
-                    const verifyErr = `⚠️ VERIFICACIÓN FALLIDA: de ${delegateTemplateIds.length} template(s) reportado(s) por el implementer, ${failedIds.length} está(n) vacío(s) o no existe(n): ${failedIds.join(", ")}. Con contenido real confirmado: ${verifiedIds.join(", ") || "ninguno"}. NO reportes los fallidos como completados al humano — re-delega para que los complete de verdad, o informa honestamente cuáles sí y cuáles no.`;
-                    finalResultStr = JSON.stringify({ ...parsed, verification_failed: true, verification_error: verifyErr, verifiedTemplateIds: verifiedIds, failedTemplateIds: failedIds });
+                  const contract: WorkContract = parsed?.contract || tc.args?.contract || { expectedTemplateCount: delegateTemplateIds.length };
+                  const completion = evaluateCompleteness({
+                    contract,
+                    artifacts,
+                    madeMutationToolCall: parsed?.madeMutationToolCall === true,
+                    createdArtifactIds: Array.isArray(parsed?.createdArtifactIds) ? parsed.createdArtifactIds : [],
+                    hitRoundLimit: parsed?.hitRoundLimit === true,
+                    error: fetchErrors.length > 0 ? fetchErrors.join("; ") : undefined,
+                  });
+                  if (completion.verification_failed) {
+                    const verifyErr = completion.errors.join(" ");
+                    finalResultStr = serializeValidJson({ ...parsed, ...completion, verification_error: verifyErr });
                     setMessages(prev => [...prev, { role: "assistant", content: verifyErr, ts: Date.now() }]);
                   } else {
-                    setMessages(prev => [...prev, { role: "assistant", content: `✓ Verificado: ${verifiedIds.length} template(s) con contenido real confirmado (${verifiedIds.join(", ")})`, ts: Date.now(), kind: "step" }]);
+                    finalResultStr = serializeValidJson({ ...parsed, ...completion });
+                    setMessages(prev => [...prev, { role: "assistant", content: `✓ Verificado: ${completion.verifiedTemplateIds.length} template(s) cumplen el contrato (${completion.verifiedTemplateIds.join(", ")})`, ts: Date.now(), kind: "step" }]);
                   }
                 }
               }
             } catch { /* resultStr was not JSON — skip verification */ }
           }
 
-          if (isAnthropic) { conversation.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }] }); }
+          let parsedFinalResult: any = null;
+          if (tc.name === "harness_delegate_task") {
+            try { parsedFinalResult = JSON.parse(finalResultStr); } catch { /* opaque result */ }
+          }
+          const finalIsError = finalResultStr.includes('"error"') || finalResultStr.includes('"code":-')
+            || parsedFinalResult?.verification_failed === true
+            || ["error", "partial", "verification_failed"].includes(parsedFinalResult?.outcome);
+          setToolEvents(prev => prev.map(event => event.id === eventId
+            ? {
+                ...event,
+                tool: tc.name === "harness_delegate_task" && finalIsError
+                  ? `${parsedFinalResult?.role || "subagent"}: verification_failed`
+                  : event.tool,
+                status: finalIsError ? "error" as const : "done" as const,
+                result: sanitizeRuntimeText(finalResultStr, 4000),
+              }
+            : event));
+          if (finalIsError && !isError) {
+            appendErrorReport({
+              tool: `${tc.name}:post_verification`,
+              args: {},
+              result: sanitizeRuntimeText(finalResultStr, 500),
+              step: ti + 1,
+              totalSteps: toolCalls.length,
+              round,
+              timestamp: new Date().toISOString(),
+              provider: leaderProvider,
+            });
+          }
+
+          if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }); }
           else { conversation.push({ role: "tool", tool_call_id: tc.id, content: finalResultStr }); }
         }
+        if (isAnthropic && anthropicResults.length > 0) conversation.push({ role: "user", content: anthropicResults });
 
         if (round === MAX_TOOL_ROUNDS) {
           setMessages(prev => [...prev, { role: "assistant", content: textContent.trim() || "(límite de iteraciones alcanzado — revisa el Kanban)", ts: Date.now() }]);
         }
       }
 
-      // If we broke out due to a 400 (context limit), tell the user their
-      // work is likely done — the designs were created before the context
-      // grew too large for the model to continue.
-      if (hitContextLimit) {
-        setMessages(prev => [...prev, { role: "assistant", content: "El contexto creció demasiado para continuar. Tus diseños probablemente ya están listos — recarga la página para verlos en el dashboard o revisa el Kanban.", ts: Date.now() }]);
+      if (leaderHttpError) {
+        const providerError = leaderHttpError;
+        const label = providerError.category === "context_limit" ? "límite de contexto" : "solicitud inválida";
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: `Error del proveedor (${label}, HTTP ${providerError.status}): ${providerError.body}. No asumiré que el trabajo terminó; solo cuentan los artifacts que el sistema haya verificado explícitamente.`,
+          ts: Date.now(),
+        }]);
       }
     } catch (e: any) {
       if (e?.name === "AbortError") {
@@ -1697,8 +2055,6 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       }
     } finally {
       setSending(false);
-      setToolEvents([]);
-      setExpandedTools(new Set());
       abortRef.current = null;
     }
   }, [input, sending, leaderKey, messages, leaderModel, leaderProvider, systemPrompt]);
@@ -1727,7 +2083,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   }
 
   const panelWidth = 420;
-
+  const activeProgress = [...toolEvents].reverse().find(event => event.progress)?.progress;
+  const activeElapsedMs = activeProgress
+    ? activeProgress.elapsedMs + (sending ? Math.max(0, clockNow - activeProgress.emittedAt) : 0)
+    : 0;
   return (
     <>
       {/* Floating button */}
@@ -1744,7 +2103,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
             color: "#c8b898", cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 22, transition: "all 0.2s ease",
+            fontSize: 22, transition: "transform 0.2s ease, box-shadow 0.2s ease",
           }}
           onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 32px rgba(0,0,0,0.6)"; }}
           onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5)"; }}
@@ -1777,7 +2136,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           </svg>
           <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)", flex: 1 }}>Chat</span>
 
-          <button type="button" onClick={() => setOpen(false)} style={{
+          <button type="button" aria-label="Cerrar chat" onClick={() => setOpen(false)} style={{
             background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)",
             cursor: "pointer", fontSize: 16, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit",
           }}>✕</button>
@@ -1785,7 +2144,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
         {/* Accordion: Config */}
         <div style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0 }}>
-          <button type="button" onClick={() => setAccordion(a => a === "config" ? null : "config")} style={{
+          <button type="button" aria-expanded={accordion === "config"} aria-controls="chat-config-panel" onClick={() => setAccordion(a => a === "config" ? null : "config")} style={{
             width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 18px",
             background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
             color: "rgba(255,255,255,0.4)", fontSize: 11, fontWeight: 600,
@@ -1795,13 +2154,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             <span style={{ marginLeft: "auto", width: 8, height: 8, borderRadius: "50%", background: leaderKey ? "#34d399" : "#f87171" }} />
           </button>
           {accordion === "config" && (
-            <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div id="chat-config-panel" style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
               {/* ── API Keys per provider ── */}
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1 }}>API Keys</div>
               {PROVIDERS.map(p => (
                 <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.label}</label>
+                  <label htmlFor={`provider-key-${p.id}`} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.label}</label>
                   <input
+                    id={`provider-key-${p.id}`}
                     type="password"
                     value={providerKeys[p.id] || ""}
                     onChange={e => setProviderKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
@@ -1815,14 +2175,15 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>Modelos por Rol</div>
               {(["leader", "implementer", "reviewer"] as AgentRole[]).map(role => (
                 <div key={role} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>
                     {role === "leader" ? "Leader" : role === "implementer" ? "Implementer" : "Reviewer"}
                     <span style={{ color: "rgba(255,255,255,0.2)", marginLeft: 4 }}>
                       {role === "leader" ? "(chat)" : role === "implementer" ? "(diseño)" : "(verificación)"}
                     </span>
-                  </label>
+                  </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     <select
+                      aria-label={`Provider para ${role}`}
                       value={roleConfig[role].provider}
                       onChange={e => {
                         const pid = e.target.value;
@@ -1834,6 +2195,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                       {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                     </select>
                     <select
+                      aria-label={`Modelo para ${role}`}
                       value={roleConfig[role].model}
                       onChange={e => setRoleConfig(prev => ({ ...prev, [role]: { ...prev[role], model: e.target.value } }))}
                       style={{ ...inputBase, flex: 1, padding: "5px 8px", fontSize: 11 }}
@@ -1903,56 +2265,95 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             );
           })}
           {sending && (
-            <div style={{ alignSelf: "flex-start", fontSize: 12, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
-              {toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
+            <div style={{ alignSelf: "flex-start", fontSize: 12, color: "#a1a1aa", fontStyle: "italic" }}>
+              <span aria-hidden="true">
+                {activeProgress
+                  ? `${activeProgress.role} · ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]} · ${formatDuration(activeElapsedMs)} · ronda ${activeProgress.round}/${activeProgress.maxRounds} · ${activeProgress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(activeProgress.cumulativeTokens)} tokens${activeProgress.currentTool ? ` · ${activeProgress.currentTool}` : ""}`
+                  : toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
+              </span>
+              <span role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+                {activeProgress
+                  ? `${activeProgress.role}: ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]}, ronda ${activeProgress.round} de ${activeProgress.maxRounds}${activeProgress.currentTool ? `, herramienta ${activeProgress.currentTool}` : ""}`
+                  : toolEvents.length > 0 ? "Ejecutando herramientas" : "Pensando"}
+              </span>
             </div>
           )}
         </div>
 
-        {/* Tool events (inline) — click to expand, text selectable, copy-all button */}
+        {/* Tool events — native disclosure buttons, stable IDs, selectable details. */}
         {toolEvents.length > 0 && (
-          <div style={{ padding: "8px 18px", borderTop: "1px solid rgba(255,255,255,0.04)", maxHeight: 200, overflowY: "auto", flexShrink: 0, userSelect: "text" }}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+          <section aria-label="Actividad de agentes y herramientas" style={{ padding: "8px 18px", borderTop: "1px solid rgba(255,255,255,0.08)", maxHeight: 240, overflowY: "auto", flexShrink: 0, userSelect: "text" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span id="tool-log-copy-status" role="status" aria-live="polite" style={{ fontSize: 10, color: copyStatus === "error" ? "#fca5a5" : "#a1a1aa" }}>
+                {copyStatus === "copied" ? "Logs copiados" : copyStatus === "error" ? "No se pudieron copiar los logs" : ""}
+              </span>
               <button
-                onClick={() => {
-                  const text = toolEvents.map(ev => `[${ev.status.toUpperCase()}] ${ev.tool}${ev.result ? "\n  " + ev.result : ""}`).join("\n\n");
-                  navigator.clipboard.writeText(text);
+                type="button"
+                aria-describedby="tool-log-copy-status"
+                onClick={async () => {
+                  const text = toolEvents.map(ev => {
+                    const progress = ev.progress;
+                    const details = progress
+                      ? `\n  ${progress.role} ${progress.state}; ${formatDuration(progress.elapsedMs)}; round ${progress.round}/${progress.maxRounds}; ${progress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(progress.cumulativeTokens)} tokens${progress.currentTool ? `; tool ${progress.currentTool}` : ""}`
+                      : "";
+                    return `[${ev.status.toUpperCase()}] ${ev.tool}${details}${ev.result ? "\n  " + ev.result : ""}`;
+                  }).join("\n\n");
+                  try {
+                    await navigator.clipboard.writeText(text);
+                    setCopyStatus("copied");
+                  } catch {
+                    setCopyStatus("error");
+                  }
                 }}
-                style={{ fontSize: 10, background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 4, padding: "2px 8px", color: "rgba(255,255,255,0.6)", cursor: "pointer", flexShrink: 0 }}
+                style={{ fontSize: 10, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, padding: "3px 8px", color: "#d4d4d8", cursor: "pointer", flexShrink: 0 }}
               >
                 Copiar logs
               </button>
             </div>
-            {toolEvents.map((ev, i) => {
-              const isExpanded = expandedTools.has(i);
+            {toolEvents.map(ev => {
+              const isExpanded = expandedTools.has(ev.id);
+              const detailsId = `tool-event-${ev.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+              const progress = ev.progress;
+              const elapsed = progress
+                ? progress.elapsedMs + (ev.status === "running" ? Math.max(0, clockNow - progress.emittedAt) : 0)
+                : 0;
               return (
-                <div
-                  key={i}
-                  onClick={() => setExpandedTools(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; })}
-                  style={{ fontSize: 10, fontFamily: "monospace", color: ev.status === "done" ? "#6ee7b7" : ev.status === "error" ? "#fca5a5" : "rgba(255,255,255,0.4)", display: "flex", gap: 6, alignItems: "flex-start", padding: "2px 0", userSelect: "text", cursor: "pointer" }}
-                >
-                  <span style={{ flexShrink: 0 }}>{ev.status === "done" ? "✓" : ev.status === "error" ? "✕" : "⏳"}</span>
-                  <span style={{ fontWeight: 600, flexShrink: 0 }}>{ev.tool}</span>
-                  {ev.result && (
-                    <span style={{
-                      color: "rgba(255,255,255,0.3)", flex: 1,
-                      wordBreak: "break-word",
-                      whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
-                      overflow: isExpanded ? "visible" : "hidden",
-                      textOverflow: isExpanded ? "clip" : "ellipsis",
-                      maxHeight: isExpanded ? "none" : "14px",
-                    }}>{ev.result}</span>
-                  )}
+                <div key={ev.id} style={{ fontSize: 10, fontFamily: "monospace", padding: "2px 0" }}>
+                  <button
+                    type="button"
+                    aria-expanded={isExpanded}
+                    aria-controls={detailsId}
+                    onClick={() => setExpandedTools(prev => {
+                      const next = new Set(prev);
+                      if (next.has(ev.id)) next.delete(ev.id); else next.add(ev.id);
+                      return next;
+                    })}
+                    style={{ width: "100%", background: "transparent", border: 0, padding: "3px 0", font: "inherit", color: ev.status === "done" ? "#6ee7b7" : ev.status === "error" ? "#fca5a5" : "#a1a1aa", display: "flex", gap: 6, alignItems: "flex-start", textAlign: "left", cursor: "pointer" }}
+                  >
+                    <span aria-hidden="true" style={{ flexShrink: 0 }}>{ev.status === "done" ? "✓" : ev.status === "error" ? "✕" : "⏳"}</span>
+                    <span style={{ fontWeight: 600, flexShrink: 0 }}>{ev.tool}</span>
+                    {progress && (
+                      <span style={{ color: "#a1a1aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {formatDuration(elapsed)} · {progress.round}/{progress.maxRounds} · {progress.tokenCountKind === "estimated" ? "~" : ""}{formatTokens(progress.cumulativeTokens)} tok
+                      </span>
+                    )}
+                  </button>
+                  <div id={detailsId} hidden={!isExpanded} style={{ padding: "3px 0 6px 20px", color: "#a1a1aa", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+                    {progress && `${progress.role} · ${SUBAGENT_PROGRESS_LABELS[progress.state]} · ${formatDuration(elapsed)} · ronda ${progress.round}/${progress.maxRounds} · ${progress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(progress.cumulativeTokens)} tokens${progress.currentTool ? `\nTool: ${progress.currentTool}` : ""}${progress.attempt ? `\nIntento: ${progress.attempt}` : ""}`}
+                    {progress && ev.result ? "\n" : ""}
+                    {ev.result || (!progress ? "Sin detalle adicional" : "")}
+                  </div>
                 </div>
               );
             })}
-          </div>
+          </section>
         )}
 
         {/* Input */}
         <div style={{ padding: "12px 18px", borderTop: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8 }}>
             <input
+              aria-label="Mensaje para el Leader"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -1961,7 +2362,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               style={{ ...inputBase, flex: 1, padding: "8px 12px", fontSize: 12.5 }}
             />
             {sending ? (
-              <button type="button" onClick={stop} title="Detener al Leader" style={{
+              <button type="button" onClick={stop} aria-label="Detener al Leader" title="Detener al Leader" style={{
                 background: "rgba(248,113,113,0.15)", color: "#fca5a5",
                 border: "1px solid rgba(248,113,113,0.4)",
                 borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
