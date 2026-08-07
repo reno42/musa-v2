@@ -214,6 +214,7 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
    - En create_deck, la portada se genera aparte: un deck de 3 frames lleva 2 entries en slides. En create_html_carousel, frames.length es el total exacto.
    - "3 posts/archivos separados" = expectedTemplateCount: 3 y expectedFrameCount: 3.
    - Siempre llena el contrato con cantidades, dimensiones, textos exactos y estilo pedido.
+   - requiredTexts = TODOS los textos que deben aparecer (array plano). requiredTextsByFrame = mismos textos pero distribuidos por frame: [["texto_frame1"], ["texto_frame2"], ...]. SIEMPRE incluye requiredTextsByFrame en create mode — distribuye los textos pedidos por el humano entre los frames según el orden lógico (primer frame: título/intro, frames siguientes: contenido). Esto ayuda al implementer a saber qué poner en cada slide.
    - Si el humano pide estilo libre/sin estilo, usa requiredStyle: "__free_style__"; nunca lo omitas ni envíes vacío.
    - CRÍTICO — brandId: si en CONTEXTO ACTUAL > ESTILOS ACTIVOS aparece el estilo pedido con un ID exacto (ej: "brand_d414751c-366: Futuraria_Infographic"), pasa ESE brandId en el contrato. El implementer lo usará directo sin buscar, ahorrando tokens y rondas. Solo omite brandId si el estilo NO está en ESTILOS ACTIVOS o BRAND GUIDELINES.
    - El implementer tiene su propia sesión LLM aislada con tools de diseño únicamente.
@@ -2555,6 +2556,53 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                 </div>
               ))}
               <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>Keys guardadas en tu navegador. Se envían directo al proveedor LLM. Cada rol puede usar un proveedor y modelo distinto.</span>
+
+              {/* ── MCP API Key for external access (IDE agent debugging) ── */}
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: 1, marginTop: 6 }}>🔑 MCP Key para debug externo</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", wordBreak: "break-all" }}>
+                Endpoint: <code style={{ fontSize: 9, background: "rgba(255,255,255,0.05)", padding: "2px 4px", borderRadius: 3 }}>https://design.futuraria.com/api/mcp</code>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const result = await mcpCall("create_api_key", {
+                      label: `debug_${new Date().toISOString().slice(0, 10)}`,
+                      scope: "read",
+                    });
+                    const key = result?.key || result?.api_key || result?.data?.key || "";
+                    if (key) {
+                      await navigator.clipboard.writeText(key);
+                      setCopyStatus("copied");
+                      setTimeout(() => setCopyStatus("idle"), 2000);
+                      setMessages(prev => [...prev, {
+                        role: "assistant",
+                        content: `🔑 **API Key creada y copiada.**\n\nEndpoint: \`https://design.futuraria.com/api/mcp\`\nKey: \`${key.slice(0, 12)}...${key.slice(-8)}\`\n\n⚠️ **Guárdala ahora** — no se puede recuperar después. Pásasela a tu agente IDE con scope read para que pueda auditar sesiones.`,
+                        ts: Date.now(),
+                      }]);
+                    } else {
+                      setMessages(prev => [...prev, {
+                        role: "assistant",
+                        content: `⚠️ No se pudo crear la key: ${JSON.stringify(result).slice(0, 300)}`,
+                        ts: Date.now(),
+                      }]);
+                    }
+                  } catch (err: any) {
+                    setMessages(prev => [...prev, {
+                      role: "assistant",
+                      content: `⚠️ Error creando API key: ${err?.message || "desconocido"}. ¿Está activo el MCP?`,
+                      ts: Date.now(),
+                    }]);
+                  }
+                }}
+                style={{
+                  ...inputBase, padding: "6px 12px", fontSize: 11, cursor: "pointer",
+                  background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.3)",
+                  fontWeight: 600,
+                }}
+              >
+                🔑 Crear API Key (solo lectura) y copiar
+              </button>
             </div>
           )}
         </div>
@@ -2734,6 +2782,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       {showGovernance && (
         <GovernancePanel
           sessions={governanceSessions}
+          workspaceId={workspaceId}
           onClose={() => setShowGovernance(false)}
         />
       )}

@@ -679,8 +679,14 @@ export function validateWorkContract(contract: WorkContract | undefined): { ok: 
     if (!validTexts(contract.requiredTexts)) {
       return { ok: false, error: "Create mode requires requiredTexts as an array of strings." };
     }
-    if (!validTextsByFrame(contract.requiredTextsByFrame) || contract.requiredTextsByFrame.length !== contract.expectedFrameCount) {
-      return { ok: false, error: "Create mode requires requiredTextsByFrame with exactly one string array per expected frame." };
+    // requiredTextsByFrame is OPTIONAL: when the leader provides it we get
+    // precise per-frame text placement; when missing the implementer distributes
+    // requiredTexts across frames itself. Failing hard here was the #1 cause of
+    // contract rejection (the leader LLM often omits it).
+    if (contract.requiredTextsByFrame !== undefined) {
+      if (!validTextsByFrame(contract.requiredTextsByFrame) || contract.requiredTextsByFrame.length !== contract.expectedFrameCount) {
+        return { ok: false, error: "requiredTextsByFrame must have exactly one string array per expected frame when provided." };
+      }
     }
     if (typeof contract.requiredStyle !== "string" || !contract.requiredStyle.trim()) {
       return { ok: false, error: `Create mode requires requiredStyle. Use ${FREE_STYLE_SENTINEL} explicitly for free style.` };

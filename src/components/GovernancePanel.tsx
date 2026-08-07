@@ -85,19 +85,71 @@ function statusColor(s: string) {
   return "rgba(251,191,36,0.2)";
 }
 
+// ── localStorage cache key ──
+const LS_KEY_PREFIX = "gov_sessions_";
+
+function loadCachedSessions(workspaceId?: string): GovernanceSession[] {
+  if (!workspaceId) return [];
+  try {
+    const raw = localStorage.getItem(LS_KEY_PREFIX + workspaceId);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function saveCachedSessions(workspaceId: string, sessions: GovernanceSession[]) {
+  try {
+    localStorage.setItem(LS_KEY_PREFIX + workspaceId, JSON.stringify(sessions.slice(-50)));
+  } catch { /* quota exceeded — silently drop */ }
+}
+
 // ── Component ──
 
-export function GovernancePanel({ sessions, onClose }: {
+export function GovernancePanel({ sessions, workspaceId, onClose }: {
   sessions: GovernanceSession[];
+  workspaceId?: string;
   onClose: () => void;
 }) {
+  // Merge prop sessions with localStorage cache to survive reloads
+  const [mergedSessions, setMergedSessions] = useState<GovernanceSession[]>(() => {
+    const cached = loadCachedSessions(workspaceId);
+    if (cached.length === 0) return sessions;
+    // Props win for same sessionId; cache fills in older sessions
+    const propIds = new Set(sessions.map(s => s.sessionId));
+    const merged = [...sessions];
+    for (const c of cached) {
+      if (!propIds.has(c.sessionId)) merged.push(c);
+    }
+    return merged.slice(-50);
+  });
+
+  // Persist to localStorage whenever sessions change
+  useEffect(() => {
+    if (!workspaceId) return;
+    const allIds = new Set(mergedSessions.map(s => s.sessionId));
+    const merged = [...mergedSessions];
+    for (const s of sessions) {
+      if (!allIds.has(s.sessionId)) merged.push(s);
+    }
+    if (merged.length > mergedSessions.length || sessions.length > 0) {
+      setMergedSessions(merged.slice(-50));
+    }
+  }, [sessions, workspaceId]);
+
+  useEffect(() => {
+    if (workspaceId && mergedSessions.length > 0) {
+      saveCachedSessions(workspaceId, mergedSessions);
+    }
+  }, [mergedSessions, workspaceId]);
+
   const [dataMap, setDataMap] = useState<Record<string, SessionData>>({});
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [expandedRounds, setExpandedRounds] = useState<Set<string>>(new Set());
   const fetchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    sessions.forEach((s) => {
+    mergedSessions.forEach((s) => {
       if (fetchedRef.current.has(s.sessionId)) return;
       fetchedRef.current.add(s.sessionId);
       setDataMap(prev => ({ ...prev, [s.sessionId]: { session: s, traces: [], diagnostics: [], loading: true } }));
@@ -118,7 +170,7 @@ export function GovernancePanel({ sessions, onClose }: {
         }
       })();
     });
-  }, [sessions]);
+  }, [mergedSessions]);
 
   const toggleRound = (key: string) => {
     setExpandedRounds(prev => {
@@ -136,18 +188,18 @@ export function GovernancePanel({ sessions, onClose }: {
         <div style={headerStyle}>
           <span style={{ fontSize: 16 }}>🏛️</span>
           <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.8)", flex: 1 }}>Gobernanza</span>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{sessions.length} sesión{sessions.length !== 1 ? "es" : ""}</span>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{mergedSessions.length} sesión{mergedSessions.length !== 1 ? "es" : ""}</span>
           <button onClick={onClose} style={{ background: "rgba(255,255,255,0.05)", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 14, borderRadius: 6, padding: "3px 8px", fontFamily: "inherit" }}>✕</button>
         </div>
 
         {/* Session list */}
         <div style={{ flex: 1, overflow: "auto", padding: "8px 12px" }}>
-          {sessions.length === 0 && (
+          {mergedSessions.length === 0 && (
             <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
               Sin sesiones aún. Ejecuta un diseño para ver sus trazas aquí.
             </div>
           )}
-          {sessions.map((s) => {
+          {mergedSessions.map((s) => {
             const sd = dataMap[s.sessionId];
             const isExpanded = expandedSession === s.sessionId;
             return (

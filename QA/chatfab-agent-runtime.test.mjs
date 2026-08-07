@@ -275,7 +275,7 @@ test("create contract enforces dimensions, per-frame text distribution and creat
 test("create contract rejects every partial or malformed required field fail-closed", () => {
   const valid = { mode: "create", expectedTemplateCount: 1, expectedFrameCount: 1, requiredWidth: 1080, requiredHeight: 1350, requiredTexts: ["Hello"], requiredTextsByFrame: [["Hello"]], requiredStyle: "__free_style__" };
   assert.equal(validateWorkContract(valid).ok, true);
-  for (const key of ["expectedTemplateCount", "expectedFrameCount", "requiredWidth", "requiredHeight", "requiredTexts", "requiredTextsByFrame", "requiredStyle"]) {
+  for (const key of ["expectedTemplateCount", "expectedFrameCount", "requiredWidth", "requiredHeight", "requiredTexts", "requiredStyle"]) {
     const partial = { ...valid };
     delete partial[key];
     assert.equal(validateWorkContract(partial).ok, false, `missing ${key} must fail`);
