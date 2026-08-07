@@ -185,7 +185,7 @@ function resolveRoleLLM(role: AgentRole): {
  * workspace happens to come back first, invisible to whoever's watching
  * the real Kanban/dashboard.
  */
-let currentContext: { workspaceId?: string; templateId?: string } = {};
+let currentContext: { workspaceId?: string; templateId?: string; sessionId?: string } = {};
 
 /** Auto-fill workspaceId when the model's tool call omits it but the tool
  *  schema accepts it and we know the current value. Only workspaceId — it's
@@ -1314,10 +1314,23 @@ interface ChatFABProps {
   workspaceId?: string;
   /** The template currently open in the editor, if any. */
   templateId?: string;
+  /** When provided, the parent controls the panel's open/close state
+   *  (used by MusaOnboarding to force the chat open with an overlay). */
+  externalOpen?: boolean;
+  /** Called whenever the internal open state would change. */
+  onOpenChange?: (open: boolean) => void;
+  /** When true, hide the floating FAB button entirely (parent already
+   *  controls the panel via externalOpen). */
+  hideFab?: boolean;
 }
 
-export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
-  const [open, setOpen] = useState(false);
+export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, hideFab }: ChatFABProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = externalOpen ?? internalOpen;
+  const setOpen = useCallback((next: boolean) => {
+    setInternalOpen(next);
+    onOpenChange?.(next);
+  }, [onOpenChange]);
   const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -1400,6 +1413,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
     const isAnthropic = leaderProvider === "anthropic";
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
+    let hitContextLimit = false;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1419,13 +1433,15 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
         }
 
         // ── Proactive context dump when conversation grows large ──
+        // Only fires when we have an active harness session; without a
+        // sessionId the dump is a no-op that pollutes the error log with
+        // "Session not found: undefined".
         const estimatedTokens = JSON.stringify(conversation).length / 4;
-        if (estimatedTokens > 4000 && !contextDumped && currentContext.workspaceId) {
+        if (estimatedTokens > 4000 && !contextDumped && currentContext.sessionId) {
           try {
             await mcpCall("harness_dump_context", {
-              agentType: "leader",
-              conversation: JSON.stringify(conversation.slice(-10)),
-              workspaceId: currentContext.workspaceId,
+              sessionId: currentContext.sessionId,
+              content: JSON.stringify(conversation.slice(-10)),
             }).catch(() => {});
             contextDumped = true;
           } catch { /* non-fatal */ }
@@ -1439,7 +1455,11 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
             headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
             body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(LEADER_TOOLS), tool_choice: { type: "auto" } }),
           }, { signal });
-          if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+          if (!resp.ok) {
+            const body = (await resp.text()).slice(0, 500);
+            if (resp.status === 400) { hitContextLimit = true; break; } // context too large — stop the loop gracefully
+            throw new Error(`Anthropic ${resp.status}: ${body}`);
+          }
           data = await resp.json();
         } else {
           const resp = await fetchWithRetry(prov.endpoint, {
@@ -1447,7 +1467,16 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
             body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: LEADER_TOOLS, tool_choice: "auto" }),
           }, { signal });
-          if (!resp.ok) throw new Error(`${prov.label} ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+          if (!resp.ok) {
+            const body = (await resp.text()).slice(0, 500);
+            // 400 from the LLM means the payload is too large or malformed
+            // (usually accumulated tool results). Break out of the loop
+            // gracefully instead of throwing — the work is likely already
+            // done, and throwing causes the model to retry with the same
+            // oversized payload, creating an endless error spiral.
+            if (resp.status === 400) { hitContextLimit = true; break; }
+            throw new Error(`${prov.label} ${resp.status}: ${body}`);
+          }
           data = await resp.json();
         }
 
@@ -1590,6 +1619,13 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
           setMessages(prev => [...prev, { role: "assistant", content: textContent.trim() || "(límite de iteraciones alcanzado — revisa el Kanban)", ts: Date.now() }]);
         }
       }
+
+      // If we broke out due to a 400 (context limit), tell the user their
+      // work is likely done — the designs were created before the context
+      // grew too large for the model to continue.
+      if (hitContextLimit) {
+        setMessages(prev => [...prev, { role: "assistant", content: "El contexto creció demasiado para continuar. Tus diseños probablemente ya están listos — recarga la página para verlos en el dashboard o revisa el Kanban.", ts: Date.now() }]);
+      }
     } catch (e: any) {
       if (e?.name === "AbortError") {
         setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
@@ -1631,7 +1667,7 @@ export function ChatFAB({ workspaceId, templateId }: ChatFABProps) {
   return (
     <>
       {/* Floating button */}
-      {!open && (
+      {!open && !hideFab && (
         <button
           type="button"
           onClick={() => setOpen(true)}

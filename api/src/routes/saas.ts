@@ -89,11 +89,26 @@ accountRoutes.post("/bootstrap", async (req, res) => {
   }
 });
 
-/** Columns added by supabase_migrations_v16.sql. Selected separately from the
- *  base ones so an un-migrated database still returns a usable profile
- *  instead of failing the whole request on an unknown column. */
-const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name";
+/** Columns added by supabase_migrations_v16.sql (+ onboarding_completed from the
+ *  same family). Selected separately from the base ones so an un-migrated
+ *  database still returns a usable profile instead of failing the whole
+ *  request on an unknown column. */
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed";
 const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
+
+/** True when the Supabase error indicates a missing column (migration not run).
+ *  PostgREST says "Could not find the 'foo' column …" (code PGRST204) while
+ *  raw Postgres says "column foo does not exist" — catch both so the UI gets
+ *  a clear 409 PROFILE_MIGRATION_REQUIRED instead of a opaque 500. */
+function isMissingColumnError(error: any): boolean {
+  return Boolean(
+    error && (
+      /column .* does not exist/i.test(error.message || "") ||
+      /Could not find the .* column/i.test(error.message || "") ||
+      error.code === "PGRST204"
+    )
+  );
+}
 
 accountRoutes.get("/me", async (req, res) => {
   try {
@@ -119,12 +134,16 @@ accountRoutes.patch("/me", async (req, res) => {
   try {
     const sb = dbOrThrow();
     const allowed = ["display_name", "first_name", "last_name", "phone", "website", "brand_name"] as const;
-    const patch: Record<string, string | null> = {};
+    const patch: Record<string, string | null | boolean> = {};
     for (const field of allowed) {
       if (field in req.body) {
         const raw = req.body[field];
         patch[field] = typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 200) : null;
       }
+    }
+    // onboarding_completed is boolean, handled separately from the text fields.
+    if ("onboarding_completed" in req.body) {
+      patch.onboarding_completed = Boolean(req.body.onboarding_completed);
     }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ success: false, error: "No recognised profile fields to update" });
@@ -132,9 +151,7 @@ accountRoutes.patch("/me", async (req, res) => {
 
     const { error } = await sb.from("user_profiles").update(patch).eq("id", req.auth!.userId);
     if (error) {
-      // Unknown column → the v16 migration hasn't been run yet. Say so
-      // plainly instead of surfacing a raw Postgres error.
-      if (/column .* does not exist/i.test(error.message)) {
+      if (isMissingColumnError(error)) {
         return res.status(409).json({
           success: false,
           error: "PROFILE_MIGRATION_REQUIRED",
@@ -143,6 +160,37 @@ accountRoutes.patch("/me", async (req, res) => {
       }
       throw error;
     }
+
+    // ── Auto-sync brand ──
+    // When the user saves a brand_name in their profile, upsert a matching
+    // brand row in their personal workspace so it immediately appears in
+    // CRM, Graph, and FileInfoPanel without a separate manual step.
+    if (typeof patch.brand_name === "string" && patch.brand_name.trim()) {
+      try {
+        const { data: userResult } = await sb.auth.admin.getUserById(req.auth!.userId);
+        if (userResult?.user) {
+          const wsId = await ensurePersonalWorkspace(sb, userResult.user);
+          if (wsId) {
+            const trimmedName = patch.brand_name.trim();
+            const { data: existing } = await sb.from("brands").select("id")
+              .eq("workspace_id", wsId).ilike("name", trimmedName).limit(1).maybeSingle();
+            if (existing) {
+              await sb.from("brands").update({
+                name: trimmedName, updated_at: new Date().toISOString(),
+              }).eq("workspace_id", wsId).eq("id", existing.id);
+            } else {
+              await sb.from("brands").insert({
+                id: `brand_${crypto.randomBytes(10).toString("hex")}`,
+                workspace_id: wsId,
+                name: trimmedName,
+                relationship_status: "client",
+              });
+            }
+          }
+        }
+      } catch { /* brand sync is best-effort — profile save must not fail */ }
+    }
+
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -679,6 +727,25 @@ workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor")
     res.json({ success: true, data });
   } catch (error: any) {
     res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.delete("/:id/brands/:brandId", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    // Null out brand references on contacts and design files (don't delete them).
+    await sb.from("crm_contacts").update({
+      brand_id: null, brand_name: null, updated_at: new Date().toISOString(),
+    }).eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
+    await sb.from("design_file_meta").update({
+      brand_id: null, brand: null, updated_at: new Date().toISOString(),
+    }).eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
+    const { error } = await sb.from("brands").delete()
+      .eq("workspace_id", req.params.id).eq("id", req.params.brandId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

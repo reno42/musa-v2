@@ -3565,6 +3565,26 @@ const MCP_TOOLS = [
       required: ["cronjobId", "action"],
     },
   },
+  // ── Error Logging ──
+  {
+    name: "harness_report_error",
+    description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool: { type: "string", description: "Nombre de la tool que falló" },
+        args: { type: "object", description: "Argumentos con los que se llamó" },
+        error_message: { type: "string", description: "Mensaje de error o resultado" },
+        step: { type: "number" },
+        totalSteps: { type: "number" },
+        round: { type: "number" },
+        provider: { type: "string" },
+        mcp_status_code: { type: "number" },
+        source: { type: "string", description: "chatfab, mcp, manual" },
+      },
+      required: ["tool", "error_message"],
+    },
+  },
   // ── Design Comments (canvas pins) ──
   {
     name: "comment_add",
@@ -10172,6 +10192,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
     // ── get_brand_guideline: retrieve a brand by ID ──
     case "get_brand_guideline": {
+      if (!params.brandId || typeof params.brandId !== "string") {
+        throw { code: -32000, message: "brandId is required (received: " + JSON.stringify(params.brandId) + "). Call list_brand_guidelines first to discover available brand IDs." };
+      }
       var brand = await brands.getBrand(params.brandId);
       if (!brand) throw { code: -32000, message: "Brand guideline not found: " + params.brandId };
       return { success: true, brand: brand };

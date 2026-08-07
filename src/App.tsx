@@ -1,11 +1,14 @@
-import { useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { ChatFAB } from "./components/ChatFAB";
+import { MusaOnboarding } from "./components/MusaOnboarding";
+import { restartOnboarding } from "./components/OnboardingTour";
 import { useToast } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getApiHeaders } from "./lib/apiKey";
+import { apiFetch } from "./lib/supabase";
 import { type AppRoute, readAppRoute, routeRequiresAccount } from "./lib/appRoute";
 import { useAuth } from "./lib/auth";
 import { saveCurrentRoute, getLastRoute, setPendingRedirect, resolvePostLoginUrl } from "./lib/routePersistence";
@@ -101,6 +104,34 @@ function App(): JSX.Element {
   const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
   const { addToast } = useToast();
   const { view, templateId } = state;
+  // null = not yet checked, true = needs onboarding, false = already done
+  const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
+
+  // ── Check if this is a first-time user who needs Musa onboarding ──
+  const checkOnboarding = useCallback(async () => {
+    if (!user) { setOnboardingNeeded(null); return; }
+    try {
+      const res = await apiFetch<any>("/account/me");
+      const d = res?.data;
+      if (d && d.onboarding_completed === false) {
+        setOnboardingNeeded(true);
+      } else {
+        setOnboardingNeeded(false);
+      }
+    } catch {
+      // Server error or not configured — skip onboarding silently
+      setOnboardingNeeded(false);
+    }
+  }, [user]);
+
+  useEffect(() => { void checkOnboarding(); }, [checkOnboarding]);
+
+  const handleOnboardingComplete = useCallback((startTour: boolean) => {
+    setOnboardingNeeded(false);
+    if (startTour) {
+      restartOnboarding();
+    }
+  }, []);
 
   const showLanding = () => {
     window.history.replaceState(null, "", "/");
@@ -294,7 +325,10 @@ function App(): JSX.Element {
             onCreateHtmlTemplate={handleCreateHtmlTemplate}
           />
         </ErrorBoundary>
-        <ChatFAB workspaceId={workspaceId ?? undefined} />
+        <ChatFAB workspaceId={workspaceId ?? undefined} hideFab={onboardingNeeded === true} />
+        {onboardingNeeded === true && (
+          <MusaOnboarding onComplete={handleOnboardingComplete} />
+        )}
       </>
     );
   }
@@ -308,7 +342,10 @@ function App(): JSX.Element {
           onOpenTemplate={(id) => openTemplate(id, `/?template=${id}&v=2`)}
         />
       </ErrorBoundary>
-      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} />
+      <ChatFAB workspaceId={workspaceId ?? undefined} templateId={templateId!} hideFab={onboardingNeeded === true} />
+      {onboardingNeeded === true && (
+        <MusaOnboarding onComplete={handleOnboardingComplete} />
+      )}
     </>
   );
 }
