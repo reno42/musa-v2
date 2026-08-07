@@ -1007,6 +1007,29 @@ async function executeToolCall(name: string, args: Record<string, any>, signal?:
   }
 }
 
+/** REQ-004: Mutation tools whose ARGS may contain a templateId worth
+ *  capturing. Read-only tools (get_template, list_frames, find_templates…)
+ *  are deliberately excluded — an implementer inspecting a reference
+ *  template must not have that ID accepted as "the deliverable".
+ *
+ *  This is the complete list of tools that CREATE or MODIFY templates.
+ *  When a new mutation tool is added, append it here. */
+const MUTATION_TOOL_NAMES = new Set([
+  // Creators
+  "create_html_template", "create_template", "create_deck", "create_frame",
+  "create_html_frame", "import_template", "import_design", "assemble_template",
+  "duplicate_template", "create_from_recipe", "generate_from_prompt",
+  "generate_ui_components", "image_to_design",
+  // Modifiers
+  "set_html", "set_css", "update_template", "update_frame_content",
+  "update_html_frame", "set_frame_layers", "enhance_template",
+  "apply_csv_to_frames", "apply_variables", "apply_brand_to_template",
+  "auto_fix_brand", "add_font_to_template", "adapt_format", "adapt_all_formats",
+  "save_version", "restore_version", "rename_template", "tag_template",
+  "untag_template", "duplicate_frame", "replace_asset", "set_css_variable",
+  "create_variable", "link_variable", "update_thumbnail",
+]);
+
 /**
  * Spawn a subagent — a SEPARATE LLM call with role-specific system prompt
  * and restricted toolset. The subagent has its own tool loop.
@@ -1175,23 +1198,27 @@ async function spawnSubagent(params: {
     for (const tc of toolCalls) {
       const rawResult = await executeToolCall(tc.name, tc.args, signal);
       const resultStr = normalizeToolResult(rawResult, tc.name);
-      // restricted to mutation tools — the old fallback captured templateId
-      // from the ARGS of any tool call at all (including get_template,
-      // get_frame, list_frames…), so an implementer that merely inspected a
-      // reference/style template before doing any real work could have that
-      // reference template silently accepted as "the deliverable".
-      if (tc.name === "create_html_template" || tc.name === "create_template") {
-        try {
-          const parsed = JSON.parse(resultStr);
-          addCapturedTemplateId(parsed?.id);
-        } catch { /* non-fatal */ }
-      } else if (tc.name === "set_html" || tc.name === "set_css") {
-        try {
-          const parsed = JSON.parse(resultStr);
-          addCapturedTemplateId(parsed?.templateId);
-        } catch { /* non-fatal */ }
-      } else if (tc.name === "create_frame" || tc.name === "create_html_frame" || tc.name === "update_template" || tc.name === "update_frame_content" || tc.name === "update_html_frame") {
+      // REQ-004: Generic templateId capture for ALL tools — replaces the
+      // old rigid if/else that only recognized ~8 tool names. Two paths:
+      //   1. From the RESULT — always safe. Only creator/mutation tools
+      //      return an id/templateId in their JSON output; read-only tools
+      //      (get_template, list_frames…) return data payloads without a
+      //      top-level `id` that addCapturedTemplateId would accept.
+      //   2. From the ARGS — restricted to mutation tools. Capturing args
+      //      from read-only tools would let a mere inspection call
+      //      (get_template on a reference style) be silently accepted as
+      //      "the deliverable" — the exact bug the old rigid list prevented.
+      try {
+        const parsed = JSON.parse(resultStr);
+        addCapturedTemplateId(parsed?.id);
+        addCapturedTemplateId(parsed?.templateId);
+        addCapturedTemplateId(parsed?.data?.id);
+        addCapturedTemplateId(parsed?.data?.templateId);
+      } catch { /* non-JSON result — skip */ }
+      if (MUTATION_TOOL_NAMES.has(tc.name)) {
         addCapturedTemplateId(tc.args?.templateId);
+        addCapturedTemplateId(tc.args?.template_id);
+        addCapturedTemplateId(tc.args?.id);
       }
       if (isAnthropic) { subConv.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: resultStr }] }); }
       else { subConv.push({ role: "tool", tool_call_id: tc.id, content: resultStr }); }
