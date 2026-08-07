@@ -3585,6 +3585,17 @@ const MCP_TOOLS = [
       required: ["tool", "error_message"],
     },
   },
+  {
+    name: "harness_list_errors",
+    description: "Retrieve recent error logs from harness_error_logs. Use after a cascade to see what actually failed and why.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max errors to return (default 20)" },
+        tool: { type: "string", description: "Filter by tool name" },
+      },
+    },
+  },
   // ── Design Comments (canvas pins) ──
   {
     name: "comment_add",
@@ -11934,6 +11945,23 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: logged, error: logErr } = await sb_err.from("harness_error_logs").insert(entry).select().single();
       if (logErr) throw { code: -32000, message: "Error log insert failed: " + logErr.message };
       return { success: true, error_id: entry.id, message: "Error logged to Supabase." };
+    }
+
+    // ── List recent errors from harness_error_logs ──
+    case "harness_list_errors": {
+      const sb_le = getSupabaseAdmin();
+      if (!sb_le) throw { code: -32000, message: "Harness requires Supabase." };
+      const accountId_le = UUID_RE.test(userId || "") ? userId : null;
+      const limit = Math.min(params.limit || 20, 100);
+      let query = sb_le.from("harness_error_logs")
+        .select("id,tool,error_message,round,provider,created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (params.tool) query = query.eq("tool", params.tool);
+      else if (accountId_le) query = query.eq("account_id", accountId_le);
+      const { data: errors, error: leErr } = await query;
+      if (leErr) throw { code: -32000, message: "Error log query failed: " + leErr.message };
+      return { success: true, count: errors.length, errors };
     }
 
     // ── Design Comments (pins on canvas like Word) ──────────────

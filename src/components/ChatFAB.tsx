@@ -489,11 +489,11 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "get_brands", description: "Lista todas las marcas registradas.", parameters: { type: "object", properties: { workspaceId: { type: "string" } } } } },
   { type: "function", function: { name: "apply_brand", description: "Aplica una marca a un template (colores, fuentes, logos).", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "create_brand_guideline", description: "Crea una guía de marca (brand guideline).", parameters: { type: "object", required: ["name"], properties: { name: { type: "string" }, workspaceId: { type: "string" }, colors: { type: "object" }, typography: { type: "object" }, spacing: { type: "object" }, logo: { type: "string" } } } } },
-  { type: "function", function: { name: "get_brand_guideline", description: "Obtiene una guía de marca por ID.", parameters: { type: "object", required: ["guidelineId"], properties: { guidelineId: { type: "string" } } } } },
+  { type: "function", function: { name: "get_brand_guideline", description: "Obtiene una guía de marca por ID.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" } } } } },
   { type: "function", function: { name: "list_brand_guidelines", description: "Lista todas las guías de marca.", parameters: { type: "object", properties: { workspaceId: { type: "string" } } } } },
-  { type: "function", function: { name: "update_brand_guideline", description: "Actualiza una guía de marca.", parameters: { type: "object", required: ["guidelineId"], properties: { guidelineId: { type: "string" }, colors: { type: "object" }, typography: { type: "object" }, spacing: { type: "object" } } } } },
-  { type: "function", function: { name: "delete_brand_guideline", description: "Elimina una guía de marca.", parameters: { type: "object", required: ["guidelineId"], properties: { guidelineId: { type: "string" } } } } },
-  { type: "function", function: { name: "apply_brand_to_template", description: "Aplica una guía de marca completa a un template.", parameters: { type: "object", required: ["templateId", "guidelineId"], properties: { templateId: { type: "string" }, guidelineId: { type: "string" } } } } },
+  { type: "function", function: { name: "update_brand_guideline", description: "Actualiza una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" }, name: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, mode: { type: "string", enum: ["replace", "append"] } } } } },
+  { type: "function", function: { name: "delete_brand_guideline", description: "Elimina una guía de marca.", parameters: { type: "object", required: ["brandId"], properties: { brandId: { type: "string", description: "Brand Guideline ID" } } } } },
+  { type: "function", function: { name: "apply_brand_to_template", description: "Aplica una guía de marca completa a un template.", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string", description: "Brand Guideline ID" } } } } },
   { type: "function", function: { name: "get_active_styles", description: "Obtiene los estilos activos aplicados a un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, frameId: { type: "string" } } } } },
   { type: "function", function: { name: "set_style_lock", description: "Bloquea/desbloquea estilos para prevenir cambios accidentales.", parameters: { type: "object", required: ["templateId", "styleId", "locked"], properties: { templateId: { type: "string" }, styleId: { type: "string" }, locked: { type: "boolean" } } } } },
   { type: "function", function: { name: "find_duplicate_styles", description: "Encuentra estilos duplicados en un template.", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" } } } } },
@@ -562,6 +562,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "harness_create_cronjob", description: "Crea un cronjob automático.", parameters: { type: "object", required: ["name", "schedule"], properties: { name: { type: "string" }, schedule: { type: "string", description: "cron expression" }, action: { type: "string" }, featureType: { type: "string" }, workspaceId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "harness_toggle_cronjob", description: "Activa/desactiva un cronjob.", parameters: { type: "object", required: ["cronjobId", "enabled"], properties: { cronjobId: { type: "string" }, enabled: { type: "boolean" } } } } },
   { type: "function", function: { name: "harness_report_error", description: "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.", parameters: { type: "object", required: ["tool", "error_message"], properties: { tool: { type: "string", description: "Nombre de la tool que falló" }, args: { type: "object", description: "Argumentos con los que se llamó" }, error_message: { type: "string", description: "Mensaje de error o resultado" }, step: { type: "number" }, totalSteps: { type: "number" }, round: { type: "number" }, provider: { type: "string" }, source: { type: "string", description: "chatfab, mcp, manual" } } } } },
+  { type: "function", function: { name: "harness_list_errors", description: "Lee errores recientes de harness_error_logs. Útil después de una cascada para ver qué falló y por qué.", parameters: { type: "object", properties: { limit: { type: "number", description: "Máximo de errores a retornar (default 20)" }, tool: { type: "string", description: "Filtrar por nombre de tool" } } } } },
   { type: "function", function: { name: "harness_delegate_task", description: "DELEGA a un subagente real. Esto spawnea una llamada LLM SEPARADA con contexto aislado y tools restringidas al rol. El Leader NUNCA hace diseño directamente — SIEMPRE delega con esta tool. Retorna un resumen (done/blocked para implementer, APPROVED/CHANGES_REQUESTED para reviewer).", parameters: { type: "object", required: ["role", "instruction"], properties: { role: { type: "string", enum: ["implementer", "reviewer"], description: "implementer ejecuta diseño con tools de diseño, reviewer verifica con tools de solo lectura" }, taskId: { type: "string", description: "ID de la tarjeta Kanban (card_xxx)" }, instruction: { type: "string", description: "Instrucción específica para el subagente. Ej implementer: 'Crea frame 1080x1080 con texto Hola Ren en estilo Futuraria (morado #7B2FF7, Orbitron).' Ej reviewer: 'Verifica: dimensiones 1080x1080, tipografía legible, paleta consistente.'" }, templateId: { type: "string", description: "Template ID si ya existe (tpl_xxx)" } } } } },
   // ═══════════════════════════════════════════════
   //  Musa Daily Batch — Queue items for automated processing
@@ -798,7 +799,7 @@ const LEADER_TOOL_NAMES = new Set([
   // ── Kanban ──
   "studio_create_card", "studio_list_cards", "studio_move_card", "studio_get_card",
   // ── Orchestration ──
-  "harness_delegate_task", "harness_healthcheck", "harness_get_context", "harness_report_error",
+  "harness_delegate_task", "harness_healthcheck", "harness_get_context", "harness_report_error", "harness_list_errors",
   // ── Feature lifecycle ──
   "harness_list_features", "harness_claim_feature", "harness_release_feature", "harness_complete_feature",
   // ── Session ──
@@ -1362,6 +1363,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
+  const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
   const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
   // ── Multi-model per role: each role can use a different provider+model ──
   const [roleConfig, setRoleConfig] = useState<RoleConfigMap>(() => loadRoleConfig());
@@ -1400,6 +1402,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     if (prevWorkspaceRef.current !== undefined && prevWorkspaceRef.current !== workspaceId) {
       setMessages([{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }]);
       setToolEvents([]);
+      setExpandedTools(new Set());
       setExpandedStepGroups(new Set());
     }
     prevWorkspaceRef.current = workspaceId;
@@ -1431,6 +1434,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     setInput("");
     setSending(true);
     setToolEvents([]);
+    setExpandedTools(new Set());
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -1575,7 +1579,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           const rawResult = await executeToolCall(tc.name, tc.args, signal);
           const resultStr = normalizeToolResult(rawResult, tc.name);
           const isError = resultStr.includes('"error"') || resultStr.includes('"code":-');
-          setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr.slice(0, 200) } : e));
+          setToolEvents(prev => prev.map((e, i) => i === prev.length - 1 ? { ...e, status: isError ? "error" as const : "done" as const, result: resultStr } : e));
 
           if (isError) {
             appendErrorReport({
@@ -1662,6 +1666,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     } finally {
       setSending(false);
       setToolEvents([]);
+      setExpandedTools(new Set());
       abortRef.current = null;
     }
   }, [input, sending, leaderKey, messages, leaderModel, leaderProvider, systemPrompt]);
@@ -1872,16 +1877,43 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           )}
         </div>
 
-        {/* Tool events (inline) */}
+        {/* Tool events (inline) — click to expand, text selectable, copy-all button */}
         {toolEvents.length > 0 && (
-          <div style={{ padding: "8px 18px", borderTop: "1px solid rgba(255,255,255,0.04)", maxHeight: 120, overflowY: "auto", flexShrink: 0 }}>
-            {toolEvents.map((ev, i) => (
-              <div key={i} style={{ fontSize: 10, fontFamily: "monospace", color: ev.status === "done" ? "#6ee7b7" : ev.status === "error" ? "#fca5a5" : "rgba(255,255,255,0.4)", display: "flex", gap: 6, alignItems: "center", padding: "2px 0" }}>
-                <span>{ev.status === "done" ? "✓" : ev.status === "error" ? "✕" : "⏳"}</span>
-                <span style={{ fontWeight: 600 }}>{ev.tool}</span>
-                {ev.result && <span style={{ color: "rgba(255,255,255,0.2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{ev.result}</span>}
-              </div>
-            ))}
+          <div style={{ padding: "8px 18px", borderTop: "1px solid rgba(255,255,255,0.04)", maxHeight: 200, overflowY: "auto", flexShrink: 0, userSelect: "text" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+              <button
+                onClick={() => {
+                  const text = toolEvents.map(ev => `[${ev.status.toUpperCase()}] ${ev.tool}${ev.result ? "\n  " + ev.result : ""}`).join("\n\n");
+                  navigator.clipboard.writeText(text);
+                }}
+                style={{ fontSize: 10, background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 4, padding: "2px 8px", color: "rgba(255,255,255,0.6)", cursor: "pointer", flexShrink: 0 }}
+              >
+                Copiar logs
+              </button>
+            </div>
+            {toolEvents.map((ev, i) => {
+              const isExpanded = expandedTools.has(i);
+              return (
+                <div
+                  key={i}
+                  onClick={() => setExpandedTools(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; })}
+                  style={{ fontSize: 10, fontFamily: "monospace", color: ev.status === "done" ? "#6ee7b7" : ev.status === "error" ? "#fca5a5" : "rgba(255,255,255,0.4)", display: "flex", gap: 6, alignItems: "flex-start", padding: "2px 0", userSelect: "text", cursor: "pointer" }}
+                >
+                  <span style={{ flexShrink: 0 }}>{ev.status === "done" ? "✓" : ev.status === "error" ? "✕" : "⏳"}</span>
+                  <span style={{ fontWeight: 600, flexShrink: 0 }}>{ev.tool}</span>
+                  {ev.result && (
+                    <span style={{
+                      color: "rgba(255,255,255,0.3)", flex: 1,
+                      wordBreak: "break-word",
+                      whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
+                      overflow: isExpanded ? "visible" : "hidden",
+                      textOverflow: isExpanded ? "clip" : "ellipsis",
+                      maxHeight: isExpanded ? "none" : "14px",
+                    }}>{ev.result}</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
