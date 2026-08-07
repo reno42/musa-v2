@@ -2,6 +2,16 @@ export const MAX_SUBAGENT_ROUNDS = 15;
 export const DEEPSEEK_MAX_TOOLS = 128;
 export const FREE_STYLE_SENTINEL = "__free_style__";
 
+/** Maximum output tokens per LLM call. DeepSeek V4 Pro can emit up to 8192
+ *  tokens; large multi-frame design generation (5+ frames of HTML/CSS) can
+ *  easily exceed 4096. */
+export const LLM_MAX_TOKENS = 8192;
+
+/** When a provider response is truncated (finish_reason = max_tokens|length),
+ *  the subagent loop sends a "continue" turn so the model can resume its
+ *  output instead of treating it as a terminal failure. */
+export const MAX_CONTINUE_RETRIES = 2;
+
 export interface WorkContract {
   mode?: "create" | "edit";
   expectedTemplateCount?: number;

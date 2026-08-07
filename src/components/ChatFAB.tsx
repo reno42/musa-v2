@@ -3,6 +3,8 @@ import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
 import {
   MAX_SUBAGENT_ROUNDS,
+  LLM_MAX_TOKENS,
+  MAX_CONTINUE_RETRIES,
   CREATOR_TOOL_NAMES,
   MUTATION_TOOL_NAMES,
   buildWorkManifest,
@@ -290,7 +292,9 @@ PRINCIPIO CRÍTICO:
 // every session with memory instead of from zero.
 // ═══════════════════════════════════════════════
 interface BootstrapContext {
-  styles: Array<{ name: string; description?: string }>;
+  workspaceName: string;
+  styles: Array<{ id: string; name: string; description?: string }>;
+  brands: Array<{ id: string; name: string }>;
   recentTemplates: Array<{ id: string; name: string }>;
   previousSessions: Array<{ id: string; summary: string }>;
   skills: Array<{ name: string; trigger: string; steps: string }>;
@@ -298,21 +302,42 @@ interface BootstrapContext {
 }
 
 async function bootstrapSession(): Promise<BootstrapContext> {
-  const ctx: BootstrapContext = { styles: [], recentTemplates: [], previousSessions: [], skills: [], healthOk: false };
+  const ctx: BootstrapContext = { workspaceName: "", styles: [], brands: [], recentTemplates: [], previousSessions: [], skills: [], healthOk: false };
   try {
     const health = await mcpCall("harness_healthcheck", {}).catch(() => null);
     ctx.healthOk = health?.ok === true;
     if (currentContext.workspaceId) {
-      const context = await mcpCall("harness_get_context", { agentType: "leader", workspaceId: currentContext.workspaceId }).catch(() => null);
+      // Fetch workspace name, styles (with IDs), brands, and templates in parallel
+      const [wsData, context, activeStyles, brandsData, templates] = await Promise.all([
+        mcpCall("list_workspaces", {}).catch(() => null),
+        mcpCall("harness_get_context", { agentType: "leader", workspaceId: currentContext.workspaceId }).catch(() => null),
+        mcpCall("get_active_styles", { workspaceId: currentContext.workspaceId }).catch(() => null),
+        mcpCall("list_brand_guidelines", { workspaceId: currentContext.workspaceId }).catch(() => null),
+        mcpCall("list_templates", { workspaceId: currentContext.workspaceId }).catch(() => null),
+      ]);
+
+      // Workspace name (agency identity)
+      const wsItems = Array.isArray(wsData?.data) ? wsData.data : [];
+      const ws = wsItems.find((w: any) => w.id === currentContext.workspaceId);
+      ctx.workspaceName = ws?.name || ws?.data?.name || "";
+
+      // Previous sessions
       if (context?.sessions) {
         ctx.previousSessions = context.sessions.slice(0, 3).map((s: any) => ({ id: s.id, summary: s.summary || s.task_title || "Sin resumen" }));
       }
-      const styles = await mcpCall("get_active_styles", { workspaceId: currentContext.workspaceId }).catch(() => null);
-      const styleItems = Array.isArray(styles) ? styles : Array.isArray(styles?.styles) ? styles.styles : [];
-      ctx.styles = styleItems.slice(0, 20).map((s: any) => ({ name: s.name || s.id, description: s.description || "" }));
-      const templates = await mcpCall("list_templates", { workspaceId: currentContext.workspaceId }).catch(() => null);
-      const templateItems = Array.isArray(templates) ? templates : Array.isArray(templates?.data) ? templates.data : Array.isArray(templates?.templates) ? templates.templates : [];
-      ctx.recentTemplates = templateItems.slice(0, 5).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
+
+      // Active styles WITH IDs so the leader can pass them directly
+      const styleItems = Array.isArray(activeStyles) ? activeStyles : Array.isArray(activeStyles?.styles) ? activeStyles.styles : [];
+      ctx.styles = styleItems.slice(0, 20).map((s: any) => ({ id: s.id || s.name || "", name: s.name || s.id || "", description: s.description || "" }));
+
+      // All brand guidelines (names + IDs)
+      const brandItems = Array.isArray(brandsData?.brands) ? brandsData.brands : Array.isArray(brandsData) ? brandsData : [];
+      ctx.brands = brandItems.slice(0, 30).map((b: any) => ({ id: b.id || "", name: b.name || b.id || "" }));
+
+      // Templates — raise from 5 to 20 so the leader knows what exists
+      const templateItems = Array.isArray(templates?.data) ? templates.data : Array.isArray(templates?.templates) ? templates.templates : Array.isArray(templates) ? templates : [];
+      ctx.recentTemplates = templateItems.slice(0, 20).map((t: any) => ({ id: t.id, name: t.name || "Sin nombre" }));
+
       try {
         const playbook = await mcpCall("get_playbook", { name: "multi-agent" }).catch(() => null);
         if (playbook?.content) {
@@ -330,13 +355,18 @@ function buildSystemPrompt(bootstrap?: BootstrapContext): string {
   if (currentContext.workspaceId) ctxLines.push(`- workspaceId actual: ${currentContext.workspaceId}`);
   if (currentContext.templateId) ctxLines.push(`- templateId actualmente abierto en el editor: ${currentContext.templateId} (si el pedido es sobre "esto"/"este diseño", es este)`);
   if (bootstrap) {
+    if (bootstrap.workspaceName) ctxLines.push(`- Workspace/Agencia: ${bootstrap.workspaceName}`);
     if (!bootstrap.healthOk) ctxLines.push("⚠️ HEALTH CHECK FALLÓ. Verifica conexión con Supabase antes de continuar.");
     if (bootstrap.styles.length > 0) {
-      ctxLines.push(`ESTILOS GUARDADOS (${bootstrap.styles.length}):`);
-      bootstrap.styles.forEach(s => ctxLines.push(`  - ${s.name}${s.description ? ": " + s.description : ""}`));
+      ctxLines.push(`ESTILOS ACTIVOS (${bootstrap.styles.length}) — usa estos IDs directamente:`);
+      bootstrap.styles.forEach(s => ctxLines.push(`  - ${s.id}: ${s.name}${s.description ? ": " + s.description : ""}`));
+    }
+    if (bootstrap.brands.length > 0) {
+      ctxLines.push(`BRAND GUIDELINES (${bootstrap.brands.length}):`);
+      bootstrap.brands.forEach(b => ctxLines.push(`  - ${b.id}: ${b.name}`));
     }
     if (bootstrap.recentTemplates.length > 0) {
-      ctxLines.push("TEMPLATES RECIENTES:");
+      ctxLines.push(`ARCHIVOS DEL WORKSPACE (${bootstrap.recentTemplates.length}):`);
       bootstrap.recentTemplates.forEach(t => ctxLines.push(`  - ${t.id}: ${t.name}`));
     }
     if (bootstrap.previousSessions.length > 0) {
@@ -1109,6 +1139,7 @@ async function spawnSubagent(params: {
   tools = selectProviderTools(tools, providerId);
   const runController = new AbortController();
   let deadlineExpired = false;
+  let continueRetries = 0;
   const forwardParentAbort = () => runController.abort(new DOMException("Stopped by user", "AbortError"));
   if (signal?.aborted) forwardParentAbort();
   else signal?.addEventListener("abort", forwardParentAbort, { once: true });
@@ -1282,7 +1313,7 @@ async function spawnSubagent(params: {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } }),
+        body: JSON.stringify({ model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } }),
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -1293,7 +1324,7 @@ async function spawnSubagent(params: {
       const resp = await fetchWithRetry(prov.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: 4096, tools, tool_choice: "auto" }),
+        body: JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: LLM_MAX_TOKENS, tools, tool_choice: "auto" }),
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -1336,7 +1367,18 @@ async function spawnSubagent(params: {
     }
 
     if (responseStoppedIncomplete(data, isAnthropic)) {
-      const reason = "El proveedor truncó la respuesta por límite de tokens; no se ejecutaron argumentos potencialmente incompletos.";
+      if (continueRetries < MAX_CONTINUE_RETRIES) {
+        continueRetries++;
+        emitProgress("retrying", { round: round + 1, attempt: continueRetries, reason: "truncated" });
+        // Push the partial assistant response so the model sees where it
+        // stopped, then ask it to resume. The model will re-emit the
+        // truncated tool call (or complete it) instead of starting fresh.
+        if (isAnthropic) { subConv.push({ role: "assistant", content: data.content || [] }); }
+        else { subConv.push(data.choices[0].message); }
+        subConv.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped — complete the tool call you were generating." });
+        continue;
+      }
+      const reason = `El proveedor truncó la respuesta por límite de tokens tras ${continueRetries} intento(s) de continuación; no se ejecutaron argumentos potencialmente incompletos.`;
       return finishResult({
         delegated: true, role: params.role, sessionId, outcome: "partial",
         verification_failed: true,
@@ -1719,6 +1761,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     const MAX_TOOL_ROUNDS = 12;
     let contextDumped = false;
     let leaderHttpError: ReturnType<typeof classifyHttpError> | null = null;
+    let leaderContinueRetries = 0;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1765,7 +1808,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: 4096, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } }),
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } }),
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
@@ -1777,7 +1820,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           const resp = await fetchWithRetry(prov.endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
-            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: 4096, tools: leaderTools, tool_choice: "auto" }),
+            body: JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" }),
           }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
@@ -1812,9 +1855,16 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
         }
 
         if (responseStoppedIncomplete(data, isAnthropic)) {
+          if (leaderContinueRetries < MAX_CONTINUE_RETRIES) {
+            leaderContinueRetries++;
+            if (isAnthropic) { conversation.push({ role: "assistant", content: data.content || [] }); }
+            else { conversation.push(data.choices[0].message); }
+            conversation.push({ role: "user", content: "Your previous response was cut off by the token limit. Continue exactly from where you stopped." });
+            continue;
+          }
           setMessages(prev => [...prev, {
             role: "assistant",
-            content: "Error: el proveedor truncó la respuesta por límite de tokens. No ejecuté argumentos potencialmente incompletos.",
+            content: "Error: el proveedor truncó la respuesta por límite de tokens tras varios intentos de continuación.",
             ts: Date.now(),
           }]);
           break;
@@ -2029,6 +2079,12 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               timestamp: new Date().toISOString(),
               provider: leaderProvider,
             });
+          }
+
+          // Re-bootstrap after delegation so the next leader turn has fresh
+          // workspace state (new templates, updated styles). Non-blocking.
+          if (tc.name === "harness_delegate_task" && !finalIsError) {
+            bootstrapSession().then(ctx => setBootstrapCtx(ctx)).catch(() => {});
           }
 
           if (isAnthropic) { anthropicResults.push({ type: "tool_result", tool_use_id: tc.id, content: finalResultStr }); }

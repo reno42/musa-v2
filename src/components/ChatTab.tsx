@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { mcpCall } from "../lib/mcpClient";
+import { LLM_MAX_TOKENS } from "../lib/agentRuntime";
 
 /**
  * ChatTab — accordion-style chat that talks to the user's LLM (OpenAI/Anthropic/OpenRouter).
@@ -180,7 +181,7 @@ export function ChatTab({ workspaceId, mcpApiKey }: Props) {
             },
             body: JSON.stringify({
               model: model || prov.defaultModel,
-              max_tokens: 4096,
+              max_tokens: LLM_MAX_TOKENS,
               system: HARNESS_SYSTEM_PROMPT,
               messages: conversation,
               tools: toolsForAnthropic(),
@@ -198,7 +199,7 @@ export function ChatTab({ workspaceId, mcpApiKey }: Props) {
             body: JSON.stringify({
               model: model || prov.defaultModel,
               messages: [{ role: "system", content: HARNESS_SYSTEM_PROMPT }, ...conversation],
-              max_tokens: 4096,
+              max_tokens: LLM_MAX_TOKENS,
               tools: HARNESS_TOOLS,
             }),
           });
