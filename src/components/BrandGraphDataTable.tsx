@@ -34,6 +34,8 @@ interface BrandGraphRoot {
   workspaceId: string;
   workspaceName: string;
   brands: BrandGraphNode[];
+  /** Files not filed under any brand. */
+  orphans?: BrandGraphNode[];
 }
 
 /** Flattened row for table display. */
@@ -133,21 +135,23 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         _node: node,
       });
 
+      // walk() already recurses, so descending into the grandchildren here as
+      // well duplicated every node from depth 2 down -- campaign files showed
+      // up twice, ghosts twice, and the row count ran to 689 instead of ~290.
       if (node.children) {
         for (const child of node.children) {
           walk(child, bn, bi, depth + 1);
-          // Also walk nested campaign nodes' children
-          if (child.children) {
-            for (const grandchild of child.children) {
-              walk(grandchild, bn, bi, depth + 2);
-            }
-          }
         }
       }
     }
 
     for (const brand of root.brands) {
       walk(brand, brand.name, brand.id, 0);
+    }
+    // Unfiled files belong in the table too -- it's the fastest place to give
+    // them a brand, which is the whole point of surfacing them.
+    for (const orphan of root.orphans || []) {
+      walk(orphan, "", "", 0);
     }
     return result;
   }
