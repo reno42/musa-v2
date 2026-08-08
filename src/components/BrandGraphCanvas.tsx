@@ -25,6 +25,8 @@ interface BrandGraphNode {
   obsidianLink?: string;
   category?: string;
   campaign?: string;
+  /** Placeholder for a category the brand hasn't filled yet — drawn faded. */
+  ghost?: boolean;
   children: BrandGraphNode[];
 }
 
@@ -57,6 +59,8 @@ interface SimNode {
   campaign?: string;
   hoverScale: number;
   phase: number;
+  /** Placeholder for an unfilled category — drawn faded. */
+  ghost?: boolean;
   /** Parent node ID for tree structure */
   parentId: string | null;
 }
@@ -250,6 +254,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           level: 2,
           kind: "category",
           color: brandNode.color,
+          ghost: cat.ghost,
           hoverScale: 1,
           phase: phaseCounter++,
           parentId: brandNode.id,
@@ -273,6 +278,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             templateId: item.templateId,
             obsidianLink: item.obsidianLink,
             campaign: item.campaign,
+            ghost: item.ghost,
             hoverScale: 1,
             phase: phaseCounter++,
             parentId: catNode.id,
@@ -484,7 +490,10 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
 
         const r = n.radius * n.hoverScale;
         const [cr, cg, cb] = hexToRgb(n.color);
-        const coreAlpha = dim ? 0.25 : 1;
+        // Ghosts stand for a category the brand hasn't filled yet, so they stay
+        // faint even when nothing else is dimmed — present as a suggestion,
+        // never mistakable for a real node.
+        const coreAlpha = dim ? 0.25 : n.ghost ? 0.3 : 1;
 
         // Halo
         const haloAlpha = isFocus ? 0.35 : isNeighbor ? 0.15 : 0.04;
@@ -505,7 +514,10 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         ctx.fillStyle = body;
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
         ctx.lineWidth = 1 / view.k;
-        ctx.strokeStyle = isSelected ? "#ffffff" : `rgba(255,255,255,${dim ? 0.05 : 0.22})`;
+        // Set every frame (including the empty case) so the dash never leaks
+        // from a ghost onto the nodes drawn after it.
+        ctx.setLineDash(n.ghost ? [3 / view.k, 3 / view.k] : []);
+        ctx.strokeStyle = isSelected ? "#ffffff" : `rgba(255,255,255,${dim ? 0.05 : n.ghost ? 0.3 : 0.22})`;
         ctx.stroke();
 
         // Obsidian badge

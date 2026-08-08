@@ -5,10 +5,17 @@
  * Tree structure:
  *   workspace (level 0)
  *     └─ brand (level 1, from brand_guidelines)
- *          ├─ 🎨 Design System    (level 2) → frames inside DS template (level 3)
- *          ├─ 📄 Plantillas       (level 2) → templates tagged with this brand (level 3)
- *          ├─ 🖼 Assets            (level 2) → assets linked to this brand (level 3)
- *          └─ 📁 Archivos         (level 2) → campaigns → templates (level 3)
+ *          ├─ 🎨 Design System    (level 2) → frames inside design_system_<brand> (level 3)
+ *          ├─ 📄 Plantillas       (level 2) → frames inside plantillas_<brand>    (level 3)
+ *          ├─ 🖼 Assets            (level 2) → assets linked to this brand         (level 3)
+ *          └─ 📁 Archivos         (level 2) → campaigns → design files            (level 3)
+ *
+ * A file is never a template. You save a *frame* as a template, so Plantillas
+ * hangs frames, not files, and needs a container file of its own — the exact
+ * mirror of the Design System. See docs/requirements/REQ-010-graph-template-model.md.
+ *
+ * All four categories are always emitted; an empty one becomes a ghost node so
+ * it reads as a suggestion instead of vanishing.
  */
 
 import { getSupabase } from "./supabase.js";
@@ -37,6 +44,14 @@ export interface BrandGraphNode {
   obsidianLink?: string;
   /** Category label shown in the graph (e.g. "Design System", "Plantillas"). */
   category?: string;
+  /** Campaign from design_file_meta — shown in the data table. */
+  campaign?: string;
+  /**
+   * Placeholder standing in for a category the brand hasn't filled yet. The
+   * graph always shows all four categories so the empty ones read as a
+   * suggestion of what's missing, rather than silently disappearing.
+   */
+  ghost?: boolean;
   children: BrandGraphNode[];
 }
 
@@ -165,79 +180,44 @@ export async function buildBrandGraph(
     // ── Build children ──
     const children: BrandGraphNode[] = [];
 
-    // Design System category
-    const dsChildren: BrandGraphNode[] = [];
-    if (brand.designSystemTemplateId) {
-      const dsTpl = brandTemplates.find(t => t._isDs);
-      if (dsTpl) {
-        // Fetch DS template to get its frames
-        try {
-          const fullDs = await getTemplate(brand.designSystemTemplateId);
-          if (fullDs?.frames && fullDs.frames.length > 0) {
-            for (const frame of fullDs.frames) {
-              dsChildren.push({
-                id: `frame:${frame.id}`,
-                name: frame.name || frame.id,
-                level: 3,
-                kind: "frame",
-                color,
-                children: [],
-              });
-            }
-          }
-        } catch { /* DS template might not exist yet */ }
-      }
-      // Even if empty, show the DS category
-      children.push({
-        id: `cat:ds:${brand.id}`,
-        name: "Design System",
-        level: 2,
-        kind: "category",
-        color,
-        category: "Design System",
-        children: dsChildren.length > 0 ? dsChildren : [
-          {
-            id: `empty:ds:${brand.id}`,
-            name: "Agrega frames al DS",
-            level: 3,
-            kind: "template",
-            color,
-            templateId: brand.designSystemTemplateId,
-            children: [],
-          },
-        ],
-      });
-    }
-
-    // Plantillas category (non-DS templates)
     const nonDsTemplates = brandTemplates.filter(t => !t._isDs);
-    const plantillaChildren: BrandGraphNode[] = [];
-    for (const tpl of nonDsTemplates) {
-      const meta = metaByTemplate.get(tpl.id);
-      plantillaChildren.push({
-        id: `tpl:${tpl.id}`,
-        name: tpl.name || tpl.id,
-        level: 3,
-        kind: "template",
-        color,
-        templateId: tpl.id,
-        obsidianLink: meta?.obsidian_link || undefined,
-        children: [],
-      });
-    }
-    if (plantillaChildren.length > 0) {
-      children.push({
-        id: `cat:templates:${brand.id}`,
-        name: "Plantillas",
-        level: 2,
-        kind: "category",
-        color,
-        category: "Plantillas",
-        children: plantillaChildren,
-      });
-    }
 
-    // Assets category
+    // ── Design System: frames of design_system_<brand> ──
+    const dsChildren: BrandGraphNode[] = [];
+    if (brand.designSystemTemplateId && brandTemplates.some(t => t._isDs)) {
+      try {
+        const fullDs = await getTemplate(brand.designSystemTemplateId);
+        for (const frame of fullDs?.frames || []) {
+          dsChildren.push({
+            id: `frame:${frame.id}`,
+            name: frame.name || frame.id,
+            level: 3,
+            kind: "frame",
+            color,
+            children: [],
+          });
+        }
+      } catch { /* DS template might not exist yet */ }
+    }
+    children.push(category(brand.id, color, "ds", "Design System", dsChildren, {
+      emptyLabel: brand.designSystemTemplateId ? "Agrega frames al DS" : "Crea tu Design System",
+      emptyTemplateId: brand.designSystemTemplateId || undefined,
+    }));
+
+    // ── Plantillas: frames of plantillas_<brand> ──
+    // The container file doesn't exist yet — it needs
+    // brand_guidelines.template_library_template_id from v21, mirroring what
+    // v20 did for the Design System. Until then this branch is always a ghost.
+    //
+    // It must NOT fall back to listing nonDsTemplates: that is what the old
+    // code did, and since Archivos lists the same array, every file was
+    // emitted twice under the same `tpl:<id>` node id, collapsing the
+    // canvas's byId map and mis-wiring the edges.
+    children.push(category(brand.id, color, "templates", "Plantillas", [], {
+      emptyLabel: "Guarda un frame con Batchamator",
+    }));
+
+    // ── Assets ──
     const assetChildren: BrandGraphNode[] = brandAssets.map(a => ({
       id: `asset:${a.id}`,
       name: a.name || a.file_path || a.id,
@@ -246,17 +226,9 @@ export async function buildBrandGraph(
       color,
       children: [],
     }));
-    if (assetChildren.length > 0) {
-      children.push({
-        id: `cat:assets:${brand.id}`,
-        name: "Assets",
-        level: 2,
-        kind: "category",
-        color,
-        category: "Assets",
-        children: assetChildren,
-      });
-    }
+    children.push(category(brand.id, color, "assets", "Assets", assetChildren, {
+      emptyLabel: "Sube fotos o archivos",
+    }));
 
     // Archivos category — templates grouped by campaign
     const campaignGroups = new Map<string, any[]>();
@@ -280,6 +252,7 @@ export async function buildBrandGraph(
           color,
           templateId: tpl.id,
           obsidianLink: meta?.obsidian_link || undefined,
+          campaign: campaign,
           children: [],
         });
       } else {
@@ -294,6 +267,7 @@ export async function buildBrandGraph(
             color,
             templateId: tpl.id,
             obsidianLink: meta?.obsidian_link || undefined,
+            campaign: campaign,
             children: [],
           };
         });
@@ -308,17 +282,9 @@ export async function buildBrandGraph(
         });
       }
     }
-    if (archivoChildren.length > 0) {
-      children.push({
-        id: `cat:archivos:${brand.id}`,
-        name: "Archivos",
-        level: 2,
-        kind: "category",
-        color,
-        category: "Archivos",
-        children: archivoChildren,
-      });
-    }
+    children.push(category(brand.id, color, "archivos", "Archivos", archivoChildren, {
+      emptyLabel: "Crea tu primer archivo",
+    }));
 
     brandNodes.push({
       id: brand.id,
@@ -339,4 +305,38 @@ export async function buildBrandGraph(
 
 function normalizeName(value: string | null | undefined): string {
   return (value || "").trim().toLowerCase();
+}
+
+/**
+ * Builds one of a brand's four category nodes. Always returns a node: when the
+ * category has no real children it gets a single ghost child carrying a hint
+ * about what to do next, so the branch stays visible as a suggestion.
+ */
+function category(
+  brandId: string,
+  color: string,
+  slug: string,
+  label: string,
+  children: BrandGraphNode[],
+  empty: { emptyLabel: string; emptyTemplateId?: string },
+): BrandGraphNode {
+  return {
+    id: `cat:${slug}:${brandId}`,
+    name: label,
+    level: 2,
+    kind: "category",
+    color,
+    category: label,
+    ghost: children.length === 0,
+    children: children.length > 0 ? children : [{
+      id: `ghost:${slug}:${brandId}`,
+      name: empty.emptyLabel,
+      level: 3,
+      kind: "template",
+      color,
+      templateId: empty.emptyTemplateId,
+      ghost: true,
+      children: [],
+    }],
+  };
 }
