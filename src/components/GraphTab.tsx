@@ -105,7 +105,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   physicsRef.current = physics;
 
   // ── View toggle: graph canvas | data table | brand hierarchy ──
-  const [view, setView] = useState<"graph" | "data" | "brands">("graph");
+  const [view] = useState<"graph" | "data" | "brands">("brands");
   // Sub-view for Red de Marcas: graph canvas vs. data table
   const [brandView, setBrandView] = useState<"graph" | "table">("graph");
   // Key to force BrandGraphCanvas remount on data change
@@ -557,12 +557,10 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", borderRadius: 12, overflow: "hidden", background: "#080a10", border: "1px solid rgba(255,255,255,0.07)" }}>
       {/* ═══ Top tab bar ═══ */}
       <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0, zIndex: 5, background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)" }}>
-        <TabBtn active={view === "graph"} onClick={() => setView("graph")}>◈ Grafo
-        </TabBtn>
-        <TabBtn active={view === "data"} onClick={() => setView("data")}>▤ Base de datos
-        </TabBtn>
-        <TabBtn active={view === "brands"} onClick={() => setView("brands")}>🕸 Red de Marcas
-        </TabBtn>
+        {/* "◈ Grafo" and "▤ Base de datos" lived here. Both read
+            design_file_meta, which is empty, so they had nothing to draw and
+            were retired; Red de Marcas is now the whole section. */}
+        <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>Red de Marcas</span>
         <div style={{ flex: 1 }} />
         {view === "graph" && (
           <button
@@ -589,7 +587,12 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
       )}
 
       {/* ═══ Content area ═══ */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+      {/* Flex column: the Red de Marcas branch stacks a sub-tab bar above a
+          flex:1 pane, and while this container was display:block that flex:1
+          resolved to height 0 -- the canvas was laid out 542x0, so the graph
+          was invisible no matter what the physics did. Stays position:relative
+          so the absolutely positioned overlays still anchor here. */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {view === "graph" ? (
           <>
             <div ref={wrapRef} style={{ position: "absolute", inset: 0 }}>
@@ -626,7 +629,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
                 ↻ Refrescar
               </button>
             </div>
-            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+            <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               {brandView === "graph" ? (
                 <BrandGraphCanvas key={brandRefreshKey} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
               ) : (
@@ -635,13 +638,17 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
             </div>
           </>
         ) : (
-          <GraphDataTable
-            workspaceId={workspaceId}
-            designNodes={designNodes}
-            brandAccounts={brandAccounts}
-            contacts={contacts}
-            onAfterEdit={fetchGraph}
-          />
+          // Wrapped so it still fills the pane now that the parent is a flex
+          // column; as a bare flex item it would size to its content instead.
+          <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+            <GraphDataTable
+              workspaceId={workspaceId}
+              designNodes={designNodes}
+              brandAccounts={brandAccounts}
+              contacts={contacts}
+              onAfterEdit={fetchGraph}
+            />
+          </div>
         )}
       </div>
     </div>

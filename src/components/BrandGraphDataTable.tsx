@@ -567,7 +567,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={e => e.stopPropagation()}
-                        style={{ color: "#7c3aed", fontSize: 11, textDecoration: "none" }}
+                        style={{ color: "#00b3d6", fontSize: 11, textDecoration: "none" }}
                         title={row.obsidianLink}
                       >
                         ◆ Link

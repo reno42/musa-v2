@@ -114,7 +114,7 @@ function orbitForLevel(level: number): number {
 const ORPHAN_ORBIT = ORBIT_RADIUS * 2.4;
 
 const BRAND_PALETTE = [
-  "#ff4b72", "#00e5ff", "#b5179e", "#ffb703",
+  "#ff4b72", "#00e5ff", "#0f8a7a", "#ffb703",
   "#06d6a0", "#ef476f", "#118ab2", "#f78c6b",
 ];
 
@@ -569,7 +569,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         // Obsidian badge
         if (n.obsidianLink && !dim) {
           const bx = n.x + r * 0.7, by = n.y - r * 0.7;
-          ctx.fillStyle = "#7c3aed";
+          ctx.fillStyle = "#00b3d6";
           ctx.beginPath(); ctx.arc(bx, by, 3.5 / view.k, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = "#fff";
           ctx.font = `${6 / view.k}px sans-serif`;
@@ -881,7 +881,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           )}
           {selectedNode.obsidianLink && (
             <a href={selectedNode.obsidianLink} target="_blank" rel="noopener noreferrer"
-              style={{ color: "#7c3aed", fontSize: 11, textDecoration: "none" }}
+              style={{ color: "#00b3d6", fontSize: 11, textDecoration: "none" }}
               onClick={e => e.stopPropagation()}>
               ◆ Obsidian
             </a>

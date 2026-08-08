@@ -73,7 +73,7 @@ const ORPHAN_COLOR = "#8a93a6";
 const BRAND_PALETTE = [
   "#ff4b72", // Rosa neón (Futuraria default)
   "#00e5ff", // Cyan
-  "#b5179e", // Púrpura
+  "#0f8a7a", // Verde azulado
   "#ffb703", // Amarillo
   "#06d6a0", // Verde menta
   "#ef476f", // Rojo coral
