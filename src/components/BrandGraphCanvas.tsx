@@ -24,6 +24,7 @@ interface BrandGraphNode {
   templateId?: string;
   obsidianLink?: string;
   category?: string;
+  campaign?: string;
   children: BrandGraphNode[];
 }
 
@@ -53,6 +54,7 @@ interface SimNode {
   color: string;
   templateId?: string;
   obsidianLink?: string;
+  campaign?: string;
   hoverScale: number;
   phase: number;
   /** Parent node ID for tree structure */
@@ -74,13 +76,25 @@ const ORBIT_RADIUS = 160; // Brands orbit distance from center
 const CAT_ORBIT = 100; // Categories orbit distance from brand
 const ITEM_ORBIT = 55; // Items orbit distance from category
 
-const REPULSION = 600;
+const REPULSION = 2200;
 const SPRING = 0.06;
-const SPRING_REST = 50;
 const GRAVITY = 0.6;
 const DAMPING = 0.85;
 const ALPHA_DECAY = 0.03;
 const WARMUP_TICKS = 120;
+
+/**
+ * Rest length of the spring holding a node to its parent, by depth.
+ * These are the orbit shells above: level 1 (brands) sit at ORBIT_RADIUS
+ * from the centre, level 2 (categories) at CAT_ORBIT from their brand, and
+ * so on. Previously every link shared one flat rest length, so all three
+ * levels settled at the same distance and the hierarchy read as a blob.
+ */
+function orbitForLevel(level: number): number {
+  if (level <= 1) return ORBIT_RADIUS;
+  if (level === 2) return CAT_ORBIT;
+  return ITEM_ORBIT;
+}
 
 const BRAND_PALETTE = [
   "#ff4b72", "#00e5ff", "#b5179e", "#ffb703",
@@ -93,6 +107,19 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const [graph, setGraph] = useState<BrandGraphRoot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // ── Selected node & context menu ──
+  const [selectedNode, setSelectedNode] = useState<{
+    id: string; name: string; kind: string; color: string;
+    templateId?: string; obsidianLink?: string; campaign?: string;
+    brandName?: string;
+  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [reconnectMode, setReconnectMode] = useState(false);
+  const [infoMsg, setInfoMsg] = useState("");
+  // Ref to bridge reconnect state into the rAF effect closure
+  const reconnectRef = useRef<{ active: boolean; nodeId: string | null }>({ active: false, nodeId: null });
+  reconnectRef.current = { active: reconnectMode, nodeId: selectedNode?.id ?? null };
 
   const openRef = useRef(onOpenTemplate);
   openRef.current = onOpenTemplate;
@@ -117,6 +144,50 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   }, [workspaceId]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
+
+  // ── Mutations (MCP calls) ──
+
+  const callMcp = useCallback(async (method: string, params: Record<string, unknown>) => {
+    if (!workspaceId) return null;
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string }>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ method, params: { workspaceId, ...params } }),
+      });
+      return res;
+    } catch (e) {
+      console.error(`[BrandGraph] MCP ${method} failed:`, e);
+      return null;
+    }
+  }, [workspaceId]);
+
+  /** Reassign a template to a different brand (update design_file_meta). */
+  const reassignToBrand = useCallback(async (templateId: string, brandId: string) => {
+    if (!workspaceId) return;
+    try {
+      await apiFetch(`/api/meta/${templateId}`, {
+        method: "PUT",
+        body: JSON.stringify({ brand_id: brandId }),
+      });
+      setInfoMsg("Marca reasignada correctamente");
+      setTimeout(() => setInfoMsg(""), 2500);
+      fetchGraph();
+    } catch (e) {
+      console.error("reassignToBrand failed:", e);
+      setInfoMsg("Error al reasignar marca");
+      setTimeout(() => setInfoMsg(""), 2500);
+    }
+  }, [workspaceId, fetchGraph]);
+
+  /** Delete a template node (soft-delete via MCP). */
+  const deleteTemplateNode = useCallback(async (templateId: string) => {
+    const res = await callMcp("tools_remove_template", { templateId });
+    if (res) {
+      setInfoMsg("Template eliminado");
+      setTimeout(() => setInfoMsg(""), 2500);
+      fetchGraph();
+    }
+  }, [callMcp, fetchGraph]);
 
   // ── Flatten tree into SimNode[] + SimLink[] ──
 
@@ -201,6 +272,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             color: brandNode.color,
             templateId: item.templateId,
             obsidianLink: item.obsidianLink,
+            campaign: item.campaign,
             hoverScale: 1,
             phase: phaseCounter++,
             parentId: catNode.id,
@@ -248,7 +320,6 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     let raf = 0;
     let cssW = 0, cssH = 0;
     let userMovedView = false;
-    let connectingChild: SimNode | null = null;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const resize = () => {
@@ -312,19 +383,31 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       for (const l of links) {
         const dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const rest = SPRING_REST + l.source.radius + l.target.radius;
+        const rest = orbitForLevel(l.target.level) + l.source.radius + l.target.radius;
         const f = (d - rest) * SPRING * a;
         l.target.vx -= (dx / d) * f; l.target.vy -= (dy / d) * f;
         l.source.vx += (dx / d) * f * 0.3; // parent moves less
         l.source.vy += (dy / d) * f * 0.3;
       }
       for (const n of sim) {
-        // Center gravity toward parent or (0,0)
         const parent = n.parentId ? byId.get(n.parentId) : null;
-        const gx = parent ? parent.x : 0;
-        const gy = parent ? parent.y : 0;
-        n.vx += (gx - n.x) * GRAVITY * a * 0.3;
-        n.vy += (gy - n.y) * GRAVITY * a * 0.3;
+        if (parent) {
+          // Hold the node on its orbit shell around the parent, rather than
+          // pulling it into the parent's centre. The old version targeted the
+          // parent's exact position, so this force fought the spring and won
+          // near equilibrium — every child ended up sitting on top of its
+          // parent. Now it only corrects the radial error, in either
+          // direction, and leaves the angle to repulsion.
+          const dx = n.x - parent.x, dy = n.y - parent.y;
+          const d = Math.sqrt(dx * dx + dy * dy) || 1;
+          const shell = orbitForLevel(n.level) + parent.radius + n.radius;
+          const pull = (d - shell) * GRAVITY * a * 0.3;
+          n.vx -= (dx / d) * pull;
+          n.vy -= (dy / d) * pull;
+        } else {
+          n.vx += (0 - n.x) * GRAVITY * a * 0.3;
+          n.vy += (0 - n.y) * GRAVITY * a * 0.3;
+        }
         if (n === dragged) { n.vx = 0; n.vy = 0; continue; }
         n.vx *= DAMPING; n.vy *= DAMPING;
         n.x += n.vx; n.y += n.vy;
@@ -371,13 +454,16 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         ctx.stroke();
       }
 
-      // Connecting line
-      if (connectingChild) {
+      // Connecting line (reconnect mode)
+      const connChild = reconnectRef.current.active && reconnectRef.current.nodeId
+        ? byId.get(reconnectRef.current.nodeId) ?? null
+        : null;
+      if (connChild) {
         ctx.beginPath();
-        ctx.moveTo(connectingChild.x, connectingChild.y);
-        if (hovered && hovered.level === connectingChild.level - 1) {
+        ctx.moveTo(connChild.x, connChild.y);
+        if (hovered && hovered.level === connChild.level - 1) {
           ctx.lineTo(hovered.x, hovered.y);
-          ctx.strokeStyle = connectingChild.color + "aa";
+          ctx.strokeStyle = connChild.color + "aa";
         } else {
           ctx.strokeStyle = "rgba(255,255,255,0.15)";
         }
@@ -483,14 +569,25 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       downScreen = { x: ev.clientX, y: ev.clientY };
       moved = false;
 
-      if (connectingChild) {
-        const hit = hitTest(p.x, p.y);
-        if (hit && hit.level === connectingChild.level - 1) {
-          // Reconnect: would call MCP tool here
-          console.log("[BrandGraph] Reconnect:", connectingChild.id, "→", hit.id);
+      // Handle reconnect mode: find the connecting child from the ref
+      if (reconnectRef.current.active && reconnectRef.current.nodeId) {
+        const connChild = byId.get(reconnectRef.current.nodeId);
+        if (connChild) {
+          const hit = hitTest(p.x, p.y);
+          if (hit && hit.level === connChild.level - 1 && hit.kind === "brand") {
+            const tplId = connChild.templateId;
+            const brandId = hit.id;
+            if (tplId && brandId) {
+              callMcp("apply_brand_to_template", { templateId: tplId, brandId })
+                .then(() => {
+                  setInfoMsg("Template reasignado a " + hit.name);
+                  setTimeout(() => setInfoMsg(""), 2500);
+                });
+            }
+          }
+          setReconnectMode(false);
+          return;
         }
-        connectingChild = null;
-        return;
       }
 
       const hit = hitTest(p.x, p.y);
@@ -564,6 +661,31 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       if (!hitTest(p.x, p.y)) { fitView(); userMovedView = false; }
     };
 
+    const onContextMenu = (ev: MouseEvent) => {
+      ev.preventDefault();
+      const p = localXY(ev);
+      const hit = hitTest(p.x, p.y);
+      if (hit) {
+        // Find brand name from parent chain
+        let brandName = "";
+        let cursor = hit.parentId;
+        while (cursor) {
+          const parent = byId.get(cursor);
+          if (parent?.kind === "brand") { brandName = parent.name; break; }
+          cursor = parent?.parentId || null;
+        }
+        setSelectedNode({
+          id: hit.id, name: hit.name, kind: hit.kind, color: hit.color,
+          templateId: hit.templateId, obsidianLink: hit.obsidianLink,
+          campaign: hit.campaign, brandName,
+        });
+        setContextMenu({ x: ev.clientX, y: ev.clientY });
+      } else {
+        setSelectedNode(null);
+        setContextMenu(null);
+      }
+    };
+
     canvas.style.cursor = "grab";
     canvas.addEventListener("mousedown", onDown);
     window.addEventListener("mousemove", onMove);
@@ -571,6 +693,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
     canvas.addEventListener("mouseleave", onLeave);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("dblclick", onDblClick);
+    canvas.addEventListener("contextmenu", onContextMenu);
 
     (window as any).__brandGraphProbe = {
       nodeCount: sim.length,
@@ -587,6 +710,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       canvas.removeEventListener("mouseleave", onLeave);
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("dblclick", onDblClick);
+      canvas.removeEventListener("contextmenu", onContextMenu);
       delete (window as any).__brandGraphProbe;
     };
   }, [graph]);
@@ -628,6 +752,171 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           </span>
         </div>
       )}
+
+      {/* ═══ Selected node info bar ═══ */}
+      {selectedNode && (
+        <div style={{
+          position: "absolute", top: 12, left: 12, right: 12,
+          padding: "10px 14px", borderRadius: 10,
+          background: "rgba(12,14,20,0.96)", backdropFilter: "blur(12px)",
+          border: `1px solid ${selectedNode.color}44`,
+          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+          zIndex: 10, fontSize: 12,
+        }}>
+          <span style={{
+            display: "inline-block", width: 12, height: 12, borderRadius: "50%",
+            background: selectedNode.color, flexShrink: 0,
+          }} />
+          <strong style={{ color: selectedNode.color }}>{selectedNode.name}</strong>
+          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>
+            {selectedNode.kind === "brand" ? "Marca" : selectedNode.kind === "template" ? "Template" : selectedNode.kind === "frame" ? "Frame" : selectedNode.kind}
+          </span>
+          {selectedNode.brandName && selectedNode.kind !== "brand" && (
+            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
+              Marca: <span style={{ color: selectedNode.color }}>{selectedNode.brandName}</span>
+            </span>
+          )}
+          {selectedNode.campaign && (
+            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
+              Campaña: {selectedNode.campaign}
+            </span>
+          )}
+          {selectedNode.obsidianLink && (
+            <a href={selectedNode.obsidianLink} target="_blank" rel="noopener noreferrer"
+              style={{ color: "#7c3aed", fontSize: 11, textDecoration: "none" }}
+              onClick={e => e.stopPropagation()}>
+              ◆ Obsidian
+            </a>
+          )}
+          <div style={{ flex: 1 }} />
+          {selectedNode.templateId && (
+            <>
+              <button onClick={() => { openRef.current?.(selectedNode.templateId!); setContextMenu(null); }}
+                style={infoBtnStyle} title="Abrir en editor">
+                ↗ Abrir
+              </button>
+              {reconnectMode ? (
+                <button onClick={() => setReconnectMode(false)}
+                  style={{ ...infoBtnStyle, borderColor: "rgba(255,180,50,0.5)", color: "#ffb703" }}>
+                  Cancelar
+                </button>
+              ) : (
+                <button onClick={() => { setReconnectMode(true); setContextMenu(null); }}
+                  style={infoBtnStyle} title="Reconectar a otra marca">
+                  🔗 Reconectar
+                </button>
+              )}
+              <button onClick={() => { deleteTemplateNode(selectedNode.templateId!); setSelectedNode(null); }}
+                style={{ ...infoBtnStyle, borderColor: "rgba(255,75,114,0.4)", color: "#ff4b72" }}
+                title="Eliminar">
+                🗑 Eliminar
+              </button>
+            </>
+          )}
+          <button onClick={() => { setSelectedNode(null); setContextMenu(null); setReconnectMode(false); }}
+            style={{ ...infoBtnStyle, color: "rgba(255,255,255,0.4)" }}>
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ═══ Context menu ═══ */}
+      {contextMenu && selectedNode && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 99 }}
+            onClick={() => { setContextMenu(null); }} />
+          <div style={{
+            position: "fixed", left: contextMenu.x, top: contextMenu.y,
+            zIndex: 100, minWidth: 180,
+            background: "rgba(18,20,28,0.98)", backdropFilter: "blur(12px)",
+            border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10,
+            padding: "6px 0", boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          }}>
+            <div style={{ padding: "6px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+              <span style={{ color: selectedNode.color, fontWeight: 600, fontSize: 13 }}>{selectedNode.name}</span>
+              <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, marginLeft: 8 }}>{selectedNode.kind}</span>
+            </div>
+            {selectedNode.templateId && (
+              <ContextMenuItem onClick={() => { openRef.current?.(selectedNode.templateId!); setContextMenu(null); }}>
+                ↗ Abrir en editor
+              </ContextMenuItem>
+            )}
+            {selectedNode.templateId && !reconnectMode && (
+              <ContextMenuItem onClick={() => { setReconnectMode(true); setContextMenu(null); }}>
+                🔗 Reconectar a otra marca
+              </ContextMenuItem>
+            )}
+            {selectedNode.obsidianLink && (
+              <ContextMenuItem onClick={() => { window.open(selectedNode.obsidianLink, "_blank", "noopener,noreferrer"); setContextMenu(null); }}>
+                ◆ Abrir en Obsidian
+              </ContextMenuItem>
+            )}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "4px 0" }} />
+            {selectedNode.templateId && (
+              <ContextMenuItem danger onClick={() => { deleteTemplateNode(selectedNode.templateId!); setSelectedNode(null); setContextMenu(null); }}>
+                🗑 Eliminar
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem onClick={() => setContextMenu(null)}>
+              ✕ Cerrar
+            </ContextMenuItem>
+          </div>
+        </>
+      )}
+
+      {/* ═══ Reconnect mode indicator ═══ */}
+      {reconnectMode && selectedNode && (
+        <div style={{
+          position: "absolute", top: selectedNode ? 60 : 12, left: "50%", transform: "translateX(-50%)",
+          padding: "6px 16px", borderRadius: 100,
+          background: "rgba(255,180,3,0.18)", border: "1px solid rgba(255,180,3,0.4)",
+          fontSize: 11, color: "#ffb703", zIndex: 8, pointerEvents: "none",
+        }}>
+          Haz click en una marca para reconectar "{selectedNode.name}"
+        </div>
+      )}
+
+      {/* ═══ Info toast ═══ */}
+      {infoMsg && (
+        <div style={{
+          position: "absolute", bottom: 48, left: "50%", transform: "translateX(-50%)",
+          padding: "6px 18px", borderRadius: 100,
+          background: "rgba(6,214,160,0.18)", border: "1px solid rgba(6,214,160,0.4)",
+          fontSize: 12, color: "#06d6a0", zIndex: 12, pointerEvents: "none",
+        }}>
+          {infoMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sub-components ──
+
+const infoBtnStyle: React.CSSProperties = {
+  padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11,
+  color: "rgba(255,255,255,0.7)", background: "transparent",
+  border: "1px solid rgba(255,255,255,0.15)", fontFamily: "inherit",
+  whiteSpace: "nowrap",
+};
+
+function ContextMenuItem({ onClick, children, danger }: {
+  onClick: () => void;
+  children: React.ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "7px 14px", cursor: "pointer", fontSize: 12,
+        color: danger ? "#ff4b72" : "rgba(255,255,255,0.8)",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.06)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+    >
+      {children}
     </div>
   );
 }

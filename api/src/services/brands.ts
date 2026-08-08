@@ -298,11 +298,25 @@ export async function listBrandsByWorkspace(workspaceId: string): Promise<BrandG
   if (!cleanWorkspaceId) throw new StyleInvariantError("workspaceId is required to list styles");
   const sb = getSupabase();
   if (sb) {
-    const { data, error } = await sb.from("brand_guidelines")
+    let { data, error } = await sb.from("brand_guidelines")
       .select("*")
       .eq("workspace_id", cleanWorkspaceId)
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
+
+    // `deleted_at` arrives with supabase_migrations_v20.sql. On a database
+    // where v20 hasn't been applied, filtering on it fails the whole query,
+    // and because this throws, every caller 500s — the Brand Network panel
+    // goes down entirely rather than just losing soft-delete. Retry without
+    // the filter so an un-migrated database still lists its brands.
+    if (error && /deleted_at/.test(error.message || "")) {
+      console.warn("[brands] brand_guidelines.deleted_at missing — run supabase_migrations_v20.sql. Listing without the soft-delete filter.");
+      ({ data, error } = await sb.from("brand_guidelines")
+        .select("*")
+        .eq("workspace_id", cleanWorkspaceId)
+        .order("updated_at", { ascending: false }));
+    }
+
     if (error) throw persistenceError("list", error);
     const brands = (data || []).map(row => rowToBrand(row as SupabaseBrandRow));
     for (const brand of brands) memoryStore.set(brand.id, brand);
