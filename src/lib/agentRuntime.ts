@@ -440,6 +440,7 @@ export function buildWorkManifest(
       requiredTexts: [...(expected.requiredTexts || [])],
       requiredTextsByFrame: (expected.requiredTextsByFrame || []).map(texts => [...texts]),
       requiredStyle: expected.requiredStyle,
+      brandId: expected.brandId,
     },
     createdTemplateIds: uniqueIds,
     pendingTemplateCount: Math.max(0, (expected.expectedTemplateCount || 0) - uniqueIds.length),
@@ -770,6 +771,23 @@ export function selectProviderTools<T extends { function?: { name?: string } }>(
   return [...required, ...rest].slice(0, DEEPSEEK_MAX_TOOLS);
 }
 
+/** Normalize text for fuzzy matching: decompose Unicode, map confusable chars,
+ *  collapse whitespace. Solves × vs x, ó corruption, and similar encoding mismatches
+ *  between leader-written contracts and implementer-generated HTML. */
+export function normalizeForMatching(text: string): string {
+  return text
+    .normalize("NFKD")                          // decompose accented chars (é → e + combining accent)
+    .replace(/[\u0300-\u036f]/g, "")            // strip combining diacritical marks
+    .replace(/[\u00d7\u2715\u2716]/g, "x")      // × ✕ ✖ → x
+    .replace(/[\u2013\u2014\u2015]/g, "-")      // – — ― → -
+    .replace(/[\u201c\u201d\u201e]/g, '"')     // “ ” „ → "
+    .replace(/[\u2018\u2019\u201a]/g, "'")     // ' ' ‚ → '
+    .replace(/[\u00a0]/g, " ")                  // non-breaking space → space
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export function evaluateCompleteness(input: {
   contract?: WorkContract;
   artifacts: ArtifactSnapshot[];
@@ -821,37 +839,57 @@ export function evaluateCompleteness(input: {
     }
   }
   const allFrames = input.artifacts.flatMap(artifact => artifact.frames?.length ? artifact.frames : [artifact]);
-  const allText = allFrames.map(frame => extractVisibleText(frame.html || "")).join(" ").toLowerCase();
+  const allText = normalizeForMatching(allFrames.map(frame => extractVisibleText(frame.html || "")).join(" "));
   for (const requiredText of contract.requiredTexts || []) {
-    if (!allText.includes(requiredText.toLowerCase())) errors.push(`Missing required text: ${requiredText}`);
+    if (!allText.includes(normalizeForMatching(requiredText))) errors.push(`Missing required text: ${requiredText}`);
   }
   for (const [frameIndex, requiredTexts] of (contract.requiredTextsByFrame || []).entries()) {
-    const frameText = extractVisibleText(allFrames[frameIndex]?.html || "").toLowerCase();
+    const frameText = normalizeForMatching(extractVisibleText(allFrames[frameIndex]?.html || ""));
     if (requiredTexts.length > 0 && !frameText) errors.push(`Frame ${frameIndex + 1} has no visible text.`);
     for (const requiredText of requiredTexts) {
-      if (!frameText.includes(requiredText.toLowerCase())) errors.push(`Frame ${frameIndex + 1} is missing required text: ${requiredText}`);
+      if (!frameText.includes(normalizeForMatching(requiredText))) errors.push(`Frame ${frameIndex + 1} is missing required text: ${requiredText}`);
     }
   }
   if (contract.requiredStyle && contract.requiredStyle !== FREE_STYLE_SENTINEL) {
+    const hasContractBrandMatch = typeof contract.brandId === "string" &&
+      contract.brandId.length > 0 &&
+      input.artifacts.some(artifact => artifact.brandId === contract.brandId);
+    // Pre-compute brand marker presence: if every artifact with a brandId has
+    // the marker in all its frames, brand application is proven even without
+    // the style name in evidence or styleReferences.
+    const allBrandedProven = input.artifacts.length > 0 && input.artifacts.every(artifact => {
+      if (!artifact.brandId) return false;
+      const marker = `futuraria-brand:${artifact.brandId}:start`;
+      const frames = artifact.frames?.length ? artifact.frames : [artifact];
+      return frames.every(frame => (frame.css || "").includes(marker));
+    });
     const evidence = input.artifacts.flatMap(artifact => artifact.styleEvidence || []).join(" ").toLowerCase();
-    if (!evidence.includes(contract.requiredStyle.toLowerCase())) errors.push(`Missing style evidence: ${contract.requiredStyle}`);
+    // Accept style evidence by: (a) name match, (b) contract.brandId match, or (c) proven brand marker application
+    if (!evidence.includes(contract.requiredStyle.toLowerCase()) && !hasContractBrandMatch && !allBrandedProven) {
+      errors.push(`Missing style evidence: ${contract.requiredStyle}`);
+    }
     for (const artifact of input.artifacts) {
       if (!artifact.brandId) {
-        errors.push(`${artifact.id}: requested style has no applied brandId.`);
+        errors.push(`${artifact.id}: requested style ${contract.requiredStyle} has no applied brandId.`);
         continue;
       }
-      const boundStyle = (artifact.styleReferences || []).find(reference =>
-        reference.id === artifact.brandId &&
-        typeof reference.name === "string" &&
-        reference.name.toLowerCase().includes(contract.requiredStyle!.toLowerCase()));
-      if (!boundStyle) {
-        errors.push(`${artifact.id}: applied brandId ${artifact.brandId} is not bound to requested style ${contract.requiredStyle}.`);
-      }
-      if (!(artifact.designArtifacts?.sharedCss || "").trim()) {
-        errors.push(`${artifact.id}: applied brand has no sharedCss.`);
-      }
+      // If the leader explicitly authorized this brandId in the contract, skip the
+      // styleReferences lookup — the leader said "use this directly, don't look it up."
+      const leaderAuthorized = typeof contract.brandId === "string" && artifact.brandId === contract.brandId;
       const marker = `futuraria-brand:${artifact.brandId}:start`;
       const effectiveFrames = artifact.frames?.length ? artifact.frames : [artifact];
+      if (!leaderAuthorized) {
+        const boundStyle = (artifact.styleReferences || []).find(reference =>
+          reference.id === artifact.brandId &&
+          typeof reference.name === "string" &&
+          reference.name.toLowerCase().includes(contract.requiredStyle!.toLowerCase()));
+        if (!boundStyle) {
+          errors.push(`${artifact.id}: applied brandId ${artifact.brandId} is not bound to requested style ${contract.requiredStyle}.`);
+        }
+      }
+      if (!(artifact.designArtifacts?.sharedCss || "").trim()) {
+        errors.push(`${artifact.id}: applied brand ${artifact.brandId} has no sharedCss.`);
+      }
       for (const [index, frame] of effectiveFrames.entries()) {
         if (!(frame.css || "").includes(marker)) {
           errors.push(`${artifact.id}: frame ${index + 1} is missing applied brand CSS marker for ${artifact.brandId}.`);
