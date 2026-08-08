@@ -2006,6 +2006,11 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
   },
   {
+    name: "get_brand_graph",
+    description: "Returns the brand hierarchy tree for the Red de Marcas force-directed graph (workspace → brands → Design System / Plantillas / Assets / Archivos → items)",
+    inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
+  },
+  {
     name: "apply_brand",
     description: "Apply a saved brand's colors and fonts as CSS custom properties to a template",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" }, workspaceId: { type: "string" } }, required: ["templateId", "brandId", "workspaceId"] },
@@ -7008,6 +7013,21 @@ async function handleMethod(method, params, userId, auth) {
         id: r.id, name: r.name, colors: r.structure?.colors || [], fonts: r.structure?.fonts || [], createdAt: r.created_at,
       }));
       return { brands };
+    }
+
+    case "get_brand_graph": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      var brandGraphMod = await import("../../api/src/services/brandGraph.js");
+      var wsName = "Mi cuenta";
+      var sb2 = getSupabase();
+      if (sb2) {
+        try {
+          var wsRow = await sb2.from("workspaces").select("name").eq("id", params.workspaceId).maybeSingle();
+          if (wsRow && wsRow.data) wsName = wsRow.data.name;
+        } catch (_) { /* ignore */ }
+      }
+      var graph = await brandGraphMod.buildBrandGraph(params.workspaceId, wsName);
+      return graph;
     }
 
     case "apply_brand": {

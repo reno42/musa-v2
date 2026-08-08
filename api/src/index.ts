@@ -24,6 +24,7 @@ import { designSystemRoutes } from "./routes/designSystem.js";
 import { sectionRoutes } from "./routes/sections.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
+import { getBrandGraph } from "./routes/brandGraph.js";
 import { storageRoutes } from "./routes/storage.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
@@ -132,6 +133,10 @@ app.use("/api/bug-reports", bugReportRoutes);
 // ── Design Knowledge Graph ──
 // GET /api/graph?workspaceId=&brand=&tag=&format=
 app.get("/api/graph", getDesignGraph);
+
+// ── Brand Hierarchy Graph (Red de Marcas) ──
+// GET /api/brand-graph?workspaceId=
+app.get("/api/brand-graph", getBrandGraph);
 
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);

@@ -11,6 +11,7 @@ import {
   type KnowledgeNodeKind,
 } from "../lib/designGraph";
 import { GraphDataTable } from "./GraphDataTable";
+import { BrandGraphCanvas } from "./BrandGraphCanvas";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -102,8 +103,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   const physicsRef = useRef(physics);
   physicsRef.current = physics;
 
-  // ── View toggle: graph canvas vs. editable data table ──
-  const [view, setView] = useState<"graph" | "data">("graph");
+  // ── View toggle: graph canvas | data table | brand hierarchy ──
+  const [view, setView] = useState<"graph" | "data" | "brands">("graph");
 
   const hierarchy = useMemo(
     () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
@@ -555,6 +556,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
         </TabBtn>
         <TabBtn active={view === "data"} onClick={() => setView("data")}>▤ Base de datos
         </TabBtn>
+        <TabBtn active={view === "brands"} onClick={() => setView("brands")}>🕸 Red de Marcas
+        </TabBtn>
         <div style={{ flex: 1 }} />
         {view === "graph" && (
           <button
@@ -603,6 +606,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
               <canvas ref={canvasRef} aria-label="Grafo de diseños" style={{ position: "absolute", inset: 0, display: loading || error || designCount === 0 ? "none" : "block" }} />
             </div>
           </>
+        ) : view === "brands" ? (
+          <BrandGraphCanvas workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
         ) : (
           <GraphDataTable
             workspaceId={workspaceId}
