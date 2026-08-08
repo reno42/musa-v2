@@ -189,7 +189,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       );
     }
     if (kindFilter) {
-      filtered = filtered.filter(r => r.kind === kindFilter);
+      filtered = filtered.filter(r => r.kind.toLowerCase().includes(kindFilter.toLowerCase()));
     }
     setRows(filtered);
   }, [brandFilter, kindFilter, allRows]);
@@ -362,26 +362,20 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         background: "rgba(12,14,20,0.96)", backdropFilter: "blur(8px)",
         flexWrap: "wrap",
       }}>
-        <select
+        {/* Plain text filters, not dropdowns: this is meant to read as a
+            spreadsheet, so filtering is typing, the way a sheet behaves. */}
+        <input
           value={brandFilter}
           onChange={e => setBrandFilter(e.target.value)}
+          placeholder="Filtrar marca"
           style={filterSelectStyle}
-        >
-          <option value="">Todas las marcas</option>
-          {uniqueBrands.map(b => (
-            <option key={b} value={b}>{b}</option>
-          ))}
-        </select>
-        <select
+        />
+        <input
           value={kindFilter}
           onChange={e => setKindFilter(e.target.value)}
+          placeholder="Filtrar tipo"
           style={filterSelectStyle}
-        >
-          <option value="">Todos los tipos</option>
-          {uniqueKinds.map(k => (
-            <option key={k} value={k}>{kindLabel(k as BrandGraphNodeKind)}</option>
-          ))}
-        </select>
+        />
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
           {rows.length} filas
