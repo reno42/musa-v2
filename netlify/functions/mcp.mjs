@@ -3416,11 +3416,12 @@ const MCP_TOOLS = [
   // can be flushed. See AGENTS.md at the repo root.
   {
     name: "harness_get_context",
-    description: "Bootstrap context for an agent session. Returns AGENTS.md, the agent definition (labor + protocol + hard_rules), relevant docs, and the latest 3 entries of the session if provided. Use this BEFORE doing any work — it replaces reading many files. This is how subagents stay efficient: minimal context, just what is needed.",
+    description: "Bootstrap context for an agent session. Returns the agent definition (labor + protocol + hard_rules), and when workspaceId is provided: active styles, brand guidelines, and recent templates. Use this BEFORE doing any work — it replaces reading many files. For the leader, this is step 0 and returns everything needed for context validation (step 0.5).",
     inputSchema: {
       type: "object",
       properties: {
         agentType: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"], description: "Which role to bootstrap" },
+        workspaceId: { type: "string", description: "Workspace ID — when provided, returns active styles, brands, and templates for this workspace" },
         taskId: { type: "string", description: "Optional task to include its acceptance criteria" },
         sessionId: { type: "string", description: "Optional session to include its latest entries" },
       },
@@ -11814,11 +11815,42 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         entries = es || [];
       }
 
+      // ── Workspace context: active styles, brands, templates ──
+      let activeStyles = [];
+      let brandGuidelines = [];
+      let recentTemplates = [];
+      if (params.workspaceId && UUID_RE.test(params.workspaceId)) {
+        try {
+          const { data: styles } = await sb.from("active_styles")
+            .select("id, name, description").eq("workspace_id", params.workspaceId)
+            .order("name", { ascending: true }).limit(20);
+          activeStyles = (styles || []).map(s => ({ id: s.id, name: s.name, description: s.description || "" }));
+        } catch { /* best-effort */ }
+        try {
+          const { data: brands } = await sb.from("brand_guidelines")
+            .select("id, name").eq("workspace_id", params.workspaceId)
+            .order("name", { ascending: true }).limit(20);
+          brandGuidelines = brands || [];
+        } catch { /* best-effort */ }
+        try {
+          const { data: tmpl } = await sb.from("templates")
+            .select("id, name").eq("workspace_id", params.workspaceId)
+            .order("created_at", { ascending: false }).limit(10);
+          recentTemplates = tmpl || [];
+        } catch { /* best-effort */ }
+      }
+
       return {
         agentDefinition: agentDef,
         task,
         recentEntries: entries,
-        note: "This is your minimal context. Read it, work, and write results via harness_log_entry. Do NOT circulate content in chat.",
+        activeStyles,
+        brandGuidelines,
+        recentTemplates,
+        workspaceId: params.workspaceId || null,
+        note: params.workspaceId
+          ? "Workspace context loaded. Validate brandId, dimensions, frameCount, and templateId BEFORE creating a card. If anything is missing, ask the user."
+          : "This is your minimal context. Read it, work, and write results via harness_log_entry. Do NOT circulate content in chat.",
       };
     }
 
