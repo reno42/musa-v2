@@ -12,6 +12,7 @@ import {
 } from "../lib/designGraph";
 import { GraphDataTable } from "./GraphDataTable";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
+import { BrandGraphDataTable } from "./BrandGraphDataTable";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -105,6 +106,10 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
   // ── View toggle: graph canvas | data table | brand hierarchy ──
   const [view, setView] = useState<"graph" | "data" | "brands">("graph");
+  // Sub-view for Red de Marcas: graph canvas vs. data table
+  const [brandView, setBrandView] = useState<"graph" | "table">("graph");
+  // Key to force BrandGraphCanvas remount on data change
+  const [brandRefreshKey, setBrandRefreshKey] = useState(0);
 
   const hierarchy = useMemo(
     () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
@@ -607,7 +612,28 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
             </div>
           </>
         ) : view === "brands" ? (
-          <BrandGraphCanvas workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
+          <>
+            {/* Sub-tab: graph vs table */}
+            <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
+              <TabBtn active={brandView === "graph"} onClick={() => setBrandView("graph")}>◈ Grafo</TabBtn>
+              <TabBtn active={brandView === "table"} onClick={() => setBrandView("table")}>▤ Tabla</TabBtn>
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => setBrandRefreshKey(k => k + 1)}
+                title="Refrescar"
+                style={{ padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 10, color: "rgba(255,255,255,0.4)", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "inherit" }}
+              >
+                ↻ Refrescar
+              </button>
+            </div>
+            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+              {brandView === "graph" ? (
+                <BrandGraphCanvas key={brandRefreshKey} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
+              ) : (
+                <BrandGraphDataTable workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} onRefreshGraph={() => setBrandRefreshKey(k => k + 1)} />
+              )}
+            </div>
+          </>
         ) : (
           <GraphDataTable
             workspaceId={workspaceId}
