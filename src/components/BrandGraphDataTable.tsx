@@ -282,15 +282,15 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
 
   // ── Delete brand ──
 
-  const deleteBrand = useCallback(async (brandId: string, cascadeDs: boolean) => {
+  const deleteBrand = useCallback(async (brandId: string) => {
     if (!workspaceId) return;
     try {
-      await apiFetch("/mcp", {
-        method: "POST",
-        body: JSON.stringify({
-          method: "delete_brand_guideline",
-          params: { workspaceId, brandId, cascadeDs },
-        }),
+      // Brands come from the `brands` table now, so the old MCP call
+      // delete_brand_guideline targeted the styles table and answered 400 on
+      // every click. This route also nulls design_file_meta.brand_id first, so
+      // the brand's files survive and simply become unfiled.
+      await apiFetch(`/api/workspaces/${workspaceId}/brands/${brandId}`, {
+        method: "DELETE",
       });
       setConfirmDelete(null);
       fetchData();
@@ -396,14 +396,11 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           background: "rgba(255,75,114,0.1)", display: "flex", alignItems: "center", gap: 10,
           flexShrink: 0,
         }}>
-          <span style={{ fontSize: 12, color: "#ff4b72", flex: 1 }}>
+          <span style={{ fontSize: 12, color: "#fff", flex: 1 }}>
             ¿Eliminar esta marca? También se puede eliminar su archivo Design System.
           </span>
-          <button onClick={() => deleteBrand(confirmDelete, false)} style={{ ...toolBtnStyle, borderColor: "rgba(255,150,50,0.5)", color: "#ffb703" }}>
-            Solo marca
-          </button>
-          <button onClick={() => deleteBrand(confirmDelete, true)} style={{ ...toolBtnStyle, borderColor: "rgba(255,75,114,0.5)", color: "#ff4b72" }}>
-            Marca + DS
+          <button onClick={() => deleteBrand(confirmDelete)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.35)", color: "#fff" }}>
+            Eliminar marca (los archivos quedan sin marca)
           </button>
           <button onClick={() => setConfirmDelete(null)} style={{ ...toolBtnStyle, color: "rgba(255,255,255,0.4)" }}>
             Cancelar
@@ -451,12 +448,12 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   key={row.id}
                   style={{
                     background: isBrand
-                      ? `${row.color}11`
+                      ? "rgba(255,255,255,0.08)"
                       : isCat
-                        ? `${row.color}08`
+                        ? "rgba(255,255,255,0.04)"
                         : "transparent",
                     borderBottom: isBrand
-                      ? `1px solid ${row.color}33`
+                      ? "1px solid rgba(255,255,255,0.18)"
                       : "1px solid rgba(255,255,255,0.03)",
                     cursor: row.templateId ? "pointer" : "default",
                   }}
@@ -468,7 +465,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   <td style={{ ...tdBaseStyle, width: colWidths["color"], textAlign: "center" }}>
                     <span style={{
                       display: "inline-block", width: 10, height: 10, borderRadius: "50%",
-                      background: row.color, verticalAlign: "middle",
+                      background: "rgba(255,255,255,0.45)", verticalAlign: "middle",
                     }} />
                   </td>
 
@@ -486,7 +483,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                         style={{
                           fontWeight: isBrand ? 600 : isCat ? 500 : 400,
                           fontSize: isBrand ? 13 : 12,
-                          color: isBrand ? row.color : isCat ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.7)",
+                          color: isBrand ? "#fff" : isCat ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.7)",
                           cursor: "text",
                         }}
                         onClick={e => {
@@ -514,7 +511,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                       <EditingInput value={editValue} onChange={setEditValue} onCommit={commitEdit} onCancel={cancelEdit} />
                     ) : (
                       <span
-                        style={{ color: row.color, cursor: row.templateId ? "text" : "default", fontWeight: isBrand ? 600 : 400 }}
+                        style={{ color: "rgba(255,255,255,0.92)", cursor: row.templateId ? "text" : "default", fontWeight: isBrand ? 600 : 400 }}
                         onClick={e => {
                           if (!row.templateId) return;
                           e.stopPropagation();
@@ -561,7 +558,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={e => e.stopPropagation()}
-                        style={{ color: "#00b3d6", fontSize: 11, textDecoration: "none" }}
+                        style={{ color: "#fff", fontSize: 11, textDecoration: "none" }}
                         title={row.obsidianLink}
                       >
                         ◆ Link
