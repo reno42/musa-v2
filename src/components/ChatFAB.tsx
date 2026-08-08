@@ -1828,6 +1828,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   
   // ── Governance panel state ──
   const [governanceSessions, setGovernanceSessions] = useState<GovernanceSession[]>([]);
+  const cardTitleCache = useRef<Map<string, string>>(new Map());
   const [showGovernance, setShowGovernance] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -2164,6 +2165,13 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   : event));
               });
           const resultStr = normalizeAgentToolResult(rawResult);
+          // ── Cache cardId → title for governance panel ──
+          if (tc.name === "studio_create_card" && tc.args?.title) {
+            try {
+              const cardResult = JSON.parse(resultStr);
+              if (cardResult?.id) cardTitleCache.current.set(cardResult.id, tc.args.title);
+            } catch { /* best-effort */ }
+          }
           let parsedDelegateResult: any = null;
           if (tc.name === "harness_delegate_task") {
             try { parsedDelegateResult = JSON.parse(resultStr); } catch { /* handled as an opaque tool result */ }
@@ -2289,6 +2297,10 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             try { parsedFinalResult = JSON.parse(finalResultStr); } catch { /* opaque result */ }
             // Track session for governance panel
             if (parsedFinalResult?.sessionId) {
+              const taskTitle = tc.args?.taskId ? cardTitleCache.current.get(tc.args.taskId) : undefined;
+              const label = taskTitle
+                ? `${parsedFinalResult.role === "implementer" ? "🛠️" : parsedFinalResult.role === "reviewer" ? "🔍" : ""} ${taskTitle}`
+                : undefined;
               setGovernanceSessions(prev => {
                 if (prev.some(s => s.sessionId === parsedFinalResult.sessionId)) return prev;
                 return [...prev.slice(-49), {
@@ -2297,6 +2309,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
                   role: parsedFinalResult.role || "unknown",
                   status: parsedFinalResult.verification_failed ? "failed" : parsedFinalResult.outcome || "unknown",
                   ts: Date.now(),
+                  label,
+                  taskTitle: taskTitle || undefined,
+                  plan: parsedFinalResult?.plan || undefined,
                 }];
               });
             }

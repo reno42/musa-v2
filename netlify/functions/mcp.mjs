@@ -685,9 +685,21 @@ function nodeToSvg($, $el, cssRules, offsetX, offsetY) {
 function buildFrameSvgNative(frame) {
   const w = frame.width || 1080;
   const h = frame.height || 1080;
-  const bg = frame.background || "#ffffff";
-  const html = frame.html || "";
+  // Extract body background from CSS to avoid white-on-white when the
+  // implementer writes dark CSS but frame.background defaults to #ffffff.
+  let cssBg = null;
   const css = frame.css || "";
+  if (css) {
+    const m = css.match(/(?:body|#__df_content)\s*\{[^}]*background\s*:\s*([^;}\n]+)/);
+    if (m) {
+      const val = m[1].trim();
+      if (/^(#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-z]+)$/.test(val)) {
+        cssBg = val;
+      }
+    }
+  }
+  const bg = frame.background || cssBg || "#ffffff";
+  const html = frame.html || "";
 
   // Parse CSS into rules
   const cssRules = parseCssRules(css);
@@ -4284,7 +4296,7 @@ async function handleMethod(method, params, userId, auth) {
         name: "Frame 1",
         x: 0, y: 0,
         width: 1080, height: 1080,
-        html: "", css: "", background: "#ffffff",
+        html: "", css: "", background: undefined,
       };
       tpl.frames.push(defaultFrame);
       await templates.updateTemplate(templateId, { engine: "html", frames: tpl.frames });
@@ -4440,7 +4452,7 @@ async function handleMethod(method, params, userId, auth) {
           width: tplWidth, height: tplHeight,
           html: params.html || "",
           css: syncedCss,
-          background: "#ffffff",
+          background: undefined,
         };
         tpl.frames = [defaultFrame];
         // CRITICAL FIX: persist engine/html/css/frames — previously missing!
@@ -4815,7 +4827,7 @@ async function handleMethod(method, params, userId, auth) {
         x: 0, y: 0, width: svgW, height: svgH,
         html: htmlParts.join("\n"),
         css: cssParts.join("\n"),
-        background: "#ffffff",
+        background: undefined,
       };
       newTpl.engine = "html";
       newTpl.frames = [frame];
@@ -6784,7 +6796,7 @@ async function handleMethod(method, params, userId, auth) {
         width: recipe.template_width || 1080,
         height: recipe.template_height || 1080,
         html, css,
-        background: "#ffffff",
+        background: undefined,
       };
       tpl.frames = [frame];
       await templates.updateTemplate(tpl.id, { engine: "html", html, css, frames: tpl.frames });
@@ -7652,7 +7664,7 @@ async function handleMethod(method, params, userId, auth) {
         width: frameWidth, height: frameHeight,
         html: params.html || "",
         css: params.css || "",
-        background: params.background || "#ffffff",
+        background: params.background || undefined,
       };
       if (!tpl.frames) tpl.frames = [];
       tpl.frames.push(frame);
@@ -8672,7 +8684,7 @@ async function handleMethod(method, params, userId, auth) {
                 width: 1920, height: 1080,
                 html: mf.html,
                 css: mf.css,
-                background: "#ffffff",
+                background: undefined,
               };
             });
             await templates.updateTemplate(manualTpl.id, {
@@ -11606,7 +11618,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           width: frameWidth, height: frameHeight,
           html: finalHtml,
           css: finalCss,
-          background: params.background || "#ffffff",
+          background: params.background || undefined,
         };
         if (!tpl.frames) tpl.frames = [];
         tpl.frames.push(frame);

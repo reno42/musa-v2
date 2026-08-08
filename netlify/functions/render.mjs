@@ -71,13 +71,33 @@ function extractFontLinks(css) {
   return links.join("\n");
 }
 
+/** Extract a concrete body background color from CSS.
+ *  Returns null if the body background uses a CSS variable, is transparent,
+ *  or isn't found — so callers can fall back safely. */
+function extractBodyBackground(css) {
+  if (!css) return null;
+  // Match body or #__df_content background declaration
+  const m = css.match(/(?:body|#__df_content)\s*\{[^}]*background\s*:\s*([^;}\n]+)/);
+  if (!m) return null;
+  const val = m[1].trim();
+  // Only concrete colors — no CSS variables, no gradients, no url()
+  if (/^(#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-z]+)$/.test(val)) {
+    return val;
+  }
+  return null;
+}
+
 function buildRenderPageHtml(tpl, width, height, format, scale, templateId) {
   const safeName = (tpl.name || templateId || "template")
     .replace(/[<>:"/\\|?*]/g, "_");
   // Support both single-template html/css and per-frame html/css
   const htmlContent = tpl._frameHtml || tpl.html || "";
   const cssContent = tpl._frameCss || tpl.css || "";
-  const background = tpl._frameBackground || tpl.background || "#ffffff";
+  // Prefer CSS body background over frame.background when the latter is the
+  // default #ffffff (or missing) — fixes white-on-white when the implementer
+  // writes dark CSS but forgets to set background on create_html_frame.
+  const cssBodyBg = extractBodyBackground(cssContent);
+  const background = tpl._frameBackground || tpl.background || cssBodyBg || "#ffffff";
   const fontLinks = extractFontLinks(cssContent);
   // Passed into the page's own <script> below as JSON literals — this file
   // never executes them, it only emits the string.
@@ -350,7 +370,7 @@ export const handler = async (event) => {
       const format = event.queryStringParameters?.format || "png";
       const width = Math.round((frame.width || 1080) * scale);
       const height = Math.round((frame.height || 1080) * scale);
-      const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || "#ffffff", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+      const frameTpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
       const html = buildRenderPageHtml(frameTpl, width, height, format, scale, templateId + "_" + frameId);
       return { statusCode: 200, headers: htmlHeaders, body: html };
     }
@@ -393,7 +413,7 @@ export const handler = async (event) => {
       if (!frame) {
         return { statusCode: 404, headers: jsonHeaders, body: JSON.stringify({ error: "Frame not found", frameId: body.frameId }) };
       }
-      tpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || "#ffffff", width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
+      tpl = { ...tpl, _frameHtml: frame.html || "", _frameCss: frame.css || "", _frameBackground: frame.background || tpl.background || undefined, width: frame.width || 1080, height: frame.height || 1080, name: frame.name || tpl.name };
     }
     const baseW = tpl.width || 1080;
     const baseH = tpl.height || 1080;

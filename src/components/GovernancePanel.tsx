@@ -9,6 +9,23 @@ export interface GovernanceSession {
   role: string;
   status: string;
   ts: number;
+  label?: string;
+  plan?: string;
+  taskTitle?: string;
+}
+
+interface PlanEntry {
+  plan: string;
+  taskId?: string;
+  role?: string;
+  acceptance?: string;
+}
+
+interface ReviewEntry {
+  verdict?: string;
+  summary?: string;
+  checkpoints?: Record<string, boolean>;
+  notes?: string;
 }
 
 interface TraceEntry {
@@ -51,6 +68,8 @@ interface DiagnosticEntry {
 
 interface SessionData {
   session: GovernanceSession;
+  planEntry?: PlanEntry;
+  reviewEntry?: ReviewEntry;
   traces: TraceEntry[];
   diagnostics: DiagnosticEntry[];
   loading: boolean;
@@ -159,12 +178,16 @@ export function GovernancePanel({ sessions, workspaceId, onClose }: {
           const entries: any[] = Array.isArray(result?.entries) ? result.entries : [];
           const traces: TraceEntry[] = [];
           const diagnostics: DiagnosticEntry[] = [];
+          let planEntry: PlanEntry | undefined;
+          let reviewEntry: ReviewEntry | undefined;
           for (const e of entries) {
             if (e.entry_type === "subagent_trace") { try { traces.push(JSON.parse(e.content)); } catch { /* skip */ } }
-            if (e.entry_type === "diagnostic") { try { diagnostics.push(JSON.parse(e.content)); } catch { /* skip */ } }
+            else if (e.entry_type === "diagnostic") { try { diagnostics.push(JSON.parse(e.content)); } catch { /* skip */ } }
+            else if (e.entry_type === "plan" && !planEntry) { try { planEntry = JSON.parse(e.content); } catch { planEntry = { plan: e.content }; } }
+            else if ((e.entry_type === "review" || e.entry_type === "verdict") && !reviewEntry) { try { reviewEntry = JSON.parse(e.content); } catch { reviewEntry = { summary: e.content }; } }
           }
           traces.sort((a, b) => a.round - b.round);
-          setDataMap(prev => ({ ...prev, [s.sessionId]: { session: s, traces, diagnostics, loading: false } }));
+          setDataMap(prev => ({ ...prev, [s.sessionId]: { session: s, planEntry, reviewEntry, traces, diagnostics, loading: false } }));
         } catch (err: any) {
           setDataMap(prev => ({ ...prev, [s.sessionId]: { session: s, traces: [], diagnostics: [], loading: false, error: err?.message } }));
         }
@@ -219,11 +242,16 @@ export function GovernancePanel({ sessions, workspaceId, onClose }: {
                     {s.role}
                   </span>
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>
-                    {s.sessionId}
+                    {s.label || s.taskTitle || s.sessionId}
                   </span>
                   <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
                     {new Date(s.ts).toLocaleTimeString()}
                   </span>
+                  <span
+                    title="Copiar sessionId"
+                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(s.sessionId).catch(() => {}); }}
+                    style={{ fontSize: 12, opacity: 0.4, cursor: "pointer", padding: "2px 4px" }}
+                  >📋</span>
                 </button>
 
                 {/* Session body */}
@@ -231,6 +259,82 @@ export function GovernancePanel({ sessions, workspaceId, onClose }: {
                   <div style={{ padding: "8px 14px 14px" }}>
                     {sd?.loading && <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>Cargando trazas...</div>}
                     {sd?.error && <div style={{ color: "#f87171", fontSize: 11 }}>Error: {sd.error}</div>}
+
+                    {/* Plan entry */}
+                    {sd?.planEntry && (
+                      <div style={{ marginBottom: 10, borderRadius: 8, border: "1px solid rgba(167,139,250,0.2)", padding: 10, background: "rgba(167,139,250,0.05)" }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#a78bfa", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                          📋 Plan de ejecución
+                          <span
+                            title="Copiar plan"
+                            onClick={() => navigator.clipboard.writeText(sd.planEntry!.plan).catch(() => {})}
+                            style={{ fontSize: 12, opacity: 0.4, cursor: "pointer", padding: "2px 4px" }}
+                          >📋</span>
+                        </div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflow: "auto" }}>
+                          {sd.planEntry.plan}
+                        </div>
+                        {sd.planEntry.acceptance && (
+                          <div style={{ marginTop: 6, fontSize: 9, color: "rgba(255,255,255,0.35)" }}>
+                            Acceptance: {sd.planEntry.acceptance}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Review entry */}
+                    {sd?.reviewEntry && (
+                      <div style={{ marginBottom: 10, borderRadius: 8, border: "1px solid rgba(52,211,153,0.2)", padding: 10, background: "rgba(52,211,153,0.05)" }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#34d399", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                          ✅ Revisión
+                          {sd.reviewEntry.verdict && (
+                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 6, background: sd.reviewEntry.verdict === "approved" ? "rgba(52,211,153,0.2)" : "rgba(248,113,113,0.2)", color: sd.reviewEntry.verdict === "approved" ? "#34d399" : "#f87171" }}>
+                              {sd.reviewEntry.verdict}
+                            </span>
+                          )}
+                          <span
+                            title="Copiar revisión"
+                            onClick={() => navigator.clipboard.writeText(sd.reviewEntry!.summary || JSON.stringify(sd.reviewEntry)).catch(() => {})}
+                            style={{ fontSize: 12, opacity: 0.4, cursor: "pointer", padding: "2px 4px", marginLeft: "auto" }}
+                          >📋</span>
+                        </div>
+                        {sd.reviewEntry.summary && (
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 80, overflow: "auto" }}>
+                            {sd.reviewEntry.summary}
+                          </div>
+                        )}
+                        {sd.reviewEntry.checkpoints && (
+                          <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {Object.entries(sd.reviewEntry.checkpoints).map(([k, v]) => (
+                              <span key={k} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 6, background: v ? "rgba(52,211,153,0.12)" : "rgba(248,113,113,0.12)", color: v ? "#34d399" : "#f87171" }}>
+                                {k}: {v ? "✓" : "✗"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* SessionId quick reference */}
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontFamily: "monospace" }}>{s.sessionId}</span>
+                      <span
+                        title="Copiar sessionId"
+                        onClick={() => navigator.clipboard.writeText(s.sessionId).catch(() => {})}
+                        style={{ cursor: "pointer", opacity: 0.5, fontSize: 10 }}
+                      >📋</span>
+                      {s.taskId && (
+                        <>
+                          <span style={{ margin: "0 4px" }}>·</span>
+                          <span style={{ fontFamily: "monospace" }}>task: {s.taskId}</span>
+                          <span
+                            title="Copiar taskId"
+                            onClick={() => navigator.clipboard.writeText(s.taskId!).catch(() => {})}
+                            style={{ cursor: "pointer", opacity: 0.5, fontSize: 10 }}
+                          >📋</span>
+                        </>
+                      )}
+                    </div>
 
                     {/* Diagnostics first (if any) */}
                     {sd?.diagnostics.map((d, di) => (
