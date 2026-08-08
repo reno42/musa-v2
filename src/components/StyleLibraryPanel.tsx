@@ -642,8 +642,8 @@ export function StyleLibraryPanel({
 
       {/* Tabs */}
       <div role="tablist" aria-label="Biblioteca" style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
-        <button type="button" role="tab" id="style-library-tab" aria-selected={tab === "library"} aria-controls="style-library-panel" style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")} title="Brand Guidelines extraídas de tus diseños">
-          🎨 Estilos
+        <button type="button" role="tab" id="style-library-tab" aria-selected={tab === "library"} aria-controls="style-library-panel" style={tabBtnStyle(tab === "library")} onClick={() => setTab("library")} title="Brand Library — estilos y guidelines de marca extraídos de tus diseños">
+          🎨 Brand Library
         </button>
         <button type="button" role="tab" id="style-keyvisuals-tab" aria-selected={tab === "keyvisuals"} aria-controls="style-keyvisuals-panel" style={tabBtnStyle(tab === "keyvisuals")} onClick={() => setTab("keyvisuals")} title="Key Visuals — diseños completos reutilizables">
           🖼 Plantillas
@@ -839,6 +839,10 @@ export function StyleLibraryPanel({
                   const fonts = extractFonts(style.tokensJson);
                   const isBusy = busyStyleId === style.id;
                   const isEditing = editingId === style.id;
+                  // Find a matching template to use as "Abrir Brand Manual" target
+                  const matchingTemplates = (style.sourceTemplateIds || [])
+                    .map(tid => workspaceTemplates.find(t => t.id === tid))
+                    .filter(Boolean) as WorkspaceTemplate[];
                   return (
                     <section
                       key={style.id}
@@ -849,6 +853,17 @@ export function StyleLibraryPanel({
                         background: !usable ? "rgba(248,113,113,0.04)" : isLocked ? "rgba(200,184,152,0.05)" : "rgba(255,255,255,0.04)",
                       }}
                     >
+                      {/* Brand preview gradient */}
+                      {colors.length > 0 && (
+                        <div aria-label="Vista previa de colores de marca" style={{
+                          height: 32, borderRadius: 4, marginBottom: 8,
+                          background: colors.length === 1
+                            ? colors[0]
+                            : `linear-gradient(90deg, ${colors.join(", ")})`,
+                          border: "1px solid rgba(255,255,255,0.1)",
+                        }} />
+                      )}
+
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                         <div id={`style-name-${style.id}`} style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                           {style.name}
@@ -902,6 +917,17 @@ export function StyleLibraryPanel({
                       </div>
 
                       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        {matchingTemplates.length > 0 && onOpenTemplate && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenTemplate(matchingTemplates[0].id)}
+                            disabled={isBusy}
+                            title={`Abrir ${matchingTemplates[0].name}`}
+                            style={{ ...btnStyle, flex: 1, background: "rgba(200,184,152,0.15)", borderColor: "rgba(200,184,152,0.25)", fontWeight: 600 }}
+                          >
+                            📖 Abrir
+                          </button>
+                        )}
                         <button type="button" onClick={() => isEditing ? setEditingId(null) : beginEdit(style)} disabled={isBusy} aria-expanded={isEditing} aria-controls={`style-edit-${style.id}`} style={{ ...btnStyle, flex: 1 }}>
                           {isEditing ? "Cerrar edición" : "Editar"}
                         </button>

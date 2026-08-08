@@ -75,6 +75,10 @@ export interface DesignTemplate {
   thumbnail?: string;
   tags?: string[];
   designArtifacts?: DesignArtifacts;
+  /** When true, comments on this template default to type=documentation
+   *  (usage explanations, not design feedback). The AI reads these as
+   *  instructions. Part of REQ-007 Brand Manual. */
+  isBrandManual?: boolean;
 }
 
 export interface Component {

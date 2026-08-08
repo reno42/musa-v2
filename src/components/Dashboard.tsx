@@ -31,6 +31,7 @@ interface Template {
   thumbnail?: string;
   metadata: { createdAt: string; updatedAt: string };
   frames?: Array<{ html?: string; css?: string; background?: string }>;
+  isBrandManual?: boolean;
 }
 
 interface Recipe {
@@ -124,6 +125,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandCounts, setBrandCounts] = useState<Map<string, number>>(new Map());
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [showBrandManuals, setShowBrandManuals] = useState(false);
   const [searchDisplay, setSearchDisplay] = useState("");
   const [creatingWs, setCreatingWs] = useState(false);
   const [newWsName, setNewWsName] = useState("");
@@ -1330,6 +1332,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </select>
           </label>
 
+          {/* Brand Manuals filter toggle */}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: showBrandManuals ? "#c8b898" : "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}>
+            <input
+              type="checkbox"
+              checked={showBrandManuals}
+              onChange={e => { setShowBrandManuals(e.target.checked); if (activeWorkspaceId) loadTemplatesRef.current(activeWorkspaceId, selectedBrand ?? undefined); }}
+              style={{ accentColor: "#c8b898", cursor: "pointer" }}
+            />
+            📖 Brand Manuals
+          </label>
+
           {/* Date range */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <input
@@ -1424,11 +1437,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               gridTemplateColumns: `repeat(auto-fill, minmax(${cardColumns <= 3 ? 380 : cardColumns <= 4 ? 280 : 190}px, 1fr))`,
               gap: 18,
             }}>
-              {(dateFrom || dateTo
+              {(dateFrom || dateTo || showBrandManuals
                 ? templates.filter(t => {
-                    const d = new Date(t.metadata.updatedAt).getTime();
-                    if (dateFrom && d < new Date(dateFrom).getTime()) return false;
-                    if (dateTo && d > new Date(dateTo + "T23:59:59").getTime()) return false;
+                    if (showBrandManuals && !t.isBrandManual) return false;
+                    if (dateFrom || dateTo) {
+                      const d = new Date(t.metadata.updatedAt).getTime();
+                      if (dateFrom && d < new Date(dateFrom).getTime()) return false;
+                      if (dateTo && d > new Date(dateTo + "T23:59:59").getTime()) return false;
+                    }
                     return true;
                   })
                 : templates

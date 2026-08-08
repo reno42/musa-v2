@@ -25,6 +25,7 @@ function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
     name: row.name,
     workspaceId: row.workspace_id,
     slug: (row as any).slug || null,
+    isBrandManual: (row as any).is_brand_manual || false,
     metadata: {
       ...data.metadata,
       createdAt: row.created_at,
@@ -81,7 +82,7 @@ async function listFromSupabase(
     // with every batch-generated design until Netlify answered 502.
     // slug column added by v7 migration — omit from SELECT if it doesn't exist yet
     const queryPromise = sb.from("templates")
-      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, first_frame:data->frames->0", { count: "exact" })
+      .select("id, name, workspace_id, created_at, updated_at, width:data->width, height:data->height, engine:data->>engine, thumbnail:data->>thumbnail, is_brand_manual, first_frame:data->frames->0", { count: "exact" })
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -104,6 +105,7 @@ async function listFromSupabase(
       engine: (r.engine as "html") || "html",
       canvas: null,
       thumbnail: r.thumbnail || null,
+      isBrandManual: r.is_brand_manual || false,
       frames: r.first_frame ? [thumbnailFrame(r.first_frame)] : [],
       styles: [],
       comments: [],

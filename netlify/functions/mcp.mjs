@@ -3689,7 +3689,7 @@ const MCP_TOOLS = [
   // ── Design Comments (canvas pins) ──
   {
     name: "comment_add",
-    description: "Add a comment pin on the canvas. Auto-creates a Kanban task unless createKanbanTask is false.",
+    description: "Add a comment pin on the canvas. Auto-creates a Kanban task unless createKanbanTask is false. When the template is a Brand Manual (is_brand_manual=true), comment_type defaults to 'documentation' instead of 'feedback'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3700,7 +3700,8 @@ const MCP_TOOLS = [
         yPct: { type: "number", description: "Y position in frame as percentage 0-100" },
         body: { type: "string", description: "Comment text" },
         authorName: { type: "string", description: "Who wrote this comment" },
-        source: { type: "string", enum: ["editor_pin", "mobile_pin", "kanban", "ai_review", "chat"], description: "Where the comment was created" },
+        source: { type: "string", enum: ["editor_pin", "mobile_pin", "kanban", "ai_review", "chat", "documentation"], description: "Where the comment was created" },
+        commentType: { type: "string", enum: ["feedback", "documentation"], description: "Comment type. Defaults to 'documentation' for Brand Manual templates, 'feedback' otherwise." },
         createKanbanTask: { type: "boolean", description: "If true (default), also creates a Kanban task" },
         parentId: { type: "string", description: "Parent comment ID for threaded replies" },
       },
@@ -8634,7 +8635,15 @@ async function handleMethod(method, params, userId, auth) {
             height: f.height,
             layoutMode: f.layoutMode,
           };
-        }).filter(function (f) { return f.html || f.css; });
+        }).filter(function (f) {
+          // Always keep frames with CSS — they contain design.
+          if (f.css) return true;
+          // For Brand Manual templates: frames without CSS are documentation/notes, not design.
+          // Skip them so the extraction only sees actual design frames (REQ-007).
+          if (tpl.isBrandManual) return false;
+          // For regular templates: keep frames with HTML even without CSS.
+          return Boolean(f.html);
+        });
 
         if (extFrames.length > 0) {
           var extraction = extractDesignSystem(extFrames);
@@ -12566,6 +12575,17 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "Comments require Supabase." };
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
+      // Detect Brand Manual: if template is_brand_manual=true, default to documentation type
+      let commentType = params.commentType || "feedback";
+      let isBrandManual = false;
+      try {
+        const tpl = await templates.getTemplate(params.templateId);
+        if (tpl && tpl.isBrandManual) {
+          isBrandManual = true;
+          if (!params.commentType) commentType = "documentation";
+        }
+      } catch { /* best-effort — if we can't fetch the template, use the provided type */ }
+
       const newComment = {
         id: "comment_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
         template_id: params.templateId,
@@ -12578,6 +12598,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         author_name: params.authorName || "Anónimo",
         author_avatar: params.authorAvatar || null,
         source: params.source || "editor_pin",
+        comment_type: commentType,
         parent_id: params.parentId || null,
       };
       const { data: comment, error } = await sb.from("design_comments").insert(newComment).select().single();
@@ -12606,7 +12627,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
       }
 
-      return { success: true, comment: { ...comment, kanban_task_id: kanbanTask?.id || null }, kanbanTask };
+      return { success: true, comment: { ...comment, kanban_task_id: kanbanTask?.id || null, comment_type: commentType, isBrandManual }, kanbanTask };
     }
 
     case "comment_list": {
