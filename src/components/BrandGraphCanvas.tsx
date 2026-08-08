@@ -27,6 +27,8 @@ interface BrandGraphNode {
   campaign?: string;
   /** Placeholder for a category the brand hasn't filled yet — drawn faded. */
   ghost?: boolean;
+  /** File no brand claimed. */
+  orphan?: boolean;
   children: BrandGraphNode[];
 }
 
@@ -34,6 +36,8 @@ interface BrandGraphRoot {
   workspaceId: string;
   workspaceName: string;
   brands: BrandGraphNode[];
+  /** Files not filed under any brand — free-floating planets. */
+  orphans?: BrandGraphNode[];
 }
 
 interface Props {
@@ -61,6 +65,11 @@ interface SimNode {
   phase: number;
   /** Placeholder for an unfilled category — drawn faded. */
   ghost?: boolean;
+  /** File no brand claimed — floats outside the brand ring, in grey. */
+  orphan?: boolean;
+  /** Rest distance from this node's parent. Set per node so orphans can sit
+   *  further out than brands without sharing their depth. */
+  orbit: number;
   /** Parent node ID for tree structure */
   parentId: string | null;
 }
@@ -100,6 +109,10 @@ function orbitForLevel(level: number): number {
   return ITEM_ORBIT;
 }
 
+/** Orphans ring the workspace well outside the brands, so being unfiled reads
+ *  as a position, not just a colour. */
+const ORPHAN_ORBIT = ORBIT_RADIUS * 2.4;
+
 const BRAND_PALETTE = [
   "#ff4b72", "#00e5ff", "#b5179e", "#ffb703",
   "#06d6a0", "#ef476f", "#118ab2", "#f78c6b",
@@ -116,7 +129,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const [selectedNode, setSelectedNode] = useState<{
     id: string; name: string; kind: string; color: string;
     templateId?: string; obsidianLink?: string; campaign?: string;
-    brandName?: string;
+    brandName?: string; orphan?: boolean;
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [reconnectMode, setReconnectMode] = useState(false);
@@ -208,6 +221,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       vx: 0,
       vy: 0,
       radius: CENTER_RADIUS,
+      orbit: 0,
       name: root.workspaceName || "Mi cuenta",
       level: 0,
       kind: "workspace",
@@ -229,6 +243,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         vx: 0,
         vy: 0,
         radius: BRAND_RADIUS_BASE + Math.min(8, Math.sqrt(brand.children.length) * 2),
+        orbit: ORBIT_RADIUS,
         name: brand.name,
         level: 1,
         kind: "brand",
@@ -250,6 +265,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           vx: 0,
           vy: 0,
           radius: CAT_RADIUS_BASE,
+          orbit: CAT_ORBIT,
           name: cat.name,
           level: 2,
           kind: "category",
@@ -271,6 +287,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             vx: 0,
             vy: 0,
             radius: ITEM_RADIUS_BASE,
+            orbit: ITEM_ORBIT,
             name: item.name,
             level: item.level,
             kind: item.kind,
@@ -287,6 +304,35 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           simLinks.push({ source: catNode, target: itemNode });
         });
       });
+    });
+
+    // Orphans: files no brand claimed. They hang off the workspace centre on
+    // a wider shell than the brands, so being unfiled is visible as a position
+    // and not only as a colour.
+    const orphans = root.orphans || [];
+    orphans.forEach((o, i) => {
+      const a = (i / Math.max(orphans.length, 1)) * Math.PI * 2;
+      simNodes.push({
+        id: o.id,
+        x: Math.cos(a) * ORPHAN_ORBIT,
+        y: Math.sin(a) * ORPHAN_ORBIT,
+        vx: 0,
+        vy: 0,
+        radius: ITEM_RADIUS_BASE + 1,
+        orbit: ORPHAN_ORBIT,
+        name: o.name,
+        level: 1,
+        kind: o.kind,
+        color: o.color,
+        templateId: o.templateId,
+        obsidianLink: o.obsidianLink,
+        campaign: o.campaign,
+        orphan: true,
+        hoverScale: 1,
+        phase: phaseCounter++,
+        parentId: rootNode.id,
+      });
+      simLinks.push({ source: rootNode, target: simNodes[simNodes.length - 1] });
     });
 
     return { nodes: simNodes, links: simLinks };
@@ -389,7 +435,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
       for (const l of links) {
         const dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const rest = orbitForLevel(l.target.level) + l.source.radius + l.target.radius;
+        const rest = l.target.orbit + l.source.radius + l.target.radius;
         const f = (d - rest) * SPRING * a;
         l.target.vx -= (dx / d) * f; l.target.vy -= (dy / d) * f;
         l.source.vx += (dx / d) * f * 0.3; // parent moves less
@@ -406,7 +452,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           // direction, and leaves the angle to repulsion.
           const dx = n.x - parent.x, dy = n.y - parent.y;
           const d = Math.sqrt(dx * dx + dy * dy) || 1;
-          const shell = orbitForLevel(n.level) + parent.radius + n.radius;
+          const shell = n.orbit + parent.radius + n.radius;
           const pull = (d - shell) * GRAVITY * a * 0.3;
           n.vx -= (dx / d) * pull;
           n.vy -= (dy / d) * pull;
@@ -608,8 +654,24 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         dragged = hit;
         alphaTarget = 0.3; alpha = Math.max(alpha, 0.3);
         canvas.style.cursor = "grabbing";
+        // A plain click opens the side card too; it used to need a right-click,
+        // which is not discoverable and made orphans look inert.
+        let bn = "";
+        let cur = hit.parentId;
+        while (cur) {
+          const par = byId.get(cur);
+          if (par?.kind === "brand") { bn = par.name; break; }
+          cur = par?.parentId || null;
+        }
+        setSelectedNode({
+          id: hit.id, name: hit.name, kind: hit.kind, color: hit.color,
+          templateId: hit.templateId, obsidianLink: hit.obsidianLink,
+          campaign: hit.campaign, brandName: bn, orphan: hit.orphan,
+        });
+        setContextMenu(null);
       } else {
         selected = null;
+        setSelectedNode(null);
         panning = true;
         userMovedView = true;
         downView = { x: view.x, y: view.y };
@@ -689,7 +751,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         setSelectedNode({
           id: hit.id, name: hit.name, kind: hit.kind, color: hit.color,
           templateId: hit.templateId, obsidianLink: hit.obsidianLink,
-          campaign: hit.campaign, brandName,
+          campaign: hit.campaign, brandName, orphan: hit.orphan,
         });
         setContextMenu({ x: ev.clientX, y: ev.clientY });
       } else {
@@ -783,10 +845,34 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>
             {selectedNode.kind === "brand" ? "Marca" : selectedNode.kind === "template" ? "Template" : selectedNode.kind === "frame" ? "Frame" : selectedNode.kind}
           </span>
-          {selectedNode.brandName && selectedNode.kind !== "brand" && (
+          {selectedNode.brandName && selectedNode.kind !== "brand" && !selectedNode.orphan && (
             <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
               Marca: <span style={{ color: selectedNode.color }}>{selectedNode.brandName}</span>
             </span>
+          )}
+          {selectedNode.orphan && (
+            <span style={{ color: "#ffb703", fontSize: 11 }}>Sin marca asignada</span>
+          )}
+          {/* Assigning here writes design_file_meta and refetches, so the orb
+              leaves the orphan ring and joins its brand without a reload. */}
+          {selectedNode.templateId && selectedNode.kind !== "brand" && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              Asignar a marca
+              <select
+                value=""
+                onChange={e => { if (e.target.value) reassignToBrand(selectedNode.templateId!, e.target.value); }}
+                style={{
+                  background: "rgba(255,255,255,0.06)", color: "#fff", fontFamily: "inherit",
+                  border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+                  padding: "5px 8px", fontSize: 11, cursor: "pointer",
+                }}
+              >
+                <option value="">Elegir marca…</option>
+                {(graph?.brands || []).map(b => (
+                  <option key={b.id} value={b.id} style={{ background: "#12141c" }}>{b.name}</option>
+                ))}
+              </select>
+            </label>
           )}
           {selectedNode.campaign && (
             <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>

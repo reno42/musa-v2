@@ -52,6 +52,8 @@ export interface BrandGraphNode {
    * suggestion of what's missing, rather than silently disappearing.
    */
   ghost?: boolean;
+  /** File no brand claimed — orbits the workspace centre on its own. */
+  orphan?: boolean;
   children: BrandGraphNode[];
 }
 
@@ -59,9 +61,14 @@ export interface BrandGraphRoot {
   workspaceId: string;
   workspaceName: string;
   brands: BrandGraphNode[];
+  /** Files not filed under any brand. Rendered as free-floating planets. */
+  orphans: BrandGraphNode[];
 }
 
 // ── Color palette (matches the prototype + brand tokens fallback) ──
+
+/** Neutral grey — orphans read as unfiled, never as a brand colour. */
+const ORPHAN_COLOR = "#8a93a6";
 
 const BRAND_PALETTE = [
   "#ff4b72", // Rosa neón (Futuraria default)
@@ -100,8 +107,24 @@ export async function buildBrandGraph(
 ): Promise<BrandGraphRoot> {
   const sb = getSupabase();
 
-  // 1. Fetch brands from brand_guidelines (active only)
-  const brands = await listBrandsByWorkspace(workspaceId);
+  // 1. Real brands live in `brands` — the table design_file_meta.brand_id
+  //    points at, and the one File Info writes. `brand_guidelines` is the
+  //    STYLES table (see StyleInvariantError/cleanStyleName in brands.ts);
+  //    reading it here made every captured style show up as a brand, and made
+  //    the brand_id comparison below compare ids from two different tables, so
+  //    no file could ever attach. Styles now hang under their brand instead.
+  const brandRowsResult = sb
+    ? await sb.from("brands").select("id, name").eq("workspace_id", workspaceId).order("name")
+    : { data: [], error: null };
+  if (brandRowsResult.error) console.warn("[brandGraph] brands query error:", brandRowsResult.error.message);
+  const brands = (brandRowsResult.data || []) as any[];
+
+  // Styles, keyed by name so a brand can find its Design System.
+  let styles: any[] = [];
+  try { styles = await listBrandsByWorkspace(workspaceId); }
+  catch (e: any) { console.warn("[brandGraph] styles query error:", e?.message); }
+  const styleByName = new Map<string, any>();
+  for (const s of styles) styleByName.set(normalizeName(s.name), s);
 
   // 2. Fetch all templates + assets + design_file_meta for this workspace
   const [tplResult, assetResult, metaResult] = await Promise.all([
@@ -141,20 +164,23 @@ export async function buildBrandGraph(
 
   // 3. Build the tree
   const brandNodes: BrandGraphNode[] = [];
+  /** Templates claimed by some brand. Whatever is left over is an orphan. */
+  const claimed = new Set<string>();
 
   for (let i = 0; i < brands.length; i++) {
     const brand = brands[i];
-    const color = brandColor(i, brand.tokensJson);
+    const style = styleByName.get(normalizeName(brand.name));
+    const color = brandColor(i, style?.tokensJson);
+    // The brand's Design System comes from the style that shares its name.
+    const designSystemTemplateId: string | null = style?.designSystemTemplateId || null;
 
-    // Determine which templates belong to this brand (by brand_id or meta brand name)
     const brandTemplates: any[] = [];
     const brandAssets: any[] = [];
-    const brandMeta: any[] = [];
 
     for (const tpl of templates) {
-      if (tpl.is_brand_manual && brand.designSystemTemplateId === tpl.id) {
-        // This is the Design System template — handled separately
+      if (tpl.is_brand_manual && designSystemTemplateId === tpl.id) {
         brandTemplates.push({ ...tpl, _isDs: true });
+        claimed.add(tpl.id);
         continue;
       }
       const meta = metaByTemplate.get(tpl.id);
@@ -164,7 +190,7 @@ export async function buildBrandGraph(
          normalizeName(meta.brand) === normalizeName(brand.name))
       ) {
         brandTemplates.push(tpl);
-        if (meta) brandMeta.push(meta);
+        claimed.add(tpl.id);
       }
     }
 
@@ -184,9 +210,9 @@ export async function buildBrandGraph(
 
     // ── Design System: frames of design_system_<brand> ──
     const dsChildren: BrandGraphNode[] = [];
-    if (brand.designSystemTemplateId && brandTemplates.some(t => t._isDs)) {
+    if (designSystemTemplateId && brandTemplates.some(t => t._isDs)) {
       try {
-        const fullDs = await getTemplate(brand.designSystemTemplateId);
+        const fullDs = await getTemplate(designSystemTemplateId);
         for (const frame of fullDs?.frames || []) {
           dsChildren.push({
             id: `frame:${frame.id}`,
@@ -200,8 +226,8 @@ export async function buildBrandGraph(
       } catch { /* DS template might not exist yet */ }
     }
     children.push(category(brand.id, color, "ds", "Design System", dsChildren, {
-      emptyLabel: brand.designSystemTemplateId ? "Agrega frames al DS" : "Crea tu Design System",
-      emptyTemplateId: brand.designSystemTemplateId || undefined,
+      emptyLabel: designSystemTemplateId ? "Agrega frames al DS" : "Crea tu Design System",
+      emptyTemplateId: designSystemTemplateId || undefined,
     }));
 
     // ── Plantillas: frames of plantillas_<brand> ──
@@ -296,10 +322,32 @@ export async function buildBrandGraph(
     });
   }
 
+  // 4. Anything no brand claimed is an orphan. These orbit the workspace centre
+  //    directly instead of hanging off a brand, so they read as "not filed yet"
+  //    at a glance and can be assigned from the side card.
+  const orphans: BrandGraphNode[] = templates
+    .filter(tpl => !claimed.has(tpl.id))
+    .map(tpl => {
+      const meta = metaByTemplate.get(tpl.id);
+      return {
+        id: `tpl:${tpl.id}`,
+        name: tpl.name || tpl.id,
+        level: 1,
+        kind: "template" as const,
+        color: ORPHAN_COLOR,
+        templateId: tpl.id,
+        obsidianLink: meta?.obsidian_link || undefined,
+        campaign: meta?.campaign || undefined,
+        orphan: true,
+        children: [],
+      };
+    });
+
   return {
     workspaceId,
     workspaceName: workspaceName || "Mi cuenta",
     brands: brandNodes,
+    orphans,
   };
 }
 
