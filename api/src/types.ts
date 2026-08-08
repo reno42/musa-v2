@@ -191,6 +191,11 @@ export interface BrandGuideline {
   sourceTemplateIds?: string[];
   createdAt: string;
   updatedAt: string;
+  /** Template ID of the brand's Design System file (is_brand_manual=true).
+   *  Created automatically when the brand is created. One brand = one DS file. */
+  designSystemTemplateId?: string;
+  /** Soft-delete timestamp. When set, the brand is in the trash. */
+  deletedAt?: string;
 }
 
 // ─── Tool Types ───────────────────────────────────────────

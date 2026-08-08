@@ -1,7 +1,7 @@
 import { v4 as uuid } from "uuid";
 import type { BrandGuideline, DesignTemplate } from "../types.js";
 import { getSupabase } from "./supabase.js";
-import { getTemplate } from "./templates.js";
+import { getTemplate, createTemplate, updateTemplate, deleteTemplate, restoreTemplate } from "./templates.js";
 
 // In-memory fallback for local development without Supabase.
 const memoryStore = new Map<string, BrandGuideline>();
@@ -24,7 +24,7 @@ export type BrandInput = {
   sharedCss?: string;
   sourceHash?: string;
   styleFingerprint?: string;
-  sourceTemplateIds: string[];
+  sourceTemplateIds?: string[];
 };
 
 export type TemplateResolver = (id: string) => Promise<DesignTemplate | null>;
@@ -137,6 +137,7 @@ export function templateHasStyleMaterial(template: DesignTemplate | null | undef
 export async function validateBrandState(
   value: Partial<BrandGuideline>,
   resolveTemplate: TemplateResolver = getTemplate,
+  opts?: { allowEmptySources?: boolean },
 ): Promise<BrandGuideline> {
   const workspaceId = typeof value.workspaceId === "string" ? value.workspaceId.trim() : "";
   const name = cleanStyleName(value.name);
@@ -145,10 +146,13 @@ export async function validateBrandState(
   if (!workspaceId) throw new StyleInvariantError("workspaceId is required for a style");
   if (!name) throw new StyleInvariantError("Style name is required");
   if (name.length > 100) throw new StyleInvariantError("Style name must be 100 characters or fewer");
-  if (sourceTemplateIds.length === 0) {
+
+  // Allow brand creation without source templates (Design System file created empty).
+  // Style extraction flow still validates sources.
+  if (!opts?.allowEmptySources && sourceTemplateIds.length === 0) {
     throw new StyleInvariantError("A style must reference at least one source template");
   }
-  if (!hasSubstantiveStyleArtifacts(value)) {
+  if (!opts?.allowEmptySources && !hasSubstantiveStyleArtifacts(value)) {
     throw new StyleInvariantError("A style must include substantive tokensJson, designMd, or sharedCss");
   }
 
@@ -175,6 +179,7 @@ export async function validateBrandState(
     sourceHash: value.sourceHash,
     styleFingerprint: value.styleFingerprint,
     sourceTemplateIds,
+    designSystemTemplateId: value.designSystemTemplateId,
     createdAt: value.createdAt || now,
     updatedAt: now,
   };
@@ -182,6 +187,7 @@ export async function validateBrandState(
 
 function rowToBrand(row: SupabaseBrandRow): BrandGuideline {
   const data = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+  const r = row as any;
   return {
     ...data,
     id: row.id,
@@ -189,6 +195,8 @@ function rowToBrand(row: SupabaseBrandRow): BrandGuideline {
     name: row.name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    designSystemTemplateId: r.design_system_template_id || data?.designSystemTemplateId || null,
+    deletedAt: r.deleted_at || data?.deletedAt || null,
   };
 }
 
@@ -221,15 +229,38 @@ async function assertNameAvailable(workspaceId: string, name: string, exceptId?:
   }
 }
 
-export async function createBrand(params: BrandInput): Promise<BrandGuideline> {
+export async function createBrand(params: BrandInput, userId?: string): Promise<BrandGuideline> {
   const now = new Date().toISOString();
   const candidate = await validateBrandState({
     ...params,
     id: `brand_${uuid().slice(0, 12)}`,
+    sourceTemplateIds: params.sourceTemplateIds || [],
     createdAt: now,
     updatedAt: now,
-  });
+  }, undefined, { allowEmptySources: true });
   await assertNameAvailable(candidate.workspaceId, candidate.name);
+
+  // Auto-create the Design System template for this brand.
+  let dsTemplateId: string | undefined;
+  try {
+    const dsTpl = await createTemplate(
+      `${candidate.name}_DesignSystem`,
+      1920, 1080,
+      undefined,
+      userId || "system",
+      candidate.workspaceId,
+    );
+    dsTemplateId = dsTpl.id;
+    // Mark as brand manual so comments default to documentation type
+    await updateTemplate(dsTpl.id, { isBrandManual: true } as any);
+  } catch (e) {
+    console.warn("[brands] Failed to auto-create Design System template:", (e as Error).message);
+    // Don't fail the brand creation — the user can link it later.
+  }
+
+  if (dsTemplateId) {
+    candidate.designSystemTemplateId = dsTemplateId;
+  }
 
   const sb = getSupabase();
   if (sb) {
@@ -270,6 +301,7 @@ export async function listBrandsByWorkspace(workspaceId: string): Promise<BrandG
     const { data, error } = await sb.from("brand_guidelines")
       .select("*")
       .eq("workspace_id", cleanWorkspaceId)
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false });
     if (error) throw persistenceError("list", error);
     const brands = (data || []).map(row => rowToBrand(row as SupabaseBrandRow));
@@ -277,7 +309,7 @@ export async function listBrandsByWorkspace(workspaceId: string): Promise<BrandG
     return brands;
   }
   return [...memoryStore.values()]
-    .filter(brand => brand.workspaceId === cleanWorkspaceId)
+    .filter(brand => brand.workspaceId === cleanWorkspaceId && !brand.deletedAt)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
@@ -326,19 +358,94 @@ export async function updateBrand(
   return candidate;
 }
 
-export async function deleteBrand(id: string): Promise<boolean> {
+export async function deleteBrand(id: string, opts?: { cascadeDs?: boolean }): Promise<boolean> {
   const current = await getBrand(id);
   if (!current) return false;
+
   const sb = getSupabase();
   if (sb) {
+    // Soft-delete the brand itself (set deleted_at, don't hard-delete)
+    const now = new Date().toISOString();
     const { data, error } = await sb.from("brand_guidelines")
-      .delete()
+      .update({ deleted_at: now, updated_at: now })
       .eq("id", current.id)
       .eq("workspace_id", current.workspaceId)
       .select("id");
     if (error) throw persistenceError("delete", error);
     if (!data || data.length === 0) return false;
+
+    // Cascade: soft-delete the Design System template if requested
+    if (opts?.cascadeDs && current.designSystemTemplateId) {
+      try {
+        await deleteTemplate(current.designSystemTemplateId);
+      } catch (e) {
+        console.warn("[brands] Failed to cascade-delete DS template:", (e as Error).message);
+      }
+    }
   }
-  memoryStore.delete(current.id);
+
+  // Update in-memory
+  const cached = memoryStore.get(current.id);
+  if (cached) {
+    cached.deletedAt = new Date().toISOString();
+    memoryStore.set(cached.id, cached);
+  }
   return true;
+}
+
+/** Restore a soft-deleted brand and optionally its Design System template. */
+export async function restoreBrand(id: string): Promise<boolean> {
+  const sb = getSupabase();
+  if (sb) {
+    // Fetch even deleted brands to get the DS template ID
+    const { data: row, error: readErr } = await sb.from("brand_guidelines")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (readErr || !row) return false;
+
+    const now = new Date().toISOString();
+    const { data, error } = await sb.from("brand_guidelines")
+      .update({ deleted_at: null, updated_at: now })
+      .eq("id", id)
+      .select("id");
+    if (error) throw persistenceError("restore", error);
+    if (!data || data.length === 0) return false;
+
+    // Also restore the DS template if it was soft-deleted
+    const brand = rowToBrand(row as SupabaseBrandRow);
+    if (brand.designSystemTemplateId) {
+      try {
+        await restoreTemplate(brand.designSystemTemplateId);
+      } catch (e) {
+        console.warn("[brands] Failed to restore DS template:", (e as Error).message);
+      }
+    }
+  }
+
+  const cached = memoryStore.get(id);
+  if (cached) {
+    cached.deletedAt = undefined;
+    memoryStore.set(cached.id, cached);
+  }
+  return true;
+}
+
+/** List soft-deleted brands for the trash view. */
+export async function listDeletedBrands(workspaceId: string): Promise<BrandGuideline[]> {
+  const cleanWorkspaceId = typeof workspaceId === "string" ? workspaceId.trim() : "";
+  if (!cleanWorkspaceId) throw new StyleInvariantError("workspaceId is required to list deleted styles");
+  const sb = getSupabase();
+  if (sb) {
+    const { data, error } = await sb.from("brand_guidelines")
+      .select("*")
+      .eq("workspace_id", cleanWorkspaceId)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false });
+    if (error) throw persistenceError("list-deleted", error);
+    return (data || []).map(row => rowToBrand(row as SupabaseBrandRow));
+  }
+  return [...memoryStore.values()]
+    .filter(brand => brand.workspaceId === cleanWorkspaceId && brand.deletedAt)
+    .sort((a, b) => new Date(b.deletedAt || "").getTime() - new Date(a.deletedAt || "").getTime());
 }

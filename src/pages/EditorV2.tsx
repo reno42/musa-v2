@@ -5534,6 +5534,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onSaveKeyVisual={handleSaveRecipe}
               saveRecipeMsg={saveRecipeMsg}
               selectedFrameCount={selectedFrameIds.size > 0 ? selectedFrameIds.size : (selectedFrameId ? 1 : 0)}
+              templateId={templateId}
+              selectedFrameIds={selectedFrameIds}
               onOpenTemplate={onOpenTemplate}
               onAssetUploaded={handleAssetUploaded}
               selectedImageSrc={selectedElement?.src}

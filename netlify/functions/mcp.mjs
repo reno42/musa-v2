@@ -2888,7 +2888,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_brand_guideline",
-    description: "Create a reusable style from real source templates. Names are unique per workspace (trimmed, whitespace-normalized, case-insensitive). Prefer generate_design_artifacts(action: 'publish') when extracting a style from a design.",
+    description: "Create a new brand guideline. Automatically creates a Design System template file (is_brand_manual=true) for the brand. Use this to create a brand from scratch; to extract styles from a design, prefer generate_design_artifacts(action: 'publish').",
     inputSchema: {
       type: "object",
       properties: {
@@ -2900,9 +2900,9 @@ const MCP_TOOLS = [
         sharedCss: { type: "string", description: "Shared CSS variables and utility classes" },
         sourceHash: { type: "string", description: "SHA-256 hash of source frames for staleness detection" },
         styleFingerprint: { type: "string", description: "Optional deterministic style fingerprint" },
-        sourceTemplateIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string" }, description: "At least one non-empty template from this workspace that contributed the style" },
+        sourceTemplateIds: { type: "array", uniqueItems: true, items: { type: "string" }, description: "Template IDs that contribute styles to this brand. Optional for brand creation; required for style extraction." },
       },
-      required: ["workspaceId", "name", "sourceTemplateIds"],
+      required: ["workspaceId", "name"],
     },
   },
   {
@@ -2919,12 +2919,13 @@ const MCP_TOOLS = [
   },
   {
     name: "list_brand_guidelines",
-    description: "List compact brand guideline summaries in a workspace. Artifacts are omitted by default to protect agent context; pass includeArtifacts=true only when the caller needs full documents. After discovery, prefer get_brand_guideline for one exact style.",
+    description: "List brand guideline summaries in a workspace. Artifacts are omitted by default to protect agent context. Set includeDeleted=true to see trashed brands. After discovery, prefer get_brand_guideline for one exact style.",
     inputSchema: {
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         includeArtifacts: { type: "boolean", description: "Include full tokensJson, designMd and sharedCss documents. Default false." },
+        includeDeleted: { type: "boolean", description: "Include soft-deleted brands in trash. Default false (active brands only)." },
       },
       required: ["workspaceId"],
     },
@@ -2952,14 +2953,42 @@ const MCP_TOOLS = [
   },
   {
     name: "delete_brand_guideline",
-    description: "Delete a brand guideline permanently. This does NOT affect templates that reference it; they will retain their last-seen designArtifacts snapshot.",
+    description: "Soft-delete a brand guideline. The brand moves to the trash (deleted_at set) and can be restored. Set cascadeDs=true to also soft-delete the brand's Design System template file. When cascadeDs is false/omitted, the DS template survives as a regular design file under the user's default brand.",
     inputSchema: {
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID that owns the style" },
         brandId: { type: "string", description: "Brand Guideline ID to delete" },
+        cascadeDs: { type: "boolean", description: "Also soft-delete the Design System template file. Default: false (DS template survives as regular design)." },
       },
       required: ["workspaceId", "brandId"],
+    },
+  },
+  {
+    name: "restore_brand_guideline",
+    description: "Restore a soft-deleted brand guideline from the trash. Also restores the brand's Design System template if it was soft-deleted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID that owns the style" },
+        brandId: { type: "string", description: "Brand Guideline ID to restore" },
+      },
+      required: ["workspaceId", "brandId"],
+    },
+  },
+  {
+    name: "add_frame_to_brand",
+    description: "Duplicate a frame from a source template into a brand's Design System template. The source template and frame are NOT modified — a copy is inserted into the DS file. This is the 'click plin' operation: add a design to the Brand Library without altering the original.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Target brand guideline ID" },
+        sourceTemplateId: { type: "string", description: "Template containing the frame to copy" },
+        sourceFrameId: { type: "string", description: "Frame ID to duplicate from the source template" },
+        label: { type: "string", description: "Optional label for the copied frame (default: source frame name)" },
+      },
+      required: ["workspaceId", "brandId", "sourceTemplateId", "sourceFrameId"],
     },
   },
   {
@@ -3922,7 +3951,8 @@ const MCP_READ_PREFIX = /^(get|list|find|inspect|analyze|validate|compare|export
 
 const STYLE_LIBRARY_METHODS = new Set([
   "create_brand_guideline", "get_brand_guideline", "list_brand_guidelines",
-  "update_brand_guideline", "delete_brand_guideline", "apply_brand_to_template",
+  "update_brand_guideline", "delete_brand_guideline", "restore_brand_guideline",
+  "apply_brand_to_template", "add_frame_to_brand",
   "get_active_styles", "set_style_lock", "find_duplicate_styles", "merge_brand_guidelines",
 ]);
 
@@ -10486,7 +10516,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { success: true, layerId, pseudo, appliedStyles: styles };
     }
 
-    // ── create_brand_guideline: store a reusable brand identity ──
+    // ── create_brand_guideline: create a brand + auto-generate Design System file ──
     case "create_brand_guideline": {
       try {
         const workspaceId = requireStyleWorkspace(params);
@@ -10499,8 +10529,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           sharedCss: params.sharedCss,
           sourceHash: params.sourceHash,
           styleFingerprint: params.styleFingerprint || (params.tokensJson ? computeFingerprintFromTokensJson(params.tokensJson) : undefined),
-          sourceTemplateIds: params.sourceTemplateIds,
-        });
+          sourceTemplateIds: params.sourceTemplateIds || [],
+        }, userId);
         return { success: true, brand: brand };
       } catch (error) {
         throw styleRpcError(error);
@@ -10518,11 +10548,15 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "list_brand_guidelines": {
       const workspaceId = requireStyleWorkspace(params);
       const includeArtifacts = params.includeArtifacts === true;
-      var list = await brands.listBrandsByWorkspace(workspaceId);
+      const includeDeleted = params.includeDeleted === true;
+      var list = includeDeleted
+        ? await brands.listDeletedBrands(workspaceId)
+        : await brands.listBrandsByWorkspace(workspaceId);
       return {
         success: true,
         workspaceId,
         includeArtifacts,
+        includeDeleted,
         count: list.length,
         brands: list.map(function (b) {
           return {
@@ -10532,6 +10566,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             sourceHash: b.sourceHash,
             styleFingerprint: b.styleFingerprint,
             sourceTemplateIds: b.sourceTemplateIds,
+            designSystemTemplateId: b.designSystemTemplateId,
+            deletedAt: b.deletedAt || undefined,
             artifactPreview: {
               hasTokens: !!(b.tokensJson && b.tokensJson.trim()),
               hasDesignMd: !!(b.designMd && b.designMd.trim()),
@@ -10615,12 +10651,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
     }
 
-    // ── delete_brand_guideline: remove a brand permanently ──
+    // ── delete_brand_guideline: soft-delete a brand (trash, not permanent) ──
     case "delete_brand_guideline": {
       try {
         const workspaceId = requireStyleWorkspace(params);
         await requireStyleInWorkspace(params.brandId, workspaceId);
-        const deleted = await brands.deleteBrand(params.brandId);
+        const deleted = await brands.deleteBrand(params.brandId, { cascadeDs: params.cascadeDs === true });
         if (!deleted) throw { code: -32004, message: `Style not found: ${params.brandId}` };
 
         const styleWorkspace = store.getWorkspace(workspaceId);
@@ -10632,6 +10668,19 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           });
         }
         return { success: true, deleted: params.brandId, workspaceId };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
+    }
+
+    // ── restore_brand_guideline: restore a soft-deleted brand from trash ──
+    case "restore_brand_guideline": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        // Don't use requireStyleInWorkspace — the brand IS deleted
+        const restored = await brands.restoreBrand(params.brandId);
+        if (!restored) throw { code: -32004, message: `Style not found: ${params.brandId}` };
+        return { success: true, restored: params.brandId, workspaceId };
       } catch (error) {
         throw styleRpcError(error);
       }
@@ -10682,6 +10731,65 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           hasSharedCss: !!brand.sharedCss,
         },
       };
+    }
+
+    // ── add_frame_to_brand: duplicate a frame into a brand's Design System template ──
+    case "add_frame_to_brand": {
+      try {
+        const workspaceId = requireStyleWorkspace(params);
+        var targetBrand = await requireStyleInWorkspace(params.brandId, workspaceId);
+        if (!targetBrand.designSystemTemplateId) {
+          throw { code: -32004, message: "Brand does not have a Design System template yet. Create the brand first." };
+        }
+
+        var dsTpl = await templates.getTemplate(targetBrand.designSystemTemplateId);
+        if (!dsTpl) {
+          throw { code: -32004, message: "Design System template not found for brand: " + targetBrand.name };
+        }
+
+        var sourceTpl = await templates.getTemplate(params.sourceTemplateId);
+        if (!sourceTpl) {
+          throw { code: -32004, message: "Source template not found: " + params.sourceTemplateId };
+        }
+
+        // Find the frame to duplicate
+        var sourceFrames = sourceTpl.frames || [];
+        var sourceFrame = sourceFrames.find(function (f) { return f.id === params.sourceFrameId; });
+        if (!sourceFrame) {
+          throw { code: -32004, message: "Source frame not found: " + params.sourceFrameId };
+        }
+
+        // Deep-clone the frame into the DS template
+        var clonedFrame = JSON.parse(JSON.stringify(sourceFrame));
+        clonedFrame.id = "frame_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        if (params.label) {
+          clonedFrame.name = params.label;
+        }
+
+        // Append to DS template frames
+        var dsFrames = dsTpl.frames || [];
+        dsFrames.push(clonedFrame);
+        await templates.updateTemplate(dsTpl.id, { frames: dsFrames });
+
+        // Update brand's sourceTemplateIds to include the source
+        var updatedIds = targetBrand.sourceTemplateIds || [];
+        if (updatedIds.indexOf(params.sourceTemplateId) === -1) {
+          updatedIds.push(params.sourceTemplateId);
+          await brands.updateBrand(params.brandId, { sourceTemplateIds: updatedIds });
+        }
+
+        return {
+          success: true,
+          brandId: params.brandId,
+          brandName: targetBrand.name,
+          dsTemplateId: dsTpl.id,
+          copiedFrameId: clonedFrame.id,
+          copiedFrom: { templateId: params.sourceTemplateId, frameId: params.sourceFrameId },
+          totalFrames: dsFrames.length,
+        };
+      } catch (error) {
+        throw styleRpcError(error);
+      }
     }
 
     // ── get_active_styles: return locked styles for a workspace ──

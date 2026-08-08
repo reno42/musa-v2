@@ -17,6 +17,10 @@ interface Props {
   onSaveKeyVisual: () => Promise<void>;
   saveRecipeMsg: string;
   selectedFrameCount: number;
+  /** The current template ID — used for add_frame_to_brand operations. */
+  templateId?: string;
+  /** IDs of currently selected frames — used for add_frame_to_brand operations. */
+  selectedFrameIds?: Set<string>;
   /** Opens a template — used to jump into a design created from a Key Visual. */
   onOpenTemplate?: (id: string) => void;
   /** Recursos (Assets) tab — same contract as AssetsPanel's own props. */
@@ -34,6 +38,8 @@ interface BrandStyle {
   sharedCss?: string;
   styleFingerprint?: string;
   sourceTemplateIds?: string[];
+  designSystemTemplateId?: string;
+  deletedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -214,7 +220,9 @@ function StyleFormFields({
 
 export function StyleLibraryPanel({
   workspaceId, onToast, onPublish, publishing,
-  onSaveKeyVisual, saveRecipeMsg, selectedFrameCount, onOpenTemplate,
+  onSaveKeyVisual, saveRecipeMsg, selectedFrameCount,
+  templateId, selectedFrameIds,
+  onOpenTemplate,
   onAssetUploaded, onManageStorage, selectedImageSrc,
 }: Props) {
   const [styles, setStyles] = useState<BrandStyle[]>([]);
@@ -501,22 +509,53 @@ export function StyleLibraryPanel({
   }, [editingId, editData, loadStyles, onToast, validateDraft, workspaceId]);
 
   const deleteStyle = useCallback(async (style: BrandStyle) => {
-    const confirmed = window.confirm(`¿Eliminar el estilo "${style.name}"? Los diseños existentes conservarán su última copia del estilo.`);
-    if (!confirmed) return;
+    const hasDS = Boolean(style.designSystemTemplateId);
+    if (!hasDS) {
+      // Simple delete — no DS template to worry about
+      const confirmed = window.confirm(`¿Eliminar la marca "${style.name}"? Puedes restaurarla desde la papelera después.`);
+      if (!confirmed) return;
+      setBusyStyleId(style.id);
+      setCardErrors(previous => ({ ...previous, [style.id]: "" }));
+      try {
+        await callStyleMcp("delete_brand_guideline", { workspaceId, brandId: style.id, cascadeDs: false });
+        if (editingId === style.id) {
+          setEditingId(null);
+          setEditData(emptyDraft());
+        }
+        const message = `Marca "${style.name}" enviada a la papelera.`;
+        setStatusMessage(message);
+        onToast?.(message, "success");
+        await loadStyles();
+      } catch (error) {
+        const message = errorMessage(error, "No se pudo eliminar la marca.");
+        setCardErrors(previous => ({ ...previous, [style.id]: message }));
+        onToast?.(message, "error");
+      } finally {
+        setBusyStyleId(null);
+      }
+      return;
+    }
+
+    // Two-step cascade: ask first if they want to delete the DS too
+    const cascade = window.confirm(
+      `¿Eliminar también el archivo Design System de "${style.name}"?\n\n✅ Aceptar → eliminar marca + Design System\n❌ Cancelar → solo eliminar la marca (el Design System queda como diseño normal)`
+    );
     setBusyStyleId(style.id);
     setCardErrors(previous => ({ ...previous, [style.id]: "" }));
     try {
-      await callStyleMcp("delete_brand_guideline", { workspaceId, brandId: style.id });
+      await callStyleMcp("delete_brand_guideline", { workspaceId, brandId: style.id, cascadeDs: cascade });
       if (editingId === style.id) {
         setEditingId(null);
         setEditData(emptyDraft());
       }
-      const message = `Estilo "${style.name}" eliminado.`;
+      const message = cascade
+        ? `Marca "${style.name}" y su Design System eliminados.`
+        : `Marca "${style.name}" eliminada. El Design System se conserva como diseño.`;
       setStatusMessage(message);
       onToast?.(message, "success");
       await loadStyles();
     } catch (error) {
-      const message = errorMessage(error, "No se pudo eliminar el estilo.");
+      const message = errorMessage(error, "No se pudo eliminar la marca.");
       setCardErrors(previous => ({ ...previous, [style.id]: message }));
       onToast?.(message, "error");
     } finally {
@@ -626,6 +665,69 @@ export function StyleLibraryPanel({
   });
   const availableTemplateIds = new Set(workspaceTemplates.map(template => template.id));
 
+  // ── Create a new brand (without source templates — DS file created empty) ──
+  const [creatingBrand, setCreatingBrand] = useState(false);
+  const createNewBrand = useCallback(async () => {
+    const name = window.prompt("Nombre de la nueva marca (ej: Futuraria_Infographic):");
+    if (!name || !name.trim()) return;
+    setCreatingBrand(true);
+    try {
+      const data = await callStyleMcp<{ brand?: BrandStyle }>("create_brand_guideline", {
+        workspaceId,
+        name: name.trim(),
+      });
+      if (data?.brand?.id) {
+        const message = `Marca "${name.trim()}" creada con su archivo Design System.`;
+        setStatusMessage(message);
+        onToast?.(message, "success");
+        await loadStyles();
+      }
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo crear la marca.");
+      onToast?.(message, "error");
+    } finally {
+      setCreatingBrand(false);
+    }
+  }, [workspaceId, loadStyles, onToast]);
+
+  // ── Add selected frame to a brand's Design System template ──
+  const [addingFrameToBrand, setAddingFrameToBrand] = useState(false);
+  const addFrameToBrand = useCallback(async (brandId: string, brandName: string) => {
+    if (!templateId || !selectedFrameIds || selectedFrameIds.size === 0) {
+      onToast?.("Selecciona un frame en el lienzo primero.", "error");
+      return;
+    }
+    setAddingFrameToBrand(true);
+    try {
+      const frameIds = [...selectedFrameIds];
+      let added = 0;
+      for (const frameId of frameIds) {
+        try {
+          await callStyleMcp("add_frame_to_brand", {
+            workspaceId,
+            brandId,
+            sourceTemplateId: templateId,
+            sourceFrameId: frameId,
+          });
+          added++;
+        } catch (e) {
+          console.warn(`[addFrameToBrand] Failed for frame ${frameId}:`, (e as Error).message);
+        }
+      }
+      const message = added > 0
+        ? `${added} frame(s) agregado(s) a "${brandName}".`
+        : `No se pudo agregar frames a "${brandName}".`;
+      setStatusMessage(message);
+      onToast?.(message, added > 0 ? "success" : "error");
+      await loadStyles();
+    } catch (error) {
+      const message = errorMessage(error, "No se pudo agregar el frame a la marca.");
+      onToast?.(message, "error");
+    } finally {
+      setAddingFrameToBrand(false);
+    }
+  }, [workspaceId, templateId, selectedFrameIds, loadStyles, onToast]);
+
   return (
     <div style={panelStyle}>
       {lockedIds.size > 0 && (
@@ -666,6 +768,15 @@ export function StyleLibraryPanel({
             </div>
             {stylesError && <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginBottom: 10 }}>{stylesError}</div>}
             <div style={{ marginBottom: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={createNewBrand}
+                disabled={creatingBrand}
+                title="Crear una nueva marca con su archivo Design System"
+                style={{ ...btnStyle, background: "rgba(200,184,152,0.2)", borderColor: "rgba(200,184,152,0.3)", fontWeight: 600 }}
+              >
+                {creatingBrand ? "Creando…" : "➕ Nueva Marca"}
+              </button>
               {onPublish && !capturingName && (
                 <button
                   type="button"
@@ -910,6 +1021,9 @@ export function StyleLibraryPanel({
 
                       <div style={{ fontSize: 10, color: "#888", lineHeight: 1.5 }}>
                         {(style.sourceTemplateIds || []).length} diseño(s) fuente
+                        {style.designSystemTemplateId && (
+                          <span> · DS: {style.designSystemTemplateId.slice(0, 8)}...</span>
+                        )}
                         {style.styleFingerprint && (
                           <span> · FP: {style.styleFingerprint.substring(0, 8)}...</span>
                         )}
@@ -917,7 +1031,18 @@ export function StyleLibraryPanel({
                       </div>
 
                       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                        {matchingTemplates.length > 0 && onOpenTemplate && (
+                        {style.designSystemTemplateId && onOpenTemplate && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenTemplate(style.designSystemTemplateId!)}
+                            disabled={isBusy}
+                            title="Abrir archivo Design System"
+                            style={{ ...btnStyle, flex: 1, background: "rgba(200,184,152,0.15)", borderColor: "rgba(200,184,152,0.25)", fontWeight: 600 }}
+                          >
+                            📖 Abrir DS
+                          </button>
+                        )}
+                        {!style.designSystemTemplateId && matchingTemplates.length > 0 && onOpenTemplate && (
                           <button
                             type="button"
                             onClick={() => onOpenTemplate(matchingTemplates[0].id)}
@@ -926,6 +1051,17 @@ export function StyleLibraryPanel({
                             style={{ ...btnStyle, flex: 1, background: "rgba(200,184,152,0.15)", borderColor: "rgba(200,184,152,0.25)", fontWeight: 600 }}
                           >
                             📖 Abrir
+                          </button>
+                        )}
+                        {style.designSystemTemplateId && selectedFrameCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => addFrameToBrand(style.id, style.name)}
+                            disabled={isBusy || addingFrameToBrand}
+                            title={`Agregar ${selectedFrameCount} frame(s) seleccionado(s) a esta marca`}
+                            style={{ ...btnStyle, flex: 1, background: "rgba(46,160,67,0.15)", borderColor: "rgba(46,160,67,0.25)", color: "#7ee787" }}
+                          >
+                            {addingFrameToBrand ? "…" : `➕ Frame${selectedFrameCount > 1 ? "s" : ""}`}
                           </button>
                         )}
                         <button type="button" onClick={() => isEditing ? setEditingId(null) : beginEdit(style)} disabled={isBusy} aria-expanded={isEditing} aria-controls={`style-edit-${style.id}`} style={{ ...btnStyle, flex: 1 }}>
