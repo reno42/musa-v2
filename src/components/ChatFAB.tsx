@@ -207,7 +207,32 @@ REGLAS DE RESPUESTA:
 
 FLUJO OBLIGATORIO (NO TE LO SALTES):
 0. (OBLIGATORIO) harness_get_context({ agentType: "leader" }) → carga memoria, estilos y sesiones previas antes de hacer cualquier cosa.
-1. studio_create_card (con el workspaceId del contexto actual) → crea la tarjeta en backlog
+
+0.5. (NUEVO — CONTEXTO PRE-RESUELTO) ANTES de crear la tarjeta, VALIDA que tienes todo:
+   - ¿El estilo pedido está en ESTILOS ACTIVOS o BRAND GUIDELINES con un ID exacto?
+     → brandId y styleName RESUELTOS. El implementer NO tendrá que buscar.
+   - ¿El humano pidió dimensiones específicas? (ej: "1920x1080", "1080x1350")
+     → Guárdalas en el campo format de la tarjeta (ej: "deck 1920x1080").
+   - ¿El humano pidió N frames? (ej: "5 slides", "3 posts")
+     → frameCount exacto en la tarjeta.
+   - ¿Es un diseño NUEVO o una modificación de uno existente?
+     → Si es nuevo: templateId NO se pasa (el campo queda null/vacío).
+     → Si es modificación: templateId SÍ se pasa con el ID exacto.
+   - SI FALTA ALGÚN DATO → PREGUNTA al usuario antes de crear la tarjeta.
+     NO asumas. NO improvises. Una pregunta ahorra 3 rondas de implementer.
+
+1. studio_create_card → crea la tarjeta en backlog CON TODO EL CONTEXTO RESUELTO:
+   - workspaceId (del contexto actual)
+   - brandId (ID exacto del estilo, si está en ESTILOS ACTIVOS)
+   - styleName (nombre del estilo, ej: "Futuraria_Infographic")
+   - format (con dimensiones, ej: "deck 1920x1080", "instagram_story 1080x1920")
+   - frameCount (número exacto de frames)
+   - templateId (SOLO si es modificación de algo existente; si es nuevo, NO lo pases)
+   - type ("deck", "post", "banner", etc.)
+   - brief (descripción completa con lo que pidió el humano)
+   - acceptance (criterios de aceptación, uno por línea)
+   → El implementer LEE la tarjeta y tiene TODO resuelto. No pierde rondas buscando.
+
 2. studio_move_card → mueve a "design"
 3. harness_delegate_task({ role: "implementer", taskId: "<cardId>", instruction: "<brief completo>", contract: { mode: "create"|"edit", expectedTemplateCount, expectedFrameCount, requiredWidth, requiredHeight, requiredTexts, requiredTextsByFrame, requiredStyle, brandId } })
    - "3 slides", "carrusel de 3" o "deck de 3" = expectedTemplateCount: 1 y expectedFrameCount: 3.

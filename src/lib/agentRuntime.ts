@@ -788,6 +788,111 @@ export function normalizeForMatching(text: string): string {
     .toLowerCase();
 }
 
+// ── Quality warnings (non-blocking) ──
+// These detect aesthetic issues the structural checks miss:
+// serif fonts when brand defines sans-serif, clipped decorative circles,
+// and content overflowing frame bounds.
+
+/** Detect serif fonts that contradict brand sans-serif tokens. */
+function auditFontFamily(css: string, artifactId: string, frameIndex: number, brandSharedCss?: string): string[] {
+  const warnings: string[] = [];
+  // Extract brand's expected font-family from sharedCss tokens
+  const brandFontMatch = (brandSharedCss || "").match(/--font-family\s*:\s*([^;}\n]+)/);
+  if (!brandFontMatch) return warnings; // no brand font token to compare against
+  const brandFont = brandFontMatch[1].trim().toLowerCase();
+  if (!brandFont.includes("sans") && !brandFont.includes("inter") && !brandFont.includes("system-ui")) return warnings;
+
+  // Find font-family declarations in frame CSS
+  const fontMatches = css.matchAll(/font-family\s*:\s*([^;}\n]+)/gi);
+  for (const match of fontMatches) {
+    const value = match[1].trim().toLowerCase();
+    if (value.includes("serif") && !value.includes("sans")) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: font-family "${match[1].trim()}" may contradict brand token "${brandFontMatch[1].trim()}" (serif detected, brand expects sans-serif)`);
+    }
+    if (value.includes("times") || value.includes("georgia") || value.includes("garamond")) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: serif font "${match[1].trim()}" detected — brand likely expects sans-serif`);
+    }
+  }
+  return warnings;
+}
+
+/** Detect decorative circles that may be clipped by overflow:hidden containers. */
+function auditCircleClipping(html: string, css: string, artifactId: string, frameIndex: number, frameWidth: number, frameHeight: number): string[] {
+  const warnings: string[] = [];
+  // Find circles: elements with border-radius:50% (common in the Futuraria infographic style)
+  const hasCircles = /border-radius\s*:\s*50%/.test(css);
+  if (!hasCircles) return warnings;
+
+  // Check for overflow:hidden on parent containers that could clip circles
+  const overflowHiddenSelectors: string[] = [];
+  const overflowMatches = css.matchAll(/([^{]+)\{[^}]*overflow\s*:\s*hidden[^}]*\}/gi);
+  for (const match of overflowMatches) {
+    const selector = match[1].trim();
+    // Skip :root, body, and .frame — these are the outer containers and are expected
+    if (/^:root|^body|^\.frame|^#__df_content/.test(selector)) continue;
+    overflowHiddenSelectors.push(selector);
+  }
+
+  if (overflowHiddenSelectors.length > 0) {
+    // Check if circles might be children of overflow:hidden containers
+    // Simple heuristic: if the circle's size exceeds 50% of frame, it's likely decorative
+    const circleSizes = css.matchAll(/(?:width|height)\s*:\s*(\d+)px/gi);
+    let maxCircleSize = 0;
+    for (const sizeMatch of circleSizes) {
+      const px = parseInt(sizeMatch[1], 10);
+      if (px > maxCircleSize) maxCircleSize = px;
+    }
+    if (maxCircleSize > Math.min(frameWidth, frameHeight) * 0.3) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: decorative circles (max ${maxCircleSize}px) may be clipped by overflow:hidden containers: ${overflowHiddenSelectors.join(", ")}. Use overflow:visible on decorative containers.`);
+    }
+  }
+  return warnings;
+}
+
+/** Detect content that may overflow frame bounds. */
+function auditContentOverflow(html: string, css: string, artifactId: string, frameIndex: number, frameWidth: number, frameHeight: number): string[] {
+  const warnings: string[] = [];
+
+  // Check for absolute-positioned elements outside frame bounds
+  const absPositionMatches = html.matchAll(/style="[^"]*(?:left|right|top|bottom)\s*:\s*(-?\d+)px[^"]*"/gi);
+  for (const match of absPositionMatches) {
+    const style = match[0];
+    const leftMatch = style.match(/left\s*:\s*(-?\d+)px/i);
+    const rightMatch = style.match(/right\s*:\s*(-?\d+)px/i);
+    const topMatch = style.match(/top\s*:\s*(-?\d+)px/i);
+    const bottomMatch = style.match(/bottom\s*:\s*(-?\d+)px/i);
+
+    if (leftMatch && parseInt(leftMatch[1], 10) < -50) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: element positioned at left:${leftMatch[1]}px — outside frame bounds`);
+    }
+    if (rightMatch && parseInt(rightMatch[1], 10) < -50) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: element positioned at right:${rightMatch[1]}px — outside frame bounds`);
+    }
+    if (topMatch && parseInt(topMatch[1], 10) < -50) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: element positioned at top:${topMatch[1]}px — outside frame bounds`);
+    }
+    if (bottomMatch && parseInt(bottomMatch[1], 10) < -50) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: element positioned at bottom:${bottomMatch[1]}px — outside frame bounds`);
+    }
+  }
+
+  // Check for white-space:nowrap without overflow:hidden — text may overflow
+  if (/white-space\s*:\s*nowrap/.test(css) && !/overflow\s*:\s*hidden/.test(css)) {
+    warnings.push(`${artifactId} frame ${frameIndex + 1}: white-space:nowrap without overflow:hidden — text may overflow frame bounds`);
+  }
+
+  // Check for elements with fixed widths larger than frame
+  const widthMatches = css.matchAll(/(?:width|min-width)\s*:\s*(\d+)px/gi);
+  for (const widthMatch of widthMatches) {
+    const px = parseInt(widthMatch[1], 10);
+    if (px > frameWidth + 10) {
+      warnings.push(`${artifactId} frame ${frameIndex + 1}: element width ${px}px exceeds frame width ${frameWidth}px — content will overflow`);
+    }
+  }
+
+  return warnings;
+}
+
 export function evaluateCompleteness(input: {
   contract?: WorkContract;
   artifacts: ArtifactSnapshot[];
@@ -796,8 +901,9 @@ export function evaluateCompleteness(input: {
   aborted?: boolean;
   error?: string;
   createdArtifactIds?: string[];
-}): { outcome: AgentOutcome; verification_failed: boolean; errors: string[]; verifiedTemplateIds: string[] } {
+}): { outcome: AgentOutcome; verification_failed: boolean; errors: string[]; warnings: string[]; verifiedTemplateIds: string[] } {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const contract = input.contract || {};
   if (input.error) errors.push(input.error);
   if (input.aborted) errors.push("Subagent was aborted.");
@@ -898,11 +1004,29 @@ export function evaluateCompleteness(input: {
     }
   }
 
+  // ── Quality warnings (non-blocking) — catch aesthetic issues ──
+  for (const artifact of input.artifacts) {
+    const brandSharedCss = artifact.designArtifacts?.sharedCss;
+    const frames = artifact.frames?.length ? artifact.frames : [artifact];
+    for (const [index, frame] of frames.entries()) {
+      const fw = frame.width ?? artifact.width ?? 0;
+      const fh = frame.height ?? artifact.height ?? 0;
+      const combinedCss = [brandSharedCss, frame.css || artifact.css || ""].filter(Boolean).join("\n");
+      const frameHtml = frame.html || artifact.html || "";
+      warnings.push(...auditFontFamily(combinedCss, artifact.id, index, brandSharedCss));
+      if (fw > 0 && fh > 0) {
+        warnings.push(...auditCircleClipping(frameHtml, combinedCss, artifact.id, index, fw, fh));
+        warnings.push(...auditContentOverflow(frameHtml, combinedCss, artifact.id, index, fw, fh));
+      }
+    }
+  }
+
   const verificationFailed = errors.length > 0;
   return {
     outcome: verificationFailed ? "verification_failed" : "success",
     verification_failed: verificationFailed,
     errors,
+    warnings,
     verifiedTemplateIds: verificationFailed ? [] : input.artifacts.map(artifact => artifact.id),
   };
 }
