@@ -174,14 +174,21 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
       }
     }
 
-    // Upsert: try update first, insert if not found
-    const { data: existing } = await sb
+    // Upsert: try update first, insert if not found.
+    //
+    // limit(1) rather than maybeSingle(): design_file_meta is UNIQUE on
+    // template_id only if the table was created by v4, and this database has
+    // had tables arrive by other routes. maybeSingle() THROWS on a second row
+    // (PGRST116) instead of returning one, which would turn a duplicate into
+    // an unexplained 500 on that one file and no other.
+    const { data: existingRows, error: lookupError } = await sb
       .from("design_file_meta")
       .select("id")
       .eq("template_id", templateId)
-      .maybeSingle();
+      .limit(1);
+    if (lookupError) throw lookupError;
 
-    if (existing) {
+    if (existingRows && existingRows.length > 0) {
       patch.updated_at = new Date().toISOString();
       const { error } = await sb
         .from("design_file_meta")
