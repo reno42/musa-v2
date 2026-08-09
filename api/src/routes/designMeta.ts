@@ -98,9 +98,12 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
       return res.json({ success: true });
     }
 
-    const { data: template } = await sb.from("templates")
-      .select("workspace_id").eq("id", templateId).maybeSingle();
-    if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
+    // requireTemplateAccess already resolved and authorised this; re-querying
+    // it here only added a round trip to every write.
+    const workspaceId = req.templateWorkspaceId
+      || (await sb.from("templates").select("workspace_id").eq("id", templateId).maybeSingle()).data?.workspace_id;
+    if (!workspaceId) return res.status(404).json({ success: false, error: "Template not found" });
+    const template = { workspace_id: workspaceId };
 
     if (patch.brand_id) {
       const { data: selectedBrand } = await sb.from("brands").select("id, name")

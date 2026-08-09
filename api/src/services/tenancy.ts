@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { asyncRoute } from "../middleware/asyncRoute.js";
 import { getSupabaseAdmin } from "./supabase.js";
 import { store } from "./store.js";
 import type { RequestAuth, WorkspaceRole } from "./requestContext.js";
@@ -58,18 +59,23 @@ export async function getTemplateWorkspaceId(templateId: string): Promise<string
   return store.getTemplate(templateId)?.workspaceId || null;
 }
 
+// Every gate below talks to Supabase, so every one of them can reject — a
+// dropped connection under a burst of writes is enough. Wrapped at the
+// definition rather than at each app.use, so no call site can forget: an
+// unwrapped rejection here writes no response at all, and on Netlify that is
+// a hung invocation the browser eventually sees as a bodyless 503.
 export function requireWorkspaceRole(minimum: WorkspaceRole = "viewer", source: "params" | "body" | "query" = "params") {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return asyncRoute(async (req: Request, res: Response, next: NextFunction) => {
     const workspaceId = source === "params" ? req.params.id : String((source === "body" ? req.body?.workspaceId : req.query.workspaceId) || "");
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, minimum))) {
       return res.status(403).json({ success: false, error: "You do not have access to this workspace" });
     }
     next();
-  };
+  });
 }
 
-export async function requireTemplateAccess(req: Request, res: Response, next: NextFunction) {
+export const requireTemplateAccess = asyncRoute(async (req: Request, res: Response, next: NextFunction) => {
   const templateId = req.params.templateId;
   if (["trash", "bulk", "import", "batch-ready"].includes(templateId)) return next();
   const workspaceId = await getTemplateWorkspaceId(templateId);
@@ -77,11 +83,15 @@ export async function requireTemplateAccess(req: Request, res: Response, next: N
   if (!workspaceId || !req.auth || !(await canAccessWorkspace(req.auth, workspaceId, minimum))) {
     return res.status(404).json({ success: false, error: "Template not found" });
   }
+  // Handed on so the route does not run the identical query a second time.
+  // Every saved cell was two round trips for one answer, and this is the path
+  // that fell over under a burst of them.
+  req.templateWorkspaceId = workspaceId;
   next();
-}
+});
 
 export function requireResourceAccess(table: string, staticSegments: string[] = []) {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return asyncRoute(async (req: Request, res: Response, next: NextFunction) => {
     const resourceId = req.params.resourceId;
     if (staticSegments.includes(resourceId)) return next();
     const sb = getSupabaseAdmin();
@@ -92,7 +102,7 @@ export function requireResourceAccess(table: string, staticSegments: string[] = 
       return res.status(404).json({ success: false, error: "Resource not found" });
     }
     next();
-  };
+  });
 }
 
 export function enforceWorkspaceKeyScope(req: Request, res: Response, next: NextFunction) {

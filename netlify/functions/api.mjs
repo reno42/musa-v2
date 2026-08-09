@@ -187,14 +187,41 @@ export const handler = async (event, context) => {
 
   const res = {
     statusCode: 200,
+    headersSent: false,
     setHeader(name, value) {
       resHeaders[name.toLowerCase()] = String(value);
     },
     getHeader(name) {
       return resHeaders[name.toLowerCase()];
     },
+    getHeaders() {
+      return { ...resHeaders };
+    },
     removeHeader(name) {
       delete resHeaders[name.toLowerCase()];
+    },
+    // Express's own finalhandler writes through writeHead/end rather than
+    // json/send. Without these two it would call undefined, throw inside the
+    // error path, and leave the invocation hanging with no response at all.
+    writeHead(code, ...rest) {
+      statusCode = code;
+      const headers = rest.find((value) => value && typeof value === "object");
+      if (headers) for (const [k, v] of Object.entries(headers)) resHeaders[k.toLowerCase()] = String(v);
+      this.headersSent = true;
+      return this;
+    },
+    set(name, value) {
+      if (name && typeof name === "object") {
+        for (const [k, v] of Object.entries(name)) resHeaders[k.toLowerCase()] = String(v);
+      } else {
+        resHeaders[String(name).toLowerCase()] = String(value);
+      }
+      return this;
+    },
+    vary(field) {
+      const current = resHeaders.vary;
+      resHeaders.vary = current ? `${current}, ${field}` : String(field);
+      return this;
     },
     status(code) {
       statusCode = code;
@@ -230,10 +257,39 @@ export const handler = async (event, context) => {
     const originalSend = res.send.bind(res);
     const originalEnd = res.end.bind(res);
 
-    res.json = (data) => resolve(originalJson(data));
-    res.send = (data) => resolve(originalSend(data));
-    res.end = (data) => resolve(originalEnd(data));
+    // This promise settles ONLY from here. Anything that leaves Express
+    // without calling one of the three runs the invocation to the platform
+    // timeout, and the browser is handed a bodyless 503 with nothing logged —
+    // which is exactly how a rejected async gate used to present.
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      resolve(result);
+    };
+    const fail = (status, error) => finish({
+      statusCode: status,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE },
+      body: JSON.stringify({ success: false, error }),
+    });
 
-    app(req, res);
+    // Below Netlify's own limit, so a stall is reported as a timeout we can
+    // read instead of a platform error we cannot.
+    const watchdog = setTimeout(() => {
+      console.error(`[api] ${event.httpMethod} ${event.path} produced no response in 9s`);
+      fail(504, "The request timed out before the API answered");
+    }, 9000);
+
+    res.json = (data) => finish(originalJson(data));
+    res.send = (data) => finish(originalSend(data));
+    res.end = (data) => finish(originalEnd(data));
+
+    try {
+      app(req, res);
+    } catch (err) {
+      console.error(`[api] ${event.httpMethod} ${event.path} threw synchronously:`, err);
+      fail(500, err?.message || "Internal error");
+    }
   });
 };

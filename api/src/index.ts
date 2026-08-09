@@ -168,4 +168,23 @@ app.get("/api/fonts/catalog", (req, res) => {
   }
 });
 
+/**
+ * Last resort. Anything that reaches `next(err)` — a rejected async gate, a
+ * body parser refusing malformed input, a throw in a route without its own
+ * catch — answers here with JSON.
+ *
+ * Without it Express falls through to finalhandler, which writes the response
+ * with writeHead/end on the raw socket. The Netlify adapter fakes `res` and
+ * implements neither, so the invocation would hang to the platform timeout and
+ * surface as a bodyless 503. Must stay last: Express picks error handlers by
+ * arity and by position.
+ */
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = Number(err?.status || err?.statusCode) || 500;
+  const message = err?.message || "Internal error";
+  console.error(`[api] ${req.method} ${req.path} failed:`, message, err?.stack || "");
+  if (res.headersSent) return;
+  res.status(status).json({ success: false, error: message });
+});
+
 export default app;

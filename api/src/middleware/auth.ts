@@ -7,6 +7,8 @@ declare global {
   namespace Express {
     interface Request {
       auth?: RequestAuth;
+      /** Set by requireTemplateAccess so routes need not look it up again. */
+      templateWorkspaceId?: string;
     }
   }
 }
