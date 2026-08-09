@@ -82,11 +82,7 @@ interface ColumnDef {
 const COLUMNS: ColumnDef[] = [
   { key: "brandName", label: "Marca", minWidth: 90, defaultWidth: 140, editable: true, metaField: "brand" },
   { key: "name", label: "Nombre", minWidth: 100, defaultWidth: 180, editable: true },
-  { key: "kind", label: "Tipo", minWidth: 60, defaultWidth: 80 },
   { key: "category", label: "Categoría", minWidth: 70, defaultWidth: 100 },
-  { key: "campaign", label: "Campaña", minWidth: 80, defaultWidth: 120, editable: true, metaField: "campaign" },
-  { key: "obsidianLink", label: "Obsidian", minWidth: 60, defaultWidth: 80, editable: true, metaField: "obsidian_link" },
-  { key: "templateId", label: "Template ID", minWidth: 100, defaultWidth: 140, monospace: true },
   { key: "actions", label: "Acciones", minWidth: 60, defaultWidth: 80 },
 ];
 
@@ -189,9 +185,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   useEffect(() => {
     let filtered = allRows;
     if (brandFilter) {
-      filtered = filtered.filter(r =>
-        r.brandName.toLowerCase().includes(brandFilter.toLowerCase()),
-      );
+      filtered = filtered.filter(r => r.brandName === brandFilter);
     }
     if (kindFilter) {
       filtered = filtered.filter(r => r.kind.toLowerCase().includes(kindFilter.toLowerCase()));
@@ -284,6 +278,23 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [editingCell]);
+
+  /** Create a brand from the table, so a run of files has somewhere to go. */
+  const createBrand = useCallback(async () => {
+    if (!workspaceId) return;
+    const name = window.prompt("Nombre de la marca")?.trim();
+    if (!name) return;
+    try {
+      await apiFetch(`/api/workspaces/${workspaceId}/brands`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      fetchData();
+      onRefreshGraph?.();
+    } catch (e) {
+      console.error("Failed to create brand:", e);
+    }
+  }, [workspaceId, fetchData, onRefreshGraph]);
 
   // ── Delete brand ──
 
@@ -391,18 +402,17 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       }}>
         {/* Plain text filters, not dropdowns: this is meant to read as a
             spreadsheet, so filtering is typing, the way a sheet behaves. */}
-        <input
+        <select
           value={brandFilter}
           onChange={e => setBrandFilter(e.target.value)}
-          placeholder="Filtrar marca"
           style={filterSelectStyle}
-        />
-        <input
-          value={kindFilter}
-          onChange={e => setKindFilter(e.target.value)}
-          placeholder="Filtrar tipo"
-          style={filterSelectStyle}
-        />
+        >
+          <option value="">Todas las marcas</option>
+          {uniqueBrands.filter(Boolean).map(b => (
+            <option key={b} value={b} style={{ background: "#12141c" }}>{b}</option>
+          ))}
+        </select>
+        <button onClick={createBrand} title="Agregar marca" style={toolBtnStyle}>+ Marca</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
           {rows.length} filas
@@ -495,7 +505,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     cursor: row.templateId ? "pointer" : "default",
                   }}
                   onClick={() => {
-                    if (row.templateId) onOpenTemplate?.(row.templateId);
+                    // Clicking a row edits it. Opening the file is the ↗ action,
+                    // so a stray click can no longer navigate away mid-edit.
+                    if (row.templateId) startEdit(row.id, "name", row.name);
                   }}
                 >
                   {/* Color indicator */}
@@ -551,77 +563,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     )}
                   </td>
 
-                  {/* Kind */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["kind"], color: "rgba(255,255,255,0.45)", fontSize: 10 }}>
-                    {kindLabel(row.kind)}
-                  </td>
-
                   {/* Category */}
                   <td style={{ ...tdBaseStyle, width: colWidths["category"], color: "rgba(255,255,255,0.55)" }}>
                     {row.category}
-                  </td>
-
-                  {/* Campaign (editable for templates) */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["campaign"] }}>
-                    {editingCell?.rowId === row.id && editingCell?.colKey === "campaign" && row.templateId ? (
-                      <EditingInput value={editValue} onChange={setEditValue} onCommit={commitEdit} onCancel={cancelEdit} />
-                    ) : (
-                      <span
-                        style={{ color: "rgba(255,255,255,0.6)", cursor: row.templateId ? "text" : "default", fontSize: row.campaign ? 12 : 11 }}
-                        onClick={e => {
-                          if (!row.templateId) return;
-                          e.stopPropagation();
-                          startEdit(row.id, "campaign", row.campaign);
-                        }}
-                        title={row.templateId ? "Click para editar campaña" : undefined}
-                      >
-                        {row.campaign || "—"}
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Obsidian Link */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["obsidianLink"] }}>
-                    {editingCell?.rowId === row.id && editingCell?.colKey === "obsidianLink" && row.templateId ? (
-                      <EditingInput value={editValue} onChange={setEditValue} onCommit={commitEdit} onCancel={cancelEdit} />
-                    ) : row.obsidianLink ? (
-                      <a
-                        href={row.obsidianLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={e => e.stopPropagation()}
-                        style={{ color: "#fff", fontSize: 11, textDecoration: "none" }}
-                        title={row.obsidianLink}
-                      >
-                        ◆ Link
-                      </a>
-                    ) : (
-                      <span
-                        style={{ color: "rgba(255,255,255,0.25)", cursor: row.templateId ? "text" : "default", fontSize: 11 }}
-                        onClick={e => {
-                          if (!row.templateId) return;
-                          e.stopPropagation();
-                          startEdit(row.id, "obsidianLink", "");
-                        }}
-                        title={row.templateId ? "Click para agregar link de Obsidian" : undefined}
-                      >
-                        —
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Template ID */}
-                  <td style={{
-                    ...tdBaseStyle, width: colWidths["templateId"],
-                    color: "rgba(255,255,255,0.3)", fontSize: 10,
-                    fontFamily: "'SF Mono', monospace",
-                    overflow: "hidden", textOverflow: "ellipsis",
-                  }}>
-                    {row.templateId
-                      ? row.templateId.length > 16
-                        ? row.templateId.slice(0, 8) + "…"
-                        : row.templateId
-                      : "—"}
                   </td>
 
                   {/* Actions */}

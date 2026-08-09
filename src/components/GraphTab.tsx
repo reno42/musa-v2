@@ -621,13 +621,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
               <TabBtn active={brandView === "graph"} onClick={() => setBrandView("graph")}>◈ Grafo</TabBtn>
               <TabBtn active={brandView === "table"} onClick={() => setBrandView("table")}>▤ Tabla</TabBtn>
               <div style={{ flex: 1 }} />
-              <button
-                onClick={() => setBrandRefreshKey(k => k + 1)}
-                title="Refrescar"
-                style={{ padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 10, color: "rgba(255,255,255,0.4)", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "inherit" }}
-              >
-                ↻ Refrescar
-              </button>
+              {/* "Refrescar" removed: it reloaded the graph while the table has
+                  its own Sincronizar, and only one pane is ever visible. */}
             </div>
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               {brandView === "graph" ? (
