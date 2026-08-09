@@ -387,9 +387,51 @@ export async function listTemplatesPaginated(
   return { data, total };
 }
 
+/**
+ * Renaming used to go the long way round: read the whole design out of
+ * Supabase, set one string, write the whole design back. On a heavy file that
+ * upsert is megabytes of `data` JSONB and can exceed the 8s guard, at which
+ * point updateTemplate answers null, the route 404s, and a rename that touched
+ * nothing but a title looks like it silently did nothing.
+ *
+ * `name` is a real column and rowToTemplate reads it from the column, never
+ * from data.name — so the column alone is the source of truth and a targeted
+ * UPDATE is both correct and cheap. Returns null when it can't take this path.
+ */
+async function renameInSupabase(id: string, name: string): Promise<DesignTemplate | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    // slug is deliberately left alone: it is the file's stable URL, and the
+    // upsert path has always kept an existing one across renames too.
+    const patch = { name, updated_at: new Date().toISOString() };
+    const result = await withTimeout(
+      sb.from("templates").update(patch).eq("id", id).select("*").single() as any, 8000,
+    );
+    if (!result) {
+      console.warn(`[templates] rename timed out (8s) for ${id}`);
+      return null;
+    }
+    const { data, error } = result as any;
+    if (error || !data) return null;
+    const tpl = rowToTemplate(data);
+    store.updateTemplate(id, { name } as any);
+    return tpl;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateTemplate(
   id: string, updates: Partial<DesignTemplate> & Record<string, any>
 ): Promise<DesignTemplate | null> {
+  // A rename on its own never needs the design blob rewritten.
+  const touched = Object.keys(updates).filter(k => k !== "userId");
+  if (touched.length === 1 && touched[0] === "name" && typeof updates.name === "string") {
+    const renamed = await renameInSupabase(id, updates.name);
+    if (renamed) return renamed;
+  }
+
   let tpl = store.updateTemplate(id, updates);
   if (!tpl) {
     // Stateless Netlify edge: load from Supabase if not in memory

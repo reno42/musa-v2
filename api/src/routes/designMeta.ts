@@ -13,11 +13,32 @@
  */
 
 import { Router, type Request, type Response } from "express";
+import { randomBytes } from "node:crypto";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
 import { store } from "../services/store.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
 
 export const designMetaRoutes = Router();
+
+/** The branches a file can hang from in the brand graph. */
+const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
+
+/** Empty or unknown means "no explicit branch" — the graph falls back to Archivos. */
+function normalizeCategory(value: unknown): string | null {
+  const typed = String(value ?? "").trim();
+  if (!typed) return null;
+  return CATEGORIES.find(c => c.toLowerCase() === typed.toLowerCase()) ?? null;
+}
+
+/**
+ * True when Postgres rejected the write because design_file_meta.category is
+ * not there yet — v21 has not been run on this database. Worth telling the
+ * caller in plain words instead of leaking "column ... does not exist".
+ */
+function isMissingCategoryColumn(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String((error as any)?.message ?? "");
+  return message.includes("category") && message.includes("does not exist");
+}
 
 /** GET /api/meta/:templateId */
 designMetaRoutes.get("/:templateId", async (req, res) => {
@@ -44,13 +65,14 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 designMetaRoutes.put("/:templateId", async (req, res) => {
   try {
     const { templateId } = req.params;
-    const { brand_id, brand, campaign_id, campaign, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
+    const { brand_id, brand, campaign_id, campaign, category, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
 
     const patch: Record<string, any> = {};
     if (brand_id !== undefined) patch.brand_id = brand_id || null;
     if (brand !== undefined) patch.brand = brand;
     if (campaign_id !== undefined) patch.campaign_id = campaign_id || null;
     if (campaign !== undefined) patch.campaign = campaign;
+    if (category !== undefined) patch.category = normalizeCategory(category);
     if (asset_type !== undefined) patch.asset_type = asset_type || "other";
     if (designer_type !== undefined) patch.designer_type = designer_type || "other";
     if (is_permanent !== undefined) patch.is_permanent = Boolean(is_permanent);
@@ -61,6 +83,13 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     if (file_type !== undefined) patch.file_type = file_type;
     if (cover_image_url !== undefined) patch.cover_image_url = cover_image_url;
     if (obsidian_link !== undefined) patch.obsidian_link = obsidian_link;
+
+    // A body of nothing this route understands used to answer 200 and write
+    // nothing, which is how the table's Categoria column looked broken for so
+    // long: the request succeeded, the cell snapped back, no error anywhere.
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ success: false, error: "No recognised metadata fields in body" });
+    }
 
     const sb = getSupabase();
     if (!sb) {
@@ -78,6 +107,34 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
         .eq("workspace_id", template.workspace_id).eq("id", patch.brand_id).maybeSingle();
       if (!selectedBrand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
       patch.brand = selectedBrand.name;
+    } else if (patch.brand !== undefined && brand_id === undefined) {
+      // A caller that sends only a brand NAME (the data tables do — the user
+      // types into the cell) used to have it stored as loose text while
+      // brand_id kept pointing at the old brand. The graph reads brand_id
+      // first, so the file never moved and the edit looked ignored. Resolve
+      // the name to a real row here, creating the brand when it is new.
+      const typed = String(patch.brand ?? "").trim();
+      if (!typed) {
+        patch.brand = null;
+        patch.brand_id = null;
+        patch.campaign_id = null;
+      } else {
+        const { data: match } = await sb.from("brands").select("id, name")
+          .eq("workspace_id", template.workspace_id).ilike("name", typed).limit(1).maybeSingle();
+        if (match) {
+          patch.brand_id = match.id;
+          patch.brand = match.name;
+        } else {
+          const { data: created, error: createError } = await sb.from("brands").insert({
+            id: `brand_${randomBytes(10).toString("hex")}`,
+            workspace_id: template.workspace_id,
+            name: typed,
+          }).select("id, name").single();
+          if (createError) throw createError;
+          patch.brand_id = created.id;
+          patch.brand = created.name;
+        }
+      }
     }
 
     if (patch.campaign === "" || patch.brand_id === null) {
@@ -127,6 +184,12 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
 
     res.json({ success: true });
   } catch (err: any) {
+    if (isMissingCategoryColumn(err)) {
+      return res.status(409).json({
+        success: false,
+        error: "La columna 'category' no existe todavía: ejecuta supabase_migrations_v21.sql en Supabase.",
+      });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -245,6 +308,7 @@ designMetaRoutes.post("/batch", async (req, res) => {
         if (entry.brand !== undefined) patch.brand = entry.brand;
         if (entry.brand_id !== undefined) patch.brand_id = entry.brand_id;
         if (entry.campaign !== undefined) patch.campaign = entry.campaign;
+        if (entry.category !== undefined) patch.category = normalizeCategory(entry.category);
         if (entry.asset_type !== undefined) patch.asset_type = entry.asset_type;
         if (entry.tags !== undefined) patch.tags = entry.tags;
         if (entry.theme !== undefined) patch.theme = entry.theme;
@@ -388,6 +452,7 @@ function rowToMeta(row: any) {
     brand_id: row.brand_id || null,
     campaign: row.campaign || "",
     campaign_id: row.campaign_id || null,
+    category: row.category || "",
     asset_type: row.asset_type || "other",
     designer_type: row.designer_type || "other",
     is_permanent: Boolean(row.is_permanent),

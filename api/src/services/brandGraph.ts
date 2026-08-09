@@ -21,6 +21,10 @@
 import { getSupabase } from "./supabase.js";
 import { listBrandsByWorkspace } from "./brands.js";
 import { getTemplate } from "./templates.js";
+import {
+  ARCHIVOS, ASSETS, DESIGN_SYSTEM, PLANTILLAS,
+  bucketByCategory, normalizeName, resolveTemplateOwners,
+} from "./brandFiling.js";
 
 // ── Public types ──
 
@@ -71,6 +75,20 @@ function brandColor(_index: number, _tokensJson?: string | null): string {
   return BRAND_PALETTE[0];
 }
 
+/**
+ * Reads design_file_meta, degrading to the pre-v21 column set when `category`
+ * is not in the database yet. Letting the query fail instead would empty
+ * metaRows and turn every file in the workspace into an orphan.
+ */
+async function selectFileMeta(sb: any, workspaceId: string) {
+  const legacy = "template_id, brand, campaign, obsidian_link, brand_id";
+  const result = await sb.from("design_file_meta")
+    .select(`${legacy}, category`).eq("workspace_id", workspaceId);
+  if (!result.error) return result;
+  if (!String(result.error.message || "").includes("category")) return result;
+  return sb.from("design_file_meta").select(legacy).eq("workspace_id", workspaceId);
+}
+
 // ── Builder ──
 
 export async function buildBrandGraph(
@@ -113,11 +131,7 @@ export async function buildBrandGraph(
           .eq("workspace_id", workspaceId)
           .order("name")
       : Promise.resolve({ data: [], error: null }),
-    sb
-      ? sb.from("design_file_meta")
-          .select("template_id, brand, campaign, obsidian_link, brand_id")
-          .eq("workspace_id", workspaceId)
-      : Promise.resolve({ data: [], error: null }),
+    sb ? selectFileMeta(sb, workspaceId) : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (tplResult.error) console.warn("[brandGraph] templates query error:", tplResult.error.message);
@@ -133,6 +147,11 @@ export async function buildBrandGraph(
   for (const row of metaRows) {
     if (row.template_id) metaByTemplate.set(row.template_id, row);
   }
+
+  // Resolve ownership once, before the per-brand loop below.
+  const ownerByTemplate = resolveTemplateOwners(
+    templates.map(t => t.id), brands as Array<{ id: string; name: string }>, metaByTemplate,
+  );
 
   // 3. Build the tree
   const brandNodes: BrandGraphNode[] = [];
@@ -155,12 +174,7 @@ export async function buildBrandGraph(
         claimed.add(tpl.id);
         continue;
       }
-      const meta = metaByTemplate.get(tpl.id);
-      if (
-        meta &&
-        (meta.brand_id === brand.id ||
-         normalizeName(meta.brand) === normalizeName(brand.name))
-      ) {
+      if (ownerByTemplate.get(tpl.id) === brand.id) {
         brandTemplates.push(tpl);
         claimed.add(tpl.id);
       }
@@ -181,6 +195,20 @@ export async function buildBrandGraph(
 
     const nonDsTemplates = brandTemplates.filter(t => !t._isDs);
 
+    const filed = bucketByCategory(nonDsTemplates, metaByTemplate);
+    /** A filed template rendered as a leaf of its category. */
+    const fileNode = (tpl: any, level: number): BrandGraphNode => ({
+      id: `tpl:${tpl.id}`,
+      name: tpl.name || tpl.id,
+      level,
+      kind: "template",
+      color,
+      templateId: tpl.id,
+      obsidianLink: metaByTemplate.get(tpl.id)?.obsidian_link || undefined,
+      campaign: metaByTemplate.get(tpl.id)?.campaign || undefined,
+      children: [],
+    });
+
     // ── Design System: frames of design_system_<brand> ──
     const dsChildren: BrandGraphNode[] = [];
     if (designSystemTemplateId && brandTemplates.some(t => t._isDs)) {
@@ -198,18 +226,21 @@ export async function buildBrandGraph(
         }
       } catch { /* DS template might not exist yet */ }
     }
-    pushCat(category(brand.id, color, "ds", "Design System", dsChildren));
+    for (const tpl of filed.get(DESIGN_SYSTEM)!) dsChildren.push(fileNode(tpl, 3));
+    pushCat(category(brand.id, color, "ds", DESIGN_SYSTEM, dsChildren));
 
-    // ── Plantillas: frames of plantillas_<brand> ──
-    // The container file doesn't exist yet — it needs
-    // brand_guidelines.template_library_template_id from v21, mirroring what
-    // v20 did for the Design System. Until then this branch is always a ghost.
+    // ── Plantillas: files filed here by hand ──
+    // The frames-of-plantillas_<brand> container doesn't exist yet — it needs
+    // brand_guidelines.template_library_template_id, mirroring what v20 did
+    // for the Design System. Until then the branch holds only what the table
+    // filed into it.
     //
     // It must NOT fall back to listing nonDsTemplates: that is what the old
     // code did, and since Archivos lists the same array, every file was
     // emitted twice under the same `tpl:<id>` node id, collapsing the
     // canvas's byId map and mis-wiring the edges.
-    pushCat(category(brand.id, color, "templates", "Plantillas", []));
+    pushCat(category(brand.id, color, "templates", PLANTILLAS,
+      filed.get(PLANTILLAS)!.map(tpl => fileNode(tpl, 3))));
 
     // ── Assets ──
     const assetChildren: BrandGraphNode[] = brandAssets.map(a => ({
@@ -220,11 +251,12 @@ export async function buildBrandGraph(
       color,
       children: [],
     }));
-    pushCat(category(brand.id, color, "assets", "Assets", assetChildren));
+    for (const tpl of filed.get(ASSETS)!) assetChildren.push(fileNode(tpl, 3));
+    pushCat(category(brand.id, color, "assets", ASSETS, assetChildren));
 
     // Archivos category — templates grouped by campaign
     const campaignGroups = new Map<string, any[]>();
-    for (const tpl of nonDsTemplates) {
+    for (const tpl of filed.get(ARCHIVOS)!) {
       const meta = metaByTemplate.get(tpl.id);
       const campaign = meta?.campaign || "Sin campaña";
       if (!campaignGroups.has(campaign)) campaignGroups.set(campaign, []);
@@ -234,35 +266,10 @@ export async function buildBrandGraph(
     for (const [campaign, groupTpls] of campaignGroups) {
       if (groupTpls.length === 1) {
         // Single template in campaign — render directly
-        const tpl = groupTpls[0];
-        const meta = metaByTemplate.get(tpl.id);
-        archivoChildren.push({
-          id: `tpl:${tpl.id}`,
-          name: tpl.name || tpl.id,
-          level: 3,
-          kind: "template",
-          color,
-          templateId: tpl.id,
-          obsidianLink: meta?.obsidian_link || undefined,
-          campaign: campaign,
-          children: [],
-        });
+        archivoChildren.push(fileNode(groupTpls[0], 3));
       } else {
         // Multiple templates — group under campaign node
-        const campaignChildren: BrandGraphNode[] = groupTpls.map(tpl => {
-          const meta = metaByTemplate.get(tpl.id);
-          return {
-            id: `tpl:${tpl.id}`,
-            name: tpl.name || tpl.id,
-            level: 4,
-            kind: "template",
-            color,
-            templateId: tpl.id,
-            obsidianLink: meta?.obsidian_link || undefined,
-            campaign: campaign,
-            children: [],
-          };
-        });
+        const campaignChildren = groupTpls.map(tpl => fileNode(tpl, 4));
         archivoChildren.push({
           id: `campaign:${brand.id}:${campaign}`,
           name: campaign,
@@ -274,7 +281,7 @@ export async function buildBrandGraph(
         });
       }
     }
-    pushCat(category(brand.id, color, "archivos", "Archivos", archivoChildren));
+    pushCat(category(brand.id, color, "archivos", ARCHIVOS, archivoChildren));
 
     brandNodes.push({
       id: brand.id,
@@ -313,10 +320,6 @@ export async function buildBrandGraph(
     brands: brandNodes,
     orphans,
   };
-}
-
-function normalizeName(value: string | null | undefined): string {
-  return (value || "").trim().toLowerCase();
 }
 
 /**

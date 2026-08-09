@@ -5,6 +5,15 @@
  * Click rows to select (shift for a range, ctrl/cmd to toggle), press Delete
  * to remove them. Double-click a cell to edit it.
  *
+ * Every cell writes through to a real column and the row redraws from the
+ * server afterwards, so what the table shows is what the graph will draw:
+ *   Marca     → design_file_meta.brand_id (the name is resolved to a brand,
+ *               and a name nobody uses yet creates one)
+ *   Categoria → design_file_meta.category (v21)
+ *   Archivo   → templates.name
+ * Writes that fail say so in the toolbar. They used to go to console.error
+ * only, which is why every one of these columns felt inert rather than broken.
+ *
  * Hover is CSS, not React state. An earlier version tracked the hovered row in
  * state, so every mouse move re-rendered all ~400 rows — that was the flicker,
  * the hang, and why typing appeared to do nothing.
@@ -77,6 +86,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<{ id: string; col: "brandName" | "name" } | null>(null);
@@ -92,11 +102,17 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         `/api/brand-graph?workspaceId=${workspaceId}`,
       );
       if (!res.success || !res.data) throw new Error("No se pudo cargar");
-      const out: Row[] = [];
+      // Keyed by templateId, not by node id: one file must never produce two
+      // rows, or React sees duplicate keys and an edit lands on whichever copy
+      // `find` happened to reach first.
+      const out = new Map<string, Row>();
       const walk = (n: GraphNode, brandId: string, brandName: string, category: string) => {
-        const cat = n.kind === "category" ? n.name : category;
-        if (n.templateId && !n.ghost) {
-          out.push({
+        // Campaign nodes are `kind: "category"` too — only the four real
+        // branches name the Categoria column, or a file inside a campaign
+        // group would show the campaign there and the select would read "-".
+        const cat = n.kind === "category" && CATEGORIES.includes(n.name) ? n.name : category;
+        if (n.templateId && !n.ghost && !out.has(n.templateId)) {
+          out.set(n.templateId, {
             id: n.id, templateId: n.templateId, brandId, brandName,
             category: cat, name: n.name,
           });
@@ -107,7 +123,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         for (const c of b.children || []) walk(c, b.id, b.name, "");
       }
       for (const o of res.data.orphans || []) walk(o, "", "", "");
-      setRows(out);
+      setRows([...out.values()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar");
     } finally {
@@ -126,56 +142,65 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     [rows, brandFilter],
   );
 
+  /** One write, then redraw from the server. Failures reach the toolbar. */
+  const save = useCallback(async (url: string, body: Record<string, unknown>, what: string) => {
+    setSaveError("");
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string }>(url, {
+        method: "PUT", body: JSON.stringify(body),
+      });
+      // The API answers 200 with success:false for anything it declined.
+      if (res && res.success === false) throw new Error(res.error || "El servidor rechazo el cambio");
+      load();
+      onRefreshGraph?.();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`No se pudo guardar ${what}:`, e);
+      setSaveError(`No se pudo guardar ${what}: ${message}`);
+      load();
+    }
+  }, [load, onRefreshGraph]);
+
   const commit = useCallback(async () => {
     if (!editing) return;
     const row = rows.find(r => r.id === editing.id);
     const value = draft.trim();
     const col = editing.col;
     setEditing(null);
-    if (!row || !value || value === row[col]) return;
-    try {
-      if (col === "name") {
-        // A file's name lives on `templates`, not on design_file_meta.
-        await apiFetch(`/api/templates/${row.templateId}`, {
-          method: "PUT", body: JSON.stringify({ name: value }),
-        });
-      } else {
-        await apiFetch(`/api/meta/${row.templateId}`, {
-          method: "PUT", body: JSON.stringify({ brand: value }),
-        });
-      }
-      load();
-      onRefreshGraph?.();
-    } catch (e) {
-      console.error("No se pudo guardar:", e);
+    if (!row || value === row[col]) return;
+    if (col === "name") {
+      // A file's name lives on `templates`, not on design_file_meta.
+      if (!value) return;
+      await save(`/api/templates/${row.templateId}`, { name: value }, "el nombre");
+    } else {
+      // Sends the typed name; the API resolves it to a brand_id (creating the
+      // brand when the name is new) because the graph files by id, not by the
+      // loose text. Emptying the cell unfiles the row.
+      await save(`/api/meta/${row.templateId}`, { brand: value }, "la marca");
     }
-  }, [editing, draft, rows, load, onRefreshGraph]);
+  }, [editing, draft, rows, save]);
 
-  const setCategory = useCallback(async (row: Row, value: string) => {
-    try {
-      await apiFetch(`/api/meta/${row.templateId}`, {
-        method: "PUT", body: JSON.stringify({ category: value }),
-      });
-      load();
-      onRefreshGraph?.();
-    } catch (e) {
-      console.error("No se pudo guardar la categoria:", e);
-    }
-  }, [load, onRefreshGraph]);
+  const setCategory = useCallback(
+    (row: Row, value: string) => save(`/api/meta/${row.templateId}`, { category: value }, "la categoria"),
+    [save],
+  );
 
   const deleteSelected = useCallback(async () => {
     if (!selected.size) return;
     const targets = rows.filter(r => selected.has(r.id));
     setSelected(new Set());
+    setSaveError("");
     try {
       for (const r of targets) {
         await apiFetch(`/api/templates/${r.templateId}`, { method: "DELETE" });
       }
-      load();
-      onRefreshGraph?.();
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       console.error("No se pudo eliminar:", e);
+      setSaveError(`No se pudo eliminar: ${message}`);
     }
+    load();
+    onRefreshGraph?.();
   }, [selected, rows, load, onRefreshGraph]);
 
   // Delete key removes the selection, the way a sheet does.
@@ -251,6 +276,17 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         <button type="button" onClick={load} style={btn}>Sincronizar</button>
       </div>
 
+      {saveError && (
+        <div role="alert" style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
+          borderBottom: "1px solid rgba(255,255,255,0.14)", flexShrink: 0,
+          fontSize: 12, color: "#fff", background: "rgba(255,255,255,0.10)",
+        }}>
+          <span style={{ flex: 1 }}>{saveError}</span>
+          <button type="button" onClick={() => setSaveError("")} style={btn}>Cerrar</button>
+        </div>
+      )}
+
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 20px 20px" }}>
         <table className="bgt" style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed" }}>
           <thead>
@@ -272,7 +308,11 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
               const cell = { ...CELL, background: isSel ? "rgba(255,255,255,0.14)" : "transparent" };
               return (
                 <tr key={row.id} onClick={e => selectRow(idx, e)}>
-                  <td style={cell} onDoubleClick={() => edit(row, "brandName")}>
+                  <td
+                    style={cell}
+                    onDoubleClick={() => edit(row, "brandName")}
+                    title="Doble click para archivar bajo otra marca - una marca nueva se crea sola"
+                  >
                     {editing && editing.id === row.id && editing.col === "brandName"
                       ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
                       : (row.brandName || "Sin marca")}
