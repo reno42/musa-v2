@@ -80,11 +80,36 @@ const control: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.35)", borderRadius: 0, cursor: "pointer",
 };
 
-const HOVER_CSS = ".bgt tbody tr:hover td { background: rgba(255,255,255,0.06); }";
+/** Long enough to read as a movement, short enough not to be a wait. */
+const ROW_EXIT_MS = 240;
+const ROW_FLASH_MS = 700;
+
+const TABLE_CSS = `
+.bgt tbody tr:hover td { background: rgba(255,255,255,0.06); }
+
+/* In flight: the row dims rather than being replaced, so the value you just
+   typed stays on screen and readable while the write lands. */
+.bgt tbody tr.bgt-pending td { opacity: 0.45; }
+
+/* Landed: one pale sweep over the row that changed, so a save is visible
+   without anything moving. */
+@keyframes bgt-flash { from { background: rgba(255,255,255,0.20); } to { background: transparent; } }
+.bgt tbody tr.bgt-saved td { animation: bgt-flash ${ROW_FLASH_MS}ms ease-out; }
+
+/* Gone: the row slides out on its own instead of the table blinking. It is
+   still in the DOM here — React drops it once the animation is over. */
+@keyframes bgt-leave { to { opacity: 0; transform: translateX(-14px); } }
+.bgt tbody tr.bgt-leaving { animation: bgt-leave ${ROW_EXIT_MS}ms ease-in forwards; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bgt tbody tr.bgt-saved td,
+  .bgt tbody tr.bgt-leaving { animation-duration: 1ms; }
+}`;
 
 export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGraph }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
@@ -92,10 +117,26 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const [editing, setEditing] = useState<{ id: string; col: "brandName" | "name" } | null>(null);
   const [draft, setDraft] = useState("");
   const lastClicked = useRef<number | null>(null);
+  /** Rows with a write in flight, and rows whose write just landed. */
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  /** Rows that left the view and are still animating out. */
+  const [exiting, setExiting] = useState<Array<{ row: Row; index: number }>>([]);
+  /** Only the very first fetch may blank the table. */
+  const hasLoaded = useRef(false);
+  const timers = useRef<number[]>([]);
+
+  const later = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms);
+    timers.current.push(id);
+  }, []);
+  useEffect(() => () => { for (const id of timers.current) window.clearTimeout(id); }, []);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
-    setLoading(true);
+    // Every refresh after the first is silent. Swapping the whole table for
+    // "Cargando..." on each save is what made an edit look like a page reload.
+    if (hasLoaded.current) setSyncing(true); else setLoading(true);
     setError("");
     try {
       const res = await apiFetch<{ success: boolean; data?: GraphRoot }>(
@@ -127,7 +168,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar");
     } finally {
+      hasLoaded.current = true;
       setLoading(false);
+      setSyncing(false);
     }
   }, [workspaceId]);
 
@@ -142,24 +185,74 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     [rows, brandFilter],
   );
 
-  /** One write, then redraw from the server. Failures reach the toolbar. */
-  const save = useCallback(async (url: string, body: Record<string, unknown>, what: string) => {
+  // Hold on to rows that just left the view — deleted, or moved out from under
+  // the brand filter — so they can animate out from where they were standing
+  // instead of vanishing between two renders.
+  const prevVisible = useRef<Row[]>([]);
+  useEffect(() => {
+    const prev = prevVisible.current;
+    prevVisible.current = visible;
+    if (!prev.length) return;
+    const present = new Set(visible.map(r => r.id));
+    const gone = prev
+      .map((row, index) => ({ row, index }))
+      .filter(e => !present.has(e.row.id));
+    if (!gone.length) return;
+    setExiting(cur => [...cur, ...gone]);
+    const goneIds = new Set(gone.map(e => e.row.id));
+    later(() => setExiting(cur => cur.filter(e => !goneIds.has(e.row.id))), ROW_EXIT_MS);
+  }, [visible, later]);
+
+  /**
+   * The rows on screen: what is here now, plus what is on its way out, put
+   * back where it was standing. Each carries its index into `visible` — a
+   * leaving row has none, and range-select has to keep counting in terms of
+   * the real list or a row mid-animation would shift every selection below it.
+   */
+  const rendered = useMemo(() => {
+    const out = visible.map((row, vIndex) => ({ row, leaving: false, vIndex }));
+    for (const e of [...exiting].sort((a, b) => a.index - b.index)) {
+      if (out.some(r => r.row.id === e.row.id)) continue; // came back before the timer
+      out.splice(Math.min(e.index, out.length), 0, { row: e.row, leaving: true, vIndex: -1 });
+    }
+    return out;
+  }, [visible, exiting]);
+
+  const markSaved = useCallback((id: string) => {
+    setSaved(cur => new Set(cur).add(id));
+    later(() => setSaved(cur => { const s = new Set(cur); s.delete(id); return s; }), ROW_FLASH_MS);
+  }, [later]);
+
+  /**
+   * Writes one cell. The new value is on screen before the request leaves, and
+   * the table never unmounts: the row dims, the server answers, the row
+   * flashes. A rejected write puts the old value back — the optimistic one was
+   * a guess and it lost.
+   */
+  const save = useCallback(async (
+    row: Row, url: string, body: Record<string, unknown>, what: string, optimistic: Partial<Row>,
+  ) => {
     setSaveError("");
+    setRows(cur => cur.map(r => (r.id === row.id ? { ...r, ...optimistic } : r)));
+    setPending(cur => new Set(cur).add(row.id));
     try {
       const res = await apiFetch<{ success?: boolean; error?: string }>(url, {
         method: "PUT", body: JSON.stringify(body),
       });
       // The API answers 200 with success:false for anything it declined.
       if (res && res.success === false) throw new Error(res.error || "El servidor rechazo el cambio");
-      load();
+      await load();
       onRefreshGraph?.();
+      markSaved(row.id);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`No se pudo guardar ${what}:`, e);
       setSaveError(`No se pudo guardar ${what}: ${message}`);
-      load();
+      setRows(cur => cur.map(r => (r.id === row.id ? row : r)));
+    } finally {
+      setPending(cur => { const s = new Set(cur); s.delete(row.id); return s; });
     }
-  }, [load, onRefreshGraph]);
+  }, [load, onRefreshGraph, markSaved]);
 
   const commit = useCallback(async () => {
     if (!editing) return;
@@ -171,17 +264,18 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     if (col === "name") {
       // A file's name lives on `templates`, not on design_file_meta.
       if (!value) return;
-      await save(`/api/templates/${row.templateId}`, { name: value }, "el nombre");
+      await save(row, `/api/templates/${row.templateId}`, { name: value }, "el nombre", { name: value });
     } else {
       // Sends the typed name; the API resolves it to a brand_id (creating the
       // brand when the name is new) because the graph files by id, not by the
       // loose text. Emptying the cell unfiles the row.
-      await save(`/api/meta/${row.templateId}`, { brand: value }, "la marca");
+      await save(row, `/api/meta/${row.templateId}`, { brand: value }, "la marca", { brandName: value });
     }
   }, [editing, draft, rows, save]);
 
   const setCategory = useCallback(
-    (row: Row, value: string) => save(`/api/meta/${row.templateId}`, { category: value }, "la categoria"),
+    (row: Row, value: string) =>
+      save(row, `/api/meta/${row.templateId}`, { category: value }, "la categoria", { category: value }),
     [save],
   );
 
@@ -190,16 +284,27 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     const targets = rows.filter(r => selected.has(r.id));
     setSelected(new Set());
     setSaveError("");
-    try {
-      for (const r of targets) {
+    setPending(cur => { const s = new Set(cur); for (const r of targets) s.add(r.id); return s; });
+    const failed = new Set<string>();
+    let message = "";
+    for (const r of targets) {
+      try {
         await apiFetch(`/api/templates/${r.templateId}`, { method: "DELETE" });
+      } catch (e) {
+        failed.add(r.id);
+        message = e instanceof Error ? e.message : String(e);
+        console.error("No se pudo eliminar:", e);
       }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error("No se pudo eliminar:", e);
-      setSaveError(`No se pudo eliminar: ${message}`);
     }
-    load();
+    // Drop the deleted rows here rather than waiting for the refetch: this is
+    // what starts the exit animation, and the reload only has to confirm it.
+    const removed = new Set(targets.filter(r => !failed.has(r.id)).map(r => r.id));
+    if (removed.size) setRows(cur => cur.filter(r => !removed.has(r.id)));
+    setPending(cur => { const s = new Set(cur); for (const r of targets) s.delete(r.id); return s; });
+    if (failed.size) {
+      setSaveError(`No se pudieron eliminar ${failed.size} de ${targets.length}: ${message}`);
+    }
+    await load();
     onRefreshGraph?.();
   }, [selected, rows, load, onRefreshGraph]);
 
@@ -219,11 +324,12 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
 
   const selectRow = (idx: number, e: React.MouseEvent) => {
     const row = visible[idx];
+    if (!row) return;
     const next = new Set(selected);
     if (e.shiftKey && lastClicked.current !== null) {
       const a = Math.min(lastClicked.current, idx);
       const b = Math.max(lastClicked.current, idx);
-      for (let i = a; i <= b; i++) next.add(visible[i].id);
+      for (let i = a; i <= b; i++) if (visible[i]) next.add(visible[i].id);
     } else if (e.ctrlKey || e.metaKey) {
       if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
     } else {
@@ -239,10 +345,12 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     setDraft(row[col]);
   };
 
+  // Only the first fetch, before there is anything to show, may take the whole
+  // pane. Once rows exist they stay on screen through every later refresh.
   if (loading) {
     return <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando...</div>;
   }
-  if (error) {
+  if (error && !rows.length) {
     return (
       <div style={{ padding: 24, color: "rgba(255,255,255,0.6)", fontSize: 13 }}>
         {error}{" "}
@@ -253,7 +361,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000" }}>
-      <style>{HOVER_CSS}</style>
+      <style>{TABLE_CSS}</style>
 
       <div style={{
         display: "flex", alignItems: "center", gap: 10, padding: "10px 20px",
@@ -264,6 +372,14 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           {brands.map(b => <option key={b} value={b} style={{ background: "#000" }}>{b}</option>)}
         </select>
         <div style={{ flex: 1 }} />
+        {/* A refresh says so here, in a corner, instead of taking the table. */}
+        <span
+          aria-hidden={!syncing}
+          style={{
+            fontSize: 12, color: "rgba(255,255,255,0.45)",
+            opacity: syncing ? 1 : 0, transition: "opacity 150ms",
+          }}
+        >Actualizando...</span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
           {visible.length} filas{selected.size ? ` · ${selected.size} seleccionadas` : ""}
         </span>
@@ -276,14 +392,21 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         <button type="button" onClick={load} style={btn}>Sincronizar</button>
       </div>
 
-      {saveError && (
+      {/* Also carries a failed background refresh: with rows already on screen
+          the full-pane error state never renders, and a silent refresh that
+          dies would otherwise leave the table quietly showing stale rows. */}
+      {(saveError || error) && (
         <div role="alert" style={{
           display: "flex", alignItems: "center", gap: 10, padding: "8px 20px",
           borderBottom: "1px solid rgba(255,255,255,0.14)", flexShrink: 0,
           fontSize: 12, color: "#fff", background: "rgba(255,255,255,0.10)",
         }}>
-          <span style={{ flex: 1 }}>{saveError}</span>
-          <button type="button" onClick={() => setSaveError("")} style={btn}>Cerrar</button>
+          <span style={{ flex: 1 }}>{saveError || `No se pudo actualizar la tabla: ${error}`}</span>
+          <button
+            type="button"
+            onClick={() => { setSaveError(""); setError(""); }}
+            style={btn}
+          >Cerrar</button>
         </div>
       )}
 
@@ -303,11 +426,20 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
             </tr>
           </thead>
           <tbody>
-            {visible.map((row, idx) => {
+            {rendered.map(({ row, leaving, vIndex }) => {
               const isSel = selected.has(row.id);
               const cell = { ...CELL, background: isSel ? "rgba(255,255,255,0.14)" : "transparent" };
+              const cls = [
+                leaving ? "bgt-leaving" : "",
+                pending.has(row.id) ? "bgt-pending" : "",
+                saved.has(row.id) ? "bgt-saved" : "",
+              ].filter(Boolean).join(" ");
               return (
-                <tr key={row.id} onClick={e => selectRow(idx, e)}>
+                <tr
+                  key={row.id}
+                  className={cls || undefined}
+                  onClick={e => { if (!leaving) selectRow(vIndex, e); }}
+                >
                   <td
                     style={cell}
                     onDoubleClick={() => edit(row, "brandName")}
