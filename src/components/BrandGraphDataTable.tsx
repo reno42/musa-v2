@@ -27,6 +27,9 @@ interface BrandGraphNode {
   obsidianLink?: string;
   category?: string;
   campaign?: string;
+  /** Placeholder for an unfilled category — has no real file to delete. */
+  ghost?: boolean;
+  orphan?: boolean;
   children: BrandGraphNode[];
 }
 
@@ -282,13 +285,35 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
 
   // ── Delete brand ──
 
-  const deleteBrand = useCallback(async (brandId: string) => {
+  /** Soft-delete one design file. */
+  const deleteFile = useCallback(async (templateId: string) => {
+    try {
+      await apiFetch(`/api/templates/${templateId}`, { method: "DELETE" });
+      fetchData();
+      onRefreshGraph?.();
+    } catch (e) {
+      console.error("Failed to delete file:", e);
+    }
+  }, [fetchData, onRefreshGraph]);
+
+  const deleteBrand = useCallback(async (brandId: string, withFiles = false) => {
     if (!workspaceId) return;
     try {
       // Brands come from the `brands` table now, so the old MCP call
       // delete_brand_guideline targeted the styles table and answered 400 on
       // every click. This route also nulls design_file_meta.brand_id first, so
       // the brand's files survive and simply become unfiled.
+      // "With files" has to run first: the brand route nulls out
+      // design_file_meta.brand_id, which is the only thing tying these files
+      // to the brand. Delete the brand first and they are unreachable.
+      if (withFiles) {
+        const ids = allRows
+          .filter(r => r.brandId === brandId && r.templateId)
+          .map(r => r.templateId);
+        for (const id of [...new Set(ids)]) {
+          await apiFetch(`/api/templates/${id}`, { method: "DELETE" });
+        }
+      }
       await apiFetch(`/api/workspaces/${workspaceId}/brands/${brandId}`, {
         method: "DELETE",
       });
@@ -298,7 +323,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     } catch (e) {
       console.error("Failed to delete brand:", e);
     }
-  }, [workspaceId, fetchData, onRefreshGraph]);
+  }, [workspaceId, fetchData, onRefreshGraph, allRows]);
 
   // ── Row filtering utilities ──
 
@@ -399,8 +424,11 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           <span style={{ fontSize: 12, color: "#fff", flex: 1 }}>
             ¿Eliminar esta marca? También se puede eliminar su archivo Design System.
           </span>
-          <button onClick={() => deleteBrand(confirmDelete)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.35)", color: "#fff" }}>
-            Eliminar marca (los archivos quedan sin marca)
+          <button onClick={() => deleteBrand(confirmDelete, false)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.35)", color: "#fff" }}>
+            Solo la marca — los archivos quedan sin marca
+          </button>
+          <button onClick={() => deleteBrand(confirmDelete, true)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.6)", color: "#fff", fontWeight: 600 }}>
+            Marca y sus archivos
           </button>
           <button onClick={() => setConfirmDelete(null)} style={{ ...toolBtnStyle, color: "rgba(255,255,255,0.4)" }}>
             Cancelar
@@ -610,6 +638,15 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                         style={iconBtnStyle}
                       >
                         ↗
+                      </button>
+                    )}
+                    {row.templateId && !row._node.ghost && (
+                      <button
+                        onClick={e => { e.stopPropagation(); deleteFile(row.templateId); }}
+                        title="Eliminar archivo"
+                        style={iconBtnStyle}
+                      >
+                        🗑
                       </button>
                     )}
                   </td>
