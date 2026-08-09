@@ -80,10 +80,9 @@ interface ColumnDef {
 }
 
 const COLUMNS: ColumnDef[] = [
-  { key: "color", label: "", minWidth: 20, defaultWidth: 24 },
+  { key: "brandName", label: "Marca", minWidth: 90, defaultWidth: 140, editable: true, metaField: "brand" },
   { key: "name", label: "Nombre", minWidth: 100, defaultWidth: 180, editable: true },
   { key: "kind", label: "Tipo", minWidth: 60, defaultWidth: 80 },
-  { key: "brandName", label: "Marca", minWidth: 80, defaultWidth: 120, editable: true, metaField: "brand" },
   { key: "category", label: "Categoría", minWidth: 70, defaultWidth: 100 },
   { key: "campaign", label: "Campaña", minWidth: 80, defaultWidth: 120, editable: true, metaField: "campaign" },
   { key: "obsidianLink", label: "Obsidian", minWidth: 60, defaultWidth: 80, editable: true, metaField: "obsidian_link" },
@@ -122,7 +121,10 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       const bn = node.kind === "brand" ? node.name : brandName;
       const bi = node.kind === "brand" ? node.id : brandId;
 
-      result.push({
+      // Brand and category nodes were emitted as header rows, which read like
+      // collapsed dropdowns. Only real files are rows now; the brand is a
+      // merged cell in the leftmost column instead. Ghosts never had a file.
+      if (node.templateId && !node.ghost) result.push({
         id: node.id,
         name: node.name,
         level: node.level,
@@ -467,7 +469,14 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => {
+            {rows.map((row, idx) => {
+              // First row of a same-brand run carries the merged cell.
+              const prevRow = idx > 0 ? rows[idx - 1] : null;
+              let brandSpan = 0;
+              if (!prevRow || prevRow.brandName !== row.brandName) {
+                brandSpan = 1;
+                while (idx + brandSpan < rows.length && rows[idx + brandSpan].brandName === row.brandName) brandSpan++;
+              }
               const isBrand = isBrandRow(row);
               const isCat = isCategoryRow(row);
 
@@ -490,12 +499,26 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   }}
                 >
                   {/* Color indicator */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["color"], textAlign: "center" }}>
-                    <span style={{
-                      display: "inline-block", width: 10, height: 10, borderRadius: "50%",
-                      background: "rgba(255,255,255,0.45)", verticalAlign: "middle",
-                    }} />
-                  </td>
+                  {/* Merged brand cell: only the first row of a same-brand run
+                      renders it, spanning the rest, the way a sheet merges. */}
+                  {brandSpan > 0 && (
+                    <td rowSpan={brandSpan} style={{
+                      ...tdBaseStyle, width: colWidths["brandName"],
+                      verticalAlign: "top", fontWeight: 600, color: "#fff",
+                      borderRight: "1px solid rgba(255,255,255,0.14)",
+                    }}>
+                      <span>{row.brandName || "Sin marca"}</span>
+                      {row.brandId && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setConfirmDelete(row.brandId); }}
+                          title="Eliminar marca"
+                          style={{ ...iconBtnStyle, marginLeft: 6 }}
+                        >
+                          🗑
+                        </button>
+                      )}
+                    </td>
+                  )}
 
                   {/* Name (editable) */}
                   <td style={{ ...tdBaseStyle, width: colWidths["name"], paddingLeft: 8 + row.depth * 16 }}>
@@ -531,25 +554,6 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   {/* Kind */}
                   <td style={{ ...tdBaseStyle, width: colWidths["kind"], color: "rgba(255,255,255,0.45)", fontSize: 10 }}>
                     {kindLabel(row.kind)}
-                  </td>
-
-                  {/* Brand (editable for template-like nodes) */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["brandName"] }}>
-                    {editingCell?.rowId === row.id && editingCell?.colKey === "brandName" && row.templateId ? (
-                      <EditingInput value={editValue} onChange={setEditValue} onCommit={commitEdit} onCancel={cancelEdit} />
-                    ) : (
-                      <span
-                        style={{ color: "rgba(255,255,255,0.92)", cursor: row.templateId ? "text" : "default", fontWeight: isBrand ? 600 : 400 }}
-                        onClick={e => {
-                          if (!row.templateId) return;
-                          e.stopPropagation();
-                          startEdit(row.id, "brandName", row.brandName);
-                        }}
-                        title={row.templateId ? "Click para editar" : undefined}
-                      >
-                        {row.brandName}
-                      </span>
-                    )}
                   </td>
 
                   {/* Category */}

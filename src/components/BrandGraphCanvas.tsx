@@ -25,8 +25,6 @@ interface BrandGraphNode {
   obsidianLink?: string;
   category?: string;
   campaign?: string;
-  /** Placeholder for a category the brand hasn't filled yet — drawn faded. */
-  ghost?: boolean;
   /** File no brand claimed. */
   orphan?: boolean;
   children: BrandGraphNode[];
@@ -63,8 +61,6 @@ interface SimNode {
   campaign?: string;
   hoverScale: number;
   phase: number;
-  /** Placeholder for an unfilled category — drawn faded. */
-  ghost?: boolean;
   /** File no brand claimed — floats outside the brand ring, in grey. */
   orphan?: boolean;
   /** Rest distance from this node's parent. Set per node so orphans can sit
@@ -113,10 +109,8 @@ function orbitForLevel(level: number): number {
  *  as a position, not just a colour. */
 const ORPHAN_ORBIT = ORBIT_RADIUS * 2.4;
 
-const BRAND_PALETTE = [
-  "#ff4b72", "#00e5ff", "#0f8a7a", "#ffb703",
-  "#06d6a0", "#ef476f", "#118ab2", "#f78c6b",
-];
+/** Monochrome. Depth and state read as brightness, never as hue. */
+const BRAND_PALETTE = ["#ffffff"];
 
 export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -270,8 +264,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
           level: 2,
           kind: "category",
           color: brandNode.color,
-          ghost: cat.ghost,
-          hoverScale: 1,
+            hoverScale: 1,
           phase: phaseCounter++,
           parentId: brandNode.id,
         };
@@ -295,7 +288,6 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
             templateId: item.templateId,
             obsidianLink: item.obsidianLink,
             campaign: item.campaign,
-            ghost: item.ghost,
             hoverScale: 1,
             phase: phaseCounter++,
             parentId: catNode.id,
@@ -539,7 +531,7 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         // Ghosts stand for a category the brand hasn't filled yet, so they stay
         // faint even when nothing else is dimmed — present as a suggestion,
         // never mistakable for a real node.
-        const coreAlpha = dim ? 0.25 : n.ghost ? 0.3 : 1;
+        const coreAlpha = dim ? 0.25 : n.orphan ? 0.5 : 1;
 
         // Halo
         const haloAlpha = isFocus ? 0.35 : isNeighbor ? 0.15 : 0.04;
@@ -561,15 +553,15 @@ export function BrandGraphCanvas({ workspaceId, onOpenTemplate }: Props) {
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
         ctx.lineWidth = 1 / view.k;
         // Set every frame (including the empty case) so the dash never leaks
-        // from a ghost onto the nodes drawn after it.
-        ctx.setLineDash(n.ghost ? [3 / view.k, 3 / view.k] : []);
-        ctx.strokeStyle = isSelected ? "#ffffff" : `rgba(255,255,255,${dim ? 0.05 : n.ghost ? 0.3 : 0.22})`;
+        // from an orphan onto the nodes drawn after it.
+        ctx.setLineDash(n.orphan ? [3 / view.k, 3 / view.k] : []);
+        ctx.strokeStyle = isSelected ? "#ffffff" : `rgba(255,255,255,${dim ? 0.05 : n.orphan ? 0.45 : 0.22})`;
         ctx.stroke();
 
         // Obsidian badge
         if (n.obsidianLink && !dim) {
           const bx = n.x + r * 0.7, by = n.y - r * 0.7;
-          ctx.fillStyle = "#00b3d6";
+          ctx.fillStyle = "#ffffff";
           ctx.beginPath(); ctx.arc(bx, by, 3.5 / view.k, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = "#fff";
           ctx.font = `${6 / view.k}px sans-serif`;

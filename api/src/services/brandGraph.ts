@@ -14,8 +14,8 @@
  * hangs frames, not files, and needs a container file of its own — the exact
  * mirror of the Design System. See docs/requirements/REQ-010-graph-template-model.md.
  *
- * All four categories are always emitted; an empty one becomes a ghost node so
- * it reads as a suggestion instead of vanishing.
+ * Categories with nothing in them are omitted rather than shown as
+ * placeholders: at four per brand they drowned out the real nodes.
  */
 
 import { getSupabase } from "./supabase.js";
@@ -46,12 +46,6 @@ export interface BrandGraphNode {
   category?: string;
   /** Campaign from design_file_meta — shown in the data table. */
   campaign?: string;
-  /**
-   * Placeholder standing in for a category the brand hasn't filled yet. The
-   * graph always shows all four categories so the empty ones read as a
-   * suggestion of what's missing, rather than silently disappearing.
-   */
-  ghost?: boolean;
   /** File no brand claimed — orbits the workspace centre on its own. */
   orphan?: boolean;
   children: BrandGraphNode[];
@@ -67,36 +61,14 @@ export interface BrandGraphRoot {
 
 // ── Color palette (matches the prototype + brand tokens fallback) ──
 
-/** Neutral grey — orphans read as unfiled, never as a brand colour. */
-const ORPHAN_COLOR = "#8a93a6";
+/** Monochrome graph: orphans are told apart by orbit and dashed ring, not hue. */
+const ORPHAN_COLOR = "#ffffff";
 
-const BRAND_PALETTE = [
-  "#ff4b72", // Rosa neón (Futuraria default)
-  "#00e5ff", // Cyan
-  "#0f8a7a", // Verde azulado
-  "#ffb703", // Amarillo
-  "#06d6a0", // Verde menta
-  "#ef476f", // Rojo coral
-  "#118ab2", // Azul profundo
-  "#f78c6b", // Naranja suave
-];
+const BRAND_PALETTE = ["#ffffff"];
 
-function brandColor(index: number, tokensJson?: string | null): string {
-  // Try to extract a primary color from tokensJson first
-  if (tokensJson) {
-    try {
-      const tokens = typeof tokensJson === "string" ? JSON.parse(tokensJson) : tokensJson;
-      // Look for brand.primary.color or palette[0]
-      const primary =
-        tokens?.brand?.primary?.color ||
-        tokens?.colors?.primary ||
-        tokens?.palette?.[0];
-      if (typeof primary === "string" && /^#[0-9a-fA-F]{6}$/.test(primary)) {
-        return primary;
-      }
-    } catch { /* fall through */ }
-  }
-  return BRAND_PALETTE[index % BRAND_PALETTE.length];
+function brandColor(_index: number, _tokensJson?: string | null): string {
+  // Deliberately ignores the style's token colours: the graph is monochrome.
+  return BRAND_PALETTE[0];
 }
 
 // ── Builder ──
@@ -205,6 +177,7 @@ export async function buildBrandGraph(
 
     // ── Build children ──
     const children: BrandGraphNode[] = [];
+    const pushCat = (c: BrandGraphNode | null) => { if (c) children.push(c); };
 
     const nonDsTemplates = brandTemplates.filter(t => !t._isDs);
 
@@ -225,10 +198,7 @@ export async function buildBrandGraph(
         }
       } catch { /* DS template might not exist yet */ }
     }
-    children.push(category(brand.id, color, "ds", "Design System", dsChildren, {
-      emptyLabel: designSystemTemplateId ? "Agrega frames al DS" : "Crea tu Design System",
-      emptyTemplateId: designSystemTemplateId || undefined,
-    }));
+    pushCat(category(brand.id, color, "ds", "Design System", dsChildren));
 
     // ── Plantillas: frames of plantillas_<brand> ──
     // The container file doesn't exist yet — it needs
@@ -239,9 +209,7 @@ export async function buildBrandGraph(
     // code did, and since Archivos lists the same array, every file was
     // emitted twice under the same `tpl:<id>` node id, collapsing the
     // canvas's byId map and mis-wiring the edges.
-    children.push(category(brand.id, color, "templates", "Plantillas", [], {
-      emptyLabel: "Guarda un frame con Batchamator",
-    }));
+    pushCat(category(brand.id, color, "templates", "Plantillas", []));
 
     // ── Assets ──
     const assetChildren: BrandGraphNode[] = brandAssets.map(a => ({
@@ -252,9 +220,7 @@ export async function buildBrandGraph(
       color,
       children: [],
     }));
-    children.push(category(brand.id, color, "assets", "Assets", assetChildren, {
-      emptyLabel: "Sube fotos o archivos",
-    }));
+    pushCat(category(brand.id, color, "assets", "Assets", assetChildren));
 
     // Archivos category — templates grouped by campaign
     const campaignGroups = new Map<string, any[]>();
@@ -308,9 +274,7 @@ export async function buildBrandGraph(
         });
       }
     }
-    children.push(category(brand.id, color, "archivos", "Archivos", archivoChildren, {
-      emptyLabel: "Crea tu primer archivo",
-    }));
+    pushCat(category(brand.id, color, "archivos", "Archivos", archivoChildren));
 
     brandNodes.push({
       id: brand.id,
@@ -356,9 +320,10 @@ function normalizeName(value: string | null | undefined): string {
 }
 
 /**
- * Builds one of a brand's four category nodes. Always returns a node: when the
- * category has no real children it gets a single ghost child carrying a hint
- * about what to do next, so the branch stays visible as a suggestion.
+ * Builds one of a brand's category nodes, or null when the brand has nothing
+ * in it. Empty categories used to emit a ghost placeholder child so the branch
+ * stayed visible as a suggestion, but with four per brand across 29 brands the
+ * graph was mostly placeholders, so they are simply omitted now.
  */
 function category(
   brandId: string,
@@ -366,8 +331,8 @@ function category(
   slug: string,
   label: string,
   children: BrandGraphNode[],
-  empty: { emptyLabel: string; emptyTemplateId?: string },
-): BrandGraphNode {
+): BrandGraphNode | null {
+  if (children.length === 0) return null;
   return {
     id: `cat:${slug}:${brandId}`,
     name: label,
@@ -375,16 +340,6 @@ function category(
     kind: "category",
     color,
     category: label,
-    ghost: children.length === 0,
-    children: children.length > 0 ? children : [{
-      id: `ghost:${slug}:${brandId}`,
-      name: empty.emptyLabel,
-      level: 3,
-      kind: "template",
-      color,
-      templateId: empty.emptyTemplateId,
-      ghost: true,
-      children: [],
-    }],
+    children,
   };
 }
