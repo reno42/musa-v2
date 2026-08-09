@@ -243,6 +243,24 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     if (!row) { setEditingCell(null); return; }
 
     const col = COLUMNS.find(c => c.key === editingCell.colKey);
+
+    if (editingCell.colKey === "name") {
+      const next = editValue.trim();
+      setEditingCell(null);
+      if (!row.templateId || !next || next === row.name) return;
+      try {
+        await apiFetch(`/api/templates/${row.templateId}`, {
+          method: "PUT",
+          body: JSON.stringify({ name: next }),
+        });
+        fetchData();
+        onRefreshGraph?.();
+      } catch (e) {
+        console.error("Failed to rename file:", e);
+      }
+      return;
+    }
+
     if (!col?.metaField) { setEditingCell(null); return; }
 
     const trimmed = editValue.trim();
@@ -516,7 +534,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     style={{
                       position: "absolute", right: 0, top: 0, bottom: 0,
                       width: 4, cursor: "col-resize",
-                      background: resizing === col.key ? "rgba(99,102,241,0.5)" : "transparent",
+                      background: resizing === col.key ? "rgba(255,255,255,0.5)" : "transparent",
                       zIndex: 5,
                     }}
                   />
@@ -576,7 +594,15 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                           visibility: hoverRow === row.id ? "visible" : "hidden",
                         }}
                       >+</button>
-                      <span>{row.brandName || "Sin marca"}</span>
+                      {editingCell?.rowId === row.id && editingCell?.colKey === "brandName" ? (
+                        <EditingInput value={editValue} onChange={setEditValue} onCommit={commitEdit} onCancel={cancelEdit} />
+                      ) : (
+                        <span
+                          style={{ cursor: "text" }}
+                          onClick={e => { e.stopPropagation(); startEdit(row.id, "brandName", row.brandName); }}
+                          title="Click para editar"
+                        >{row.brandName || "Sin marca"}</span>
+                      )}
                       {row.brandId && (
                         <button
                         type="button"
