@@ -123,14 +123,22 @@ export function CrmWorkspace({
   onOpenTemplate,
   setError,
   setNotice,
+  view: controlledView,
 }: {
   workspaceId: string;
   onOpenTemplate?: (templateId: string) => void;
   setError: (message: string) => void;
   setNotice: (message: string) => void;
+  /**
+   * When set, the parent owns which view shows and renders the switch itself
+   * -- the Red de Marcas tab bar hosts Pipeline and Marcas y Personas next to
+   * Grafo and Tabla, so the internal switch would be a second, stale copy.
+   */
+  view?: "pipeline" | "accounts";
 }) {
   const [data, setData] = useState<CrmData | null>(null);
-  const [view, setView] = useState<"pipeline" | "accounts">("pipeline");
+  const [ownView, setView] = useState<"pipeline" | "accounts">("pipeline");
+  const view = controlledView ?? ownView;
   const [loading, setLoading] = useState(true);
   const [selectedDealId, setSelectedDealId] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState("");
@@ -161,10 +169,12 @@ export function CrmWorkspace({
   return (
     <div className="crm-shell">
       <div className="crm-toolbar">
-        <div className="crm-view-switch" role="group" aria-label="Vista del CRM">
-          <button type="button" className={view === "pipeline" ? "active" : ""} aria-pressed={view === "pipeline"} onClick={() => setView("pipeline")}>Pipeline</button>
-          <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas y Personas</button>
-        </div>
+        {!controlledView && (
+          <div className="crm-view-switch" role="group" aria-label="Vista del CRM">
+            <button type="button" className={view === "pipeline" ? "active" : ""} aria-pressed={view === "pipeline"} onClick={() => setView("pipeline")}>Pipeline</button>
+            <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas y Personas</button>
+          </div>
+        )}
         {view === "pipeline" && <button type="button" className="workspace-button" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "Nuevo deal"}</button>}
       </div>
 

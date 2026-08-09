@@ -13,6 +13,7 @@ import {
 import { GraphDataTable } from "./GraphDataTable";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
+import { CrmWorkspace } from "./CrmWorkspace";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -107,7 +108,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   // ── View toggle: graph canvas | data table | brand hierarchy ──
   const [view] = useState<"graph" | "data" | "brands">("brands");
   // Sub-view for Red de Marcas: graph canvas vs. data table
-  const [brandView, setBrandView] = useState<"graph" | "table">("graph");
+  const [brandView, setBrandView] = useState<"graph" | "table" | "pipeline" | "accounts">("graph");
   // Key to force BrandGraphCanvas remount on data change
   const [brandRefreshKey, setBrandRefreshKey] = useState(0);
 
@@ -620,6 +621,8 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
             <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
               <TabBtn active={brandView === "graph"} onClick={() => setBrandView("graph")}>◈ Grafo</TabBtn>
               <TabBtn active={brandView === "table"} onClick={() => setBrandView("table")}>▤ Tabla</TabBtn>
+              <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Pipeline</TabBtn>
+              <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas y Personas</TabBtn>
               <div style={{ flex: 1 }} />
               {/* "Refrescar" removed: it reloaded the graph while the table has
                   its own Sincronizar, and only one pane is ever visible. */}
@@ -627,8 +630,18 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               {brandView === "graph" ? (
                 <BrandGraphCanvas key={brandRefreshKey} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
-              ) : (
+              ) : brandView === "table" ? (
                 <BrandGraphDataTable workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} onRefreshGraph={() => setBrandRefreshKey(k => k + 1)} />
+              ) : (
+                <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
+                  <CrmWorkspace
+                    workspaceId={workspaceId || ""}
+                    onOpenTemplate={onOpenTemplate}
+                    view={brandView === "pipeline" ? "pipeline" : "accounts"}
+                    setError={setError}
+                    setNotice={() => {}}
+                  />
+                </div>
               )}
             </div>
           </>
