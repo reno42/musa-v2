@@ -31,13 +31,23 @@ function normalizeCategory(value: unknown): string | null {
 }
 
 /**
- * True when Postgres rejected the write because design_file_meta.category is
- * not there yet — v21 has not been run on this database. Worth telling the
- * caller in plain words instead of leaking "column ... does not exist".
+ * True when the database rejected the write because design_file_meta.category
+ * is not there — v21 has not been run against THIS database.
+ *
+ * Two different wordings, and matching only the first is why this surfaced as
+ * a blank 500 rather than the message below. Reading a missing column raises
+ * Postgres 42703, "column ... does not exist". Writing one PostgREST rejects
+ * before it ever reaches Postgres, against its own schema cache, as PGRST204
+ * "Could not find the 'category' column ... in the schema cache". The write
+ * path only ever produces the second.
  */
 function isMissingCategoryColumn(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String((error as any)?.message ?? "");
-  return message.includes("category") && message.includes("does not exist");
+  const err = error as { message?: string; code?: string } | null;
+  const code = String(err?.code ?? "");
+  if (code === "PGRST204" || code === "42703") return true;
+  const message = (error instanceof Error ? error.message : String(err?.message ?? "")).toLowerCase();
+  if (!message.includes("category")) return false;
+  return message.includes("does not exist") || message.includes("schema cache");
 }
 
 /** GET /api/meta/:templateId */
@@ -63,8 +73,8 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 
 /** PUT /api/meta/:templateId — upsert metadata fields */
 designMetaRoutes.put("/:templateId", async (req, res) => {
+  const { templateId } = req.params; // outside the try so the catch can name it
   try {
-    const { templateId } = req.params;
     const { brand_id, brand, campaign_id, campaign, category, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
 
     const patch: Record<string, any> = {};
@@ -188,12 +198,16 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     if (isMissingCategoryColumn(err)) {
+      console.warn(`[meta] missing column writing ${templateId}:`, err?.code, err?.message);
       return res.status(409).json({
         success: false,
-        error: "La columna 'category' no existe todavía: ejecuta supabase_migrations_v21.sql en Supabase.",
+        error: `Falta una columna en esta base de datos: ejecuta supabase_migrations_v21.sql en el proyecto de Supabase que usa produccion, y recarga el esquema (Settings -> API -> Reload schema cache). Detalle: ${err?.message || err}`,
       });
     }
-    res.status(500).json({ success: false, error: err.message });
+    // Logged as well as returned: a 500 that only exists in the response body
+    // cannot be looked up afterwards.
+    console.error(`[meta] PUT ${templateId} failed:`, err?.code, err?.message, err?.details || "");
+    res.status(500).json({ success: false, error: err?.message || "Error interno" });
   }
 });
 
