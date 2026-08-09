@@ -14,6 +14,7 @@ import { GraphDataTable } from "./GraphDataTable";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { CrmWorkspace } from "./CrmWorkspace";
+import { StorageTab } from "./StorageTab";
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -108,7 +109,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
   // ── View toggle: graph canvas | data table | brand hierarchy ──
   const [view] = useState<"graph" | "data" | "brands">("brands");
   // Sub-view for Red de Marcas: graph canvas vs. data table
-  const [brandView, setBrandView] = useState<"graph" | "table" | "pipeline" | "accounts">("graph");
+  const [brandView, setBrandView] = useState<"graph" | "table" | "pipeline" | "accounts" | "storage">("graph");
   // Key to force BrandGraphCanvas remount on data change
   const [brandRefreshKey, setBrandRefreshKey] = useState(0);
 
@@ -623,6 +624,7 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
               <TabBtn active={brandView === "table"} onClick={() => setBrandView("table")}>▤ Tabla</TabBtn>
               <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Pipeline</TabBtn>
               <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas y Personas</TabBtn>
+              <TabBtn active={brandView === "storage"} onClick={() => setBrandView("storage")}>Storage</TabBtn>
               <div style={{ flex: 1 }} />
               {/* "Refrescar" removed: it reloaded the graph while the table has
                   its own Sincronizar, and only one pane is ever visible. */}
@@ -632,6 +634,10 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
                 <BrandGraphCanvas key={brandRefreshKey} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
               ) : brandView === "table" ? (
                 <BrandGraphDataTable workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} onRefreshGraph={() => setBrandRefreshKey(k => k + 1)} />
+              ) : brandView === "storage" ? (
+                <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
+                  <StorageTab workspaceId={workspaceId} />
+                </div>
               ) : (
                 <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
                   <CrmWorkspace
