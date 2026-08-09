@@ -13,5 +13,19 @@ public/SKILL.md
 # Reference repos (not part of codebase)
 ejemplo-harness-subagentes-main/
 
-# QA screenshots
+# Typecheck output
 tsc-output.txt
+
+# Throwaway captures agents drop in the repo root while verifying a change.
+# The ones already committed under QA/ stay committed; this only stops new
+# ones from piling up at the top level.
+/screenshot_*.png
+/slide*.png
+/step*.png
+
+# Assets uploaded to a local api server: with no Supabase configured it
+# writes them to disk instead of Storage.
+api/public/assets/
+
+# 0-byte artefact of a `> nul` redirect written on Windows.
+/nul
