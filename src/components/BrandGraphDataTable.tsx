@@ -79,6 +79,9 @@ interface ColumnDef {
   metaField?: string;
 }
 
+/** The four branches a brand hangs off in the graph. */
+const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
+
 const COLUMNS: ColumnDef[] = [
   { key: "brandName", label: "Marca", minWidth: 90, defaultWidth: 140, editable: true, metaField: "brand" },
   { key: "name", label: "Nombre", minWidth: 100, defaultWidth: 180, editable: true },
@@ -106,6 +109,8 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const [editingCell, setEditingCell] = useState<{ rowId: string; colKey: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [hoverRow, setHoverRow] = useState<string | null>(null);
+
 
   // ── Flatten ──
 
@@ -279,7 +284,48 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     return () => window.removeEventListener("keydown", onKey);
   }, [editingCell]);
 
-  /** Create a brand from the table, so a run of files has somewhere to go. */
+  /**
+   * Persisting the category needs a column to write to: today a file's branch
+   * is derived from the tree (design system template id, brand_id, asset tags),
+   * not stored, so design_file_meta has nowhere to put it. Sent as `category`
+   * so the write lands the moment that field exists.
+   */
+  const commitCategory = useCallback(async (row: FlatRow, value: string) => {
+    if (!row.templateId) return;
+    try {
+      await apiFetch(`/api/meta/${row.templateId}`, {
+        method: "PUT",
+        body: JSON.stringify({ category: value }),
+      });
+      fetchData();
+      onRefreshGraph?.();
+    } catch (e) {
+      console.error("Failed to set category:", e);
+    }
+  }, [fetchData, onRefreshGraph]);
+
+  /** Add an empty file row under the same brand; the user names it in place. */
+  const addRow = useCallback(async (sibling: FlatRow) => {
+    if (!workspaceId) return;
+    try {
+      const res = await apiFetch<{ data?: { id: string } }>("/api/templates", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, name: "Nuevo archivo", width: 1080, height: 1080, engine: "html" }),
+      });
+      const id = res?.data?.id;
+      if (id && sibling.brandId) {
+        await apiFetch(`/api/meta/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({ brand_id: sibling.brandId, brand: sibling.brandName }),
+        });
+      }
+      fetchData();
+      onRefreshGraph?.();
+    } catch (e) {
+      console.error("Failed to add row:", e);
+    }
+  }, [workspaceId, fetchData, onRefreshGraph]);
+
   const createBrand = useCallback(async () => {
     if (!workspaceId) return;
     const name = window.prompt("Nombre de la marca")?.trim();
@@ -384,7 +430,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: "#fca5a5", fontSize: 13 }}>
         <span>Error al cargar datos</span>
         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{error}</span>
-        <button onClick={fetchData} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.07)", color: "#fff", cursor: "pointer" }}>Reintentar</button>
+        <button type="button" onClick={fetchData} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.07)", color: "#fff", cursor: "pointer" }}>Reintentar</button>
       </div>
     );
   }
@@ -412,12 +458,12 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
             <option key={b} value={b} style={{ background: "#12141c" }}>{b}</option>
           ))}
         </select>
-        <button onClick={createBrand} title="Agregar marca" style={toolBtnStyle}>+ Marca</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
           {rows.length} filas
         </span>
         <button
+                        type="button"
           onClick={fetchData}
           title="Sincronizar"
           style={toolBtnStyle}
@@ -436,13 +482,13 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           <span style={{ fontSize: 12, color: "#fff", flex: 1 }}>
             ¿Eliminar esta marca? También se puede eliminar su archivo Design System.
           </span>
-          <button onClick={() => deleteBrand(confirmDelete, false)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.35)", color: "#fff" }}>
+          <button type="button" onClick={() => deleteBrand(confirmDelete, false)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.35)", color: "#fff" }}>
             Solo la marca — los archivos quedan sin marca
           </button>
-          <button onClick={() => deleteBrand(confirmDelete, true)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.6)", color: "#fff", fontWeight: 600 }}>
+          <button type="button" onClick={() => deleteBrand(confirmDelete, true)} style={{ ...toolBtnStyle, borderColor: "rgba(255,255,255,0.6)", color: "#fff", fontWeight: 600 }}>
             Marca y sus archivos
           </button>
-          <button onClick={() => setConfirmDelete(null)} style={{ ...toolBtnStyle, color: "rgba(255,255,255,0.4)" }}>
+          <button type="button" onClick={() => setConfirmDelete(null)} style={{ ...toolBtnStyle, color: "rgba(255,255,255,0.4)" }}>
             Cancelar
           </button>
         </div>
@@ -492,6 +538,8 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
 
               return (
                 <tr
+                  onMouseEnter={() => setHoverRow(row.id)}
+                  onMouseLeave={() => setHoverRow(null)}
                   key={row.id}
                   style={{
                     background: isBrand
@@ -513,15 +561,25 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   {/* Color indicator */}
                   {/* Merged brand cell: only the first row of a same-brand run
                       renders it, spanning the rest, the way a sheet merges. */}
-                  {brandSpan > 0 && (
-                    <td rowSpan={brandSpan} style={{
+                  {(
+                    <td style={{
                       ...tdBaseStyle, width: colWidths["brandName"],
                       verticalAlign: "top", fontWeight: 600, color: "#fff",
                       borderRight: "1px solid rgba(255,255,255,0.14)",
                     }}>
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); addRow(row); }}
+                        title="Agregar fila"
+                        style={{
+                          ...iconBtnStyle, marginRight: 6,
+                          visibility: hoverRow === row.id ? "visible" : "hidden",
+                        }}
+                      >+</button>
                       <span>{row.brandName || "Sin marca"}</span>
                       {row.brandId && (
                         <button
+                        type="button"
                           onClick={e => { e.stopPropagation(); setConfirmDelete(row.brandId); }}
                           title="Eliminar marca"
                           style={{ ...iconBtnStyle, marginLeft: 6 }}
@@ -564,14 +622,31 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   </td>
 
                   {/* Category */}
-                  <td style={{ ...tdBaseStyle, width: colWidths["category"], color: "rgba(255,255,255,0.55)" }}>
-                    {row.category}
+                  {/* Category is a fixed set -- the four branches the graph
+                      hangs off -- so it is a dropdown, never free text. */}
+                  <td style={{ ...tdBaseStyle, width: colWidths["category"] }}>
+                    <select
+                      value={row.category || ""}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => commitCategory(row, e.target.value)}
+                      style={{
+                        width: "100%", background: "transparent", color: "rgba(255,255,255,0.75)",
+                        border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4,
+                        padding: "2px 4px", fontSize: 12, fontFamily: "inherit", cursor: "pointer",
+                      }}
+                    >
+                      <option value="" style={{ background: "#12141c" }}>—</option>
+                      {CATEGORIES.map(c => (
+                        <option key={c} value={c} style={{ background: "#12141c" }}>{c}</option>
+                      ))}
+                    </select>
                   </td>
 
                   {/* Actions */}
                   <td style={{ ...tdBaseStyle, width: colWidths["actions"], textAlign: "center" }}>
                     {isBrand && (
                       <button
+                        type="button"
                         onClick={e => { e.stopPropagation(); setConfirmDelete(row.id); }}
                         title="Eliminar marca"
                         style={iconBtnStyle}
@@ -581,6 +656,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     )}
                     {row.templateId && (
                       <button
+                        type="button"
                         onClick={e => { e.stopPropagation(); onOpenTemplate?.(row.templateId); }}
                         title="Abrir en editor"
                         style={iconBtnStyle}
@@ -590,6 +666,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     )}
                     {row.templateId && !row._node.ghost && (
                       <button
+                        type="button"
                         onClick={e => { e.stopPropagation(); deleteFile(row.templateId); }}
                         title="Eliminar archivo"
                         style={iconBtnStyle}
@@ -629,7 +706,9 @@ function EditingInput({
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    ref.current?.focus();
+    // preventScroll: focusing the input made the browser scroll it into view,
+    // which jumped the page on every row click.
+    ref.current?.focus({ preventScroll: true });
     ref.current?.select();
   }, []);
 
@@ -645,7 +724,7 @@ function EditingInput({
       onBlur={onCommit}
       style={{
         width: "100%", minWidth: 60,
-        background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.5)",
+        background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.45)",
         borderRadius: 4, padding: "3px 6px", color: "#fff", fontSize: 12,
         fontFamily: "inherit", outline: "none",
       }}
