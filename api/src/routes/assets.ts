@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getSupabase, uploadAsset, migrateBase64FromHtml, sanitizeAssetFileName } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
 import { assertSafeIntegrationEndpoint } from "../services/workspaceIntegrations.js";
+import { fetchRemoteImage } from "../services/remoteImage.js";
 
 export const assetRoutes = Router();
 
@@ -29,17 +30,17 @@ assetRoutes.post("/upload", async (req, res) => {
       filename = `${assetId}.${ext}`;
     } else if (url) {
       try {
-        await assertSafeIntegrationEndpoint(url);
-        const fetchResp = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-        if (!fetchResp.ok) throw new Error(`Fetch failed: ${fetchResp.status}`);
-        const contentType = fetchResp.headers.get("content-type") || "image/png";
-        mimeType = contentType.split(";")[0].trim();
-        if (!mimeType.startsWith("image/")) throw new Error("Remote URL is not an image");
-        imageBuffer = Buffer.from(await fetchResp.arrayBuffer());
+        // Follows redirects, revalidating each hop, and rewrites the share
+        // links people actually paste. redirect:"error" used to reject almost
+        // every real image URL, since Unsplash, Pexels and Drive all bounce.
+        const image = await fetchRemoteImage(url);
+        mimeType = image.mimeType;
+        imageBuffer = image.buffer;
         const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
         filename = `${assetId}.${ext}`;
       } catch (e: any) {
-        return res.status(400).json({ success: false, error: `Failed to download: ${e.message}` });
+        // The message already says what to do about it — don't bury it.
+        return res.status(400).json({ success: false, error: e.message });
       }
     } else {
       return res.status(400).json({ success: false, error: "Provide either data (base64) or url" });

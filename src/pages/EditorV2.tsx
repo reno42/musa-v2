@@ -5553,6 +5553,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onCheckedFrameIdsChange={setBatchCheckedFrameIds}
               onFrameHover={setBatchHoveredFrameId}
               onGenerate={handleBatchGenerate}
+              workspaceId={templateWorkspaceId}
             />
           )}
           {rightPanelTab === "ai" && (

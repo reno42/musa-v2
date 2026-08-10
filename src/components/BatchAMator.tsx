@@ -1,5 +1,10 @@
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { IconFolder } from "../shared/icons";
+import { apiFetch } from "../lib/supabase";
+import { downloadBlob } from "../lib/download";
+import {
+  ID_COLUMN, allColumns, emptyRow, looksLikeUrl, parseCSV, rowsFromCsv, toCSV, type SheetRow,
+} from "../lib/contentSheet";
 import type { FrameData } from "./DesignFrame";
 
 interface BatchAMatorProps {
@@ -11,6 +16,8 @@ interface BatchAMatorProps {
   onFrameHover?: (frameId: string | null) => void;
   /** Called with the full new frames array (existing + generated duplicates) to commit. */
   onGenerate: (newFrames: FrameData[]) => void;
+  /** Needed to re-host images the sheet points at. Without it links are left as typed. */
+  workspaceId?: string | null;
 }
 
 const FRAME_GAP = 100;
@@ -21,150 +28,101 @@ function createFrameId(): string {
   return `frame_b${Date.now().toString(36)}_${generatedFrameSeq.toString(36)}`;
 }
 
-/**
- * RFC 4180 compliant CSV parser.
- * Handles quoted fields, escaped quotes (""), commas and newlines inside quotes.
- */
-function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
-  const result: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = "";
-  let inQuotes = false;
-  let i = 0;
-
-  while (i < text.length) {
-    const ch = text[i];
-
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          currentField += '"';
-          i += 2;
-          continue;
-        }
-        inQuotes = false;
-        i++;
-        continue;
-      }
-      currentField += ch;
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      inQuotes = true;
-      i++;
-      continue;
-    }
-    if (ch === ",") {
-      currentRow.push(currentField);
-      currentField = "";
-      i++;
-      continue;
-    }
-    if (ch === "\r") {
-      currentRow.push(currentField);
-      currentField = "";
-      result.push(currentRow);
-      currentRow = [];
-      i++;
-      if (text[i] === "\n") i++;
-      continue;
-    }
-    if (ch === "\n") {
-      currentRow.push(currentField);
-      currentField = "";
-      result.push(currentRow);
-      currentRow = [];
-      i++;
-      continue;
-    }
-    currentField += ch;
-    i++;
-  }
-
-  if (currentField !== "" || currentRow.length > 0) {
-    currentRow.push(currentField);
-    result.push(currentRow);
-  }
-
-  const nonEmpty = result.filter(r => r.some(c => c.trim() !== ""));
-  if (nonEmpty.length < 2) return { headers: [], rows: [] };
-
-  const h = nonEmpty[0].map(s => s.trim());
-  const dataRows = nonEmpty.slice(1).map(line => {
-    const obj: Record<string, string> = {};
-    h.forEach((key, idx) => { obj[key] = (line[idx] || "").trim(); });
-    return obj;
-  });
-
-  return { headers: h, rows: dataRows };
-}
-
-interface TextLayerRef {
+interface LayerRef {
   frameId: string;
   layerId: string;
 }
 
-interface CsvColumn {
+interface SheetColumn {
   column: string;
+  /** text fills textContent; image replaces an <img> src. */
+  type: "text" | "image";
   sample: string;
-  refs: TextLayerRef[];
+  refs: LayerRef[];
 }
 
 /**
- * Auto-detects every `data-layer-kind="text"` element inside the given
- * frames — no manual `{{slot}}`/`data-slot` markup required. Layers sharing
- * the same `data-layer-name` are grouped into one CSV column, so one value
- * fills every same-named text layer across every checked frame (handy when
- * duplicated frames share layer names like "Headline").
+ * Auto-detects every text and image layer inside the given frames — no manual
+ * `{{slot}}` markup required. Layers sharing a `data-layer-name` become one
+ * column, so one value fills every same-named layer across every checked
+ * frame (duplicated frames share names like "Headline").
  */
-function detectTextColumns(frames: FrameData[]): CsvColumn[] {
-  const byLabel = new Map<string, CsvColumn>();
+function detectColumns(frames: FrameData[]): SheetColumn[] {
+  const byLabel = new Map<string, SheetColumn>();
   const wrapper = document.createElement("div");
   for (const f of frames) {
     if (!f.html) continue;
     wrapper.innerHTML = f.html;
-    wrapper.querySelectorAll('[data-layer-kind="text"]').forEach(el => {
-      const layerId = el.getAttribute("data-layer-id");
-      if (!layerId) return;
-      const label = (el.getAttribute("data-layer-name") || "Text").trim() || "Text";
-      const sample = (el.textContent || "").trim();
-      const existing = byLabel.get(label);
-      if (existing) {
-        existing.refs.push({ frameId: f.id, layerId });
-      } else {
-        byLabel.set(label, { column: label, sample, refs: [{ frameId: f.id, layerId }] });
-      }
-    });
+    const collect = (selector: string, type: "text" | "image", read: (el: Element) => string) => {
+      wrapper.querySelectorAll(selector).forEach(el => {
+        const layerId = el.getAttribute("data-layer-id");
+        if (!layerId) return;
+        const fallback = type === "image" ? "Imagen" : "Text";
+        const label = (el.getAttribute("data-layer-name") || fallback).trim() || fallback;
+        const existing = byLabel.get(label);
+        if (existing) existing.refs.push({ frameId: f.id, layerId });
+        else byLabel.set(label, { column: label, type, sample: read(el), refs: [{ frameId: f.id, layerId }] });
+      });
+    };
+    collect('[data-layer-kind="text"]', "text", el => (el.textContent || "").trim());
+    // An <img> is classified as kind="image" by htmlMutations; a photo is as
+    // much part of a variant as its headline, so it gets a column too.
+    collect('img[data-layer-id]', "image", el => el.getAttribute("src") || "");
   }
   return [...byLabel.values()];
 }
 
-/** Sets the text content of every `data-layer-id` match found in `html`. */
-function applyTextReplacements(html: string, valuesByLayerId: Record<string, string>): string {
-  if (Object.keys(valuesByLayerId).length === 0) return html;
+/** Writes text into textContent and image URLs into src, by layer id. */
+function applyReplacements(
+  html: string,
+  textByLayerId: Record<string, string>,
+  imageByLayerId: Record<string, string>,
+): string {
+  const entries = Object.entries(textByLayerId).length + Object.entries(imageByLayerId).length;
+  if (entries === 0) return html;
   const wrapper = document.createElement("div");
   wrapper.innerHTML = html;
   let changed = false;
-  for (const [layerId, value] of Object.entries(valuesByLayerId)) {
+  for (const [layerId, value] of Object.entries(textByLayerId)) {
     const el = wrapper.querySelector(`[data-layer-id="${CSS.escape(layerId)}"]`);
     if (el) { el.textContent = value; changed = true; }
+  }
+  for (const [layerId, value] of Object.entries(imageByLayerId)) {
+    if (!value) continue;
+    const el = wrapper.querySelector(`[data-layer-id="${CSS.escape(layerId)}"]`);
+    if (el) { el.setAttribute("src", value); changed = true; }
   }
   return changed ? wrapper.innerHTML : html;
 }
 
-export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, onFrameHover, onGenerate }: BatchAMatorProps) {
-  const [csvText, setCsvText] = useState("");
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [rows, setRows] = useState<Record<string, string>[]>([]);
-  const [preview, setPreview] = useState<Record<string, string>[]>([]);
+export function BatchAMator({
+  frames, checkedFrameIds, onCheckedFrameIdsChange, onFrameHover, onGenerate, workspaceId,
+}: BatchAMatorProps) {
+  const [rows, setRows] = useState<SheetRow[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState("");
   const [message, setMessage] = useState<{ text: string; kind: "success" | "error" } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const checkedFrames = useMemo(() => frames.filter(f => checkedFrameIds.has(f.id)), [frames, checkedFrameIds]);
-  const columns = useMemo(() => detectTextColumns(checkedFrames), [checkedFrames]);
+  const columns = useMemo(() => detectColumns(checkedFrames), [checkedFrames]);
+  const columnNames = useMemo(() => columns.map(c => c.column), [columns]);
+  const imageColumns = useMemo(
+    () => new Set(columns.filter(c => c.type === "image").map(c => c.column)),
+    [columns],
+  );
+  /** Detected columns plus anything a returned CSV brought with it. */
+  const sheetColumns = useMemo(() => allColumns(columnNames, rows), [columnNames, rows]);
+
+  // Start the sheet with one row seeded from the frame's own text, so the
+  // table is usable the moment the panel opens rather than being an empty
+  // grid the user has to guess the shape of.
+  useEffect(() => {
+    if (columns.length === 0 || rows.length > 0) return;
+    const values: Record<string, string> = {};
+    for (const c of columns) values[c.column] = c.sample;
+    setRows([{ id: emptyRow([]).id, values }]);
+  }, [columns, rows.length]);
 
   const toggleFrame = useCallback((id: string) => {
     const next = new Set(checkedFrameIds);
@@ -172,97 +130,179 @@ export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, 
     onCheckedFrameIdsChange(next);
   }, [checkedFrameIds, onCheckedFrameIdsChange]);
 
-  const applyCsvText = useCallback((text: string) => {
-    const { headers: h, rows: r } = parseCSV(text);
-    const capped = r.length > MAX_ROWS;
-    const finalRows = capped ? r.slice(0, MAX_ROWS) : r;
-    setCsvText(text);
-    setHeaders(h);
-    setRows(finalRows);
-    setPreview(finalRows.slice(0, 5));
-    setMessage(capped ? { text: `Se usarán solo las primeras ${MAX_ROWS} filas (máximo soportado).`, kind: "error" } : null);
+  const setCell = useCallback((rowId: string, column: string, value: string) => {
+    setRows(cur => cur.map(r => (r.id === rowId ? { ...r, values: { ...r.values, [column]: value } } : r)));
   }, []);
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => applyCsvText(reader.result as string);
-    reader.readAsText(file);
-  }
+  const addRow = useCallback(() => {
+    setRows(cur => (cur.length >= MAX_ROWS ? cur : [...cur, emptyRow(sheetColumns)]));
+  }, [sheetColumns]);
 
-  function handleDownloadCsvTemplate() {
-    if (columns.length === 0) {
-      setMessage({ text: "Los frames seleccionados no tienen texto detectable. Nada que exportar.", kind: "error" });
+  const removeRow = useCallback((rowId: string) => {
+    setRows(cur => cur.filter(r => r.id !== rowId));
+  }, []);
+
+  const handleDownloadCsv = useCallback(() => {
+    if (sheetColumns.length === 0) {
+      setMessage({ text: "Los frames seleccionados no tienen texto ni imágenes detectables.", kind: "error" });
       return;
     }
-    const header = columns.map(c => `"${c.column}"`).join(",");
-    const example = columns.map(c => `"${(c.sample || `Ejemplo ${c.column}`).replace(/"/g, '""')}"`).join(",");
-    const csv = `${header}\n${example}\n`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "batchamator-template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+    const csv = toCSV(sheetColumns, rows.length ? rows : [emptyRow(sheetColumns)]);
+    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "content-machine.csv");
+  }, [sheetColumns, rows]);
 
-  function handleGenerate() {
+  /** Load a CSV into the sheet. `andGenerate` skips the review step. */
+  const loadCsv = useCallback((text: string, andGenerate: boolean) => {
+    const parsed = parseCSV(text);
+    if (parsed.rows.length === 0) {
+      setMessage({ text: "Ese CSV no tiene filas de datos.", kind: "error" });
+      return;
+    }
+    const loaded = rowsFromCsv(parsed, columnNames);
+    const capped = loaded.length > MAX_ROWS;
+    setRows(capped ? loaded.slice(0, MAX_ROWS) : loaded);
+    setMessage(capped
+      ? { text: `Se cargaron las primeras ${MAX_ROWS} filas (máximo soportado).`, kind: "error" }
+      : { text: `✓ ${loaded.length} fila${loaded.length === 1 ? "" : "s"} cargada${loaded.length === 1 ? "" : "s"}.`, kind: "success" });
+    if (andGenerate) pendingGenerateRef.current = true;
+  }, [columnNames]);
+
+  // "Subir y crear" has to wait for the rows to be in state before generating,
+  // so the click sets a flag and the effect below runs once they land.
+  const pendingGenerateRef = useRef(false);
+
+  const readFile = useCallback((file: File, andGenerate: boolean) => {
+    const reader = new FileReader();
+    reader.onload = () => loadCsv(reader.result as string, andGenerate);
+    reader.readAsText(file);
+  }, [loadCsv]);
+
+  /**
+   * Re-hosts an image the sheet points at.
+   *
+   * The server fetches it and puts it in the workspace bucket, so the design
+   * stops depending on someone else's link staying alive — and so export,
+   * which reads pixels, is not blocked by another origin. Only direct image
+   * URLs work: a Drive or SharePoint "share" link answers with an HTML login
+   * page, not an image, and no amount of trying changes that.
+   */
+  const rehostCache = useRef(new Map<string, string>());
+  const rehostImage = useCallback(async (rawUrl: string, name: string): Promise<string> => {
+    const url = rawUrl.trim();
+    if (!looksLikeUrl(url) || !workspaceId) return url;
+    const cached = rehostCache.current.get(url);
+    if (cached) return cached;
+    try {
+      const res = await apiFetch<{ success?: boolean; url?: string; error?: string }>("/api/assets/upload", {
+        method: "POST",
+        body: JSON.stringify({ name, url, workspaceId }),
+      });
+      const hosted = res?.url;
+      if (!hosted) throw new Error(res?.error || "El servidor no devolvió una URL");
+      rehostCache.current.set(url, hosted);
+      return hosted;
+    } catch (e) {
+      // Keep the original link rather than dropping the image: a design with a
+      // hotlinked photo still looks right on screen, and the message says which
+      // one could not be brought in.
+      const detail = e instanceof Error ? e.message : String(e);
+      failedImagesRef.current.push(`${name}: ${detail}`);
+      return url;
+    }
+  }, [workspaceId]);
+  const failedImagesRef = useRef<string[]>([]);
+
+  const handleGenerate = useCallback(async () => {
     if (checkedFrames.length === 0) {
       setMessage({ text: "Selecciona al menos un frame para duplicar.", kind: "error" });
       return;
     }
-    if (rows.length === 0) {
-      setMessage({ text: "Sube o pega un CSV con datos primero.", kind: "error" });
+    const usable = rows.filter(r => Object.values(r.values).some(v => (v || "").trim() !== ""));
+    if (usable.length === 0) {
+      setMessage({ text: "Llena al menos una fila de la tabla.", kind: "error" });
       return;
     }
     setGenerating(true);
     setMessage(null);
+    failedImagesRef.current = [];
 
-    const groupMinX = Math.min(...checkedFrames.map(f => f.x));
-    const groupMinY = Math.min(...checkedFrames.map(f => f.y));
-    const groupMaxY = Math.max(...checkedFrames.map(f => f.y + f.height));
-    const groupHeight = groupMaxY - groupMinY;
-    const startX = Math.max(...frames.map(f => f.x + f.width), 0) + FRAME_GAP;
-    const dx = startX - groupMinX;
+    try {
+      const groupMinX = Math.min(...checkedFrames.map(f => f.x));
+      const groupMinY = Math.min(...checkedFrames.map(f => f.y));
+      const groupMaxY = Math.max(...checkedFrames.map(f => f.y + f.height));
+      const groupHeight = groupMaxY - groupMinY;
+      const startX = Math.max(...frames.map(f => f.x + f.width), 0) + FRAME_GAP;
+      const dx = startX - groupMinX;
 
-    // For each row, resolve column values → per-frame {layerId: value} maps.
-    const newFrames: FrameData[] = [];
-    rows.forEach((row, rowIdx) => {
-      const dy = rowIdx * (groupHeight + FRAME_GAP);
-      const label = row.name || row.title || row.headline || columns[0]?.column && row[columns[0].column] || `Fila ${rowIdx + 1}`;
-      const valuesByFrame = new Map<string, Record<string, string>>();
-      for (const col of columns) {
-        const value = row[col.column];
-        if (value === undefined) continue;
-        for (const ref of col.refs) {
-          if (!valuesByFrame.has(ref.frameId)) valuesByFrame.set(ref.frameId, {});
-          valuesByFrame.get(ref.frameId)![ref.layerId] = value;
+      const newFrames: FrameData[] = [];
+      for (let rowIdx = 0; rowIdx < usable.length; rowIdx++) {
+        const row = usable[rowIdx];
+        setProgress(`Fila ${rowIdx + 1} de ${usable.length}`);
+        const dy = rowIdx * (groupHeight + FRAME_GAP);
+        const label = row.values.name || row.values.title || row.values.headline
+          || (columnNames[0] && row.values[columnNames[0]]) || row.id;
+
+        const textByFrame = new Map<string, Record<string, string>>();
+        const imageByFrame = new Map<string, Record<string, string>>();
+        for (const col of columns) {
+          const value = row.values[col.column];
+          if (value === undefined || value === "") continue;
+          const resolved = col.type === "image"
+            ? await rehostImage(value, `${col.column} — ${label}`)
+            : value;
+          const target = col.type === "image" ? imageByFrame : textByFrame;
+          for (const ref of col.refs) {
+            if (!target.has(ref.frameId)) target.set(ref.frameId, {});
+            target.get(ref.frameId)![ref.layerId] = resolved;
+          }
+        }
+
+        for (const f of checkedFrames) {
+          newFrames.push({
+            ...f,
+            id: createFrameId(),
+            name: `${f.name} — ${label}`,
+            x: f.x + dx,
+            y: f.y + dy,
+            html: applyReplacements(f.html, textByFrame.get(f.id) || {}, imageByFrame.get(f.id) || {}),
+          });
         }
       }
-      for (const f of checkedFrames) {
-        const replacements = valuesByFrame.get(f.id) || {};
-        newFrames.push({
-          ...f,
-          id: createFrameId(),
-          name: `${f.name} — ${label}`,
-          x: f.x + dx,
-          y: f.y + dy,
-          html: applyTextReplacements(f.html, replacements),
-        });
-      }
-    });
 
-    onGenerate([...frames, ...newFrames]);
-    setMessage({ text: `✓ ${newFrames.length} frame${newFrames.length === 1 ? "" : "s"} generado${newFrames.length === 1 ? "" : "s"} a partir de ${rows.length} fila${rows.length === 1 ? "" : "s"}.`, kind: "success" });
-    setGenerating(false);
-  }
+      onGenerate([...frames, ...newFrames]);
+      const failed = failedImagesRef.current;
+      setMessage(failed.length
+        ? {
+          text: `✓ ${newFrames.length} frames generados. ${failed.length} imagen${failed.length === 1 ? "" : "es"} no se pudo traer y quedó como enlace externo — ${failed[0]}`,
+          kind: "error",
+        }
+        : {
+          text: `✓ ${newFrames.length} frame${newFrames.length === 1 ? "" : "s"} generado${newFrames.length === 1 ? "" : "s"} a partir de ${usable.length} fila${usable.length === 1 ? "" : "s"}.`,
+          kind: "success",
+        });
+    } catch (e) {
+      setMessage({ text: `No se pudo generar: ${e instanceof Error ? e.message : String(e)}`, kind: "error" });
+    } finally {
+      setGenerating(false);
+      setProgress("");
+    }
+  }, [checkedFrames, rows, frames, columns, columnNames, onGenerate, rehostImage]);
+
+  // Runs the generation that "Subir y crear" asked for, once the rows landed.
+  useEffect(() => {
+    if (!pendingGenerateRef.current || rows.length === 0) return;
+    pendingGenerateRef.current = false;
+    void handleGenerate();
+  }, [rows, handleGenerate]);
+
+  const filledRows = rows.filter(r => Object.values(r.values).some(v => (v || "").trim() !== "")).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12, overflow: "auto", flex: 1 }}>
       <div style={{ fontSize: 11.5, color: "#9a9484", lineHeight: 1.5 }}>
-        Selecciona frames, exporta sus textos a un CSV (hasta {MAX_ROWS} filas), edítalo y vuelve a subirlo para generar tus variantes al instante.
+        Una fila por diseño. Escribe aquí, o descarga el CSV para que alguien más lo llene
+        y vuelve a subirlo — cada fila lleva su <code style={{ color: "#c8b898" }}>id</code> para
+        reconocerla cuando regrese.
       </div>
 
       {/* Frame selection */}
@@ -271,7 +311,7 @@ export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, 
         {frames.length === 0 ? (
           <div style={{ fontSize: 12, color: "#7a7668" }}>Este template no tiene frames todavía.</div>
         ) : (
-          <div className="batch-frame-list" style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 240, overflowY: "auto", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 4 }}>
+          <div className="batch-frame-list" style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflowY: "auto", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 4 }}>
             {frames.map(f => {
               const checked = checkedFrameIds.has(f.id);
               return (
@@ -285,8 +325,6 @@ export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, 
                     background: checked ? "rgba(200,184,152,0.16)" : "transparent",
                     transition: "background 0.1s ease",
                   }}
-                  onMouseOver={e => { if (!checked) e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
-                  onMouseOut={e => { e.currentTarget.style.background = checked ? "rgba(200,184,152,0.16)" : "transparent"; }}
                 >
                   <input type="checkbox" checked={checked} onChange={() => toggleFrame(f.id)} />
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
@@ -298,106 +336,127 @@ export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, 
         )}
       </div>
 
-      {/* Detected text columns */}
-      {checkedFrameIds.size > 0 && (
-        <div style={{
-          padding: "8px 12px", borderRadius: 6,
-          background: "rgba(200, 184, 152, 0.04)", border: "1px solid rgba(200, 184, 152, 0.08)",
-          fontSize: 11, lineHeight: 1.6,
-        }}>
-          <div style={{ color: "#c8b898", fontWeight: 600, marginBottom: 4 }}>
-            {columns.length > 0 ? `Textos detectados (${columns.length}):` : "No se detectó texto editable en estos frames."}
-          </div>
-          {columns.length > 0 && (
-            <div style={{ color: "#7a7668" }}>
-              {columns.map(c => (
-                <span key={c.column} style={{ display: "inline-block", marginRight: 4, marginBottom: 2, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.03)", color: "#f0ebe0" }}>
-                  {c.column}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Generate CSV template */}
-      <button
-        type="button"
-        onClick={handleDownloadCsvTemplate}
-        disabled={columns.length === 0}
-        style={{
-          padding: "8px 0", border: "1px solid rgba(200,184,152,0.2)", borderRadius: 6,
-          background: "rgba(200,184,152,0.06)", color: columns.length === 0 ? "#5a5648" : "#c8b898",
-          fontSize: 12, fontWeight: 500, cursor: columns.length === 0 ? "not-allowed" : "pointer",
-        }}
-      >
-        ⇩ Generar CSV de ejemplo
-      </button>
-
-      {/* CSV Upload */}
+      {/* ── The sheet ── */}
       <div>
-        <div style={batchSectionLabelStyle}>Subir CSV</div>
-        <button
-          type="button"
-          aria-label="Upload CSV file"
-          onDragOver={e => e.preventDefault()}
-          onDrop={e => {
-            e.preventDefault();
-            const file = e.dataTransfer.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => applyCsvText(reader.result as string);
-            reader.readAsText(file);
-          }}
-          style={batchDropZoneStyle}
-          onClick={() => fileRef.current?.click()}
-        >
-          <div style={{ fontSize: 20, marginBottom: 4 }}><IconFolder size={22} color="#7a7668" /></div>
-          <div style={{ fontSize: 12, color: "#7a7668" }}>Suelta el CSV aquí o haz clic para buscar</div>
-          <input ref={fileRef} type="file" accept=".csv" aria-label="CSV file input" style={{ display: "none" }} onChange={handleFile} />
-        </button>
-        <textarea
-          aria-label="CSV data"
-          value={csvText}
-          onChange={e => applyCsvText(e.target.value)}
-          placeholder={"O pega los datos CSV aquí…\nHeadline,Subtitle\nHello World,Welcome"}
-          style={batchTextareaStyle}
-        />
+        <div style={batchSectionLabelStyle}>
+          Tabla de contenido ({filledRows} de {rows.length} fila{rows.length === 1 ? "" : "s"} con datos)
+        </div>
+        {sheetColumns.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#7a7668" }}>
+            Selecciona un frame con texto o imágenes para armar la tabla.
+          </div>
+        ) : (
+          <>
+            <div style={{ overflowX: "auto", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6 }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "100%" }}>
+                <thead>
+                  <tr style={{ background: "rgba(15,15,15,0.6)" }}>
+                    <th style={sheetHeadStyle} title="Identificador de la fila. Viaja en el CSV.">id</th>
+                    {sheetColumns.map(c => (
+                      <th key={c} style={{ ...sheetHeadStyle, minWidth: 130 }}>
+                        {c}
+                        {imageColumns.has(c) && (
+                          <span style={{ color: "#c8b898", marginLeft: 4 }} title="Pega el enlace directo de la imagen">
+                            ◧
+                          </span>
+                        )}
+                      </th>
+                    ))}
+                    <th style={{ ...sheetHeadStyle, width: 26 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(row => (
+                    <tr key={row.id}>
+                      <td style={{ ...sheetCellStyle, color: "#7a7668", fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                        {row.id}
+                      </td>
+                      {sheetColumns.map(c => (
+                        <td key={c} style={sheetCellStyle}>
+                          <input
+                            value={row.values[c] ?? ""}
+                            onChange={e => setCell(row.id, c, e.target.value)}
+                            placeholder={imageColumns.has(c) ? "https://…" : ""}
+                            aria-label={`${c} fila ${row.id}`}
+                            style={sheetInputStyle}
+                          />
+                        </td>
+                      ))}
+                      <td style={sheetCellStyle}>
+                        <button
+                          type="button"
+                          onClick={() => removeRow(row.id)}
+                          title="Eliminar fila"
+                          aria-label={`Eliminar fila ${row.id}`}
+                          style={{
+                            background: "transparent", border: "none", color: "#7a7668",
+                            cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 4px",
+                          }}
+                        >×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              onClick={addRow}
+              disabled={rows.length >= MAX_ROWS}
+              style={{
+                marginTop: 6, width: "100%", padding: "6px 0", fontSize: 12,
+                border: "1px dashed rgba(200,184,152,0.25)", borderRadius: 6,
+                background: "transparent", color: rows.length >= MAX_ROWS ? "#5a5648" : "#c8b898",
+                cursor: rows.length >= MAX_ROWS ? "not-allowed" : "pointer",
+              }}
+            >
+              + Agregar fila{rows.length >= MAX_ROWS ? ` (máximo ${MAX_ROWS})` : ""}
+            </button>
+          </>
+        )}
       </div>
 
-      {/* Preview table */}
-      {preview.length > 0 && (
-        <div>
-          <div style={batchSectionLabelStyle}>Vista previa (primeras {preview.length} de {rows.length} filas)</div>
-          <div style={{ overflow: "auto", maxHeight: 140, border: "1px solid rgba(255, 255, 255, 0.04)", borderRadius: 6 }}>
-            <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "rgba(15, 15, 15, 0.5)" }}>
-                  {headers.map(h => (
-                    <th key={h} style={{ padding: "4px 8px", textAlign: "left", color: "#7a7668", fontWeight: 400, borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {preview.map((row, rowIdx) => {
-                  const rowKey = headers.map(h => row[h] || "").join("-") || `row-${rowIdx}`;
-                  return (
-                    <tr key={rowKey}>
-                      {headers.map(h => (
-                        <td key={h} style={{ padding: "3px 8px", borderBottom: "1px solid rgba(255, 255, 255, 0.03)", color: "#f0ebe0" }}>{row[h] || ""}</td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {/* CSV in and out */}
+      <div style={{ display: "flex", gap: 6 }}>
+        <button type="button" onClick={handleDownloadCsv} disabled={sheetColumns.length === 0} style={batchSecondaryBtnStyle(sheetColumns.length === 0)}>
+          ⇩ Descargar CSV
+        </button>
+        <button type="button" onClick={() => fileRef.current?.click()} style={batchSecondaryBtnStyle(false)}>
+          ⇧ Subir CSV
+        </button>
+      </div>
+      <button
+        type="button"
+        aria-label="Subir CSV y generar"
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => {
+          e.preventDefault();
+          const file = e.dataTransfer.files[0];
+          if (file) readFile(file, false);
+        }}
+        style={batchDropZoneStyle}
+        onClick={() => { pendingGenerateRef.current = false; fileRef.current?.click(); }}
+      >
+        <div style={{ marginBottom: 4 }}><IconFolder size={22} color="#7a7668" /></div>
+        <div style={{ fontSize: 12, color: "#7a7668" }}>Suelta aquí el CSV que te devolvieron</div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv"
+          aria-label="CSV file input"
+          style={{ display: "none" }}
+          onChange={e => {
+            const file = e.target.files?.[0];
+            if (file) readFile(file, generateOnUploadRef.current);
+            generateOnUploadRef.current = false;
+            e.target.value = "";
+          }}
+        />
+      </button>
 
       {message && (
         <div style={{
-          padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          padding: "8px 12px", borderRadius: 6, fontSize: 12, lineHeight: 1.5,
           background: message.kind === "error" ? "rgba(248,113,113,0.08)" : "rgba(74,222,128,0.08)",
           color: message.kind === "error" ? "#f87171" : "#4ade80",
         }}>
@@ -405,32 +464,58 @@ export function BatchAMator({ frames, checkedFrameIds, onCheckedFrameIdsChange, 
         </div>
       )}
 
-      {/* Generate button */}
       <button
         type="button"
         onClick={handleGenerate}
-        disabled={checkedFrameIds.size === 0 || rows.length === 0 || generating}
-        style={batchGenerateBtnStyle(checkedFrameIds.size === 0 || rows.length === 0, generating)}
+        disabled={checkedFrameIds.size === 0 || filledRows === 0 || generating}
+        style={batchGenerateBtnStyle(checkedFrameIds.size === 0 || filledRows === 0, generating)}
       >
-        {generating ? "Generando…" : `Generar ${rows.length || ""} duplicado${rows.length === 1 ? "" : "s"}`.trim()}
+        {generating ? (progress || "Generando…") : `Generar ${filledRows || ""} diseño${filledRows === 1 ? "" : "s"}`.trim()}
+      </button>
+      <button
+        type="button"
+        onClick={() => { generateOnUploadRef.current = true; fileRef.current?.click(); }}
+        disabled={checkedFrameIds.size === 0 || generating}
+        style={batchSecondaryBtnStyle(checkedFrameIds.size === 0 || generating)}
+        title="Carga el CSV y genera de inmediato, sin revisar la tabla"
+      >
+        Subir CSV y crear de una
       </button>
     </div>
   );
 }
 
+/** Set just before opening the picker, read once the file arrives. */
+const generateOnUploadRef = { current: false };
+
 const batchSectionLabelStyle: React.CSSProperties = {
   fontSize: 11, color: "#7a7668", marginBottom: 6,
   textTransform: "uppercase", letterSpacing: 1,
 };
+const sheetHeadStyle: React.CSSProperties = {
+  padding: "5px 8px", textAlign: "left", color: "#7a7668", fontWeight: 400,
+  borderBottom: "1px solid rgba(255,255,255,0.06)", whiteSpace: "nowrap",
+};
+const sheetCellStyle: React.CSSProperties = {
+  padding: "2px 4px", borderBottom: "1px solid rgba(255,255,255,0.03)",
+  color: "#f0ebe0", verticalAlign: "middle",
+};
+const sheetInputStyle: React.CSSProperties = {
+  width: "100%", minWidth: 120, background: "transparent",
+  border: "1px solid transparent", borderRadius: 4, padding: "3px 5px",
+  color: "#f0ebe0", fontSize: 11, fontFamily: "inherit", outline: "none",
+};
 const batchDropZoneStyle: React.CSSProperties = {
-  border: "1px dashed rgba(200, 184, 152, 0.12)", borderRadius: 8, padding: 16,
-  textAlign: "center", cursor: "pointer", marginBottom: 8, width: "100%", background: "transparent",
+  border: "1px dashed rgba(200, 184, 152, 0.12)", borderRadius: 8, padding: 14,
+  textAlign: "center", cursor: "pointer", width: "100%", background: "transparent",
 };
-const batchTextareaStyle: React.CSSProperties = {
-  width: "100%", height: 70, background: "rgba(15, 15, 15, 0.5)", border: "1px solid rgba(255, 255, 255, 0.04)",
-  color: "#f0ebe0", borderRadius: 6, padding: 8, fontSize: 12,
-  fontFamily: "monospace", resize: "vertical",
-};
+function batchSecondaryBtnStyle(disabled: boolean): React.CSSProperties {
+  return {
+    flex: 1, padding: "8px 0", border: "1px solid rgba(200,184,152,0.2)", borderRadius: 6,
+    background: "rgba(200,184,152,0.06)", color: disabled ? "#5a5648" : "#c8b898",
+    fontSize: 12, fontWeight: 500, cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
 function batchGenerateBtnStyle(disabled: boolean, generating: boolean): React.CSSProperties {
   return {
     width: "100%", padding: "10px 0", border: "none", borderRadius: 8,
