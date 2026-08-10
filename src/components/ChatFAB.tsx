@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { appendRemoteHistory, fetchRemoteHistory } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
@@ -1891,8 +1892,54 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
     }
   }, [providerKeys]);
 
-  // Persist messages
+  // Persist messages locally, for instant render and offline reading.
   useEffect(() => { saveMessages(messages); }, [messages]);
+
+  // ── The conversation belongs to the account ──
+  // The local copy paints immediately; the server's copy replaces it as soon
+  // as it arrives, which is what makes the same conversation appear on a
+  // phone, a second browser, or after clearing site data. Only replaced when
+  // the server actually answered AND has something — a failed request must
+  // never blank a real conversation.
+  const syncedRef = useRef(false);
+  useEffect(() => {
+    if (syncedRef.current) return;
+    syncedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchRemoteHistory();
+      if (cancelled || !remote || remote.length === 0) return;
+      setMessages(remote as Message[]);
+      // Already on the server by definition — without this the sync effect
+      // would read them as "new" and write the whole conversation straight
+      // back, doubling it on every load.
+      syncedCountRef.current = remote.length;
+      // Everything already on this device that the server has not seen is
+      // pushed up, so a conversation started offline is not lost by syncing.
+      const localOnly = loadMessages().filter(m =>
+        !remote.some(r => r.ts === m.ts && r.content === m.content));
+      if (localOnly.length) void appendRemoteHistory(localOnly, workspaceId);
+    })();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  /**
+   * Mirrors whatever is new up to the account, once the turn has settled.
+   *
+   * Driven off `sending` rather than hooked into each of the dozen places a
+   * message is appended: a turn adds several as it runs, and pushing each one
+   * as it lands would be a request per token-ish. Waiting for the turn to
+   * finish sends them in one write, and the index of what has already been
+   * persisted is the only bookkeeping needed.
+   */
+  const syncedCountRef = useRef(0);
+  useEffect(() => {
+    if (sending) return;
+    const pending = messages.slice(syncedCountRef.current);
+    if (pending.length === 0) return;
+    syncedCountRef.current = messages.length;
+    void appendRemoteHistory(pending as any, workspaceId);
+  }, [sending, messages, workspaceId]);
   // The draft is saved as it is typed, not on submit: the point is to survive
   // a reload that happens mid-sentence.
   useEffect(() => {
@@ -1913,13 +1960,20 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   useEffect(() => { currentContext = { workspaceId, templateId }; }, [workspaceId, templateId]);
 
   // ── Reset chat history when workspace changes ──
-  // The chat is workspace-scoped: switching workspace means switching user
-  // (or project), so we must not show the previous conversation. Without
-  // this, Victor could see Renzo's chat if they share a browser.
+  // Switching workspace clears the working state of the current turn, but no
+  // longer wipes the conversation.
+  //
+  // This used to reset the transcript, because the transcript lived in
+  // localStorage and two people sharing a browser would have shared it. That
+  // is now handled where it belongs: history is stored per user and read back
+  // under a row-level policy of `user_id = auth.uid()`, so Victor cannot see
+  // Renzo's conversation even on the same machine. Wiping on workspace change
+  // would only mean the agent forgets its own user for no reason — and this
+  // agent is one per person, not one per project. The workspace each message
+  // was said in travels with the message.
   const prevWorkspaceRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (prevWorkspaceRef.current !== undefined && prevWorkspaceRef.current !== workspaceId) {
-      setMessages([{ role: "assistant", content: "Hola. Soy el Leader del Harness. ¿Qué diseño necesitas crear hoy?", ts: Date.now() }]);
       setToolEvents([]);
       setCopyStatus("idle");
       setExpandedTools(new Set());
