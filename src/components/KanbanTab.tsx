@@ -35,6 +35,14 @@ type KanbanTask = {
   blocker_reason?: string | null;
   checkpoint_json?: CheckpointJson | null;
   completed_at?: string | null;
+  // v25 enrichment fields
+  source?: string | null;
+  ai_model?: string | null;
+  content_type?: string | null;
+  style_name?: string | null;
+  total_agent_time_ms?: number | null;
+  total_tokens?: number | null;
+  total_cost_cents?: number | null;
 };
 
 type KanbanColumns = Record<string, KanbanTask[]>;
@@ -85,6 +93,53 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
   </div>
 );
 
+// ── Helpers for v25 detail enrichment ──
+const sourceLabel = (s?: string | null) => ({ mcp: "MCP", chat_internal: "Chat Interno", human: "Humano" }[s || ""] || s || "—");
+const sourceColor = (s?: string | null) => ({ mcp: "rgba(59,130,246,0.2)", chat_internal: "rgba(168,85,247,0.2)", human: "rgba(52,211,153,0.2)" }[s || ""] || "rgba(255,255,255,0.06)");
+const sourceTextColor = (s?: string | null) => ({ mcp: "#60a5fa", chat_internal: "#a78bfa", human: "#6ee7b7" }[s || ""] || "rgba(255,255,255,0.4)");
+
+function formatMs(ms?: number | null): string {
+  if (!ms || ms <= 0) return "—";
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return totalSec + "s";
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (h > 0) return h + "h " + m + "m";
+  return m + "m " + (totalSec % 60) + "s";
+}
+
+function formatTokens(n?: number | null): string {
+  if (!n || n <= 0) return "—";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+function formatCost(cents?: number | null): string {
+  if (!cents || cents <= 0) return "—";
+  const dollars = cents / 100;
+  if (dollars < 0.01) return "< $0.01";
+  return "$" + dollars.toFixed(dollars < 1 ? 3 : 2);
+}
+
+const statCardStyle: React.CSSProperties = {
+  flex: 1, minWidth: 100,
+  background: "rgba(255,255,255,0.03)", borderRadius: 10,
+  border: "1px solid rgba(255,255,255,0.06)", padding: "12px 14px",
+  textAlign: "center",
+};
+
+function MetaRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+      {label}:{" "}
+      {mono
+        ? <code style={{ color: "rgba(255,255,255,0.6)", fontSize: 10, wordBreak: "break-all" }}>{value}</code>
+        : <span style={{ color: "rgba(255,255,255,0.65)" }}>{value}</span>}
+    </div>
+  );
+}
+
 export function KanbanTab({ workspaceId }: Props) {
   const [columns, setColumns] = useState<KanbanColumns>({});
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
@@ -97,8 +152,9 @@ export function KanbanTab({ workspaceId }: Props) {
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [detailCardId, setDetailCardId] = useState<string | null>(null);
   const [sessionEntries, setSessionEntries] = useState<Record<string, any[]>>({});
+  const [agentTimeLogs, setAgentTimeLogs] = useState<Record<string, any[]>>({});
   const [createAcceptance, setCreateAcceptance] = useState("");
-  const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "" });
+  const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", source: "mcp", aiModel: "", contentType: "organico" });
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -120,6 +176,7 @@ export function KanbanTab({ workspaceId }: Props) {
       // We don't have a session list tool yet — use the activity log as a proxy for now.
       // If we wanted harness_entries we'd add harness_list_sessions({ taskId }).
       setSessionEntries(prev => ({ ...prev, [taskId]: sessData?.activityLog || [] }));
+      setAgentTimeLogs(prev => ({ ...prev, [taskId]: sessData?.agentTimeLog || [] }));
     } catch {
       setSessionEntries(prev => ({ ...prev, [taskId]: [] }));
     }
@@ -261,12 +318,15 @@ export function KanbanTab({ workspaceId }: Props) {
             brief: createForm.brief.trim() || undefined,
             deadline: createForm.deadline || undefined,
             acceptance: acceptanceLines.length > 0 ? acceptanceLines : undefined,
+            source: createForm.source,
+            aiModel: createForm.aiModel || undefined,
+            contentType: createForm.contentType,
           },
           id: 1,
         }),
       });
       setShowCreateModal(false);
-      setCreateForm({ title: "", type: "post", priority: 2, brief: "", deadline: "" });
+      setCreateForm({ title: "", type: "post", priority: 2, brief: "", deadline: "", source: "mcp", aiModel: "", contentType: "organico" });
       setCreateAcceptance("");
       await fetchTasks();
     } catch (e: any) {
@@ -405,6 +465,32 @@ export function KanbanTab({ workspaceId }: Props) {
                   rows={3}
                 />
               </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Origen</label>
+                  <select value={createForm.source} onChange={e => setCreateForm(f => ({ ...f, source: e.target.value }))} style={inputStyle}>
+                    <option value="mcp">🤖 MCP</option>
+                    <option value="chat_internal">💬 Chat Interno</option>
+                    <option value="human">👤 Humano</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Tipo de contenido</label>
+                  <select value={createForm.contentType} onChange={e => setCreateForm(f => ({ ...f, contentType: e.target.value }))} style={inputStyle}>
+                    <option value="organico">🌱 Orgánico</option>
+                    <option value="ad">💰 Ad</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo de IA</label>
+                <input
+                  placeholder="ej: claude-sonnet-4 (opcional)"
+                  value={createForm.aiModel}
+                  onChange={e => setCreateForm(f => ({ ...f, aiModel: e.target.value }))}
+                  style={inputStyle}
+                />
+              </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" onClick={() => setShowCreateModal(false)} style={btnSecondary}>Cancelar</button>
                 <button type="button" onClick={handleCreate} disabled={!createForm.title.trim()} style={btnPrimary(!!createForm.title.trim())}>Crear</button>
@@ -463,6 +549,66 @@ export function KanbanTab({ workspaceId }: Props) {
                 {task.brand_name && <div>Brand: {task.brand_name}</div>}
                 {task.workspace_name && <div>Workspace: {task.workspace_name}</div>}
               </div>
+
+              {/* ── v25: Procedencia + Archivos + Estilo ── */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+                {task.source && (
+                  <Badge label={sourceLabel(task.source)} color={sourceColor(task.source)} textColor={sourceTextColor(task.source)} />
+                )}
+                {task.content_type && (
+                  <Badge label={task.content_type === "ad" ? "💰 Ad" : "🌱 Orgánico"} color={task.content_type === "ad" ? "rgba(251,191,36,0.15)" : "rgba(52,211,153,0.12)"} textColor={task.content_type === "ad" ? "#fbbf24" : "#6ee7b7"} />
+                )}
+                {task.ai_model && (
+                  <Badge label={`🧠 ${task.ai_model}`} color="rgba(59,130,246,0.12)" textColor="#60a5fa" />
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 24px", fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 16 }}>
+                <MetaRow label="Archivo ID" value={task.template_id || "—"} mono />
+                <MetaRow label="Estilo" value={task.style_name || task.brand_name || "—"} />
+              </div>
+
+              {/* ── v25: Tiempo · Tokens · Costo ── */}
+              {(task.total_agent_time_ms || task.total_tokens || task.total_cost_cents) ? (
+                <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                  <div style={statCardStyle}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Tiempo agente</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{formatMs(task.total_agent_time_ms)}</div>
+                  </div>
+                  <div style={statCardStyle}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Tokens</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{formatTokens(task.total_tokens)}</div>
+                  </div>
+                  <div style={statCardStyle}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Costo</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: task.total_cost_cents ? "#6ee7b7" : "rgba(255,255,255,0.5)" }}>{formatCost(task.total_cost_cents)}</div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── v25: Per-agent breakdown ── */}
+              {(agentTimeLogs[task.id] || []).length > 0 && (
+                <Section title={`Tiempo por agente (${(agentTimeLogs[task.id] || []).length})`}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {(agentTimeLogs[task.id] || []).map((at: any, i: number) => (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        fontSize: 11, color: "rgba(255,255,255,0.5)",
+                        background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: "8px 12px",
+                      }}>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 100,
+                          background: at.agent_role === "leader" ? "rgba(59,130,246,0.15)" : at.agent_role === "implementer" ? "rgba(168,85,247,0.15)" : at.agent_role === "reviewer" ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.06)",
+                          color: at.agent_role === "leader" ? "#60a5fa" : at.agent_role === "implementer" ? "#a78bfa" : at.agent_role === "reviewer" ? "#6ee7b7" : "rgba(255,255,255,0.4)",
+                        }}>{at.agent_role}</span>
+                        <span style={{ flex: 1 }}>{at.agent_name || "—"}</span>
+                        <span style={{ color: "rgba(255,255,255,0.4)", minWidth: 60, textAlign: "right" }}>{formatMs(at.duration_ms)}</span>
+                        {at.tokens_used > 0 && <span style={{ color: "rgba(255,255,255,0.3)", minWidth: 50, textAlign: "right" }}>{formatTokens(at.tokens_used)}</span>}
+                        {at.ai_model && <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>{at.ai_model}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              )}
 
               {/* Brief */}
               {task.brief && (

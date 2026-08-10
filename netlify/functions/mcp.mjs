@@ -3405,6 +3405,9 @@ const MCP_TOOLS = [
         assignedTo: { type: "string", description: "Agent/person assigned to this task" },
         tags: { type: "array", items: { type: "string" }, description: "Free-form tags" },
         acceptance: { type: "array", items: { type: "string" }, description: "Acceptance criteria — objective verifiable items. The reviewer checks each one. Example: ['Button exists in topbar', 'Build passes without TS errors']" },
+        source: { type: "string", enum: ["mcp", "chat_internal", "human"], description: "Provenance: mcp (via external AI/MCP call), chat_internal (via the in-app chat), or human (manually created)" },
+        aiModel: { type: "string", description: "AI model that created this task (e.g. claude-sonnet-4, gpt-4o). Omit for human-created tasks." },
+        contentType: { type: "string", enum: ["ad", "organico"], description: "ad (paid advertisement) or organico (organic content)" },
       },
       required: ["title"],
     },
@@ -3446,6 +3449,32 @@ const MCP_TOOLS = [
         cardId: { type: "string", description: "Card ID" },
       },
       required: ["cardId"],
+    },
+  },
+  {
+    name: "studio_log_agent_time",
+    description: "Log time, tokens, and model usage for an agent session on a Kanban task. Accumulates totals on the card and calculates cost from the deterministic ai_model_pricing table. Call this when an agent (leader/implementer/reviewer) finishes work on a task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Card ID to log time against" },
+        agentRole: { type: "string", enum: ["leader", "implementer", "reviewer", "explorer"], description: "Role of the agent" },
+        agentName: { type: "string", description: "Name of the agent (e.g. 'claude', 'hermes')" },
+        durationMs: { type: "integer", minimum: 0, description: "Duration in milliseconds" },
+        tokensUsed: { type: "integer", minimum: 0, description: "Tokens consumed in this session" },
+        aiModel: { type: "string", description: "AI model used (e.g. claude-sonnet-4). Used for cost lookup." },
+        notes: { type: "string", description: "Optional notes about this session" },
+      },
+      required: ["taskId", "agentRole", "durationMs"],
+    },
+  },
+  {
+    name: "studio_list_models",
+    description: "List all AI models and their pricing from the deterministic lookup table. Returns model name, provider, and per-1M-token input/output prices. Use this to see available models and their costs.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
     },
   },
   // ── Harness: multi-agent orchestration (12 tools) ──
@@ -11834,6 +11863,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         created_by: "mcp",
         tags: params.tags || [],
         acceptance: acceptanceArr,
+        source: params.source || "mcp",
+        ai_model: params.aiModel || null,
+        content_type: params.contentType || "organico",
       };
       const { data: created, error: createErr } = await sbCard.from("design_kanban_tasks").insert(newCard).select().single();
       if (createErr) throw { code: -32000, message: "Failed to create card: " + createErr.message, detail: createErr };
@@ -11906,7 +11938,84 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (getErr || !cardDetail) throw { code: -32000, message: "Card not found: " + params.cardId };
       // Fetch activity log
       const { data: activity } = await sbGet.from("design_kanban_activity_log").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
-      return { card: cardDetail, activityLog: activity || [], activityCount: (activity || []).length };
+      // Fetch agent time log
+      const { data: agentTime } = await sbGet.from("design_kanban_agent_time").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
+      // Fetch model pricing for cost breakdown
+      const { data: pricing } = await sbGet.from("ai_model_pricing").select("*").order("model_name", { ascending: true });
+      return {
+        card: cardDetail,
+        activityLog: activity || [],
+        activityCount: (activity || []).length,
+        agentTimeLog: agentTime || [],
+        modelPricing: pricing || [],
+      };
+    }
+
+    // ── Studio Board: log agent time + tokens + cost ──
+    case "studio_log_agent_time": {
+      const sbTime = getSupabaseAdmin();
+      if (!sbTime) throw { code: -32000, message: "Studio Board requires Supabase." };
+
+      // Verify card exists
+      const { data: taskCard, error: taskErr } = await sbTime.from("design_kanban_tasks").select("id, total_agent_time_ms, total_tokens, total_cost_cents").eq("id", params.taskId).single();
+      if (taskErr || !taskCard) throw { code: -32000, message: "Card not found: " + params.taskId };
+
+      const tokensUsed = params.tokensUsed || 0;
+      const aiModel = params.aiModel || "unknown";
+
+      // Look up pricing for cost calculation
+      let costCents = 0;
+      const { data: pricingRow } = await sbTime.from("ai_model_pricing").select("*").eq("model_name", aiModel).maybeSingle();
+      if (pricingRow && tokensUsed > 0) {
+        // Use output price as blended rate (output tokens are the expensive part)
+        const pricePerToken = Number(pricingRow.output_price_per_1m) / 1_000_000;
+        costCents = Math.round(tokensUsed * pricePerToken * 100);
+      }
+
+      // Insert agent time entry
+      const timeId = "at_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+      const { error: insertErr } = await sbTime.from("design_kanban_agent_time").insert({
+        id: timeId,
+        task_id: params.taskId,
+        agent_role: params.agentRole,
+        agent_name: params.agentName || null,
+        duration_ms: params.durationMs || 0,
+        tokens_used: tokensUsed,
+        ai_model: aiModel,
+        notes: params.notes || null,
+      });
+      if (insertErr) throw { code: -32000, message: "Failed to log agent time: " + insertErr.message };
+
+      // Accumulate totals on the card
+      const { data: updated, error: updateErr } = await sbTime.from("design_kanban_tasks")
+        .update({
+          total_agent_time_ms: (taskCard.total_agent_time_ms || 0) + (params.durationMs || 0),
+          total_tokens: (taskCard.total_tokens || 0) + tokensUsed,
+          total_cost_cents: (taskCard.total_cost_cents || 0) + costCents,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", params.taskId).select("total_agent_time_ms, total_tokens, total_cost_cents").single();
+      if (updateErr) throw { code: -32000, message: "Failed to update card totals: " + updateErr.message };
+
+      return {
+        success: true,
+        timeEntryId: timeId,
+        sessionCostCents: costCents,
+        cardTotals: {
+          total_agent_time_ms: updated.total_agent_time_ms,
+          total_tokens: updated.total_tokens,
+          total_cost_cents: updated.total_cost_cents,
+        },
+      };
+    }
+
+    // ── Studio Board: list AI model pricing ──
+    case "studio_list_models": {
+      const sbModels = getSupabaseAdmin();
+      if (!sbModels) throw { code: -32000, message: "Studio Board requires Supabase." };
+      const { data: models, error: modelsErr } = await sbModels.from("ai_model_pricing").select("*").order("model_name", { ascending: true });
+      if (modelsErr) throw { code: -32000, message: "Failed to list models: " + modelsErr.message };
+      return { models: models || [], total: (models || []).length };
     }
 
     // ═══════════════════════════════════════════════════════════════
