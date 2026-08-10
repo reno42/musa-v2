@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = resolve(fileURLToPath(import.meta.url), "..");
 const modulePath = "file://" + resolve(__dirname, "..", "src", "lib", "appRoute.ts");
-const { readAppRoute, routeRequiresAccount } = await import(modulePath);
+const { readAppRoute, routeRequiresAccount, workspaceTabUrl } = await import(modulePath);
 
 function location(pathname = "/", search = "", hash = "") {
   return { pathname, search, hash };
@@ -35,6 +35,43 @@ describe("startup routing", () => {
     const route = readAppRoute(location());
     assert.deepEqual(route, { kind: "root" });
     assert.equal(routeRequiresAccount(route), false);
+  });
+
+  // Panes used to live in React state alone, so refreshing the table or the
+  // CRM dropped back to the graph — and losing the tab with it dropped all
+  // the way back to Archivos.
+  it("carries the pane inside a workspace tab", () => {
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/graph/table")),
+      { kind: "workspace", tab: "graph", pane: "table" },
+    );
+  });
+
+  it("keeps the tab when the pane is unknown, since the tab is the bigger loss", () => {
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/graph/inventado")),
+      { kind: "workspace", tab: "graph", pane: "inventado" },
+    );
+  });
+
+  it("falls back to the default tab when the tab itself is unknown", () => {
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/inventado/table")),
+      { kind: "workspace" },
+    );
+  });
+
+  it("round-trips a tab and pane through the URL builder", () => {
+    assert.equal(workspaceTabUrl("graph", "pipeline"), "/#workspace/graph/pipeline");
+    assert.deepEqual(
+      readAppRoute(location("/", "", "#workspace/graph/pipeline")),
+      { kind: "workspace", tab: "graph", pane: "pipeline" },
+    );
+  });
+
+  it("leaves the default pane out of the URL, the way the default tab is", () => {
+    assert.equal(workspaceTabUrl("graph", "graph"), "/#workspace/graph");
+    assert.equal(workspaceTabUrl("templates"), "/#workspace");
   });
 
   it("prioritizes invitation and recovery flows over template params", () => {

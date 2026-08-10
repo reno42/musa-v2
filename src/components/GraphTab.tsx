@@ -10,6 +10,7 @@ import {
   type KnowledgeGraphEdge,
   type KnowledgeNodeKind,
 } from "../lib/designGraph";
+import { DEFAULT_GRAPH_PANE, isGraphPane, type GraphPane } from "../lib/appRoute";
 import { GraphDataTable } from "./GraphDataTable";
 import { BrandGraphCanvas } from "./BrandGraphCanvas";
 import { BrandGraphDataTable } from "./BrandGraphDataTable";
@@ -35,6 +36,10 @@ import { StorageTab } from "./StorageTab";
 interface Props {
   workspaceId: string | null;
   onOpenTemplate?: (templateId: string) => void;
+  /** Which pane to show, read from the URL by Dashboard. */
+  pane?: string;
+  /** Report a pane change so it lands in the URL and survives a refresh. */
+  onPaneChange?: (pane: GraphPane) => void;
 }
 
 interface SimNode {
@@ -81,7 +86,7 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
 }
 
-export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
+export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [designNodes, setDesignNodes] = useState<DesignGraphNode[]>([]);
@@ -108,8 +113,11 @@ export function GraphTab({ workspaceId, onOpenTemplate }: Props) {
 
   // ── View toggle: graph canvas | data table | brand hierarchy ──
   const [view] = useState<"graph" | "data" | "brands">("brands");
-  // Sub-view for Red de Marcas: graph canvas vs. data table
-  const [brandView, setBrandView] = useState<"graph" | "table" | "pipeline" | "accounts" | "storage">("graph");
+  // Sub-view for Red de Marcas. The URL owns it — Dashboard reads the pane out
+  // of the hash and hands it down, so a refresh on the table stays on the
+  // table instead of snapping back to the graph.
+  const brandView: GraphPane = pane && isGraphPane(pane) ? pane : DEFAULT_GRAPH_PANE;
+  const setBrandView = useCallback((next: GraphPane) => { onPaneChange?.(next); }, [onPaneChange]);
   // Key to force BrandGraphCanvas remount on data change
   const [brandRefreshKey, setBrandRefreshKey] = useState(0);
 

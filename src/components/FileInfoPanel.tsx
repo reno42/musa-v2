@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiHeaders } from "../lib/apiKey";
+import { notifyMetaChanged, onMetaChanged } from "../lib/metaSync";
 import { ASSET_TYPE_OPTIONS, DESIGNER_TYPE_OPTIONS, type DesignerType } from "../lib/designGraph";
 
 interface FileMeta {
@@ -7,6 +8,7 @@ interface FileMeta {
   brand: string;
   campaign_id: string | null;
   campaign: string;
+  category: string;
   asset_type: string;
   designer_type: string;
   is_permanent: boolean;
@@ -28,6 +30,13 @@ interface Props {
   onCoverCapture?: () => Promise<string | null>;  // returns base64 data URL
 }
 
+/** Must match CATEGORIES in BrandGraphDataTable and the API's normalizeCategory. */
+const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
+
+/** The house brand. A design file with no brand at all is never what is meant,
+ *  so a file that arrives unfiled is put here rather than left as "Sin marca". */
+const DEFAULT_BRAND_NAME = "Futuraria";
+
 const FORMATS = ["", "web", "mobile", "social", "print", "email", "packaging", "large_format", "signage", "textile"];
 const FILE_TYPES = ["", "frame", "deck", "template", "export"];
 const PRODUCTION_FIELDS = [
@@ -47,7 +56,7 @@ const ASSET_TYPE_GROUPS = [...new Set(ASSET_TYPE_OPTIONS.map((o) => o.group))];
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
-    brand_id: null, brand: "", campaign_id: null, campaign: "", asset_type: "other",
+    brand_id: null, brand: "", campaign_id: null, campaign: "", category: "", asset_type: "other",
     designer_type: "other", is_permanent: false,
     tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
     production_data: {},
@@ -61,36 +70,40 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const metaRef = useRef<FileMeta>(meta);
 
+  /** Read the row back from the server. Also the listener below, so an edit
+   *  made in the brand table lands here without reopening the file. */
+  const loadMeta = useCallback(async () => {
+    if (!templateId) return;
+    try {
+      const d = await fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() }).then(r => r.json());
+      if (!d.success || !d.data) return;
+      const m = {
+        brand_id: d.data.brand_id || null,
+        brand: d.data.brand || "",
+        campaign_id: d.data.campaign_id || null,
+        campaign: d.data.campaign || "",
+        category: d.data.category || "",
+        asset_type: d.data.asset_type || "other",
+        designer_type: d.data.designer_type || "other",
+        is_permanent: Boolean(d.data.is_permanent),
+        tags: d.data.tags || [],
+        theme: d.data.theme || "",
+        format: d.data.format || "",
+        file_type: d.data.file_type || "",
+        cover_image_url: d.data.cover_image_url || "",
+        obsidian_link: d.data.obsidian_link || "",
+        production_data: d.data.production_data || {},
+      };
+      setMeta(m);
+      metaRef.current = m;
+    } catch { /* keep whatever is on screen */ }
+  }, [templateId]);
+
   // Fetch metadata on mount / templateId change
   useEffect(() => {
     if (!templateId) { setLoading(false); return; }
     setLoading(true);
-    fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.data) {
-          const m = {
-            brand_id: d.data.brand_id || null,
-            brand: d.data.brand || "",
-            campaign_id: d.data.campaign_id || null,
-            campaign: d.data.campaign || "",
-            asset_type: d.data.asset_type || "other",
-            designer_type: d.data.designer_type || "other",
-            is_permanent: Boolean(d.data.is_permanent),
-            tags: d.data.tags || [],
-            theme: d.data.theme || "",
-            format: d.data.format || "",
-            file_type: d.data.file_type || "",
-            cover_image_url: d.data.cover_image_url || "",
-            obsidian_link: d.data.obsidian_link || "",
-            production_data: d.data.production_data || {},
-          };
-          setMeta(m);
-          metaRef.current = m;
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    void loadMeta().finally(() => setLoading(false));
 
     fetch(`/api/meta/${templateId}/taxonomy`, { headers: getApiHeaders() })
       .then(r => r.json())
@@ -100,7 +113,52 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         setCampaigns(Array.isArray(d.data?.campaigns) ? d.data.campaigns : []);
       })
       .catch(() => { setBrands([]); setCampaigns([]); });
-  }, [templateId]);
+  }, [templateId, loadMeta]);
+
+  // Re-read when this same file was written somewhere else in the app — the
+  // brand table is the other view of this row.
+  useEffect(() => {
+    if (!templateId) return;
+    return onMetaChanged(changedId => {
+      // Skip while an edit of ours is still pending, or the debounce would be
+      // overwritten by the value it is about to replace.
+      if (changedId === templateId && !saveTimer.current) void loadMeta();
+    });
+  }, [templateId, loadMeta]);
+
+  // ── Nothing stays unfiled ──
+  // A design file with no brand is never what was meant, so one that arrives
+  // unfiled is adopted by the house brand and saved straight away. Sent as a
+  // bare name with no brand_id on purpose: that is the shape the API resolves
+  // against the workspace's brands, creating Futuraria if this workspace does
+  // not have it yet. Once per template, and never over an existing choice.
+  const adoptedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!templateId || loading) return;
+    if (meta.brand_id || meta.brand) return;
+    if (adoptedRef.current === templateId) return;
+    adoptedRef.current = templateId;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/meta/${templateId}`, {
+          method: "PUT",
+          headers: getApiHeaders(),
+          body: JSON.stringify({ brand: DEFAULT_BRAND_NAME }),
+        });
+        if (!res.ok || cancelled) return;
+        const fresh = await fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() }).then(r => r.json());
+        if (cancelled || !fresh?.success || !fresh.data) return;
+        setMeta(prev => {
+          const next = { ...prev, brand_id: fresh.data.brand_id || null, brand: fresh.data.brand || "" };
+          metaRef.current = next;
+          return next;
+        });
+        notifyMetaChanged(templateId);
+      } catch { /* the panel still works unfiled; the next open retries */ }
+    })();
+    return () => { cancelled = true; };
+  }, [templateId, loading, meta.brand_id, meta.brand]);
 
   // Debounced auto-save
   const scheduleSave = useCallback((patch: Partial<FileMeta>) => {
@@ -118,6 +176,10 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
           headers: getApiHeaders(),
           body: JSON.stringify(next),
         });
+        // Cleared before announcing: the listener above ignores an event while
+        // a save of ours is pending, and this one is no longer pending.
+        saveTimer.current = undefined;
+        notifyMetaChanged(templateId);
       } catch {} finally { setSaving(false); }
     }, 2000);
   }, [templateId]);
@@ -218,7 +280,27 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         >
           <option value="">Sin marca</option>
           {meta.brand && !meta.brand_id && <option value={`legacy:${meta.brand}`}>{meta.brand} (sin vincular)</option>}
-          {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name} · {brand.relationship_status === "client" ? "Cliente" : "Lead"}</option>)}
+          {/* The name and nothing else. The old "· Cliente / · Lead" suffix was
+              relationship_status painted onto the label, so this picker and the
+              brand table disagreed about what a brand is called — and a name
+              that really does contain a dash became impossible to tell from
+              one this was decorating. */}
+          {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+        </select>
+      </label>
+
+      {/* Categoria — the same four branches the brand table writes, on the
+          same design_file_meta.category column, so the two panels cannot
+          disagree about where a file is filed. */}
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Categoría</span>
+        <select
+          style={selectStyle}
+          value={CATEGORIES.includes(meta.category) ? meta.category : ""}
+          onChange={event => scheduleSave({ category: event.target.value })}
+        >
+          <option value="">Archivos (por defecto)</option>
+          {CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
         </select>
       </label>
 

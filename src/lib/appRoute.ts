@@ -13,14 +13,29 @@ export function isWorkspaceTab(value: string): value is WorkspaceTab {
   return (WORKSPACE_TABS as readonly string[]).includes(value);
 }
 
-/** Build the canonical URL for a dashboard tab. */
-export function workspaceTabUrl(tab: WorkspaceTab): string {
-  return tab === DEFAULT_WORKSPACE_TAB ? "/#workspace" : `/#workspace/${tab}`;
+/**
+ * Panes inside the Red de Marcas tab. These lived in React state alone, so a
+ * refresh on the table or the CRM dropped back to the graph — and, once the
+ * tab itself was lost, all the way back to Archivos. A pane is a place the
+ * user navigated to; it belongs in the URL like any other.
+ */
+export const GRAPH_PANES = ["graph", "table", "pipeline", "accounts", "storage"] as const;
+export type GraphPane = typeof GRAPH_PANES[number];
+export const DEFAULT_GRAPH_PANE: GraphPane = "graph";
+
+export function isGraphPane(value: string): value is GraphPane {
+  return (GRAPH_PANES as readonly string[]).includes(value);
+}
+
+/** Build the canonical URL for a dashboard tab, optionally with a pane. */
+export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
+  const base = tab === DEFAULT_WORKSPACE_TAB ? "/#workspace" : `/#workspace/${tab}`;
+  return pane && pane !== DEFAULT_GRAPH_PANE ? `${base}/${pane}` : base;
 }
 
 export type AppRoute =
   | { kind: "root" }
-  | { kind: "workspace"; tab?: WorkspaceTab }
+  | { kind: "workspace"; tab?: WorkspaceTab; pane?: string }
   | { kind: "template"; templateId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
   | { kind: "invitation"; token: string }
@@ -46,14 +61,16 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
   const templateId = params.get("template");
   if (templateId) return { kind: "template", templateId };
 
-  // "#workspace" (default tab) or "#workspace/<tab>". An unrecognised tab
-  // segment falls back to the workspace default rather than dropping the
-  // user out to the landing page.
+  // "#workspace" (default tab), "#workspace/<tab>", or "#workspace/<tab>/<pane>".
+  // An unrecognised tab segment falls back to the workspace default rather
+  // than dropping the user out to the landing page; an unrecognised pane is
+  // dropped but keeps the tab, since the tab is the bigger loss.
   const hash = location.hash.replace(/^#/, "");
   if (hash === "workspace") return { kind: "workspace" };
   if (hash.startsWith("workspace/")) {
-    const tab = hash.slice("workspace/".length);
-    return isWorkspaceTab(tab) ? { kind: "workspace", tab } : { kind: "workspace" };
+    const [tab, pane] = hash.slice("workspace/".length).split("/");
+    if (!isWorkspaceTab(tab)) return { kind: "workspace" };
+    return pane ? { kind: "workspace", tab, pane } : { kind: "workspace", tab };
   }
   return { kind: "root" };
 }

@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { notifyMetaChanged, onMetaChanged } from "../lib/metaSync";
 
 interface GraphNode {
   id: string;
@@ -37,13 +38,22 @@ interface GraphRoot {
   orphans?: GraphNode[];
 }
 
-/** One file. Brand and category are the branch it hangs from. */
+/** One file. Brand and category are the branch it hangs from.
+ *  A row with no templateId is a brand that owns no files — listed so it can
+ *  be seen and deleted, since the graph shows it but the file list cannot. */
 interface Row {
   id: string;
   templateId: string;
   brandId: string;
   brandName: string;
   category: string;
+  name: string;
+  /** True for a brand placeholder rather than a real file. */
+  brandOnly?: boolean;
+}
+
+interface Brand {
+  id: string;
   name: string;
 }
 
@@ -164,7 +174,28 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         for (const c of b.children || []) walk(c, b.id, b.name, "");
       }
       for (const o of res.data.orphans || []) walk(o, "", "", "");
-      setRows([...out.values()]);
+
+      // The graph draws every brand; this table drew only brands that own a
+      // file, so a brand you could see in the graph was invisible here and
+      // there was nowhere to delete it from. Ask the workspace for the real
+      // list and add a placeholder row for whatever is missing.
+      const rows = [...out.values()];
+      let allBrands: Brand[] = [];
+      try {
+        const brandRes = await apiFetch<{ success?: boolean; data?: Brand[] }>(
+          `/api/workspaces/${workspaceId}/brands`,
+        );
+        allBrands = Array.isArray(brandRes?.data) ? brandRes.data : [];
+      } catch { /* the file rows are still worth showing */ }
+      const withFiles = new Set(rows.map(r => r.brandId).filter(Boolean));
+      for (const brand of allBrands) {
+        if (withFiles.has(brand.id)) continue;
+        rows.push({
+          id: `brand:${brand.id}`, templateId: "", brandId: brand.id,
+          brandName: brand.name, category: "", name: "", brandOnly: true,
+        });
+      }
+      setRows(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo cargar");
     } finally {
@@ -184,6 +215,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     () => (brandFilter ? rows.filter(r => r.brandName === brandFilter) : rows),
     [rows, brandFilter],
   );
+  const emptyBrandCount = useMemo(() => visible.filter(r => r.brandOnly).length, [visible]);
 
   // Hold on to rows that just left the view — deleted, or moved out from under
   // the brand filter — so they can animate out from where they were standing
@@ -241,6 +273,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       });
       // The API answers 200 with success:false for anything it declined.
       if (res && res.success === false) throw new Error(res.error || "El servidor rechazo el cambio");
+      if (row.templateId) notifyMetaChanged(row.templateId);
       await load();
       onRefreshGraph?.();
       markSaved(row.id);
@@ -282,6 +315,21 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const deleteSelected = useCallback(async () => {
     if (!selected.size) return;
     const targets = rows.filter(r => selected.has(r.id));
+    const brandTargets = targets.filter(r => r.brandOnly);
+
+    // Deleting a file is a soft delete it can come back from. Deleting a brand
+    // is not: it unfiles every design that pointed at it, across the whole
+    // database, and takes it out of the graph. Worth asking first.
+    if (brandTargets.length) {
+      const names = brandTargets.map(r => r.brandName).join(", ");
+      const ok = window.confirm(
+        `Se eliminaran ${brandTargets.length === 1 ? "la marca" : "las marcas"} ${names} de toda la base de datos.\n\n` +
+        "Los archivos que tuvieran esa marca no se borran: quedan sin marca. Esto no se puede deshacer.\n\n" +
+        "¿Continuar?",
+      );
+      if (!ok) return;
+    }
+
     setSelected(new Set());
     setSaveError("");
     setPending(cur => { const s = new Set(cur); for (const r of targets) s.add(r.id); return s; });
@@ -289,7 +337,11 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     let message = "";
     for (const r of targets) {
       try {
-        await apiFetch(`/api/templates/${r.templateId}`, { method: "DELETE" });
+        if (r.brandOnly) {
+          await apiFetch(`/api/workspaces/${workspaceId}/brands/${r.brandId}`, { method: "DELETE" });
+        } else {
+          await apiFetch(`/api/templates/${r.templateId}`, { method: "DELETE" });
+        }
       } catch (e) {
         failed.add(r.id);
         message = e instanceof Error ? e.message : String(e);
@@ -306,7 +358,10 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     }
     await load();
     onRefreshGraph?.();
-  }, [selected, rows, load, onRefreshGraph]);
+  }, [selected, rows, load, onRefreshGraph, workspaceId]);
+
+  // The editor's Information panel is the other view of these same rows.
+  useEffect(() => onMetaChanged(() => { void load(); }), [load]);
 
   // Delete key removes the selection, the way a sheet does.
   useEffect(() => {
@@ -381,7 +436,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           }}
         >Actualizando...</span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-          {visible.length} filas{selected.size ? ` · ${selected.size} seleccionadas` : ""}
+          {visible.filter(r => !r.brandOnly).length} archivos
+          {emptyBrandCount > 0 ? ` · ${emptyBrandCount} marcas sin archivos` : ""}
+          {selected.size ? ` · ${selected.size} seleccionadas` : ""}
         </span>
         <button
           type="button"
@@ -442,31 +499,46 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                 >
                   <td
                     style={cell}
-                    onDoubleClick={() => edit(row, "brandName")}
-                    title="Doble click para archivar bajo otra marca - una marca nueva se crea sola"
+                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "brandName"); }}
+                    title={row.brandOnly
+                      ? "Marca sin archivos"
+                      : "Doble click para archivar bajo otra marca - una marca nueva se crea sola"}
                   >
                     {editing && editing.id === row.id && editing.col === "brandName"
                       ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
                       : (row.brandName || "Sin marca")}
                   </td>
+                  {/* A brand with no files has no category and no file to name.
+                      Showing empty controls there would invite edits that
+                      cannot land anywhere. */}
                   <td style={cell} onClick={e => e.stopPropagation()}>
-                    <select
-                      value={CATEGORIES.indexOf(row.category) >= 0 ? row.category : ""}
-                      onChange={e => setCategory(row, e.target.value)}
-                      style={{ ...control, width: "100%", border: "none", padding: 0 }}
-                    >
-                      <option value="" style={{ background: "#000" }}>-</option>
-                      {CATEGORIES.map(c => (
-                        <option key={c} value={c} style={{ background: "#000" }}>{c}</option>
-                      ))}
-                    </select>
+                    {row.brandOnly ? (
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>—</span>
+                    ) : (
+                      <select
+                        value={CATEGORIES.indexOf(row.category) >= 0 ? row.category : ""}
+                        onChange={e => setCategory(row, e.target.value)}
+                        style={{ ...control, width: "100%", border: "none", padding: 0 }}
+                      >
+                        <option value="" style={{ background: "#000" }}>-</option>
+                        {CATEGORIES.map(c => (
+                          <option key={c} value={c} style={{ background: "#000" }}>{c}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td
                     style={cell}
-                    onDoubleClick={() => edit(row, "name")}
-                    title="Doble click para renombrar - alt+click para abrir"
+                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "name"); }}
+                    title={row.brandOnly
+                      ? "Marca sin archivos - seleccionala y pulsa Eliminar para borrarla de toda la base"
+                      : "Doble click para renombrar - alt+click para abrir"}
                   >
-                    {editing && editing.id === row.id && editing.col === "name"
+                    {row.brandOnly ? (
+                      <span style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>
+                        marca sin archivos
+                      </span>
+                    ) : editing && editing.id === row.id && editing.col === "name"
                       ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
                       : (
                         <span onClick={e => {

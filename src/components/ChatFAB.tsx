@@ -69,6 +69,13 @@ const MAX_STORED_MESSAGES = 50;
 // provider reuse the same key.
 const LS_ROLE_CONFIG_KEY = "futuraria-chat-role-config";
 const LS_PROVIDER_KEYS_PREFIX = "futuraria-chat-key-";
+/** Panel open/closed and the half-typed draft, so a reload behind the chat
+ *  leaves the chat exactly where it was. */
+const LS_OPEN_KEY = "futuraria-chat-open";
+const LS_DRAFT_KEY = "futuraria-chat-draft";
+/** Set while a turn is in flight, cleared when it finishes. Still set at load
+ *  time means the page went away mid-turn. */
+const LS_INFLIGHT_KEY = "futuraria-chat-inflight";
 
 type AgentRole = "leader" | "implementer" | "reviewer";
 interface RoleConfig { provider: string; model: string }
@@ -1756,6 +1763,27 @@ function saveMessages(msgs: Message[]) {
   try { localStorage.setItem(LS_MESSAGES_KEY, JSON.stringify(msgs.slice(-MAX_STORED_MESSAGES))); } catch {}
 }
 
+const readFlag = (key: string) => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
+const writeFlag = (key: string, on: boolean) => {
+  try { if (on) localStorage.setItem(key, "1"); else localStorage.removeItem(key); } catch {}
+};
+
+/**
+ * A turn runs in this tab, against the model, from the browser. A reload tears
+ * the connection down with the page and there is nothing on a server to resume
+ * — so the honest thing is to say the turn was cut off rather than leave the
+ * transcript looking like the answer is still coming.
+ */
+function interruptedTurnNotice(): Message | null {
+  if (!readFlag(LS_INFLIGHT_KEY)) return null;
+  writeFlag(LS_INFLIGHT_KEY, false);
+  return {
+    role: "assistant",
+    content: "_(La página se recargó mientras yo respondía, así que ese turno se cortó. El historial está intacto — vuelve a enviarlo cuando quieras.)_",
+    ts: Date.now(),
+  };
+}
+
 async function appendErrorReport(report: any) {
   // 1. Primary: send to Supabase via MCP
   try {
@@ -1816,14 +1844,23 @@ interface ChatFABProps {
 }
 
 export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, hideFab }: ChatFABProps) {
-  const [internalOpen, setInternalOpen] = useState(false);
+  // Restored from the last visit: reloading the page behind the chat should
+  // leave the chat itself untouched, panel open and draft intact.
+  const [internalOpen, setInternalOpen] = useState(() => readFlag(LS_OPEN_KEY));
   const open = externalOpen ?? internalOpen;
   const setOpen = useCallback((next: boolean) => {
     setInternalOpen(next);
+    writeFlag(LS_OPEN_KEY, next);
     onOpenChange?.(next);
   }, [onOpenChange]);
-  const [messages, setMessages] = useState<Message[]>(loadMessages);
-  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const restored = loadMessages();
+    const notice = interruptedTurnNotice();
+    return notice ? [...restored, notice] : restored;
+  });
+  const [input, setInput] = useState(() => {
+    try { return localStorage.getItem(LS_DRAFT_KEY) || ""; } catch { return ""; }
+  });
   const [sending, setSending] = useState(false);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
@@ -1856,6 +1893,12 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
   // Persist messages
   useEffect(() => { saveMessages(messages); }, [messages]);
+  // The draft is saved as it is typed, not on submit: the point is to survive
+  // a reload that happens mid-sentence.
+  useEffect(() => {
+    try { if (input) localStorage.setItem(LS_DRAFT_KEY, input); else localStorage.removeItem(LS_DRAFT_KEY); } catch {}
+  }, [input]);
+  useEffect(() => { writeFlag(LS_INFLIGHT_KEY, sending); }, [sending]);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
   useEffect(() => {

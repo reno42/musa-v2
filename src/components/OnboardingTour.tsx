@@ -130,6 +130,9 @@ export function OnboardingTour({ page, onAction }: Props) {
       setActive(isOnboardingEnabled() && !isOnboardingDone());
       const s = parseInt(localStorage.getItem(KEY_STEP) || "0", 10);
       if (Number.isFinite(s)) setStep(Math.min(Math.max(s, 0), STEPS.length - 1));
+      // An explicit restart is the user asking to be taken to step one, so
+      // the step's action should fire even though the step id has not changed.
+      enteredRef.current = null;
     };
     window.addEventListener("futuraria-tour-changed", sync);
     return () => window.removeEventListener("futuraria-tour-changed", sync);
@@ -137,6 +140,22 @@ export function OnboardingTour({ page, onAction }: Props) {
 
   const current = STEPS[step];
   const visible = active && current.page === page;
+
+  /**
+   * Suppress the current step's action for the first render only.
+   *
+   * The step is persisted, so on every mount the tour would re-run whatever
+   * the saved step wanted — and step one wants "tab-templates". For anyone who
+   * never finished or dismissed the tour, that meant EVERY page refresh threw
+   * them onto Archivos and, because switching tabs rewrites the URL, erased
+   * where they actually were. The tour may move the user when they advance a
+   * step or restart it; it may not move them for merely existing.
+   */
+  const mountedRef = useRef(false);
+  if (!mountedRef.current) {
+    mountedRef.current = true;
+    enteredRef.current = current.id;
+  }
 
   // Run the step's onEnter host action (switch tab) exactly once per step
   useEffect(() => {

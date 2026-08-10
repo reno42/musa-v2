@@ -146,21 +146,48 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     return route.kind === "workspace" && route.tab ? route.tab : DEFAULT_WORKSPACE_TAB;
   });
 
+  // The pane within a tab (Red de Marcas: graph / table / pipeline / …).
+  // Read straight from the URL on mount for the same reason as the tab.
+  const [activePane, setActivePaneState] = useState<string | undefined>(() => {
+    const route = readAppRoute(window.location);
+    return route.kind === "workspace" ? route.pane : undefined;
+  });
+
   /** Switch tabs and record it in the URL, so refresh/back behave. */
   const setActiveTab = useCallback((tab: WorkspaceTab) => {
     setActiveTabState(tab);
+    // Panes belong to the tab that owns them; carrying one across would put a
+    // stale segment in the URL of a tab that knows nothing about it.
+    setActivePaneState(undefined);
     try {
       window.history.replaceState(null, "", workspaceTabUrl(tab));
       saveCurrentRoute();
     } catch { /* history may be unavailable in embedded contexts */ }
   }, []);
 
+  /** Record the pane the active tab moved to, without touching the tab. */
+  const setActivePane = useCallback((pane: string) => {
+    setActivePaneState(pane);
+    try {
+      window.history.replaceState(null, "", workspaceTabUrl(activeTabRef.current, pane));
+      saveCurrentRoute();
+    } catch { /* history may be unavailable in embedded contexts */ }
+  }, []);
+
+  // Read inside setActivePane without making it depend on the tab, which would
+  // rebuild the callback on every tab change and remount the pane below it.
+  const activeTabRef = useRef<WorkspaceTab>(activeTab);
+  activeTabRef.current = activeTab;
+
   // Keep up with browser back/forward, which changes the hash without
   // going through setActiveTab.
   useEffect(() => {
     const onHashChange = () => {
       const route = readAppRoute(window.location);
-      if (route.kind === "workspace") setActiveTabState(route.tab || DEFAULT_WORKSPACE_TAB);
+      if (route.kind === "workspace") {
+        setActiveTabState(route.tab || DEFAULT_WORKSPACE_TAB);
+        setActivePaneState(route.pane);
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -2006,6 +2033,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         <div data-tour="graph-view" style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <GraphTab
             workspaceId={activeWorkspaceId}
+            pane={activePane}
+            onPaneChange={setActivePane}
             onOpenTemplate={(id) => {
               onSelectTemplate(id);
             }}
