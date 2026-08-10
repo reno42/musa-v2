@@ -6,7 +6,7 @@ import { IconFolder, IconFile, IconTag } from "../shared/icons";
 import { GraphTab } from "./GraphTab";
 import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
-import { TextsTab } from "./TextsTab";
+import { ContentTab } from "./ContentTab";
 import { KanbanTab } from "./KanbanTab";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
@@ -1045,7 +1045,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <rect x="14" y="3" width="7" height="10" rx="1" />
                 </svg>
               )},
-{ id: "texts", label: "Textos", icon: (
+{ id: "texts", label: "Content", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4 7 4 4 20 4 20 7" />
                   <line x1="9" y1="20" x2="15" y2="20" />
@@ -1172,7 +1172,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
-                        Textos
+                        Content
                       </button>
                       <button
                         type="button"
@@ -1483,7 +1483,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Texts Tab ── */}
       {activeTab === "texts" && (
-        <TextsTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+        <ContentTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* ── Kanban Tab ── */}

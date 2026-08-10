@@ -26,6 +26,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { getBrandGraph } from "./routes/brandGraph.js";
 import { storageRoutes } from "./routes/storage.js";
+import { contentRoutes } from "./routes/contentCalendar.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
@@ -138,6 +139,7 @@ app.get("/api/graph", getDesignGraph);
 // GET /api/brand-graph?workspaceId=
 app.get("/api/brand-graph", getBrandGraph);
 
+app.use("/api/content", contentRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);
 

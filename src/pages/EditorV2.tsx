@@ -274,7 +274,7 @@ const EDITOR_NAV_TABS = [
   { id: "templates", label: "Archivos" },
   { id: "graph", label: "Red de Marcas" },
   { id: "kanban", label: "Studio Board" },
-  { id: "texts", label: "Textos" },
+  { id: "texts", label: "Content" },
   { id: "recipes", label: "Recetas" },
   { id: "storage", label: "Storage" },
   { id: "workspace", label: "Workspace" },
