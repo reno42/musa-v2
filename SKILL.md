@@ -956,6 +956,21 @@ correct; do not set `category` just to set it.
 Only set a campaign when the user names one. Inventing campaigns to tidy the
 tree destroys the signal.
 
+### Paid or organic
+
+`design_file_meta.content_kind` — `organic` | `ad` | NULL.
+
+**This is provenance, not current state.** It records what a design was FIRST
+used for. A photo that ran as an ad and did well often becomes an organic post
+later; the design keeps its original label and the calendar row carries what it
+is doing now. Never rewrite it because a file was reused the other way.
+
+When you create a design, set it. A freelancer's workspace is mostly organic
+and an agency's is mostly ads, but neither is a safe guess — if the request
+does not say, ask or leave it NULL rather than inventing one. Images that
+Content Machine pulls into a file inherit that file's kind as a tag, which is
+why getting it right on the design matters beyond the design.
+
 ### Assets
 
 Assets come from the `assets` table, not from templates. In the graph a brand
@@ -967,6 +982,28 @@ An asset uploaded through `POST /api/assets/upload` should carry
 `tags: ["<brand name>"]`, or it will be filed under no brand and nobody will
 find it. Pass a `url` and the server fetches and re-hosts the image; pass
 `replaceAssetId` to overwrite an existing one instead of leaving two copies.
+
+---
+
+## 🗓 Content Calendar — Say When It Goes Out
+
+`content_calendar` is one row per piece of content, and the section formerly
+called Textos is built on it. `POST /api/content` to create, `PATCH
+/api/content/:id` to update, `GET /api/content?workspaceId=&from=&to=` to read.
+
+- `kind` — `organic` | `ad`. Paid and organic share every dimension except
+  spend, which is why they are one table and not two.
+- `campaign` and `ad_set` — **both optional**, for organic as much as for ads.
+  An organic series is an ad set by another name. Never fill one in to tidy
+  the data: an invented campaign erases the difference between planned work
+  and loose work, which is the thing the user is looking at the graph to see.
+- `template_id` — the join back to the design, the graph and the kanban. **When
+  you schedule content for a design you created, set it.** Without it the
+  calendar row and the file are two facts about the same work that nothing can
+  connect.
+- `plan_*` and `actual_*` — the PROYECCIÓN and RESULTADOS bands of an agency
+  report. Leave them NULL when there is no plan; 0 is a promise to spend
+  nothing and the pacing column has to tell those apart.
 
 ---
 

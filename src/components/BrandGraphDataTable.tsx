@@ -27,6 +27,7 @@ interface GraphNode {
   id: string;
   name: string;
   kind: string;
+  contentKind?: string;
   category?: string;
   templateId?: string;
   ghost?: boolean;
@@ -50,6 +51,8 @@ interface Row {
   name: string;
   /** True for a brand placeholder rather than a real file. */
   brandOnly?: boolean;
+  /** organic | ad — what this design was first used for. */
+  contentKind?: string;
   /** Set for an asset: where its bytes are, and whose server they sit on. */
   assetUrl?: string;
   assetOrigin?: "bucket" | "external";
@@ -202,7 +205,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         if (n.templateId && !n.ghost && !out.has(n.templateId)) {
           out.set(n.templateId, {
             id: n.id, templateId: n.templateId, brandId, brandName,
-            category: cat, name: n.name,
+            category: cat, name: n.name, contentKind: n.contentKind || "",
           });
         }
         for (const c of n.children || []) walk(c, brandId, brandName, cat);
@@ -386,6 +389,15 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     }
   }, [editing, draft, rows, save]);
 
+  /** Provenance, not current state: what the file was FIRST used for. The
+   *  same photo can run as an ad and later as an organic post; the calendar
+   *  row carries that, this does not chase it. */
+  const setContentKind = useCallback(
+    (row: Row, value: string) =>
+      save(row, `/api/meta/${row.templateId}`, { content_kind: value }, "orgánico/ad", { contentKind: value }),
+    [save],
+  );
+
   const setCategory = useCallback(
     (row: Row, value: string) =>
       save(row, `/api/meta/${row.templateId}`, { category: value }, "la categoria", { category: value }),
@@ -555,9 +567,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         <table className="bgt" style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed" }}>
           <thead>
             <tr>
-              {["Marca", "Categoria", "Archivo"].map((h, i) => (
+              {["Marca", "Categoria", "Tipo", "Archivo"].map((h, i) => (
                 <th key={h} style={{
-                  ...CELL, width: i === 2 ? "auto" : "28%",
+                  ...CELL, width: i === 3 ? "auto" : i === 2 ? "10%" : "26%",
                   position: "sticky", top: 0, zIndex: 1,
                   background: "#000", fontWeight: 600,
                   color: "rgba(255,255,255,0.65)", fontSize: 12,
@@ -611,6 +623,25 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                         {CATEGORIES.map(c => (
                           <option key={c} value={c} style={{ background: "#000" }}>{c}</option>
                         ))}
+                      </select>
+                    )}
+                  </td>
+                  <td style={cell} onClick={e => e.stopPropagation()}>
+                    {row.brandOnly ? (
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>—</span>
+                    ) : row.assetUrl ? (
+                      // An asset keeps the kind of its FIRST use; it is not a
+                      // choice here, it is where the image came from.
+                      <span style={{ color: "rgba(255,255,255,0.6)" }}>{row.contentKind || "—"}</span>
+                    ) : (
+                      <select
+                        value={row.contentKind || ""}
+                        onChange={e => setContentKind(row, e.target.value)}
+                        style={{ ...control, width: "100%", border: "none", padding: 0 }}
+                      >
+                        <option value="" style={{ background: "#000" }}>-</option>
+                        <option value="organic" style={{ background: "#000" }}>Orgánico</option>
+                        <option value="ad" style={{ background: "#000" }}>Ad</option>
                       </select>
                     )}
                   </td>

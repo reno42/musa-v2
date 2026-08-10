@@ -50,6 +50,8 @@ export interface BrandGraphNode {
   category?: string;
   /** Campaign from design_file_meta — shown in the data table. */
   campaign?: string;
+  /** organic | ad — what this design was first used for (v22). */
+  contentKind?: string;
   /** File no brand claimed — orbits the workspace centre on its own. */
   orphan?: boolean;
   /** Asset only: where the bytes are, and whose server they sit on. */
@@ -106,10 +108,12 @@ const ASSET_NODE_LIMIT = 8;
  */
 async function selectFileMeta(sb: any, workspaceId: string) {
   const legacy = "template_id, brand, campaign, obsidian_link, brand_id";
+  // content_kind arrives with v22; the fallback below covers a database without it.
   const result = await sb.from("design_file_meta")
-    .select(`${legacy}, category`).eq("workspace_id", workspaceId);
+    .select(`${legacy}, category, content_kind`).eq("workspace_id", workspaceId);
   if (!result.error) return result;
-  if (!String(result.error.message || "").includes("category")) return result;
+  const msg = String(result.error.message || "");
+  if (!msg.includes("category") && !msg.includes("content_kind")) return result;
   return sb.from("design_file_meta").select(legacy).eq("workspace_id", workspaceId);
 }
 
@@ -227,6 +231,7 @@ export async function buildBrandGraph(
       templateId: tpl.id,
       obsidianLink: metaByTemplate.get(tpl.id)?.obsidian_link || undefined,
       campaign: metaByTemplate.get(tpl.id)?.campaign || undefined,
+      contentKind: metaByTemplate.get(tpl.id)?.content_kind || undefined,
       children: [],
     });
 

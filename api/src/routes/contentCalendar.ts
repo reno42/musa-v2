@@ -45,6 +45,20 @@ function buildPatch(body: Record<string, any>): Record<string, any> {
   if (body.brand_id !== undefined) patch.brand_id = text(body.brand_id);
   if (body.published_at !== undefined) patch.published_at = text(body.published_at);
 
+  // Plan and actual figures. Empty means "no plan", which is not the same as
+  // zero — a projection of 0 is a promise to spend nothing, and pacing has to
+  // be able to tell those apart.
+  for (const key of [
+    "plan_spend", "plan_impressions", "plan_reach", "plan_clicks", "plan_views",
+    "actual_spend", "actual_impressions", "actual_reach", "actual_clicks", "actual_views",
+  ]) {
+    if (body[key] === undefined) continue;
+    const raw = String(body[key] ?? "").trim();
+    if (raw === "") { patch[key] = null; continue; }
+    const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
+    patch[key] = Number.isFinite(parsed) ? parsed : null;
+  }
+
   if (body.kind !== undefined) {
     const kind = String(body.kind || "").trim();
     patch.kind = KINDS.has(kind) ? kind : "organic";
@@ -68,7 +82,40 @@ const dbOr503 = (res: any) => {
   return sb;
 };
 
-contentRoutes.get("/", asyncRoute(async (req, res) => {
+/**
+ * PostgREST answers "Could not find the table 'public.content_calendar' in the
+ * schema cache" (PGRST205) when v22 has not been run. That is a setup step,
+ * not a failure — surfacing it as a 500 tells the user nothing about what to
+ * do, which is exactly how this shipped and exactly what it cost.
+ */
+export function isMissingTable(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  if (err?.code === "PGRST205" || err?.code === "42P01") return true;
+  const message = String(err?.message ?? "").toLowerCase();
+  return message.includes("content_calendar")
+    && (message.includes("schema cache") || message.includes("does not exist"));
+}
+
+const SETUP_MESSAGE =
+  "Falta crear la tabla del calendario. Ejecuta supabase_migrations_v22.sql en el "
+  + "proyecto de Supabase que usa producción y recarga el esquema "
+  + "(Settings → API → Reload schema cache).";
+
+/** Wraps a handler so a missing table reads as setup, with the exact step. */
+function withSetupCheck(fn: (req: any, res: any) => Promise<unknown>) {
+  return asyncRoute(async (req: any, res: any) => {
+    try {
+      await fn(req, res);
+    } catch (err) {
+      if (isMissingTable(err)) {
+        return res.status(503).json({ success: false, error: SETUP_MESSAGE, setupRequired: true });
+      }
+      throw err;
+    }
+  });
+}
+
+contentRoutes.get("/", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;
   const workspaceId = String(req.query.workspaceId || "");
@@ -86,7 +133,7 @@ contentRoutes.get("/", asyncRoute(async (req, res) => {
   res.json({ success: true, data: data || [] });
 }));
 
-contentRoutes.post("/", asyncRoute(async (req, res) => {
+contentRoutes.post("/", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;
   const workspaceId = String(req.body.workspaceId || "");
@@ -108,7 +155,7 @@ contentRoutes.post("/", asyncRoute(async (req, res) => {
   res.status(201).json({ success: true, data });
 }));
 
-contentRoutes.patch("/:id", asyncRoute(async (req, res) => {
+contentRoutes.patch("/:id", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;
   const { data: existing, error: readError } = await sb.from("content_calendar")
@@ -132,7 +179,7 @@ contentRoutes.patch("/:id", asyncRoute(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-contentRoutes.delete("/:id", asyncRoute(async (req, res) => {
+contentRoutes.delete("/:id", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;
   const { data: existing } = await sb.from("content_calendar")

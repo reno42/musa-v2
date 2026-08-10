@@ -111,11 +111,24 @@ export function BatchAMator({
    * panel is working on.
    */
   const [assetBrand, setAssetBrand] = useState("");
+  /**
+   * The kind an image inherits from the file it was first pulled into.
+   *
+   * A photo that started as an ad and did well often becomes an organic post
+   * later; the asset keeps the label of its FIRST use, and the calendar row
+   * carries what it is doing now. So this is provenance, and nothing rewrites
+   * it afterwards.
+   */
+  const [assetKind, setAssetKind] = useState("");
   useEffect(() => {
     if (!templateId) { setAssetBrand(""); return; }
     let cancelled = false;
-    void apiFetch<{ success?: boolean; data?: { brand?: string } }>(`/api/meta/${templateId}`)
-      .then(res => { if (!cancelled) setAssetBrand(res?.data?.brand || ""); })
+    void apiFetch<{ success?: boolean; data?: { brand?: string; content_kind?: string } }>(`/api/meta/${templateId}`)
+      .then(res => {
+        if (cancelled) return;
+        setAssetBrand(res?.data?.brand || "");
+        setAssetKind(res?.data?.content_kind || "");
+      })
       .catch(() => { /* untagged is survivable; unfindable is the old behaviour */ });
     return () => { cancelled = true; };
   }, [templateId]);
@@ -216,7 +229,7 @@ export function BatchAMator({
     try {
       const res = await apiFetch<{ success?: boolean; url?: string; assetId?: string; sizeBytes?: number; error?: string }>(
         "/api/assets/upload",
-        { method: "POST", body: JSON.stringify({ name, url, workspaceId, tags: assetBrand ? [assetBrand] : [] }) },
+        { method: "POST", body: JSON.stringify({ name, url, workspaceId, tags: [assetBrand, assetKind].filter(Boolean) }) },
       );
       let hosted = res?.url;
       if (!hosted) throw new Error(res?.error || "El servidor no devolvió una URL");
@@ -233,7 +246,7 @@ export function BatchAMator({
             method: "POST",
             body: JSON.stringify({
               name, workspaceId, data: smaller.dataUrl, replaceAssetId: res.assetId,
-              tags: assetBrand ? [assetBrand] : [],
+              tags: [assetBrand, assetKind].filter(Boolean),
             }),
           });
           if (replaced?.url) hosted = replaced.url;
@@ -250,7 +263,7 @@ export function BatchAMator({
       failedImagesRef.current.push(`${name}: ${detail}`);
       return url;
     }
-  }, [workspaceId, assetBrand]);
+  }, [workspaceId, assetBrand, assetKind]);
   const failedImagesRef = useRef<string[]>([]);
 
   const handleGenerate = useCallback(async () => {

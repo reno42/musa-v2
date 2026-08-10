@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS content_calendar (
   published_at  TIMESTAMPTZ,
   permalink     TEXT,                       -- the post's URL once published
 
+  -- PROYECCIÓN. The plan side of an agency report: what was promised, per
+  -- piece. Kept beside the content rather than in a separate plan table
+  -- because the plan IS per ad in the Santander format — one row, one promise,
+  -- one result. All nullable: organic content usually has no projection, and
+  -- an empty plan must read as "no plan", never as zero.
+  plan_spend       NUMERIC,
+  plan_impressions NUMERIC,
+  plan_reach       NUMERIC,
+  plan_clicks      NUMERIC,
+  plan_views       NUMERIC,
+
+  -- RESULTADOS, once they are pulled from the platform or typed in by hand.
+  actual_spend       NUMERIC,
+  actual_impressions NUMERIC,
+  actual_reach       NUMERIC,
+  actual_clicks      NUMERIC,
+  actual_views       NUMERIC,
+
   notes         TEXT,
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ DEFAULT NOW()
@@ -64,6 +82,24 @@ CREATE INDEX IF NOT EXISTS idx_cc_workspace_date ON content_calendar(workspace_i
 CREATE INDEX IF NOT EXISTS idx_cc_template       ON content_calendar(template_id);
 CREATE INDEX IF NOT EXISTS idx_cc_brand          ON content_calendar(brand_id);
 CREATE INDEX IF NOT EXISTS idx_cc_kind           ON content_calendar(workspace_id, kind);
+
+-- ═══════════════════════════════════════════════════════════════
+-- Paid or organic, on the design file itself.
+--
+-- A freelancer's workspace is mostly organic; an agency's is mostly ads, and
+-- the same photo can be both over its life — one that started as an ad and did
+-- well often becomes an organic post later. So this records what a file was
+-- FIRST used for and does not chase it afterwards: provenance, not current
+-- state. Current state is what content_calendar.kind says, per publication.
+-- ═══════════════════════════════════════════════════════════════
+ALTER TABLE design_file_meta
+  ADD COLUMN IF NOT EXISTS content_kind TEXT;
+
+COMMENT ON COLUMN design_file_meta.content_kind IS
+  'organic | ad — what this design was first used for. NULL means nobody has said. Not updated when the file is later reused the other way; the calendar row carries that.';
+
+CREATE INDEX IF NOT EXISTS idx_dfm_content_kind
+  ON design_file_meta(workspace_id, content_kind);
 
 ALTER TABLE content_calendar ENABLE ROW LEVEL SECURITY;
 

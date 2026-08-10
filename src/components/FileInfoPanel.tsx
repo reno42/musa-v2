@@ -8,6 +8,7 @@ interface FileMeta {
   campaign_id: string | null;
   campaign: string;
   category: string;
+  content_kind: string;
   asset_type: string;
   designer_type: string;
   is_permanent: boolean;
@@ -51,7 +52,7 @@ const PRODUCTION_FIELDS = [
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
-    brand_id: null, brand: "", campaign_id: null, campaign: "", category: "", asset_type: "other",
+    brand_id: null, brand: "", campaign_id: null, campaign: "", category: "", content_kind: "", asset_type: "other",
     designer_type: "other", is_permanent: false,
     tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
     production_data: {},
@@ -78,6 +79,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         campaign_id: d.data.campaign_id || null,
         campaign: d.data.campaign || "",
         category: d.data.category || "",
+        content_kind: d.data.content_kind || "",
         asset_type: d.data.asset_type || "other",
         designer_type: d.data.designer_type || "other",
         is_permanent: Boolean(d.data.is_permanent),
@@ -296,6 +298,23 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         >
           <option value="">Archivos (por defecto)</option>
           {CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+        </select>
+      </label>
+
+      {/* Orgánico o Ad — provenance, not current state. A design that ran as
+          an ad and did well often becomes an organic post later; this records
+          what it was FIRST used for, and the calendar row carries what it is
+          doing now. Images pulled in by Content Machine inherit it. */}
+      <label style={sectionStyle}>
+        <span style={labelStyle}>Orgánico / Ad</span>
+        <select
+          style={selectStyle}
+          value={meta.content_kind}
+          onChange={event => scheduleSave({ content_kind: event.target.value })}
+        >
+          <option value="">Sin definir</option>
+          <option value="organic">Orgánico</option>
+          <option value="ad">Ad</option>
         </select>
       </label>
 

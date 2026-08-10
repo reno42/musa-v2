@@ -135,3 +135,92 @@ test("spending nothing against a real plan is 0, not null", () => {
   assert.equal(pacing(0, 600), 0);
   assert.equal(pacing(undefined, 600), 0);
 });
+
+// ── Filters ──
+// The whole value is that they stack: "Acelera, ads, marzo" is one question.
+
+const { applyFilters, describeFilters, toCSVExport, toExcelXml, EXPORT_COLUMNS } =
+  await import("../src/lib/contentCalendar.ts");
+
+const set = [
+  row({ id: "1", scheduled_date: "2026-03-02", kind: "ad", brand_id: "b1", campaign: "Escolar", channels: ["Instagram"] }),
+  row({ id: "2", scheduled_date: "2026-03-20", kind: "organic", brand_id: "b1", campaign: null, channels: ["Facebook"] }),
+  row({ id: "3", scheduled_date: "2026-04-02", kind: "ad", brand_id: "b2", campaign: "Escolar", channels: ["Instagram", "Facebook"] }),
+];
+
+test("no filters returns everything untouched", () => {
+  assert.equal(applyFilters(set, {}).length, 3);
+});
+
+test("filters stack as AND, they do not replace each other", () => {
+  const out = applyFilters(set, { from: "2026-03-01", to: "2026-03-31", kind: "ad", brandId: "b1" });
+  assert.deepEqual(out.map(r => r.id), ["1"]);
+});
+
+test("the period is inclusive on both ends", () => {
+  assert.deepEqual(
+    applyFilters(set, { from: "2026-03-02", to: "2026-03-02" }).map(r => r.id), ["1"]);
+});
+
+test("an empty filter means any, not the empty value", () => {
+  // A blank brand box must not match "the brand whose id is empty string".
+  assert.equal(applyFilters(set, { brandId: "", kind: "", campaign: "" }).length, 3);
+});
+
+test("channel matches membership, since one post goes to several", () => {
+  assert.deepEqual(applyFilters(set, { channel: "Facebook" }).map(r => r.id), ["2", "3"]);
+});
+
+test("campaign matching ignores case and stray spaces", () => {
+  assert.deepEqual(applyFilters(set, { campaign: "  escolar " }).map(r => r.id), ["1", "3"]);
+});
+
+test("a filter combination matching nothing yields nothing, not everything", () => {
+  assert.deepEqual(applyFilters(set, { kind: "ad", brandId: "b1", campaign: "Verano" }), []);
+});
+
+test("the filter description names what was narrowed", () => {
+  assert.match(describeFilters({ from: "2026-03-01", kind: "ad" }), /2026-03-01/);
+  assert.equal(describeFilters({}), "Sin filtros");
+});
+
+// ── Export ──
+
+test("the CSV carries the plan, the actual and the pacing", () => {
+  const csv = toCSVExport([row({ plan_spend: 600, actual_spend: 300 })]);
+  const [header, first] = csv.trim().split("\n");
+  assert.match(header, /PROY Inversión/);
+  assert.match(header, /REAL Inversión/);
+  assert.match(header, /AVANCE Inversión/);
+  assert.match(first, /0\.5/, "300 of 600 is half the budget");
+});
+
+test("a copy containing commas, quotes and newlines survives the CSV", () => {
+  const csv = toCSVExport([row({ copy: 'Dijo "hola", y\nse fue' })]);
+  assert.ok(csv.includes('"Dijo ""hola"", y\nse fue"'));
+});
+
+test("no plan exports as blank, never as a fake zero", () => {
+  const csv = toCSVExport([row({ actual_spend: 300 })]);
+  const cells = csv.trim().split("\n")[1];
+  const avance = cells.split('","')[EXPORT_COLUMNS.findIndex(c => c.key === "avance_spend")];
+  assert.equal(avance.replace(/"/g, ""), "");
+});
+
+test("the spreadsheet types numbers as numbers so Excel can sum them", () => {
+  const xml = toExcelXml([row({ plan_spend: 600 })]);
+  assert.match(xml, /<Data ss:Type="Number">600<\/Data>/);
+  assert.match(xml, /<Data ss:Type="String">/);
+});
+
+test("the spreadsheet escapes XML rather than producing a broken file", () => {
+  const xml = toExcelXml([row({ topic: "Ahorro & <familia>" })]);
+  assert.ok(xml.includes("Ahorro &amp; &lt;familia&gt;"));
+  assert.ok(!xml.includes("<familia>"));
+});
+
+test("only the filtered rows reach the export", () => {
+  const filtered = applyFilters(set, { kind: "ad" });
+  const csv = toCSVExport(filtered);
+  assert.equal(csv.trim().split("\n").length, 3, "header plus the two ads");
+});

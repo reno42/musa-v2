@@ -13,9 +13,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/supabase";
+import { downloadBlob } from "../lib/download";
 import {
-  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL, REPORT_METRICS,
-  buildMonthGrid, groupByPlan, isoDate, pacing, summarizeMetaRows, type ContentRow,
+  CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
+  applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, pacing,
+  toCSVExport, toExcelXml, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
 import { TextsTab } from "./TextsTab";
 
@@ -66,6 +68,8 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cursor, setCursor] = useState(() => new Date());
+  const [filters, setFilters] = useState<ContentFilters>({});
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -83,6 +87,36 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
   }, [workspaceId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Brands drive the filter, so a report can be cut per client.
+  useEffect(() => {
+    if (!workspaceId) return;
+    void apiFetch<{ data?: Array<{ id: string; name: string }> }>(`/api/workspaces/${workspaceId}/brands`)
+      .then(res => setBrands(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => { /* the section works unfiltered */ });
+  }, [workspaceId]);
+
+  const brandNameById = useMemo(
+    () => new Map(brands.map(b => [b.id, b.name])), [brands]);
+
+  /** Every view below reads THIS, never `rows` — so an export is exactly what
+   *  is on screen, which is the whole point of being able to stack filters. */
+  const visible = useMemo(
+    () => applyFilters(rows, filters).map(r => ({ ...r, brandName: brandNameById.get(r.brand_id || "") || "" })),
+    [rows, filters, brandNameById]);
+
+  const exportAs = useCallback((format: "csv" | "xlsx") => {
+    const stamp = isoDate(new Date());
+    if (format === "csv") {
+      downloadBlob(new Blob([toCSVExport(visible)], { type: "text/csv;charset=utf-8" }),
+        `reporte-${stamp}.csv`);
+    } else {
+      // SpreadsheetML: Excel and Sheets both open it as a real sheet, with no
+      // zip writer shipped to the browser for one table.
+      downloadBlob(new Blob([toExcelXml(visible, "Reporte")], { type: "application/vnd.ms-excel" }),
+        `reporte-${stamp}.xls`);
+    }
+  }, [visible]);
 
   /** Optimistic write: the cell changes before the request leaves. */
   const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
@@ -132,8 +166,8 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
   }, [rows]);
 
   const grid = useMemo(
-    () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth(), rows),
-    [cursor, rows],
+    () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth(), visible),
+    [cursor, visible],
   );
 
   const monthLabel = cursor.toLocaleDateString("es", { month: "long", year: "numeric" });
@@ -153,10 +187,50 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
         <div style={{ flex: 1 }} />
         {pane !== "copies" && (
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-            {rows.length} piezas · {rows.filter(r => r.kind === "ad").length} ads
+            {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
           </span>
         )}
       </div>
+
+      {pane !== "copies" && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
+        }}>
+          {/* Each narrows the last. Stacking them is what lets one workspace
+              produce a report per brand, per period, per kind. */}
+          <input type="date" value={filters.from || ""} style={{ ...control, colorScheme: "dark" }}
+            onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} aria-label="Desde" />
+          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>a</span>
+          <input type="date" value={filters.to || ""} style={{ ...control, colorScheme: "dark" }}
+            onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} aria-label="Hasta" />
+          <select value={filters.brandId || ""} style={control} aria-label="Marca"
+            onChange={e => setFilters(f => ({ ...f, brandId: e.target.value }))}>
+            <option value="" style={{ background: "#000" }}>Todas las marcas</option>
+            {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+          </select>
+          <select value={filters.kind || ""} style={control} aria-label="Tipo"
+            onChange={e => setFilters(f => ({ ...f, kind: e.target.value as any }))}>
+            <option value="" style={{ background: "#000" }}>Ads y orgánico</option>
+            {CONTENT_KINDS.map(k => <option key={k} value={k} style={{ background: "#000" }}>{KIND_LABEL[k]}</option>)}
+          </select>
+          <select value={filters.channel || ""} style={control} aria-label="Canal"
+            onChange={e => setFilters(f => ({ ...f, channel: e.target.value }))}>
+            <option value="" style={{ background: "#000" }}>Todos los canales</option>
+            {CHANNELS.map(c => <option key={c} value={c} style={{ background: "#000" }}>{c}</option>)}
+          </select>
+          <input value={filters.campaign || ""} placeholder="Campaña" aria-label="Campaña"
+            style={{ ...control, width: 130 }}
+            onChange={e => setFilters(f => ({ ...f, campaign: e.target.value }))} />
+          {Object.values(filters).some(Boolean) && (
+            <button type="button" style={btn} onClick={() => setFilters({})}>Limpiar</button>
+          )}
+          <div style={{ flex: 1 }} />
+          {/* Exports carry exactly what the filters left on screen. */}
+          <button type="button" style={btn} onClick={() => exportAs("csv")}>⇩ CSV</button>
+          <button type="button" style={btn} onClick={() => exportAs("xlsx")}>⇩ Excel</button>
+        </div>
+      )}
 
       {error && (
         <div role="alert" style={{
@@ -240,7 +314,8 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["Fecha", "Hora", "Tipo", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado", "Archivo", ""].map(h => (
+                {["Fecha", "Hora", "Tipo", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
+                  "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
                     fontWeight: 600, color: "rgba(255,255,255,0.65)", fontSize: 11.5,
@@ -250,7 +325,7 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              {visible.map(r => (
                 <tr key={r.id}>
                   <td style={CELL}>
                     <input type="date" value={r.scheduled_date || ""} style={field}
@@ -303,6 +378,26 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
                       {CONTENT_STATUSES.map(s => <option key={s} value={s} style={{ background: "#000" }}>{s}</option>)}
                     </select>
                   </td>
+                  {/* PROYECCIÓN against RESULTADOS, the two bands an agency
+                      report is built on. Blank means no plan, which is not
+                      zero — the avance column shows "—" rather than 0%. */}
+                  {(["plan_spend", "plan_impressions", "actual_spend", "actual_impressions"] as const).map(key => (
+                    <td key={key} style={{ ...CELL, minWidth: 84 }}>
+                      <input
+                        inputMode="decimal"
+                        value={(r as any)[key] ?? ""}
+                        placeholder="—"
+                        style={{ ...field, textAlign: "right" }}
+                        onChange={e => patch(r.id, { [key]: e.target.value })}
+                      />
+                    </td>
+                  ))}
+                  <td style={{ ...CELL, textAlign: "right", color: "rgba(255,255,255,0.7)", whiteSpace: "nowrap" }}>
+                    {(() => {
+                      const p = pacing((r as any).actual_spend, (r as any).plan_spend);
+                      return p === null ? "—" : `${Math.round(p * 100)}%`;
+                    })()}
+                  </td>
                   <td style={{ ...CELL, minWidth: 150 }}>
                     {r.template_id ? (
                       <button type="button" onClick={() => onOpenTemplate?.(r.template_id!)}
@@ -327,7 +422,7 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
           </button>
         </div>
       ) : pane === "reports" ? (
-        <ReportsPane rows={rows} />
+        <ReportsPane rows={visible} filters={filters} onExport={exportAs} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
@@ -338,70 +433,108 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
 }
 
 /**
- * The agency report, in the shape the Santander files use: dimensions on the
- * left, then PROYECCIÓN against RESULTADOS, then how far along it is.
+ * The agency report: dimensions, PROYECCIÓN against RESULTADOS, and how far
+ * along it is — the four bands the Santander files are built on.
  *
- * What is here today is the actual side computed from what the calendar knows,
- * grouped the way a media plan is read. Plan figures and the Meta pull are the
- * next piece — the roll-up maths they need (weighted rates, pacing) is already
- * written and tested in lib/contentCalendar.ts.
+ * Totals are summed from the rows the filters left, and the rates are derived
+ * from those sums rather than averaged per row. Averaging a CPM weights a
+ * 300-impression ad the same as a 300,000-impression one and yields a number
+ * that is not the cost of anything.
  */
-function ReportsPane({ rows }: { rows: ContentRow[] }) {
-  const ads = useMemo(() => rows.filter(r => r.kind === "ad"), [rows]);
-  const { campaigns, loose } = useMemo(() => groupByPlan(ads), [ads]);
-  const totals = useMemo(() => summarizeMetaRows([]), []);
+function ReportsPane({ rows, filters, onExport }: {
+  rows: ContentRow[];
+  filters: ContentFilters;
+  onExport: (format: "csv" | "xlsx") => void;
+}) {
+  const { campaigns, loose } = useMemo(() => groupByPlan(rows), [rows]);
+
+  const sum = (list: ContentRow[], key: string) =>
+    list.reduce((acc, r) => acc + (Number((r as any)[key]) || 0), 0);
+
+  const block = (list: ContentRow[]) => {
+    const planSpend = sum(list, "plan_spend");
+    const planImpr = sum(list, "plan_impressions");
+    const realSpend = sum(list, "actual_spend");
+    const realImpr = sum(list, "actual_impressions");
+    const realClicks = sum(list, "actual_clicks");
+    return {
+      piezas: list.length,
+      planSpend, planImpr, realSpend, realImpr,
+      cpm: realImpr > 0 ? (realSpend / realImpr) * 1000 : null,
+      ctr: realImpr > 0 ? (realClicks / realImpr) * 100 : null,
+      avanceSpend: pacing(realSpend, planSpend),
+      avanceImpr: pacing(realImpr, planImpr),
+    };
+  };
+
+  const n = (v: number | null, digits = 0) =>
+    v === null || !Number.isFinite(v) ? "—" : v.toLocaleString("es", { maximumFractionDigits: digits });
+  const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
+
+  const head = (label: string) => (
+    <th key={label} style={{
+      ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5,
+      color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap",
+    }}>{label}</th>
+  );
+
+  const line = (label: string, list: ContentRow[], muted = false) => {
+    const b = block(list);
+    return (
+      <tr key={label}>
+        <td style={{ ...CELL, color: muted ? "rgba(255,255,255,0.5)" : "#fff", fontStyle: muted ? "italic" : "normal" }}>{label}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{b.piezas}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{n(b.planSpend, 2)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{n(b.planImpr)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{n(b.realSpend, 2)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{n(b.realImpr)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{n(b.cpm, 2)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{b.ctr === null ? "—" : `${b.ctr.toFixed(2)}%`}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{pct(b.avanceSpend)}</td>
+        <td style={{ ...CELL, textAlign: "right" }}>{pct(b.avanceImpr)}</td>
+      </tr>
+    );
+  };
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12, lineHeight: 1.6, maxWidth: 620 }}>
-        Estructura del reporte de agencia: dimensiones, <strong style={{ color: "#fff" }}>proyección</strong> contra{" "}
-        <strong style={{ color: "#fff" }}>resultados</strong>, y el avance. Las cifras reales entran al conectar Meta;
-        la tabla de abajo ya agrupa lo planificado como lo lee un plan de medios.
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
+        {describeFilters(filters)} · {rows.length} piezas
       </div>
 
-      {ads.length === 0 ? (
+      {rows.length === 0 ? (
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
-          Todavía no hay piezas marcadas como Ad en el calendario.
+          Nada que reportar con estos filtros.
         </div>
       ) : (
-        <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
-          <thead>
-            <tr>
-              <th style={{ ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5, color: "rgba(255,255,255,0.65)" }}>Campaña</th>
-              <th style={{ ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5, color: "rgba(255,255,255,0.65)" }}>Conjunto</th>
-              <th style={{ ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5, color: "rgba(255,255,255,0.65)" }}>Piezas</th>
-              {REPORT_METRICS.map(m => (
-                <th key={m.key} style={{ ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5, color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap" }}>{m.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[...campaigns.entries()].map(([name, items]) => (
-              <tr key={name}>
-                <td style={CELL}>{name}</td>
-                <td style={CELL}>{[...new Set(items.map(i => i.ad_set).filter(Boolean))].join(", ") || "—"}</td>
-                <td style={CELL}>{items.length}</td>
-                {REPORT_METRICS.map(m => (
-                  <td key={m.key} style={{ ...CELL, color: "rgba(255,255,255,0.35)" }}>—</td>
-                ))}
-              </tr>
-            ))}
-            {loose.length > 0 && (
+        <>
+          <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
               <tr>
-                <td style={{ ...CELL, color: "rgba(255,255,255,0.5)", fontStyle: "italic" }}>sin campaña</td>
-                <td style={CELL}>—</td>
-                <td style={CELL}>{loose.length}</td>
-                {REPORT_METRICS.map(m => (
-                  <td key={m.key} style={{ ...CELL, color: "rgba(255,255,255,0.35)" }}>—</td>
-                ))}
+                {head("Campaña")}
+                {head("Piezas")}
+                {head("PROY Inversión")}
+                {head("PROY Impresiones")}
+                {head("REAL Inversión")}
+                {head("REAL Impresiones")}
+                {head("CPM")}
+                {head("CTR")}
+                {head("AVANCE $")}
+                {head("AVANCE Impr.")}
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {[...campaigns.entries()].map(([name, items]) => line(name, items))}
+              {loose.length > 0 && line("sin campaña", loose, true)}
+              {line("TOTAL", rows)}
+            </tbody>
+          </table>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button type="button" style={btn} onClick={() => onExport("csv")}>⇩ Exportar CSV</button>
+            <button type="button" style={btn} onClick={() => onExport("xlsx")}>⇩ Exportar Excel</button>
+          </div>
+        </>
       )}
-      <div style={{ marginTop: 14, fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
-        Avance de inversión: {pacing(totals.spend, 0) === null ? "sin plan cargado" : "—"}
-      </div>
     </div>
   );
 }

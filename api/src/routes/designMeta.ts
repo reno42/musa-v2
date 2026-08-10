@@ -75,7 +75,7 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
 designMetaRoutes.put("/:templateId", async (req, res) => {
   const { templateId } = req.params; // outside the try so the catch can name it
   try {
-    const { brand_id, brand, campaign_id, campaign, category, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
+    const { brand_id, brand, campaign_id, campaign, category, content_kind, asset_type, designer_type, is_permanent, production_data, tags, theme, format, file_type, cover_image_url, obsidian_link } = req.body;
 
     const patch: Record<string, any> = {};
     if (brand_id !== undefined) patch.brand_id = brand_id || null;
@@ -83,6 +83,11 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
     if (campaign_id !== undefined) patch.campaign_id = campaign_id || null;
     if (campaign !== undefined) patch.campaign = campaign;
     if (category !== undefined) patch.category = normalizeCategory(category);
+    if (content_kind !== undefined) {
+      // Provenance, not current state: what the design was FIRST used for.
+      const kind = String(content_kind || "").trim().toLowerCase();
+      patch.content_kind = kind === "ad" || kind === "organic" ? kind : null;
+    }
     if (asset_type !== undefined) patch.asset_type = asset_type || "other";
     if (designer_type !== undefined) patch.designer_type = designer_type || "other";
     if (is_permanent !== undefined) patch.is_permanent = Boolean(is_permanent);
@@ -477,6 +482,7 @@ function rowToMeta(row: any) {
     campaign: row.campaign || "",
     campaign_id: row.campaign_id || null,
     category: row.category || "",
+    content_kind: row.content_kind || "",
     asset_type: row.asset_type || "other",
     designer_type: row.designer_type || "other",
     is_permanent: Boolean(row.is_permanent),
