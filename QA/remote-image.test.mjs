@@ -7,7 +7,9 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeImageUrl, unsupportedLinkReason } from "../api/src/services/imageLinks.ts";
+import {
+  normalizeImageUrl, unsupportedLinkReason, requestSmallerVariant,
+} from "../api/src/services/imageLinks.ts";
 
 test("a Drive view link becomes the one that returns bytes", () => {
   assert.equal(
@@ -57,4 +59,36 @@ test("a gallery page is called out as not being the image", () => {
 test("the CDN URLs those pages point at are fine", () => {
   assert.equal(unsupportedLinkReason("https://images.unsplash.com/photo-1"), null);
   assert.equal(unsupportedLinkReason("https://images.pexels.com/photos/1/gato.jpg"), null);
+});
+
+// Cheapest compression there is: never receive the big file.
+test("Unsplash is asked for a resized copy instead of the original", () => {
+  const smaller = new URL(requestSmallerVariant("https://images.unsplash.com/photo-1?ixid=abc", 2000, 75));
+  assert.equal(smaller.searchParams.get("w"), "2000");
+  assert.equal(smaller.searchParams.get("q"), "75");
+  assert.equal(smaller.searchParams.get("fit"), "max", "fit=max must not upscale or crop");
+  assert.equal(smaller.searchParams.get("ixid"), "abc", "the source's own params survive");
+});
+
+test("Pexels gets its own compression parameters", () => {
+  const smaller = new URL(requestSmallerVariant("https://images.pexels.com/photos/1/gato.jpg"));
+  assert.equal(smaller.searchParams.get("auto"), "compress");
+  assert.equal(smaller.searchParams.get("w"), "2000");
+});
+
+test("an existing size parameter is replaced, not duplicated", () => {
+  const smaller = requestSmallerVariant("https://images.unsplash.com/photo-1?w=6000&q=100");
+  assert.equal((smaller.match(/[?&]w=/g) || []).length, 1);
+  assert.match(smaller, /w=2000/);
+});
+
+test("a host we do not know is left completely alone", () => {
+  const own = "https://mi-servidor.com/foto.jpg?token=abc";
+  assert.equal(requestSmallerVariant(own), own);
+  assert.equal(requestSmallerVariant("https://cdn.pixabay.com/photo/1/x.jpg"),
+    "https://cdn.pixabay.com/photo/1/x.jpg");
+});
+
+test("something that is not a URL comes back untouched rather than throwing", () => {
+  assert.equal(requestSmallerVariant("no soy una url"), "no soy una url");
 });

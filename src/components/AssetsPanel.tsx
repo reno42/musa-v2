@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { imageStorageWarning } from "../lib/storageHealth";
+import { prepareImageForUpload } from "../lib/imageCompress";
 import { getApiHeaders } from "../lib/apiKey";
 
 interface Asset {
@@ -99,18 +100,15 @@ export function AssetsPanel({ workspaceId, onAssetUploaded, onManageStorage, sel
   }, [onAssetUploaded, workspaceId]);
 
   const uploadFile = useCallback(async (file: File) => {
-    const warning = imageStorageWarning(file);
-    setStorageWarning(warning || "");
-    if (warning && !window.confirm(`${warning}\n\n¿Deseas continuar con la carga?`)) return;
     setError("");
     setUploading(true);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      // Shrunk before anything is asked of the user. The old flow measured the
+      // original and warned that it was heavy — which put the problem on the
+      // person holding a phone photo, who had no way to fix it. Now it is
+      // fixed here, and the warning only survives for what stays big after.
+      const { dataUrl: base64, bytes, note } = await prepareImageForUpload(file);
+      setStorageWarning(bytes > file.size * 0.95 ? imageStorageWarning(file) || "" : note);
       await uploadDataUrl(file.name.replace(/\.[^.]+$/, ""), base64);
     } catch (e: any) {
       setError(e.message || "Upload failed");

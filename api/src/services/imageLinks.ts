@@ -30,6 +30,46 @@ export function normalizeImageUrl(rawUrl: string): string {
 }
 
 /**
+ * Asks the source for a smaller copy instead of downloading the original.
+ *
+ * The server has no image library and no business growing one, but the CDNs a
+ * copywriter actually pastes from all resize on request — so the cheapest
+ * compression available is to never receive the big file. An Unsplash original
+ * is 15-25MB; the same URL with w=2000&q=75 is a few hundred KB, resized on
+ * their machines, for free.
+ *
+ * Untouched for anything unrecognised: a query string invented for a host that
+ * does not understand it is at best ignored and at worst a 404.
+ */
+export function requestSmallerVariant(rawUrl: string, maxEdge = 2000, quality = 75): string {
+  let url: URL;
+  try { url = new URL(rawUrl.trim()); } catch { return rawUrl; }
+  const host = url.hostname.toLowerCase();
+
+  if (host === "images.unsplash.com") {
+    url.searchParams.set("w", String(maxEdge));
+    url.searchParams.set("q", String(quality));
+    url.searchParams.set("fit", "max");   // never upscale, keep aspect
+    url.searchParams.set("fm", "jpg");
+    return url.toString();
+  }
+
+  if (host === "images.pexels.com") {
+    url.searchParams.set("auto", "compress");
+    url.searchParams.set("cs", "tinysrgb");
+    url.searchParams.set("w", String(maxEdge));
+    return url.toString();
+  }
+
+  if (host === "cdn.pixabay.com" || host.endsWith(".shopify.com")) {
+    // Both encode size in the path rather than the query; leave them be.
+    return rawUrl;
+  }
+
+  return rawUrl;
+}
+
+/**
  * A reason, in Spanish, for the links that cannot work at all — either because
  * they are behind a login the server has no way through, or because they point
  * at a gallery page rather than the picture on it. Returning the reason up

@@ -16,12 +16,17 @@
  */
 
 import { assertSafeIntegrationEndpoint } from "./workspaceIntegrations.js";
-import { normalizeImageUrl, unsupportedLinkReason } from "./imageLinks.js";
+import { normalizeImageUrl, requestSmallerVariant, unsupportedLinkReason } from "./imageLinks.js";
 
-export { normalizeImageUrl, unsupportedLinkReason };
+export { normalizeImageUrl, requestSmallerVariant, unsupportedLinkReason };
 
 const MAX_REDIRECTS = 4;
-const MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * A design file has no use for more than this, and the number is a promise
+ * about how heavy a workspace can get. It used to be 10MB, which is four phone
+ * photos away from a template nobody can open.
+ */
+const MAX_BYTES = 5 * 1024 * 1024;
 const TIMEOUT_MS = 15_000;
 
 export interface RemoteImage {
@@ -36,7 +41,9 @@ export async function fetchRemoteImage(rawUrl: string): Promise<RemoteImage> {
   const blocked = unsupportedLinkReason(rawUrl);
   if (blocked) throw new Error(blocked);
 
-  let target = normalizeImageUrl(rawUrl);
+  // Ask the source to resize before sending, where it knows how. Costs us
+  // nothing and is the difference between a 20MB original and 300KB.
+  let target = requestSmallerVariant(normalizeImageUrl(rawUrl));
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertSafeIntegrationEndpoint(target);
@@ -65,9 +72,15 @@ export async function fetchRemoteImage(rawUrl: string): Promise<RemoteImage> {
 
     // Trust the header enough to reject early, then measure what actually came.
     const declared = Number(response.headers.get("content-length") || 0);
-    if (declared > MAX_BYTES) throw new Error("La imagen supera el límite de 10MB");
+    if (declared > MAX_BYTES) throw new Error(
+      "La imagen pesa más de 5MB. Redúcela antes de enlazarla, o súbela desde el "
+      + "editor: al subirla desde tu equipo el navegador la optimiza solo.",
+    );
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > MAX_BYTES) throw new Error("La imagen supera el límite de 10MB");
+    if (buffer.length > MAX_BYTES) throw new Error(
+      "La imagen pesa más de 5MB. Redúcela antes de enlazarla, o súbela desde el "
+      + "editor: al subirla desde tu equipo el navegador la optimiza solo.",
+    );
     if (buffer.length === 0) throw new Error("El enlace devolvió un archivo vacío");
 
     return { buffer, mimeType, finalUrl: target };

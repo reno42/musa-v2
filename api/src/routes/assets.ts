@@ -45,8 +45,13 @@ assetRoutes.post("/upload", async (req, res) => {
     } else {
       return res.status(400).json({ success: false, error: "Provide either data (base64) or url" });
     }
-    if (imageBuffer.length > 10 * 1024 * 1024) {
-      return res.status(413).json({ success: false, error: "Image exceeds the 10MB workspace limit" });
+    // 5MB, not 10: the browser optimises before it uploads, so anything that
+    // still arrives this heavy skipped that path and would bloat the workspace.
+    if (imageBuffer.length > 5 * 1024 * 1024) {
+      return res.status(413).json({
+        success: false,
+        error: "La imagen supera el límite de 5MB. Súbela desde el editor y se optimizará sola.",
+      });
     }
 
     // Use the unified upload helper (Supabase Storage or local disk fallback)
@@ -240,8 +245,13 @@ assetRoutes.post("/upload-file", async (req, res) => {
     const mimeType = clientMime || (matches?.[1]) || "image/png";
     const b64 = matches?.[2] || data;
     const imageBuffer = Buffer.from(b64, "base64");
-    if (imageBuffer.length > 10 * 1024 * 1024) {
-      return res.status(413).json({ success: false, error: "Image exceeds the 10MB workspace limit" });
+    // 5MB, not 10: the browser optimises before it uploads, so anything that
+    // still arrives this heavy skipped that path and would bloat the workspace.
+    if (imageBuffer.length > 5 * 1024 * 1024) {
+      return res.status(413).json({
+        success: false,
+        error: "La imagen supera el límite de 5MB. Súbela desde el editor y se optimizará sola.",
+      });
     }
     const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
     const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;

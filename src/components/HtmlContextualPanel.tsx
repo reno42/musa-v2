@@ -4,6 +4,7 @@ import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { getApiHeaders } from "../lib/apiKey";
+import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";
 
 /**
@@ -618,12 +619,9 @@ export function HtmlContextualPanel({
     const file = e.target.files?.[0];
     if (!file || !element) return;
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      // Shrunk here, where the file already is. A phone photo is routinely
+      // 8-12MB and none of it survives being drawn into a frame.
+      const { dataUrl: base64 } = await prepareImageForUpload(file);
 
       const result = await fetch(`/api/assets/upload`, {
         method: "POST",
