@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiHeaders } from "../lib/apiKey";
 import { notifyMetaChanged, onMetaChanged } from "../lib/metaSync";
-import { ASSET_TYPE_OPTIONS, DESIGNER_TYPE_OPTIONS, type DesignerType } from "../lib/designGraph";
 
 interface FileMeta {
   brand_id: string | null;
@@ -37,8 +36,6 @@ const CATEGORIES = ["Design System", "Plantillas", "Assets", "Archivos"];
  *  so a file that arrives unfiled is put here rather than left as "Sin marca". */
 const DEFAULT_BRAND_NAME = "Futuraria";
 
-const FORMATS = ["", "web", "mobile", "social", "print", "email", "packaging", "large_format", "signage", "textile"];
-const FILE_TYPES = ["", "frame", "deck", "template", "export"];
 const PRODUCTION_FIELDS = [
   ["supplier", "Proveedor / imprenta"],
   ["print_run", "Tiraje (cantidad)"],
@@ -51,8 +48,6 @@ const PRODUCTION_FIELDS = [
   ["approved_version", "Versión aprobada"],
 ] as const;
 
-// Group ASSET_TYPE_OPTIONS by group for <optgroup> rendering
-const ASSET_TYPE_GROUPS = [...new Set(ASSET_TYPE_OPTIONS.map((o) => o.group))];
 
 export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
@@ -324,39 +319,14 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         </datalist>
       </label>
 
-      <label style={sectionStyle}>
-        <span style={labelStyle}>Tipo de asset</span>
-        <select style={selectStyle} value={meta.asset_type} onChange={event => scheduleSave({ asset_type: event.target.value })}>
-          {ASSET_TYPE_GROUPS.map(group => (
-            <optgroup key={group} label={group}>
-              {ASSET_TYPE_OPTIONS.filter(o => o.group === group).map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </label>
+      {/* "Tipo de asset", "Perfil de diseño" and "Activo permanente" lived here.
+          All three were write-only: stored, echoed back, and read by nothing
+          that makes a decision. The panel is for what a person needs to file a
+          design, not for every column the table happens to have.
 
-      {/* Designer Type */}
-      <label style={sectionStyle}>
-        <span style={labelStyle}>Perfil de diseño</span>
-        <select style={selectStyle} value={meta.designer_type} onChange={event => scheduleSave({ designer_type: event.target.value })}>
-          {DESIGNER_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </label>
-
-      {/* Is Permanent */}
-      <div style={sectionStyle}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={meta.is_permanent}
-            onChange={e => scheduleSave({ is_permanent: e.target.checked })}
-            style={{ width: 14, height: 14, cursor: "pointer" }}
-          />
-          <span style={{ fontSize: 11, color: "#ccc" }}>Activo permanente (lineamientos de marca)</span>
-        </label>
-      </div>
+          asset_type still decides whether the production block below appears,
+          so it is kept in state and set by the API's default; it just has no
+          control of its own any more. */}
 
       {/* Production Data (only for print-type assets) */}
       {(meta.designer_type === "print" || ["packaging", "label", "dieline", "pop_display", "large_format", "signage", "textile", "merch", "stand"].includes(meta.asset_type)) && (
@@ -411,45 +381,10 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         />
       </div>
 
-      {/* Format */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>Format</label>
-        <select
-          style={selectStyle}
-          value={meta.format}
-          onChange={e => scheduleSave({ format: e.target.value })}
-        >
-          {FORMATS.map(f => <option key={f} value={f}>{f || "—"}</option>)}
-        </select>
-      </div>
-
-      {/* File Type */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>File Type</label>
-        <select
-          style={selectStyle}
-          value={meta.file_type}
-          onChange={e => scheduleSave({ file_type: e.target.value })}
-        >
-          {FILE_TYPES.map(f => <option key={f} value={f}>{f || "—"}</option>)}
-        </select>
-      </div>
-
-      {/* Obsidian Link */}
-      <div style={sectionStyle}>
-        <label style={labelStyle}>Obsidian Link</label>
-        <input
-          style={inputStyle}
-          value={meta.obsidian_link}
-          onChange={e => scheduleSave({ obsidian_link: e.target.value })}
-          placeholder="obsidian://open?vault=design&file=..."
-        />
-        {meta.obsidian_link && (
-          <a href={meta.obsidian_link} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontSize: 11, marginTop: 4, display: "inline-block" }}>
-            Open in Obsidian ↗
-          </a>
-        )}
-      </div>
+      {/* Format, File Type and Obsidian Link lived here. Same story: three
+          more fields nothing downstream reads. Their values are still carried
+          in state and round-tripped on save, so anything already stored is
+          preserved rather than blanked by the next edit. */}
 
       {/* Save indicator */}
       <div style={{ padding: "4px 0", fontSize: 10, color: "#666", textAlign: "right" }}>

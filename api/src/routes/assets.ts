@@ -118,6 +118,56 @@ assetRoutes.get("/", async (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/assets/:id — rename an asset, or re-file it under a brand.
+ *
+ * An asset belongs to a brand by carrying that brand's name in its tags, which
+ * is the rule buildBrandGraph files by. So "change this asset's brand" means
+ * "swap whichever tag is a brand name for this one", and the brand table's
+ * Marca cell writes through here. Tags that are not brand names — a
+ * campaign, a topic — are left alone.
+ */
+assetRoutes.patch("/:id", async (req, res) => {
+  try {
+    const sb = getSupabase();
+    if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+
+    const { data: asset, error: readError } = await sb.from("assets")
+      .select("id, workspace_id, tags").eq("id", req.params.id).maybeSingle();
+    if (readError) throw readError;
+    if (!asset) return res.status(404).json({ success: false, error: "Asset no encontrado" });
+    if (!req.auth || !(await canAccessWorkspace(req.auth, asset.workspace_id, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
+
+    const patch: Record<string, any> = {};
+    if (typeof req.body.name === "string" && req.body.name.trim()) patch.name = req.body.name.trim();
+
+    if (req.body.brand !== undefined) {
+      const { data: brands } = await sb.from("brands").select("name")
+        .eq("workspace_id", asset.workspace_id);
+      const brandNames = new Set((brands || []).map((b: any) => String(b.name).trim().toLowerCase()));
+      const current: string[] = Array.isArray(asset.tags) ? asset.tags : [];
+      // Everything that is not a brand name survives untouched.
+      const kept = current.filter(t => !brandNames.has(String(t).trim().toLowerCase()));
+      const wanted = String(req.body.brand || "").trim();
+      patch.tags = wanted ? [...kept, wanted] : kept;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ success: false, error: "Nada que actualizar" });
+    }
+    patch.updated_at = new Date().toISOString();
+
+    const { error } = await sb.from("assets").update(patch).eq("id", req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error(`[assets] PATCH ${req.params.id} failed:`, err?.code, err?.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /** DELETE /api/assets/:id — soft-delete asset (move to Trash) */
 assetRoutes.delete("/:id", async (req, res) => {
   try {

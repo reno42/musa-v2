@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
+import { SETTLE_MS, shouldCapture, thumbnailScale } from "../lib/autoSnapshot";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -276,6 +277,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // QA probe: verification agents inspect undo depth / frames without guessing.
   if (typeof window !== "undefined") (window as any).__docStore = store;
   const frames = useSyncExternalStore(store.subscribe, store.getSnapshot) as FrameData[];
+  // Bumped during render, not in an effect: the auto-snapshot below has to be
+  // able to tell "changed since the last capture" without depending on which
+  // effect happens to run first. framesRef itself is declared further down,
+  // alongside the autosave that also needs it.
+  const revisionSeenRef = useRef<FrameData[] | null>(null);
+  const revisionRef = useRef(0);
+  if (revisionSeenRef.current !== frames) {
+    revisionSeenRef.current = frames;
+    revisionRef.current += 1;
+  }
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -2856,6 +2867,78 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return null;
     }
   }, []);
+
+  // ── Auto-snapshot ──────────────────────────────────────────────────────
+  // Why this runs while the user is working rather than as they leave, and
+  // what each guard is for, is written up in lib/autoSnapshot.ts. The short
+  // version: an exit-triggered capture is missing exactly when you need it,
+  // because nothing waits for async work during unload and nothing fires at
+  // all when a laptop lid closes.
+  const snapshotStateRef = useRef({ capturedRevision: -1, lastCaptureAt: 0, running: false });
+
+  const captureSnapshot = useCallback(async (flush = false) => {
+    const state = snapshotStateRef.current;
+    if (state.running || !templateId) return;
+    const frame = framesRef.current?.[0];
+    const decision = shouldCapture({
+      revision: revisionRef.current,
+      capturedRevision: state.capturedRevision,
+      lastCaptureAt: state.lastCaptureAt,
+      now: Date.now(),
+      hasFrame: Boolean(frame?.html),
+      flush,
+    });
+    if (!decision.capture || !frame) return;
+
+    state.running = true;
+    const revisionAtStart = revisionRef.current;
+    try {
+      // Card-sized, not full-bore: rendering a 4000px artboard at 2x to show
+      // it 300px wide is most of what a snapshot costs.
+      const blob = await captureFrameToPng(frame, thumbnailScale(frame.width, frame.height), "jpg");
+      if (!blob) return;
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("read failed"));
+        reader.readAsDataURL(blob);
+      });
+      // Through the same tool the dashboard's "capture thumbnails" uses. A
+      // PUT on the template would take the long road — read the design, set
+      // one string, write the whole blob back — and this runs on a timer.
+      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
+      state.capturedRevision = revisionAtStart;
+      state.lastCaptureAt = Date.now();
+    } catch (err) {
+      // A card showing yesterday's snapshot is fine. Interrupting the person
+      // designing to tell them about it is not.
+      console.warn("[snapshot] no se pudo capturar:", err);
+    } finally {
+      state.running = false;
+    }
+  }, [templateId, captureFrameToPng]);
+
+  // Fires once the edits stop, so by the time anyone leaves it is already done.
+  useEffect(() => {
+    if (!templateId) return;
+    const timer = window.setTimeout(() => { void captureSnapshot(false); }, SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [templateId, frames, captureSnapshot]);
+
+  // Best-effort flush. Covers the tab being hidden, the app being backgrounded
+  // on a phone, and leaving the editor by any in-app route. It is a flush of
+  // something already pending, never the mechanism.
+  useEffect(() => {
+    if (!templateId) return;
+    const onHide = () => { if (document.visibilityState === "hidden") void captureSnapshot(true); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onHide);
+      void captureSnapshot(true);
+    };
+  }, [templateId, captureSnapshot]);
 
   /* Capture first frame as PNG base64 — for FileInfoPanel cover */
   const handleCoverCapture = useCallback(async (): Promise<string | null> => {
@@ -5554,6 +5637,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onFrameHover={setBatchHoveredFrameId}
               onGenerate={handleBatchGenerate}
               workspaceId={templateWorkspaceId}
+              templateId={templateId}
             />
           )}
           {rightPanelTab === "ai" && (

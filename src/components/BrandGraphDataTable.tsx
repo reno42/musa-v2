@@ -335,13 +335,14 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
    */
   const save = useCallback(async (
     row: Row, url: string, body: Record<string, unknown>, what: string, optimistic: Partial<Row>,
+    method: "PUT" | "PATCH" = "PUT",
   ) => {
     setSaveError("");
     setRows(cur => cur.map(r => (r.id === row.id ? { ...r, ...optimistic } : r)));
     setPending(cur => new Set(cur).add(row.id));
     try {
       const res = await apiFetch<{ success?: boolean; error?: string }>(url, {
-        method: "PUT", body: JSON.stringify(body),
+        method, body: JSON.stringify(body),
       });
       // The API answers 200 with success:false for anything it declined.
       if (res && res.success === false) throw new Error(res.error || "El servidor rechazo el cambio");
@@ -366,6 +367,13 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     const col = editing.col;
     setEditing(null);
     if (!row || value === row[col]) return;
+    if (row.assetUrl) {
+      // An asset is filed by its tags, so the endpoint swaps the brand tag
+      // rather than writing design_file_meta, which an asset does not have.
+      await save(row, `/api/assets/${row.id.replace(/^asset:/, "")}`, { brand: value },
+        "la marca del asset", { brandName: value }, "PATCH");
+      return;
+    }
     if (col === "name") {
       // A file's name lives on `templates`, not on design_file_meta.
       if (!value) return;
@@ -575,9 +583,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                 >
                   <td
                     style={cell}
-                    onDoubleClick={() => { if (isFile(row)) edit(row, "brandName"); }}
+                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "brandName"); }}
                     title={row.brandOnly ? "Marca sin archivos"
-                      : row.assetUrl ? "La marca de un asset se define por sus etiquetas, no aquí"
+                      : row.assetUrl ? "Doble click para cambiar la marca - se guarda como etiqueta del asset"
                         : "Doble click para archivar bajo otra marca - una marca nueva se crea sola"}
                   >
                     {editing && editing.id === row.id && editing.col === "brandName"

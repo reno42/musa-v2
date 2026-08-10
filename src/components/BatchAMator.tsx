@@ -19,6 +19,8 @@ interface BatchAMatorProps {
   onGenerate: (newFrames: FrameData[]) => void;
   /** Needed to re-host images the sheet points at. Without it links are left as typed. */
   workspaceId?: string | null;
+  /** The file being worked on — its brand is what generated assets get tagged with. */
+  templateId?: string | null;
 }
 
 const FRAME_GAP = 100;
@@ -97,8 +99,26 @@ function applyReplacements(
 }
 
 export function BatchAMator({
-  frames, checkedFrameIds, onCheckedFrameIdsChange, onFrameHover, onGenerate, workspaceId,
+  frames, checkedFrameIds, onCheckedFrameIdsChange, onFrameHover, onGenerate, workspaceId, templateId,
 }: BatchAMatorProps) {
+  /**
+   * The brand every image this run pulls in gets tagged with.
+   *
+   * An asset is filed under a brand by carrying its name in tags — that is the
+   * rule the graph and the table both read. Content Machine uploaded untagged,
+   * so a run that pulled twenty photos produced twenty assets nobody could
+   * find under the brand they plainly belong to. Read once from the file this
+   * panel is working on.
+   */
+  const [assetBrand, setAssetBrand] = useState("");
+  useEffect(() => {
+    if (!templateId) { setAssetBrand(""); return; }
+    let cancelled = false;
+    void apiFetch<{ success?: boolean; data?: { brand?: string } }>(`/api/meta/${templateId}`)
+      .then(res => { if (!cancelled) setAssetBrand(res?.data?.brand || ""); })
+      .catch(() => { /* untagged is survivable; unfindable is the old behaviour */ });
+    return () => { cancelled = true; };
+  }, [templateId]);
   const [rows, setRows] = useState<SheetRow[]>([]);
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState("");
@@ -196,7 +216,7 @@ export function BatchAMator({
     try {
       const res = await apiFetch<{ success?: boolean; url?: string; assetId?: string; sizeBytes?: number; error?: string }>(
         "/api/assets/upload",
-        { method: "POST", body: JSON.stringify({ name, url, workspaceId }) },
+        { method: "POST", body: JSON.stringify({ name, url, workspaceId, tags: assetBrand ? [assetBrand] : [] }) },
       );
       let hosted = res?.url;
       if (!hosted) throw new Error(res?.error || "El servidor no devolvió una URL");
@@ -213,6 +233,7 @@ export function BatchAMator({
             method: "POST",
             body: JSON.stringify({
               name, workspaceId, data: smaller.dataUrl, replaceAssetId: res.assetId,
+              tags: assetBrand ? [assetBrand] : [],
             }),
           });
           if (replaced?.url) hosted = replaced.url;
@@ -229,7 +250,7 @@ export function BatchAMator({
       failedImagesRef.current.push(`${name}: ${detail}`);
       return url;
     }
-  }, [workspaceId]);
+  }, [workspaceId, assetBrand]);
   const failedImagesRef = useRef<string[]>([]);
 
   const handleGenerate = useCallback(async () => {
