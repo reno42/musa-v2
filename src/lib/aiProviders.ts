@@ -142,3 +142,26 @@ export const CHAT_PROVIDERS: ChatProviderCompat[] = [
     models: full.models,
   };
 });
+
+// ── Backend for Frontend ───────────────────────────────────────────────────
+
+/**
+ * Every completion goes through our own server, which holds the key.
+ *
+ * A credential the browser can read is one an extension, an XSS, or anyone
+ * holding the laptop can read — and it spends the user's money. So the browser
+ * asks for a completion instead of making one: it never sees the key, and the
+ * key follows the account to any device the user signs in on.
+ */
+export const LLM_PROXY_URL = "/api/chat/llm";
+
+/** Splices the provider id into an already-serialised request body. */
+export function proxyBody(reqBody: string, providerId: string): string {
+  try {
+    return JSON.stringify({ ...JSON.parse(reqBody), provider: providerId });
+  } catch {
+    // Unparseable bodies are passed through; the proxy rejects what it cannot
+    // route, which is a clearer failure than silently dropping the request.
+    return reqBody;
+  }
+}

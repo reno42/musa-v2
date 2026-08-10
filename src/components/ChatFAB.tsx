@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { appendRemoteHistory, fetchRemoteHistory } from "../lib/chatHistory";
+import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
-import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import { CHAT_PROVIDERS as PROVIDERS, LLM_PROXY_URL, proxyBody } from "../lib/aiProviders";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
@@ -1425,10 +1426,10 @@ async function spawnSubagent(params: {
       }
       const reqBody = JSON.stringify({ model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } });
       lastRequestBody = reqBody;
-      const resp = await fetchWithRetry(prov.endpoint, {
+      const resp = await fetchWithRetry(LLM_PROXY_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": llmKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: reqBody,
+        headers: getApiHeaders(),
+        body: proxyBody(reqBody, prov.id),
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -1445,10 +1446,10 @@ async function spawnSubagent(params: {
       }
       const reqBody = JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: LLM_MAX_TOKENS, tools, tool_choice: "auto" });
       lastRequestBody = reqBody;
-      const resp = await fetchWithRetry(prov.endpoint, {
+      const resp = await fetchWithRetry(LLM_PROXY_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${llmKey}` },
-        body: reqBody,
+        headers: getApiHeaders(),
+        body: proxyBody(reqBody, prov.id),
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -2096,11 +2097,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             break;
           }
           const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } });
-          const resp = await fetchWithRetry(prov.endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-api-key": leaderKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: reqBody,
-          }, { signal });
+          const resp = await fetchWithRetry(LLM_PROXY_URL, {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: proxyBody(reqBody, prov.id),
+      }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
             if (resp.status === 400) {
@@ -2135,11 +2136,11 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             break;
           }
           const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
-          const resp = await fetchWithRetry(prov.endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${leaderKey}` },
-            body: reqBody,
-          }, { signal });
+          const resp = await fetchWithRetry(LLM_PROXY_URL, {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: proxyBody(reqBody, prov.id),
+      }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
             if (resp.status === 400) {
