@@ -916,6 +916,94 @@ tools/call: rename_template({
 | `-32602` | Invalid params | Missing required parameter, bad format |
 | `-32000` | Server error | Template/workspace not found |
 
+## 🗂 Filing a Design — Brand, Category, Campaign, Assets
+
+Every design belongs somewhere. The "Red de Marcas" graph and the Tabla view
+are two renderings of the same filing, so getting it right is what makes work
+findable later — by the next agent as much as by the human.
+
+### Where the filing lives
+
+| Fact | Column | Written by |
+|---|---|---|
+| Brand | `design_file_meta.brand_id` (+ `brand` as a mirror) | `PUT /api/meta/:templateId` |
+| Category | `design_file_meta.category` (v21) | same |
+| Campaign | `design_file_meta.campaign` | same |
+| Asset → brand | `assets.tags` contains the brand **name** | `PATCH /api/assets/:id { brand }` |
+
+**`brand_id` is authoritative, not `brand`.** The graph files by id and falls
+back to the name only when there is no id. Sending a bare `{ brand: "Acme" }`
+is correct and preferred: the route resolves it against the workspace's brands
+and creates the brand if it is new. Never write `brand` and `brand_id`
+inconsistently — the file ends up in two places at once.
+
+### The four categories
+
+`Design System` · `Plantillas` · `Assets` · `Archivos`
+
+A file with no category is an **Archivo**. That is the default and it is
+correct; do not set `category` just to set it.
+
+### Campaigns are optional, and the shape says so
+
+- A file **with** a campaign hangs under a node named after that campaign,
+  even if it is the only one there.
+- A file **without** a campaign hangs straight off Archivos.
+- There is no "Sin campaña" node and there must never be one. Grouping the
+  unfiled files under something that looks like a campaign erases the very
+  difference the graph exists to show.
+
+Only set a campaign when the user names one. Inventing campaigns to tidy the
+tree destroys the signal.
+
+### Assets
+
+Assets come from the `assets` table, not from templates. In the graph a brand
+draws **at most 8** of them plus a node counting the rest — a Content Machine
+run is dozens of photos and drawing them all buries the brand. The complete
+list is in the Tabla view, which reads `GET /api/assets?workspaceId=` instead.
+
+An asset uploaded through `POST /api/assets/upload` should carry
+`tags: ["<brand name>"]`, or it will be filed under no brand and nobody will
+find it. Pass a `url` and the server fetches and re-hosts the image; pass
+`replaceAssetId` to overwrite an existing one instead of leaving two copies.
+
+---
+
+## 📸 Snapshots — Always Leave a Preview Behind
+
+**After you finish creating or substantially changing a design, call
+`update_thumbnail`.** A design with no thumbnail falls back to a generated
+placeholder, and a card that shows a flat rectangle is a design the user
+cannot recognise in a list of forty.
+
+```jsonc
+{
+  "method": "update_thumbnail",
+  "params": {
+    "templateId": "tpl_...",
+    "workspaceId": "ws_...",   // REQUIRED: it decides the storage folder
+    "thumbnail": "data:image/jpeg;base64,..."
+  }
+}
+```
+
+Rules that matter:
+
+- **`workspaceId` is not optional.** The capture is stored at
+  `{workspaceId}/thumbnails/{templateId}.{ext}`. Omit it and every workspace's
+  snapshots land together under a literal `undefined`.
+- **One file per design, forever.** That path is deterministic and written with
+  `upsert`, and a capture in a different format removes the previous one. There
+  is no history and there must not be one — a snapshot per save would fill the
+  bucket with pictures of the same design.
+- **Max 1MB** as a base64 string. Render at card size (~480px on the long
+  edge), not at full artboard resolution.
+- The human editor already does this on its own a few seconds after edits
+  settle, so you are covering the agent-created case, not duplicating it.
+
+---
+
 ## 🧭 Graph Playbooks — Intent-Driven Agent Workflows
 
 When a user gives you a high-level task, **don't guess the tool sequence**. Instead, match the intent to a playbook below and follow its DAG (Directed Acyclic Graph). Each playbook is a battle-tested, graph-engineered path with branching logic, validation gates, and error recovery.

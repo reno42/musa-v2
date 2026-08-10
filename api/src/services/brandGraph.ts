@@ -23,7 +23,7 @@ import { listBrandsByWorkspace } from "./brands.js";
 import { getTemplate } from "./templates.js";
 import {
   ARCHIVOS, ASSETS, DESIGN_SYSTEM, PLANTILLAS,
-  assetOrigin, bucketByCategory, normalizeName, resolveTemplateOwners,
+  assetOrigin, bucketByCategory, groupByCampaign, normalizeName, resolveTemplateOwners,
 } from "./brandFiling.js";
 
 // ── Public types ──
@@ -294,32 +294,30 @@ export async function buildBrandGraph(
     for (const tpl of filed.get(ASSETS)!) assetChildren.push(fileNode(tpl, 3));
     pushCat(category(brand.id, color, "assets", ASSETS, assetChildren));
 
-    // Archivos category — templates grouped by campaign
-    const campaignGroups = new Map<string, any[]>();
-    for (const tpl of filed.get(ARCHIVOS)!) {
-      const meta = metaByTemplate.get(tpl.id);
-      const campaign = meta?.campaign || "Sin campaña";
-      if (!campaignGroups.has(campaign)) campaignGroups.set(campaign, []);
-      campaignGroups.get(campaign)!.push(tpl);
-    }
-    const archivoChildren: BrandGraphNode[] = [];
-    for (const [campaign, groupTpls] of campaignGroups) {
-      if (groupTpls.length === 1) {
-        // Single template in campaign — render directly
-        archivoChildren.push(fileNode(groupTpls[0], 3));
-      } else {
-        // Multiple templates — group under campaign node
-        const campaignChildren = groupTpls.map(tpl => fileNode(tpl, 4));
-        archivoChildren.push({
-          id: `campaign:${brand.id}:${campaign}`,
-          name: campaign,
-          level: 3,
-          kind: "category",
-          color,
-          category: "Campaña",
-          children: campaignChildren,
-        });
-      }
+    // ── Archivos ──
+    // A campaign is optional, and the shape of the branch says so out loud.
+    // A file that has one hangs under a node named after it; a file that does
+    // not hangs straight off Archivos. Nothing invents a "Sin campaña" bucket
+    // — that grouped the unfiled files into something that looked like a
+    // campaign, hiding the very difference worth seeing. Now the graph shows
+    // at a glance which work is organised and which is not, which is what
+    // makes it worth organising.
+    const { campaigns, loose } = groupByCampaign(
+      filed.get(ARCHIVOS)!, tpl => metaByTemplate.get(tpl.id)?.campaign,
+    );
+    const archivoChildren: BrandGraphNode[] = loose.map(tpl => fileNode(tpl, 3));
+    for (const [campaign, groupTpls] of campaigns) {
+      archivoChildren.push({
+        id: `campaign:${brand.id}:${campaign}`,
+        name: campaign,
+        level: 3,
+        kind: "category",
+        color,
+        category: "Campaña",
+        // Kept even for a single file: the point is that the campaign is
+        // visible, not that it is crowded.
+        children: groupTpls.map(tpl => fileNode(tpl, 4)),
+      });
     }
     pushCat(category(brand.id, color, "archivos", ARCHIVOS, archivoChildren));
 

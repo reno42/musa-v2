@@ -3156,14 +3156,18 @@ const MCP_TOOLS = [
   },
   {
     name: "update_thumbnail",
-    description: "Set or update the preview thumbnail for a template. Pass a base64 data URL (data:image/png;base64,...) or a URL to an image. Thumbnails are used in the dashboard Cover Flow and grid views for instant preview without rendering live iframes.",
+    description: "Set or update the preview thumbnail for a template — call this after creating or substantially changing a design, so its card shows the work instead of a generated placeholder. The capture replaces the design's previous one at a fixed path; there is no thumbnail history, by design. Render at card size (~480px on the long edge), not full artboard resolution.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
-        thumbnail: { type: "string", description: "Base64 data URL or HTTPS image URL for the thumbnail preview" },
+        workspaceId: {
+          type: "string",
+          description: "Workspace that owns the template. Required: it decides the storage folder ({workspaceId}/thumbnails/{templateId}.{ext}), and omitting it files every workspace's snapshots together under a literal 'undefined'.",
+        },
+        thumbnail: { type: "string", description: "Base64 data URL (max 1MB as a string) or HTTPS image URL for the thumbnail preview" },
       },
-      required: ["templateId", "thumbnail"],
+      required: ["templateId", "workspaceId", "thumbnail"],
     },
   },
   {

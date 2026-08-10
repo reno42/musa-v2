@@ -66,6 +66,34 @@ export function bucketByCategory<T extends { id: string }>(
 }
 
 /**
+ * Splits a brand's files into the ones that belong to a campaign and the ones
+ * that do not.
+ *
+ * A campaign is optional metadata, so the graph must not manufacture one. The
+ * old code bucketed everything by `campaign || "Sin campaña"`, which meant two
+ * unfiled files got collected under a node that looked exactly like a campaign
+ * — erasing the distinction between organised and not, which is the one thing
+ * a person looking at this graph wants to see.
+ *
+ * Campaign order follows first appearance, so the tree does not reshuffle
+ * itself between loads for no reason.
+ */
+export function groupByCampaign<T>(
+  templates: T[],
+  campaignOf: (tpl: T) => string | null | undefined,
+): { campaigns: Map<string, T[]>; loose: T[] } {
+  const campaigns = new Map<string, T[]>();
+  const loose: T[] = [];
+  for (const tpl of templates) {
+    const name = (campaignOf(tpl) || "").trim();
+    if (!name) { loose.push(tpl); continue; }
+    if (!campaigns.has(name)) campaigns.set(name, []);
+    campaigns.get(name)!.push(tpl);
+  }
+  return { campaigns, loose };
+}
+
+/**
  * Where an asset's bytes actually live. A Content Machine run can pull photos
  * from half a dozen sites, and the difference between "this is ours now" and
  * "this still depends on someone else's server" is the thing worth being able

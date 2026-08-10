@@ -266,6 +266,21 @@ p {
   margin: 0;
 }`;
 
+/**
+ * Where the account menu can take you. Ids must match WORKSPACE_TABS — the
+ * dashboard reads the one left in sessionStorage on mount and switches to it.
+ */
+const EDITOR_NAV_TABS = [
+  { id: "templates", label: "Archivos" },
+  { id: "graph", label: "Red de Marcas" },
+  { id: "kanban", label: "Studio Board" },
+  { id: "texts", label: "Textos" },
+  { id: "recipes", label: "Recetas" },
+  { id: "storage", label: "Storage" },
+  { id: "workspace", label: "Workspace" },
+  { id: "settings", label: "Ajustes" },
+] as const;
+
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
   const { user, signOut } = useAuth();
@@ -2906,7 +2921,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // Through the same tool the dashboard's "capture thumbnails" uses. A
       // PUT on the template would take the long road — read the design, set
       // one string, write the whole blob back — and this runs on a timer.
-      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
+      //
+      // workspaceId is not optional: the tool stores the capture at
+      // {workspaceId}/thumbnails/{templateId}.{ext}, so omitting it files
+      // every workspace's snapshots together under a literal "undefined".
+      await mcpCall("update_thumbnail", {
+        templateId, workspaceId: templateWorkspaceId, thumbnail: dataUrl,
+      });
       state.capturedRevision = revisionAtStart;
       state.lastCaptureAt = Date.now();
     } catch (err) {
@@ -4969,6 +4990,38 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5 }}>Sesión activa</div>
                     <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2, wordBreak: "break-all" }}>{user.email}</div>
                   </div>
+
+                  {/* Somewhere to go, not just a way out. The editor's only
+                      route back used to be the back arrow, which lands on
+                      Archivos — so reaching the graph or the CRM from here
+                      meant two navigations. Each of these leaves through the
+                      same door as the back arrow, so the auto-snapshot on
+                      unmount still runs, then asks the dashboard for a tab. */}
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, padding: "4px 12px" }}>
+                    Ir a
+                  </div>
+                  {EDITOR_NAV_TABS.map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        try { sessionStorage.setItem("dashboardInitialTab", tab.id); } catch { /* private mode */ }
+                        onBack();
+                      }}
+                      style={{
+                        width: "100%", textAlign: "left", padding: "7px 12px", borderRadius: 6,
+                        cursor: "pointer", fontSize: 12, background: "transparent", border: "none",
+                        color: "rgba(255,255,255,0.82)", fontFamily: "inherit",
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                      onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "4px 0" }} />
                   <button
                     type="button"
                     onClick={() => { void handleSignOut(); }}
