@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { IconFolder } from "../shared/icons";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
+import { TARGET_BYTES, recompressStoredImage } from "../lib/imageCompress";
 import {
   ID_COLUMN, allColumns, emptyRow, looksLikeUrl, parseCSV, rowsFromCsv, toCSV, type SheetRow,
 } from "../lib/contentSheet";
@@ -193,12 +194,31 @@ export function BatchAMator({
     const cached = rehostCache.current.get(url);
     if (cached) return cached;
     try {
-      const res = await apiFetch<{ success?: boolean; url?: string; error?: string }>("/api/assets/upload", {
-        method: "POST",
-        body: JSON.stringify({ name, url, workspaceId }),
-      });
-      const hosted = res?.url;
+      const res = await apiFetch<{ success?: boolean; url?: string; assetId?: string; sizeBytes?: number; error?: string }>(
+        "/api/assets/upload",
+        { method: "POST", body: JSON.stringify({ name, url, workspaceId }) },
+      );
+      let hosted = res?.url;
       if (!hosted) throw new Error(res?.error || "El servidor no devolvió una URL");
+
+      // Second pass. The server has no image library, and hosts that do not
+      // resize on request hand over whatever they had. Now that the bytes are
+      // in our own bucket the browser can finally read them, so it shrinks the
+      // image and overwrites the stored copy under the same id. Best effort —
+      // a failure here leaves the working original alone.
+      if (res.assetId && (res.sizeBytes ?? 0) > TARGET_BYTES) {
+        const smaller = await recompressStoredImage(hosted);
+        if (smaller) {
+          const replaced = await apiFetch<{ url?: string }>("/api/assets/upload", {
+            method: "POST",
+            body: JSON.stringify({
+              name, workspaceId, data: smaller.dataUrl, replaceAssetId: res.assetId,
+            }),
+          });
+          if (replaced?.url) hosted = replaced.url;
+        }
+      }
+
       rehostCache.current.set(url, hosted);
       return hosted;
     } catch (e) {

@@ -9,14 +9,20 @@ export const assetRoutes = Router();
 /** POST /api/assets/upload — upload image via base64 or URL */
 assetRoutes.post("/upload", async (req, res) => {
   try {
-    const { name, data, url, workspaceId, tags } = req.body;
+    const { name, data, url, workspaceId, tags, replaceAssetId } = req.body;
     if (!name) return res.status(400).json({ success: false, error: "name is required" });
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
       return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
     }
 
-    const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // Reusing the id overwrites the row and the stored object instead of
+    // leaving the heavy original orphaned next to its own replacement. Used by
+    // the browser's second compression pass, which can only run once the
+    // bytes are already in our bucket and readable across origins.
+    const assetId = typeof replaceAssetId === "string" && replaceAssetId.trim()
+      ? replaceAssetId.trim()
+      : `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     let imageBuffer: Buffer;
     let mimeType = "image/png";
     let filename: string;

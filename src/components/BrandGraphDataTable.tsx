@@ -50,11 +50,48 @@ interface Row {
   name: string;
   /** True for a brand placeholder rather than a real file. */
   brandOnly?: boolean;
+  /** Set for an asset: where its bytes are, and whose server they sit on. */
+  assetUrl?: string;
+  assetOrigin?: "bucket" | "external";
 }
 
 interface Brand {
   id: string;
   name: string;
+}
+
+interface Asset {
+  id: string;
+  name: string;
+  url: string;
+  tags?: string[];
+}
+
+/**
+ * Whether an asset's bytes are ours or still borrowed. Content Machine pulls
+ * photos from wherever the writer found them, and a design quietly depending
+ * on someone else's server is worth being able to see.
+ */
+function originOf(url: string): "bucket" | "external" {
+  const value = (url || "").trim();
+  if (value.startsWith("/assets/") || /\/storage\/v1\/object\//.test(value)) return "bucket";
+  return "external";
+}
+
+/** A real design file — the only row kind whose cells are all editable. */
+function isFile(row: Row): boolean {
+  return !row.brandOnly && !row.assetUrl;
+}
+
+/** Shortens a URL to something that fits a cell but still identifies the host. */
+function shortUrl(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const file = parsed.pathname.split("/").filter(Boolean).pop() || parsed.pathname;
+    return `${parsed.hostname}/…/${decodeURIComponent(file).slice(0, 28)}`;
+  } catch {
+    return url.slice(0, 48);
+  }
 }
 
 interface Props {
@@ -187,6 +224,37 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
         );
         allBrands = Array.isArray(brandRes?.data) ? brandRes.data : [];
       } catch { /* the file rows are still worth showing */ }
+      // Assets come from their own endpoint rather than the graph payload.
+      // The graph deliberately draws only a handful per brand — a Content
+      // Machine afternoon would otherwise bury it — but the table is exactly
+      // where the complete list belongs, links and all.
+      let assets: Asset[] = [];
+      try {
+        const assetRes = await apiFetch<{ success?: boolean; assets?: Asset[] }>(
+          `/api/assets?workspaceId=${encodeURIComponent(workspaceId)}&limit=500`,
+        );
+        assets = Array.isArray(assetRes?.assets) ? assetRes.assets : [];
+      } catch { /* files and brands are still worth showing */ }
+
+      const brandByName = new Map(allBrands.map(b => [b.name.trim().toLowerCase(), b]));
+      for (const asset of assets) {
+        // An asset belongs to the brand whose name it is tagged with, the same
+        // rule the graph uses. Untagged ones are listed with no brand instead
+        // of hidden — an asset nobody can find is an asset nobody deletes.
+        const tags = Array.isArray(asset.tags) ? asset.tags : [];
+        const owner = tags.map(t => brandByName.get(String(t).trim().toLowerCase())).find(Boolean);
+        rows.push({
+          id: `asset:${asset.id}`,
+          templateId: "",
+          brandId: owner?.id || "",
+          brandName: owner?.name || "",
+          category: "Assets",
+          name: asset.name || asset.url,
+          assetUrl: asset.url,
+          assetOrigin: originOf(asset.url),
+        });
+      }
+
       const withFiles = new Set(rows.map(r => r.brandId).filter(Boolean));
       for (const brand of allBrands) {
         if (withFiles.has(brand.id)) continue;
@@ -216,6 +284,10 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     [rows, brandFilter],
   );
   const emptyBrandCount = useMemo(() => visible.filter(r => r.brandOnly).length, [visible]);
+  const assetCount = useMemo(() => visible.filter(r => r.assetUrl).length, [visible]);
+  const externalAssetCount = useMemo(
+    () => visible.filter(r => r.assetOrigin === "external").length, [visible],
+  );
 
   // Hold on to rows that just left the view — deleted, or moved out from under
   // the brand filter — so they can animate out from where they were standing
@@ -339,6 +411,8 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       try {
         if (r.brandOnly) {
           await apiFetch(`/api/workspaces/${workspaceId}/brands/${r.brandId}`, { method: "DELETE" });
+        } else if (r.assetUrl) {
+          await apiFetch(`/api/assets/${r.id.replace(/^asset:/, "")}`, { method: "DELETE" });
         } else {
           await apiFetch(`/api/templates/${r.templateId}`, { method: "DELETE" });
         }
@@ -436,7 +510,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           }}
         >Actualizando...</span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-          {visible.filter(r => !r.brandOnly).length} archivos
+          {visible.filter(r => isFile(r)).length} archivos
+          {assetCount > 0 ? ` · ${assetCount} assets` : ""}
+          {externalAssetCount > 0 ? ` (${externalAssetCount} externos)` : ""}
           {emptyBrandCount > 0 ? ` · ${emptyBrandCount} marcas sin archivos` : ""}
           {selected.size ? ` · ${selected.size} seleccionadas` : ""}
         </span>
@@ -499,10 +575,10 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                 >
                   <td
                     style={cell}
-                    onDoubleClick={() => { if (!row.brandOnly) edit(row, "brandName"); }}
-                    title={row.brandOnly
-                      ? "Marca sin archivos"
-                      : "Doble click para archivar bajo otra marca - una marca nueva se crea sola"}
+                    onDoubleClick={() => { if (isFile(row)) edit(row, "brandName"); }}
+                    title={row.brandOnly ? "Marca sin archivos"
+                      : row.assetUrl ? "La marca de un asset se define por sus etiquetas, no aquí"
+                        : "Doble click para archivar bajo otra marca - una marca nueva se crea sola"}
                   >
                     {editing && editing.id === row.id && editing.col === "brandName"
                       ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />
@@ -514,6 +590,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                   <td style={cell} onClick={e => e.stopPropagation()}>
                     {row.brandOnly ? (
                       <span style={{ color: "rgba(255,255,255,0.35)" }}>—</span>
+                    ) : row.assetUrl ? (
+                      // An asset is an Asset by definition; there is nothing to choose.
+                      <span style={{ color: "rgba(255,255,255,0.6)" }}>Assets</span>
                     ) : (
                       <select
                         value={CATEGORIES.indexOf(row.category) >= 0 ? row.category : ""}
@@ -537,6 +616,38 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
                     {row.brandOnly ? (
                       <span style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>
                         marca sin archivos
+                      </span>
+                    ) : row.assetUrl ? (
+                      // The link IS the traceability: one glance says whether
+                      // this image is ours now or still lives on the site the
+                      // writer found it on.
+                      <span
+                        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <span
+                          title={row.assetOrigin === "bucket"
+                            ? "Guardada en tu Supabase"
+                            : "Sigue alojada fuera — si esa página la borra, el diseño se rompe"}
+                          style={{
+                            flexShrink: 0, fontSize: 10, padding: "1px 6px", borderRadius: 2,
+                            border: "1px solid rgba(255,255,255,0.3)",
+                            color: row.assetOrigin === "bucket" ? "#fff" : "rgba(255,255,255,0.55)",
+                          }}
+                        >{row.assetOrigin === "bucket" ? "propia" : "externa"}</span>
+                        <a
+                          href={row.assetUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={row.assetUrl}
+                          style={{
+                            color: "#fff", textDecoration: "underline", minWidth: 0,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}
+                        >{row.name || shortUrl(row.assetUrl)}</a>
+                        <span style={{ flexShrink: 0, color: "rgba(255,255,255,0.35)", fontSize: 10 }}>
+                          {shortUrl(row.assetUrl)}
+                        </span>
                       </span>
                     ) : editing && editing.id === row.id && editing.col === "name"
                       ? <Field value={draft} onChange={setDraft} onCommit={commit} onCancel={() => setEditing(null)} />

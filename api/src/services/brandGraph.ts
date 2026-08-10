@@ -23,7 +23,7 @@ import { listBrandsByWorkspace } from "./brands.js";
 import { getTemplate } from "./templates.js";
 import {
   ARCHIVOS, ASSETS, DESIGN_SYSTEM, PLANTILLAS,
-  bucketByCategory, normalizeName, resolveTemplateOwners,
+  assetOrigin, bucketByCategory, normalizeName, resolveTemplateOwners,
 } from "./brandFiling.js";
 
 // ── Public types ──
@@ -52,6 +52,11 @@ export interface BrandGraphNode {
   campaign?: string;
   /** File no brand claimed — orbits the workspace centre on its own. */
   orphan?: boolean;
+  /** Asset only: where the bytes are, and whose server they sit on. */
+  assetUrl?: string;
+  assetOrigin?: "bucket" | "external" | "unknown";
+  /** Set on the single node standing in for assets the graph did not draw. */
+  rollup?: number;
   children: BrandGraphNode[];
 }
 
@@ -74,6 +79,25 @@ function brandColor(_index: number, _tokensJson?: string | null): string {
   // Deliberately ignores the style's token colours: the graph is monochrome.
   return BRAND_PALETTE[0];
 }
+
+/**
+ * Reads the workspace's assets.
+ *
+ * This asked for `file_path`, which the assets table does not have — the real
+ * column is `url`. PostgREST failed the whole query, the error was warned and
+ * swallowed, and the Assets branch of every brand has therefore been empty
+ * since it was written. Production logs said so on every graph load.
+ */
+async function selectAssets(sb: any, workspaceId: string) {
+  const full = "id, name, url, filename, size_bytes, tags";
+  const result = await sb.from("assets").select(full).eq("workspace_id", workspaceId).order("name");
+  if (!result.error) return result;
+  // A schema that predates size_bytes should still draw its assets.
+  return sb.from("assets").select("id, name, url, tags").eq("workspace_id", workspaceId).order("name");
+}
+
+/** How many asset nodes one brand may draw before the rest become a count. */
+const ASSET_NODE_LIMIT = 8;
 
 /**
  * Reads design_file_meta, degrading to the pre-v21 column set when `category`
@@ -126,10 +150,7 @@ export async function buildBrandGraph(
           .order("name")
       : Promise.resolve({ data: [], error: null }),
     sb
-      ? sb.from("assets")
-          .select("id, name, file_path, tags")
-          .eq("workspace_id", workspaceId)
-          .order("name")
+      ? selectAssets(sb, workspaceId)
       : Promise.resolve({ data: [], error: null }),
     sb ? selectFileMeta(sb, workspaceId) : Promise.resolve({ data: [], error: null }),
   ]);
@@ -243,14 +264,33 @@ export async function buildBrandGraph(
       filed.get(PLANTILLAS)!.map(tpl => fileNode(tpl, 3))));
 
     // ── Assets ──
-    const assetChildren: BrandGraphNode[] = brandAssets.map(a => ({
+    // Capped on purpose. A Content Machine run can add dozens of photos in an
+    // afternoon, and drawing every one of them turns a brand into a hairball
+    // that says nothing. The graph answers "this brand has assets, roughly
+    // this many"; the data table is where the full list belongs, and it reads
+    // /api/assets rather than this payload precisely so this one stays small.
+    const assetChildren: BrandGraphNode[] = brandAssets.slice(0, ASSET_NODE_LIMIT).map(a => ({
       id: `asset:${a.id}`,
-      name: a.name || a.file_path || a.id,
+      name: a.name || a.filename || a.id,
       level: 3,
       kind: "asset",
       color,
+      assetUrl: a.url || undefined,
+      assetOrigin: assetOrigin(a.url),
       children: [],
     }));
+    const hiddenAssets = Math.max(0, brandAssets.length - ASSET_NODE_LIMIT);
+    if (hiddenAssets > 0) {
+      assetChildren.push({
+        id: `asset-rollup:${brand.id}`,
+        name: `+${hiddenAssets} assets más`,
+        level: 3,
+        kind: "asset",
+        color,
+        rollup: hiddenAssets,
+        children: [],
+      });
+    }
     for (const tpl of filed.get(ASSETS)!) assetChildren.push(fileNode(tpl, 3));
     pushCat(category(brand.id, color, "assets", ASSETS, assetChildren));
 

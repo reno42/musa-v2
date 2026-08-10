@@ -153,6 +153,40 @@ export async function prepareImageForUpload(
   return { dataUrl, bytes: result.blob.size, note };
 }
 
+/**
+ * Second pass, for an image the browser could not touch on the way in.
+ *
+ * A link from a host that does not resize on request lands in the bucket at
+ * whatever size it happened to be. Once it is OUR bucket the browser is
+ * allowed to read the pixels, so it can do then what it could not do before:
+ * decode, shrink, and hand back a smaller copy to replace the stored one.
+ *
+ * Best effort by design. If the fetch is blocked by CORS, or the canvas comes
+ * back tainted, or anything else goes wrong, the stored original stays exactly
+ * where it is — an optimisation that fails must cost nothing.
+ */
+export async function recompressStoredImage(
+  storedUrl: string,
+  options?: { targetBytes?: number; maxEdge?: number },
+): Promise<{ dataUrl: string; before: number; after: number } | null> {
+  const budget = options?.targetBytes ?? TARGET_BYTES;
+  try {
+    const response = await fetch(storedUrl, { mode: "cors", credentials: "omit" });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/") || blob.size <= budget) return null;
+    const result = await compressImage(blob, options);
+    if (!result.changed) return null;
+    return {
+      dataUrl: await blobToDataUrl(result.blob),
+      before: blob.size,
+      after: result.blob.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Human-readable size, for messages that have to justify what just happened. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

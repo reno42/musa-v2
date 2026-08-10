@@ -64,3 +64,18 @@ export function bucketByCategory<T extends { id: string }>(
   }
   return filed;
 }
+
+/**
+ * Where an asset's bytes actually live. A Content Machine run can pull photos
+ * from half a dozen sites, and the difference between "this is ours now" and
+ * "this still depends on someone else's server" is the thing worth being able
+ * to see at a glance.
+ */
+export function assetOrigin(url: string | null | undefined): "bucket" | "external" | "unknown" {
+  const value = (url || "").trim();
+  if (!value) return "unknown";
+  if (value.startsWith("/assets/")) return "bucket";          // local disk fallback
+  if (/\/storage\/v1\/object\//.test(value)) return "bucket"; // Supabase Storage
+  if (/^https?:\/\//i.test(value)) return "external";
+  return "unknown";
+}
