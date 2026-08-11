@@ -244,7 +244,7 @@ export async function createBrand(params: BrandInput, userId?: string): Promise<
   let dsTemplateId: string | undefined;
   try {
     const dsTpl = await createTemplate(
-      `${candidate.name}_DesignSystem`,
+      `DesignSystem_${candidate.name}`,
       1920, 1080,
       undefined,
       userId || "system",

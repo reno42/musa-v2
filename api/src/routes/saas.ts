@@ -8,6 +8,7 @@ import { requireWorkspaceRole } from "../services/tenancy.js";
 import { claimLegacyWorkspacesForInitialUser, ensurePersonalWorkspace } from "../services/legacyOwnership.js";
 import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../services/workspaceInvitations.js";
 import { buildDealProgress, buildOfferSuggestions } from "../services/crmInsights.js";
+import { createBrand, findBrandByName } from "../services/brands.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -697,6 +698,23 @@ workspaceSaasRoutes.post("/:id/brands", requireWorkspaceRole("editor"), async (r
       next_follow_up_at: parsed.nextFollowUpAt || null,
     }).select("*").single();
     if (error) throw error;
+
+    // Auto-create the Design System file + brand_guidelines row for this brand,
+    // unless the user opted out via the skipDesignSystem flag.
+    if (!req.body?.skipDesignSystem) {
+      try {
+        await createBrand({
+          workspaceId: req.params.id,
+          name: parsed.name,
+        });
+      } catch (e) {
+        // Best-effort: a name conflict means a brand_guidelines row already
+        // exists for this name, which is fine. Other errors don't fail the
+        // brand creation itself.
+        console.warn("[saas] Auto-DS creation for brand failed:", (e as Error).message);
+      }
+    }
+
     res.status(201).json({ success: true, data });
   } catch (error: any) {
     res.status(error instanceof z.ZodError ? 400 : 500).json({ success: false, error: error.message });
@@ -744,6 +762,44 @@ workspaceSaasRoutes.delete("/:id/brands/:brandId", requireWorkspaceRole("editor"
       .eq("workspace_id", req.params.id).eq("id", req.params.brandId);
     if (error) throw error;
     res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+workspaceSaasRoutes.post("/:id/brands/:brandId/design-system", requireWorkspaceRole("editor"), async (req, res) => {
+  try {
+    const sb = dbOrThrow();
+    // Fetch the CRM brand row to get its name.
+    const { data: brand, error } = await sb.from("brands")
+      .select("*")
+      .eq("workspace_id", req.params.id)
+      .eq("id", req.params.brandId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!brand) {
+      res.status(404).json({ success: false, error: "Marca no encontrada" });
+      return;
+    }
+
+    // If a brand_guidelines row already exists with a DS template, return it.
+    const existing = await findBrandByName(req.params.id, brand.name);
+    if (existing?.designSystemTemplateId) {
+      res.json({
+        success: true,
+        message: "Ya existe un Design System para esta marca",
+        templateId: existing.designSystemTemplateId,
+      });
+      return;
+    }
+
+    // Create the brand_guidelines row + Design System template.
+    const ds = await createBrand({
+      workspaceId: req.params.id,
+      name: brand.name,
+    });
+
+    res.status(201).json({ success: true, data: ds });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

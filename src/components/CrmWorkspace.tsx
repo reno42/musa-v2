@@ -568,9 +568,12 @@ function AccountsView({
   const createBrand = async (event: FormEvent) => {
     event.preventDefault();
     try {
+      // When the user has disabled auto-DS creation, tell the server to skip it.
+      let skipDesignSystem = false;
+      try { skipDesignSystem = localStorage.getItem("futuraria-auto-design-system") === "false"; } catch {}
       const result = await crmFetch<{ data: Brand }>(`/api/workspaces/${workspaceId}/brands`, {
         method: "POST",
-        body: JSON.stringify({ name: brandName, relationshipStatus }),
+        body: JSON.stringify({ name: brandName, relationshipStatus, skipDesignSystem }),
       });
       setBrandName("");
       setSelectedBrandId(result.data.id);

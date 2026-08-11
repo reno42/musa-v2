@@ -175,6 +175,8 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   /** Only the very first fetch may blank the table. */
   const hasLoaded = useRef(false);
   const timers = useRef<number[]>([]);
+  /** Status of the manual "Create Design System" action. */
+  const [dsCreating, setDsCreating] = useState(false);
 
   const later = useCallback((fn: () => void, ms: number) => {
     const id = window.setTimeout(fn, ms);
@@ -454,6 +456,33 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     onRefreshGraph?.();
   }, [selected, rows, load, onRefreshGraph, workspaceId]);
 
+  /**
+   * Manually create a Design System file for the selected brand. Used when
+   * auto-creation is disabled, or to add a DS to a brand that predates the
+   * feature.
+   */
+  const createDesignSystem = useCallback(async () => {
+    // The button is only enabled when exactly one row is selected, so grab it.
+    const target = rows.find(r => selected.has(r.id));
+    if (!target || !target.brandId || !workspaceId) return;
+    setDsCreating(true);
+    setSaveError("");
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string; message?: string }>(
+        `/api/workspaces/${workspaceId}/brands/${target.brandId}/design-system`,
+        { method: "POST" },
+      );
+      if (res && res.success === false) throw new Error(res.error || "El servidor rechazo la creación");
+      setSaveError(res?.message || "Design System creado.");
+      await load();
+      onRefreshGraph?.();
+    } catch (e) {
+      setSaveError(`No se pudo crear el Design System: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDsCreating(false);
+    }
+  }, [rows, selected, workspaceId, load, onRefreshGraph]);
+
   // The editor's Information panel is the other view of these same rows.
   useEffect(() => onMetaChanged(() => { void load(); }), [load]);
 
@@ -536,6 +565,20 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           {emptyBrandCount > 0 ? ` · ${emptyBrandCount} marcas sin archivos` : ""}
           {selected.size ? ` · ${selected.size} seleccionadas` : ""}
         </span>
+        {(() => {
+          // Enable the DS button only when exactly one row is selected and it
+          // has a brandId to create the DS for.
+          const sel = rows.find(r => selected.has(r.id));
+          const canCreateDs = selected.size === 1 && !!sel?.brandId;
+          return (
+            <button
+              type="button"
+              onClick={createDesignSystem}
+              disabled={!canCreateDs || dsCreating}
+              style={{ ...btn, opacity: canCreateDs ? 1 : 0.35, cursor: canCreateDs ? "pointer" : "default" }}
+            >{dsCreating ? "Creando…" : "Crear Design System"}</button>
+          );
+        })()}
         <button
           type="button"
           onClick={deleteSelected}
