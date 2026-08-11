@@ -57,10 +57,25 @@ const TEXT_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; 
   { key: "text-path",  icon: <IconTextPath size={16} />,    shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
 ];
 
-const COLOR_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
-  { key: "eyedropper",   icon: <IconEyedropper size={16} />,   shortcut: "I", title: "Eyedropper — pick a color from the canvas" },
-  { key: "paint-bucket", icon: <IconPaintBucket size={16} />,  shortcut: "K", title: "Paint Bucket — fill a shape with the foreground color" },
-  { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Gradient — apply a gradient fill" },
+/**
+ * The eyedropper is its own button, not a sibling in a flyout.
+ *
+ * It is a different verb: it READS a colour off the canvas, where the bucket
+ * and the gradient WRITE one. Burying a picker one hover deep costs a click
+ * every time you sample, and sampling is the frequent half of the pair.
+ */
+const EYEDROPPER_TOOL = {
+  key: "eyedropper" as HtmlToolName,
+  icon: <IconEyedropper size={16} />,
+  shortcut: "I",
+  title: "Cuentagotas — toma un color del lienzo (I)",
+};
+
+/** The fills. Gradient lives under the bucket because both paint the same
+ *  property; only what they paint it with differs. */
+const FILL_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
+  { key: "paint-bucket", icon: <IconPaintBucket size={16} />,  shortcut: "K", title: "Bote de pintura — rellena con el color frontal" },
+  { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Degradado — rellena con un degradado del frontal al de fondo" },
 ];
 
 const shortcutLabel: React.CSSProperties = {
@@ -88,7 +103,7 @@ export function FloatingToolbar({
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
   const [defaultText, setDefaultText] = useState<string>("text");
-  const [defaultColor, setDefaultColor] = useState<string>("eyedropper");
+  const [defaultColor, setDefaultColor] = useState<string>("paint-bucket");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -148,9 +163,9 @@ export function FloatingToolbar({
   const displayText = TEXT_TOOLS.find(tx => tx.key === displayTextKey) || TEXT_TOOLS[0];
 
   // Which color tool icon to show on the main button
-  const activeColorKey = COLOR_TOOLS.find(c => c.key === tool)?.key;
-  const displayColorKey = activeColorKey || (defaultColor as HtmlToolName);
-  const displayColor = COLOR_TOOLS.find(c => c.key === displayColorKey) || COLOR_TOOLS[0];
+  const activeFillKey = FILL_TOOLS.find(c => c.key === tool)?.key;
+  const displayColorKey = activeFillKey || (defaultColor as HtmlToolName);
+  const displayFill = FILL_TOOLS.find(c => c.key === displayColorKey) || FILL_TOOLS[0];
 
   // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
@@ -457,16 +472,35 @@ export function FloatingToolbar({
 
       {divider}
 
-      {/* ── Color tools split button + flyout ── */}
+      {/* ── Eyedropper: on its own, because it reads rather than writes ── */}
+      <button
+        type="button"
+        onClick={() => onToolChange(EYEDROPPER_TOOL.key)}
+        title={EYEDROPPER_TOOL.title}
+        style={{
+          width: 46, height: 36,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", position: "relative", borderRadius: 8,
+          background: tool === "eyedropper" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+          border: tool === "eyedropper" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+          color: tool === "eyedropper" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+          transition: "all 0.15s ease",
+        }}
+      >
+        {EYEDROPPER_TOOL.icon}
+        <span style={shortcutLabel}>{EYEDROPPER_TOOL.shortcut}</span>
+      </button>
+
+      {/* ── Fills: bucket, with gradient one level in ── */}
       <SplitButton
         which="colors"
-        mainIcon={displayColor.icon}
-        mainShortcut={displayColor.shortcut}
-        mainTitle={displayColor.title}
-        onMainClick={() => onToolChange(displayColor.key)}
-        isActive={!!activeColorKey}
+        mainIcon={displayFill.icon}
+        mainShortcut={displayFill.shortcut}
+        mainTitle={displayFill.title}
+        onMainClick={() => onToolChange(displayFill.key)}
+        isActive={!!activeFillKey}
       >
-        {COLOR_TOOLS.map(item => (
+        {FILL_TOOLS.map(item => (
           <button
             key={item.key}
             type="button"
@@ -475,7 +509,7 @@ export function FloatingToolbar({
               setDefaultColor(item.key);
               setOpenFlyout(null);
             }}
-            title={`${item.title} (${item.shortcut})`}
+            title={item.title}
             style={flyoutItem(tool === item.key)}
             onMouseEnter={(e) => {
               if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
@@ -492,75 +526,56 @@ export function FloatingToolbar({
 
       {divider}
 
-      {/* ── Foreground / Background color swatches ── */}
-      <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-        padding: "2px 0",
-      }}>
-        {/* Foreground (top) */}
-        <div style={{ position: "relative" }}>
-          <input
-            type="color"
-            value={foregroundColor}
-            onChange={e => onForegroundColorChange?.(e.target.value)}
-            title="Foreground Color — used for painting and filling"
-            style={{
-              width: 28, height: 28,
-              border: "2px solid var(--glass-border, rgba(255,255,255,0.15))",
-              borderRadius: 4,
-              cursor: "pointer", padding: 0,
-              background: foregroundColor,
-              boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-            }}
-          />
-          <span style={{
-            position: "absolute", top: -5, left: -5,
-            fontSize: 7, color: "#7a7668", fontWeight: 700,
-            lineHeight: 1,
-          }}>F</span>
-        </div>
-
-        {/* Swap button */}
+      {/* ── Foreground / background swatches ── */}
+      {/* One item, two squares set diagonally so neither hides the other —
+          the overlapping stack read as a single swatch with a shadow. The
+          arrow swaps them; clicking either opens its picker, and the
+          eyedropper writes into whichever is in front. */}
+      <div style={{ position: "relative", width: 46, height: 42, flexShrink: 0 }}>
+        {/* Background sits back and down-right, so its whole face is visible. */}
+        <input
+          type="color"
+          value={backgroundColor}
+          onChange={e => onBackgroundColorChange?.(e.target.value)}
+          title="Color de fondo — degradados y espacios que borras"
+          aria-label="Color de fondo"
+          style={{
+            position: "absolute", right: 4, bottom: 2,
+            width: 20, height: 20, padding: 0, cursor: "pointer",
+            border: "1px solid var(--glass-border, rgba(255,255,255,0.25))",
+            borderRadius: 3, background: backgroundColor,
+          }}
+        />
+        {/* Foreground sits forward and up-left: the one that paints. */}
+        <input
+          type="color"
+          value={foregroundColor}
+          onChange={e => onForegroundColorChange?.(e.target.value)}
+          title="Color frontal — pintar, rellenar y lo que toma el cuentagotas"
+          aria-label="Color frontal"
+          style={{
+            position: "absolute", left: 2, top: 1,
+            width: 22, height: 22, padding: 0, cursor: "pointer",
+            border: "1px solid var(--glass-border, rgba(255,255,255,0.4))",
+            borderRadius: 3, background: foregroundColor,
+            boxShadow: "0 1px 4px rgba(0,0,0,0.45)",
+          }}
+        />
         <button
           type="button"
           onClick={onSwapColors}
-          title="Swap foreground and background colors"
+          title="Intercambiar frontal y fondo (X)"
+          aria-label="Intercambiar colores"
           style={{
-            width: 20, height: 16,
+            position: "absolute", right: 1, top: 0,
+            width: 14, height: 14, padding: 0, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: 3, cursor: "pointer",
-            background: "transparent", border: "1px solid transparent",
+            background: "transparent", border: "none",
             color: "var(--text-muted, #7a7668)",
-            transition: "all 0.15s ease",
-            padding: 0,
           }}
         >
-          <IconSwap size={12} />
+          <IconSwap size={11} />
         </button>
-
-        {/* Background (bottom) */}
-        <div style={{ position: "relative" }}>
-          <input
-            type="color"
-            value={backgroundColor}
-            onChange={e => onBackgroundColorChange?.(e.target.value)}
-            title="Background Color — used for gradients and erasing"
-            style={{
-              width: 24, height: 24,
-              border: "2px solid var(--glass-border, rgba(255,255,255,0.1))",
-              borderRadius: 4,
-              cursor: "pointer", padding: 0,
-              background: backgroundColor,
-              boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
-              marginTop: -2,
-            }}
-          />
-          <span style={{
-            position: "absolute", bottom: -5, left: -5,
-            fontSize: 7, color: "#7a7668", fontWeight: 700,
-            lineHeight: 1,
-          }}>B</span>
-        </div>
       </div>
 
       {divider}
