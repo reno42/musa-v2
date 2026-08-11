@@ -461,33 +461,35 @@ export const IconLayers = (p: React.ComponentProps<typeof Icon>) => (
   </Icon>
 );
 
-// ── Eyedropper (color picker) ──────────────────────────
+// ── Eyedropper / Pipette (Lucide) ─────────────────────
 export const IconEyedropper = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}>
-    <path d="M2 22l1-1h3l9-9" />
-    <path d="M18.2 6.8a2.4 2.4 0 00-3.4 0l-1.4 1.4 3.4 3.4 1.4-1.4a2.4 2.4 0 000-3.4z" />
-    <path d="M18 7l-8.2 8.2" />
-    <path d="M7 18l-5 5" />
+    <path d="m2 22 1-1h3l9-9" />
+    <path d="M3.5 17.5 6 20" />
+    <path d="M18 7 9 16" />
+    <path d="m21 6-6 6" />
+    <path d="M12 2H8a2 2 0 0 0-2 2v4h8" />
+    <circle cx="10" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <path d="M21.5 6.5a2.48 2.48 0 0 0-3.5 0L17 8l4 4 1.5-2a2.5 2.5 0 0 0 0-3.5z" />
   </Icon>
 );
 
-// ── Paint Bucket (fill) ─────────────────────────────────
+// ── Paint Bucket (Lucide fill-bucket) ────────────────────
 export const IconPaintBucket = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}>
-    <path d="M19.6 12.6L11.4 4.4a1 1 0 00-1.4 0l-7 7a1 1 0 000 1.4l8.2 8.2a1 1 0 001.4 0l7-7a1 1 0 000-1.4z" />
-    <path d="M4 19l3-3" />
-    <path d="M19 20c-.6 1-1.5 2-2 2s-1.4-1-2-2c0 0 1.5-2 2-2s2 2 2 2z" />
+    <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+    <path d="m5 2 5 5" />
+    <path d="M2 13h15" />
+    <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" />
   </Icon>
 );
 
-// ── Gradient (color transition) ─────────────────────────
+// ── Gradient (diagonal half-fill) ────────────────────────
 export const IconGradient = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}>
     <rect x="3" y="3" width="18" height="18" rx="3" />
-    <line x1="3" y1="9" x2="21" y2="9" />
-    <line x1="3" y1="15" x2="21" y2="15" />
-    <line x1="9" y1="3" x2="9" y2="21" />
-    <line x1="15" y1="3" x2="15" y2="21" />
+    <path d="M3 21 21 3" />
+    <path d="M8 21 21 8" opacity="0.35" />
   </Icon>
 );
 

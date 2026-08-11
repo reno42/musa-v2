@@ -8,6 +8,7 @@ import {
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
   IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize,
+  IconZoomIn, IconZoomOut,
 } from "../shared/icons";
 
 interface Props {
@@ -569,7 +570,7 @@ export function FloatingToolbar({
               onClick={onZoomIn}
               title="Acercar (Ctrl +)"
               style={zoomBtn}
-            >+</button>
+            ><IconZoomIn size={14} /></button>
             <button
               type="button"
               onClick={onZoomFit}
@@ -583,64 +584,10 @@ export function FloatingToolbar({
               onClick={onZoomOut}
               title="Alejar (Ctrl −)"
               style={zoomBtn}
-            >−</button>
+            ><IconZoomOut size={14} /></button>
           </div>
         </>
       )}
-
-      {divider}
-      {/* ── Foreground / background swatches ── */}
-      {/* One item, two squares set diagonally so neither hides the other —
-          the overlapping stack read as a single swatch with a shadow. The
-          arrow swaps them; clicking either opens its picker, and the
-          eyedropper writes into whichever is in front. */}
-      <div style={{ position: "relative", width: 46, height: 42, flexShrink: 0 }}>
-        {/* Background sits back and down-right, so its whole face is visible. */}
-        <input
-          type="color"
-          value={backgroundColor}
-          onChange={e => onBackgroundColorChange?.(e.target.value)}
-          title="Color de fondo — degradados y espacios que borras"
-          aria-label="Color de fondo"
-          style={{
-            position: "absolute", right: 4, bottom: 2,
-            width: 20, height: 20, padding: 0, cursor: "pointer",
-            border: "1px solid var(--glass-border, rgba(255,255,255,0.25))",
-            borderRadius: 3, background: backgroundColor,
-          }}
-        />
-        {/* Foreground sits forward and up-left: the one that paints. */}
-        <input
-          type="color"
-          value={foregroundColor}
-          onChange={e => onForegroundColorChange?.(e.target.value)}
-          title="Color frontal — pintar, rellenar y lo que toma el cuentagotas"
-          aria-label="Color frontal"
-          style={{
-            position: "absolute", left: 2, top: 1,
-            width: 22, height: 22, padding: 0, cursor: "pointer",
-            border: "1px solid var(--glass-border, rgba(255,255,255,0.4))",
-            borderRadius: 3, background: foregroundColor,
-            boxShadow: "0 1px 4px rgba(0,0,0,0.45)",
-          }}
-        />
-        <button
-          type="button"
-          onClick={onSwapColors}
-          title="Intercambiar frontal y fondo (X)"
-          aria-label="Intercambiar colores"
-          style={{
-            position: "absolute", right: 1, top: 0,
-            width: 14, height: 14, padding: 0, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: "transparent", border: "none",
-            color: "var(--text-muted, #7a7668)",
-          }}
-        >
-          <IconSwap size={11} />
-        </button>
-      </div>
-
 
       {divider}
 
@@ -766,6 +713,55 @@ export function FloatingToolbar({
           <IconShapes size={16} />
         </button>
       </>}
+
+      {divider}
+      {/* ── Foreground / background swatches (at the bottom — last tool in the stack) ── */}
+      <div style={{ position: "relative", width: 46, height: 42, flexShrink: 0 }}>
+        {/* Background sits back and down-right, so its whole face is visible. */}
+        <input
+          type="color"
+          value={backgroundColor}
+          onChange={e => onBackgroundColorChange?.(e.target.value)}
+          title="Color de fondo — degradados y espacios que borras"
+          aria-label="Color de fondo"
+          style={{
+            position: "absolute", right: 4, bottom: 2,
+            width: 20, height: 20, padding: 0, cursor: "pointer",
+            border: "1px solid var(--glass-border, rgba(255,255,255,0.25))",
+            borderRadius: 3, background: backgroundColor,
+          }}
+        />
+        {/* Foreground sits forward and up-left: the one that paints. */}
+        <input
+          type="color"
+          value={foregroundColor}
+          onChange={e => onForegroundColorChange?.(e.target.value)}
+          title="Color frontal — pintar, rellenar y lo que toma el cuentagotas"
+          aria-label="Color frontal"
+          style={{
+            position: "absolute", left: 2, top: 1,
+            width: 22, height: 22, padding: 0, cursor: "pointer",
+            border: "1px solid var(--glass-border, rgba(255,255,255,0.4))",
+            borderRadius: 3, background: foregroundColor,
+            boxShadow: "0 1px 4px rgba(0,0,0,0.45)",
+          }}
+        />
+        <button
+          type="button"
+          onClick={onSwapColors}
+          title="Intercambiar frontal y fondo (X)"
+          aria-label="Intercambiar colores"
+          style={{
+            position: "absolute", right: 1, top: 0,
+            width: 14, height: 14, padding: 0, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "transparent", border: "none",
+            color: "var(--text-muted, #7a7668)",
+          }}
+        >
+          <IconSwap size={11} />
+        </button>
+      </div>
 
     </div>
   );
