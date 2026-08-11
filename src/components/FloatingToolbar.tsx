@@ -8,7 +8,7 @@ import {
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
   IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize,
-  IconZoomIn, IconZoomOut,
+  IconZoomIn, IconZoomOut, IconSearch,
 } from "../shared/icons";
 
 interface Props {
@@ -111,6 +111,7 @@ export function FloatingToolbar({
   showLayersPanel, onToggleLayers, onZoomIn, onZoomOut, onZoomFit,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
+  const [showZoomPopover, setShowZoomPopover] = useState(false);
   const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | "colors" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
@@ -126,6 +127,7 @@ export function FloatingToolbar({
       const t = e.target as Node;
       if (rootRef.current && !rootRef.current.contains(t)) {
         setOpenFlyout(null);
+        setShowZoomPopover(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -564,27 +566,56 @@ export function FloatingToolbar({
       {onZoomFit && (
         <>
           {divider}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <div style={{ position: "relative" }}>
             <button
               type="button"
-              onClick={onZoomIn}
-              title="Acercar (Ctrl +)"
-              style={zoomBtn}
-            ><IconZoomIn size={14} /></button>
-            <button
-              type="button"
-              onClick={onZoomFit}
-              title="Ajustar a la pantalla (⇧1)"
-              style={{ ...zoomBtn, height: 22 }}
+              onClick={() => setShowZoomPopover(v => !v)}
+              title="Zoom"
+              style={{
+                width: 46, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 8, cursor: "pointer",
+                background: showZoomPopover ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+                border: showZoomPopover ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+                color: showZoomPopover ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+                transition: "all 0.15s ease",
+              }}
             >
-              <IconMaximize size={13} />
+              <IconSearch size={15} />
             </button>
-            <button
-              type="button"
-              onClick={onZoomOut}
-              title="Alejar (Ctrl −)"
-              style={zoomBtn}
-            ><IconZoomOut size={14} /></button>
+            {showZoomPopover && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setShowZoomPopover(false)} />
+                <div style={{ ...flyoutStyle, minWidth: 150, padding: 6, gap: 0, left: "100%", top: 0, marginLeft: 6 }}>
+                  <div style={{ fontSize: 10, color: "#7a7668", padding: "2px 8px 4px", textTransform: "uppercase", letterSpacing: 1 }}>Zoom</div>
+                  {([
+                    { label: "Acercar", icon: <IconZoomIn size={14} />, shortcut: "Ctrl +", action: onZoomIn },
+                    { label: "Alejar", icon: <IconZoomOut size={14} />, shortcut: "Ctrl −", action: onZoomOut },
+                    { label: "Ajustar", icon: <IconMaximize size={14} />, shortcut: "⇧1", action: onZoomFit },
+                  ] as const).map(({ label, icon, shortcut, action }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => { action?.(); setShowZoomPopover(false); }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        width: "100%", padding: "5px 10px",
+                        background: "transparent", border: "1px solid transparent",
+                        borderRadius: 6, color: "var(--text-main, #c4c0b4)",
+                        cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                        transition: "all 0.1s",
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                    >
+                      {icon}
+                      <span>{label}</span>
+                      <span style={{ marginLeft: "auto", fontSize: 9, color: "#7a7668", fontFamily: "monospace" }}>{shortcut}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

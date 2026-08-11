@@ -72,6 +72,8 @@ interface InfiniteHtmlCanvasProps {
   onOrphanShiftClick?: (id: string) => void;
   onOrphanMove?: (id: string, x: number, y: number) => void;
   onDeleteOrphan?: (id: string) => void;
+  /** Eyedropper: reports the sampled color (hex/rgb) when user clicks on canvas. */
+  onEyedropperPick?: (color: string) => void;
   /** Inline text editing of orphan objects (double-click, or auto after create). */
   onOrphanHtmlChange?: (id: string, html: string) => void;
   autoEditOrphanId?: string | null;
@@ -113,7 +115,7 @@ export function InfiniteHtmlCanvas({
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
-  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans,
+  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
@@ -258,6 +260,24 @@ export function InfiniteHtmlCanvas({
     if (activeTool === "hand" && e.button === 0) {
       isPanning.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    // Eyedropper: sample pixel color from any element under cursor
+    if (activeTool === "eyedropper" && e.button === 0) {
+      let el = document.elementFromPoint(e.clientX, e.clientY);
+      // Traverse into Shadow DOM (frame content) if present
+      while (el?.shadowRoot) {
+        const inner = el.shadowRoot.elementFromPoint(e.clientX, e.clientY);
+        if (!inner || inner === el) break;
+        el = inner;
+      }
+      if (el) {
+        const styles = window.getComputedStyle(el);
+        const bg = styles.backgroundColor;
+        if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+          onEyedropperPick?.(bg);
+        }
+      }
       return;
     }
     // Select tool: click on empty canvas deselects + starts marquee (Phase 3)

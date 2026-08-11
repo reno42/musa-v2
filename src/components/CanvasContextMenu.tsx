@@ -114,7 +114,7 @@ export function CanvasContextMenu({
           marginBottom: 4,
         }}>
           <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>
-            {selectedElement!.tag} {selectedElement!.layerKind ? `· ${selectedElement!.layerKind}` : ""}
+            Element
           </span>
           <button
             type="button"

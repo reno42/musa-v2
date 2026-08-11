@@ -1355,6 +1355,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     handleCssChange(newCss);
   }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
 
+  // ── Eyedropper: sample color and apply fill + stroke to selected element ──
+  const handleEyedropperPick = useCallback((rawColor: string) => {
+    const hex = toHexColor(rawColor);
+    setForegroundColor(hex);
+    // Apply fill (background-color) and stroke (border-color + outline-color)
+    if (selectedElement && selectedFrameId) {
+      let newCss = updateCssProperty(activeCss, selectedElement.selector, "background-color", `${hex} !important`);
+      newCss = updateCssProperty(newCss, selectedElement.selector, "border-color", `${hex} !important`);
+      newCss = updateCssProperty(newCss, selectedElement.selector, "outline-color", `${hex} !important`);
+      handleCssChange(newCss);
+    }
+    setActiveTool("select");
+  }, [selectedElement, selectedFrameId, activeCss, handleCssChange]);
+
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
     setLayerSelectionRequest(null);
@@ -2406,6 +2420,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             break;
           case "p": setActiveTool("pen"); break;
           case "b": setActiveTool("pencil"); break;
+          case "i": setActiveTool(t => t === "eyedropper" ? "select" : "eyedropper"); break;
           case "z": handleZoomIn(); break;
           case "delete":
           case "backspace":
@@ -3377,6 +3392,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Auto-close the context menu when the selected element is cleared
+  // (e.g. when panning with the hand tool deselects the element).
+  useEffect(() => {
+    if (!selectedElement) setContextMenu(null);
+  }, [selectedElement]);
+
   const [showInsertBar, setShowInsertBar] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showVersionPanel, setShowVersionPanel] = useState(false);
@@ -5495,6 +5517,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             showRulers={showRulers}
             columnConfig={columnConfig}
             smartGuides={[]}
+            onEyedropperPick={handleEyedropperPick}
           />
         </div>
       </div>
