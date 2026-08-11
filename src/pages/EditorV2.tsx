@@ -278,7 +278,6 @@ const EDITOR_NAV_TABS = [
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },
   { id: "recipes", label: "Recetas" },
-  { id: "storage", label: "Storage" },
   { id: "workspace", label: "Workspace" },
 ] as const;
 

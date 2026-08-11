@@ -2,7 +2,7 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "diseno", "agentes", "copywriting", "recipes", "storage", "configuracion", "contactos", "workspace",
+  "diseno", "agentes", "copywriting", "recipes", "configuracion", "contactos", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
@@ -19,7 +19,7 @@ export function isWorkspaceTab(value: string): value is WorkspaceTab {
  * tab itself was lost, all the way back to Archivos. A pane is a place the
  * user navigated to; it belongs in the URL like any other.
  */
-export const GRAPH_PANES = ["pipeline", "accounts", "storage"] as const;
+export const GRAPH_PANES = ["pipeline", "accounts"] as const;
 export type GraphPane = typeof GRAPH_PANES[number];
 export const DEFAULT_GRAPH_PANE: GraphPane = "pipeline";
 

@@ -291,7 +291,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   // Sub-tabs inside Diseño and Agentes.
-  const [designSubTab, setDesignSubTab] = useState<"files" | "graph" | "table">("files");
+  const [designSubTab, setDesignSubTab] = useState<"files" | "graph" | "table" | "trash">("files");
   const [agentSubTab, setAgentSubTab] = useState<"kanban" | "table" | "agents">("kanban");
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
@@ -1194,11 +1194,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("storage"); setUserMenuOpen(false); }}
+                        onClick={() => { setDesignSubTab("trash"); setActiveTab("diseno"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></svg>
-                        Storage
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                        Papelera
                       </button>
                       <button
                         type="button"
@@ -1334,6 +1334,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <button type="button" onClick={() => setDesignSubTab("files")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "files" ? 600 : 400, color: designSubTab === "files" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "files" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "files" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Archivos</button>
             <button type="button" onClick={() => setDesignSubTab("graph")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "graph" ? 600 : 400, color: designSubTab === "graph" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "graph" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "graph" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Grafo</button>
             <button type="button" onClick={() => setDesignSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "table" ? 600 : 400, color: designSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tablas</button>
+            <button type="button" onClick={() => setDesignSubTab("trash")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "trash" ? 600 : 400, color: designSubTab === "trash" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "trash" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "trash" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Papelera</button>
           </div>
           {/* Sub-tab content */}
           {designSubTab === "files" ? (
@@ -1503,9 +1504,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               <BrandGraphCanvas workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
             </div>
-          ) : (
+          ) : designSubTab === "table" ? (
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
               <BrandGraphDataTable workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
+            </div>
+          ) : (
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <StorageTab workspaceId={activeWorkspaceId} />
             </div>
           )}
         </div>
@@ -1596,9 +1601,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         )}
       </div>
       )}
-
-      {/* ── Storage Tab ── */}
-      {activeTab === "storage" && <StorageTab workspaceId={activeWorkspaceId} />}
 
       {/* ── Settings Tab ── */}
       {activeTab === "configuracion" && (
@@ -2122,7 +2124,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </p>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
               {deleteMode === "soft"
-                ? "It will be moved to Trash and recoverable from the Storage tab for 30 days."
+                ? "It will be moved to Trash and recoverable from the Papelera sub-tab for 30 days."
                 : "This action cannot be undone. The template will be removed from the database."}
             </p>
 

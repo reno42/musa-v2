@@ -14,7 +14,7 @@ import { DEFAULT_GRAPH_PANE, isGraphPane, type GraphPane } from "../lib/appRoute
 import { GraphDataTable } from "./GraphDataTable";
 // BrandGraphCanvas and BrandGraphDataTable moved to Dashboard's Diseño tab
 import { CrmWorkspace } from "./CrmWorkspace";
-import { StorageTab } from "./StorageTab";
+// StorageTab moved to Dashboard's Diseño > Papelera sub-tab
 
 /**
  * GraphTab — Obsidian-style design knowledge graph.
@@ -623,30 +623,23 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
           </>
         ) : view === "brands" ? (
           <>
-            {/* Sub-tab: Pipeline / Marcas y Personas / Storage
-                (Grafo and Tabla moved to the Diseño tab) */}
+            {/* Sub-tab: Pipeline / Marcas y Personas
+                (Grafo, Tabla and Papelera moved to the Diseño tab) */}
             <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
               <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Pipeline</TabBtn>
               <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas y Personas</TabBtn>
-              <TabBtn active={brandView === "storage"} onClick={() => setBrandView("storage")}>Storage</TabBtn>
               <div style={{ flex: 1 }} />
             </div>
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-              {brandView === "storage" ? (
-                <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
-                  <StorageTab workspaceId={workspaceId} />
-                </div>
-              ) : (
-                <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
-                  <CrmWorkspace
-                    workspaceId={workspaceId || ""}
-                    onOpenTemplate={onOpenTemplate}
-                    view={brandView === "pipeline" ? "pipeline" : "accounts"}
-                    setError={setError}
-                    setNotice={() => {}}
-                  />
-                </div>
-              )}
+              <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
+                <CrmWorkspace
+                  workspaceId={workspaceId || ""}
+                  onOpenTemplate={onOpenTemplate}
+                  view={brandView === "pipeline" ? "pipeline" : "accounts"}
+                  setError={setError}
+                  setNotice={() => {}}
+                />
+              </div>
             </div>
           </>
         ) : (
