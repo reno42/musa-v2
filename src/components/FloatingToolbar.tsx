@@ -7,7 +7,7 @@ import {
   IconIntersect, IconShapes,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
-  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers,
+  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize,
 } from "../shared/icons";
 
 interface Props {
@@ -34,6 +34,10 @@ interface Props {
   // Layers panel
   showLayersPanel?: boolean;
   onToggleLayers?: () => void;
+  /** Zoom lives here with the other tools; the top bar keeps the readout. */
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomFit?: () => void;
 }
 
 const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
@@ -78,6 +82,13 @@ const FILL_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; 
   { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Degradado — rellena con un degradado del frontal al de fondo" },
 ];
 
+const zoomBtn: React.CSSProperties = {
+  width: 46, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
+  cursor: "pointer", borderRadius: 6, background: "transparent",
+  border: "1px solid transparent", color: "var(--text-muted, #7a7668)",
+  fontSize: 14, lineHeight: 1, fontFamily: "SF Mono, monospace", padding: 0,
+};
+
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
   bottom: 1,
@@ -96,7 +107,7 @@ export function FloatingToolbar({
   onGroup, onUngroup, canGroup, canUngroup,
   foregroundColor = "#000000", backgroundColor = "#ffffff",
   onForegroundColorChange, onBackgroundColorChange, onSwapColors,
-  showLayersPanel, onToggleLayers,
+  showLayersPanel, onToggleLayers, onZoomIn, onZoomOut, onZoomFit,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
   const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | "colors" | null>(null);
@@ -526,6 +537,58 @@ export function FloatingToolbar({
 
       {divider}
 
+      {divider}
+
+      {/* ── Layers panel toggle ── */}
+      {onToggleLayers && (
+        <button
+          type="button"
+          onClick={onToggleLayers}
+          title="Toggle Layers Panel"
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 8, cursor: "pointer",
+            background: showLayersPanel ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+            border: showLayersPanel ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+            color: showLayersPanel ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          <IconLayers size={16} />
+        </button>
+      )}
+
+      {/* ── Zoom ── */}
+      {onZoomFit && (
+        <>
+          {divider}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <button
+              type="button"
+              onClick={onZoomIn}
+              title="Acercar (Ctrl +)"
+              style={zoomBtn}
+            >+</button>
+            <button
+              type="button"
+              onClick={onZoomFit}
+              title="Ajustar a la pantalla (⇧1)"
+              style={{ ...zoomBtn, height: 22 }}
+            >
+              <IconMaximize size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={onZoomOut}
+              title="Alejar (Ctrl −)"
+              style={zoomBtn}
+            >−</button>
+          </div>
+        </>
+      )}
+
+      {divider}
       {/* ── Foreground / background swatches ── */}
       {/* One item, two squares set diagonally so neither hides the other —
           the overlapping stack read as a single swatch with a shadow. The
@@ -578,27 +641,6 @@ export function FloatingToolbar({
         </button>
       </div>
 
-      {divider}
-
-      {/* ── Layers panel toggle ── */}
-      {onToggleLayers && (
-        <button
-          type="button"
-          onClick={onToggleLayers}
-          title="Toggle Layers Panel"
-          style={{
-            width: 46, height: 36,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: 8, cursor: "pointer",
-            background: showLayersPanel ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-            border: showLayersPanel ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-            color: showLayersPanel ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-            transition: "all 0.15s ease",
-          }}
-        >
-          <IconLayers size={16} />
-        </button>
-      )}
 
       {divider}
 

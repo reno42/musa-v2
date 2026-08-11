@@ -4629,20 +4629,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ Zona: Documento (zoom + guardado de versión) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Zoom: magnifying glass first (so it reads as "this is zoom"),
-              then -, live level (click to type an exact %), then +. Moved
-              here from the floating left toolbar so it's always visible
-              next to Guardar. */}
-          <span className="editor-v2-topbar-icon-btn" style={{ cursor: "default", opacity: 0.6 }} title="Zoom">
-            <IconSearch size={13} />
-          </span>
+          {/* Zoom: minus, the live level (click to type an exact %), plus.
+              No magnifiers — "- 100% +" already reads as zoom, and the glyphs
+              were three icons doing one icon's work. The tool itself lives in
+              the left toolbar; what stays here is the readout. */}
           <button
             type="button"
             className="editor-v2-topbar-icon-btn"
             onClick={handleZoomOut}
-            title="Zoom Out"
+            title="Alejar"
+            style={{ fontSize: 15, lineHeight: 1, fontFamily: "SF Mono, monospace" }}
           >
-            <IconZoomOut size={13} />
+            −
           </button>
           {editingZoomTopbar ? (
             <input
@@ -4687,9 +4685,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             type="button"
             className="editor-v2-topbar-icon-btn"
             onClick={handleZoomIn}
-            title="Zoom In"
+            title="Acercar"
+            style={{ fontSize: 15, lineHeight: 1, fontFamily: "SF Mono, monospace" }}
           >
-            <IconZoomIn size={13} />
+            +
           </button>
 
           <button
@@ -4942,14 +4941,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           >
             <IconSliders size={14} />
           </button>
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showLayersPanel ? "active" : ""}`}
-            onClick={() => setShowLayersPanel(v => !v)}
-            title="Toggle Layers"
-          >
-            <IconLayers size={14} />
-          </button>
+          {/* The layers toggle lives in the left toolbar now, with the other
+              tools. Two buttons for one panel meant neither was the one you
+              reached for. */}
           <button
             type="button"
             className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
@@ -5510,6 +5504,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
         <FloatingToolbar
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomFit={handleZoomToFit}
           tool={activeTool}
           onToolChange={setActiveTool}
           canUndo={canUndo}

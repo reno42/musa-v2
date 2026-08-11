@@ -66,15 +66,48 @@ const TEXT_TAGS = new Set([
   "sub", "sup", "mark", "del", "ins", "u", "s", "br",
 ]);
 
-export interface ChildShape { tag: string; hasChildren: boolean }
+export interface ChildShape {
+  tag: string;
+  hasChildren: boolean;
+  /** Inline style, used to tell one block from two. */
+  styleAttr?: string | null;
+}
+
+/** The properties that decide whether two runs belong to the same block. */
+const BLOCK_IDENTITY_PROPS = ["font-family", "font-size", "font-weight", "font-style", "color"];
+
+/** Reads one declaration out of an inline style. */
+function readProp(styleAttr: string | null | undefined, prop: string): string {
+  const hit = (styleAttr || "").match(new RegExp(`(^|;)\\s*${prop}\\s*:\\s*([^;]+)`, "i"));
+  return hit ? hit[2].trim().toLowerCase() : "";
+}
 
 /**
- * True when every child is a plain text run — a heading over a subheading, a
- * label over a value. One thing a person selects and moves, not a group.
+ * The style fingerprint that decides block membership.
+ *
+ * Two runs are the same block only if they look the same. Renzo's example is
+ * the whole rule: "El carro está bonito" is one block — but bold and recolour
+ * "está" and it becomes three, because that word now needs its own font and
+ * colour and there is no way to express that from a single block's controls.
+ * Its neighbours are separated by it, so they cannot be one block either.
+ */
+export function styleFingerprint(styleAttr: string | null | undefined): string {
+  return BLOCK_IDENTITY_PROPS.map(p => `${p}:${readProp(styleAttr, p)}`).join("|");
+}
+
+/**
+ * True when every child is a plain text run AND they all share one look.
+ *
+ * A heading over a subheading is one block: a person selects it, moves it and
+ * styles it as a unit. The moment one run carries a different font, weight or
+ * colour, it is a block of its own — a single block has one set of type
+ * controls, so two looks inside it would be unconfigurable.
  */
 export function isTextBlock(children: ChildShape[]): boolean {
   if (children.length === 0) return false;
-  return children.every(c => TEXT_TAGS.has(c.tag.toLowerCase()) && !c.hasChildren);
+  if (!children.every(c => TEXT_TAGS.has(c.tag.toLowerCase()) && !c.hasChildren)) return false;
+  const first = styleFingerprint(children[0].styleAttr);
+  return children.every(c => styleFingerprint(c.styleAttr) === first);
 }
 
 export type LayerKind = "shape" | "image" | "text" | "group" | "container";

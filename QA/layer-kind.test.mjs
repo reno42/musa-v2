@@ -9,9 +9,9 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyLayer, paintsABox, isTextBlock } from "../src/lib/layerKind.ts";
+import { classifyLayer, paintsABox, isTextBlock, styleFingerprint } from "../src/lib/layerKind.ts";
 
-const text = (tag = "span") => ({ tag, hasChildren: false });
+const text = (tag = "span", styleAttr = null) => ({ tag, hasChildren: false, styleAttr });
 const box = (tag = "div") => ({ tag, hasChildren: true });
 
 // ── Paint detection ──
@@ -91,4 +91,53 @@ test("an image is an image even with children", () => {
 
 test("a painted text tag is a container, so its fill survives", () => {
   assert.equal(classifyLayer({ tag: "p", styleAttr: "background:#eee", children: [text("span")] }), "container");
+});
+
+
+// ── One block, or several ──
+// Renzo's rule: runs that sit together AND look the same are one block. The
+// moment one carries a different font, weight or colour it is its own block,
+// because a single block has one set of type controls and two looks inside it
+// would be unconfigurable.
+
+test("runs that look the same are one block", () => {
+  assert.equal(isTextBlock([
+    text("span", "font-size:16px;color:#111"),
+    text("span", "font-size:16px;color:#111"),
+  ]), true);
+});
+
+test("\"El carro está bonito\" with one word restyled is not one block", () => {
+  const same = "font-family:Inter;font-size:16px;color:#111";
+  assert.equal(isTextBlock([
+    text("span", same),
+    text("span", "font-family:Inter;font-size:16px;font-weight:700;color:#e11"),
+    text("span", same),
+  ]), false);
+});
+
+test("a heading over a subheading is still one block when the look matches", () => {
+  assert.equal(isTextBlock([text("h1", "color:#111"), text("p", "color:#111")]), true);
+});
+
+test("only the properties that need their own controls split a block", () => {
+  // Letter-spacing differing does not: it is set per block, not per run.
+  assert.equal(isTextBlock([
+    text("span", "color:#111;letter-spacing:1px"),
+    text("span", "color:#111;letter-spacing:4px"),
+  ]), true);
+  // Colour does.
+  assert.equal(isTextBlock([text("span", "color:#111"), text("span", "color:#eee")]), false);
+});
+
+test("unstyled runs share the empty fingerprint, so they are one block", () => {
+  assert.equal(styleFingerprint(null), styleFingerprint(""));
+  assert.equal(isTextBlock([text("h1"), text("p")]), true);
+});
+
+test("a split block classifies as a group, so its runs stay separate layers", () => {
+  assert.equal(classifyLayer({
+    tag: "div",
+    children: [text("span", "color:#111"), text("span", "color:#e11")],
+  }), "group");
 });

@@ -146,6 +146,8 @@ export function ensureLayerIds(html: string, createId: () => string): string {
         children: Array.from(element.children).map(child => ({
           tag: child.tagName,
           hasChildren: child.children.length > 0,
+          // Carried so two runs with different looks do not read as one block.
+          styleAttr: child.getAttribute("style"),
         })),
       });
       element.setAttribute("data-layer-kind", kind);
