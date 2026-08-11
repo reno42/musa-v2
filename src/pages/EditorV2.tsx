@@ -272,14 +272,14 @@ p {
  * dashboard reads the one left in sessionStorage on mount and switches to it.
  */
 const EDITOR_NAV_TABS = [
-  { id: "templates", label: "Archivos" },
-  { id: "graph", label: "Red de Marcas" },
-  { id: "kanban", label: "Studio Board" },
-  { id: "texts", label: "Content" },
+  { id: "archivos", label: "Archivos" },
+  { id: "procesos", label: "Procesos" },
+  { id: "calendario", label: "Calendario" },
+  { id: "contactos", label: "Contactos" },
+  { id: "configuracion", label: "Configuración" },
   { id: "recipes", label: "Recetas" },
   { id: "storage", label: "Storage" },
   { id: "workspace", label: "Workspace" },
-  { id: "settings", label: "Ajustes" },
 ] as const;
 
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {

@@ -254,7 +254,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
   /* Fetch storage health when Settings tab is active */
   useEffect(() => {
-    if (activeTab !== "settings") return;
+    if (activeTab !== "configuracion") return;
     let cancelled = false;
     fetch("/api/health/storage")
       .then(r => r.json())
@@ -1038,21 +1038,22 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Centered: fixed nav tabs */}
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
-              { id: "templates", label: "Archivos", icon: <IconFile size={14} /> },
-              { id: "kanban", label: "Kanban", icon: (
+              { id: "archivos", label: "Archivos", icon: <IconFile size={14} /> },
+              { id: "procesos", label: "Procesos", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="7" height="18" rx="1" />
                   <rect x="14" y="3" width="7" height="10" rx="1" />
                 </svg>
               )},
-{ id: "texts", label: "Content", icon: (
+{ id: "calendario", label: "Calendario", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4 7 4 4 20 4 20 7" />
-                  <line x1="9" y1="20" x2="15" y2="20" />
-                  <line x1="12" y1="4" x2="12" y2="20" />
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
                 </svg>
               )},
-              { id: "graph", label: "CRM", icon: (
+              { id: "contactos", label: "Contactos", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="6" cy="6" r="2" />
                   <circle cx="18" cy="6" r="2" />
@@ -1062,7 +1063,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <line x1="8" y1="6" x2="16" y2="6" />
                 </svg>
               )},
-              { id: "settings", label: "Configuración", icon: (
+              { id: "configuracion", label: "Configuración", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
               )},
             ] as const).map(tab => (
@@ -1153,26 +1154,26 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </div>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("templates"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("archivos"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <IconFile size={14} /> Archivos
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("kanban"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("procesos"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1" /><rect x="14" y="3" width="7" height="10" rx="1" /></svg>
-                        Kanban
+                        Procesos
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("texts"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("calendario"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
-                        Content
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+                        Calendario
                       </button>
                       <button
                         type="button"
@@ -1191,11 +1192,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("graph"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("contactos"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><line x1="7.5" y1="7.5" x2="11" y2="16" /><line x1="16.5" y1="7.5" x2="13" y2="16" /><line x1="8" y1="6" x2="16" y2="6" /></svg>
-                        Graph
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                        Contactos
                       </button>
                       <button
                         type="button"
@@ -1207,7 +1208,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("settings"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("configuracion"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
@@ -1246,7 +1247,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <button
                 type="button"
                 className="liquid-glass"
-                onClick={() => setActiveTab("settings")}
+                onClick={() => setActiveTab("configuracion")}
                 title="Falta SUPABASE_PUBLISHABLE_KEY en el servidor"
                 style={{
                   borderRadius: 100, padding: "8px 12px", fontSize: 11,
@@ -1290,7 +1291,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
               type="button"
-              onClick={() => setActiveTab("settings")}
+              onClick={() => setActiveTab("configuracion")}
               style={{
                 borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500,
                 border: "none", cursor: "pointer", whiteSpace: "nowrap",
@@ -1316,7 +1317,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* Template Grid */}
-      {activeTab === "templates" && (
+      {activeTab === "archivos" && (
       <div data-tour="templates-grid" style={{
         flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
         background: "#06080d",
@@ -1482,12 +1483,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* ── Texts Tab ── */}
-      {activeTab === "texts" && (
+      {activeTab === "calendario" && (
         <ContentTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* ── Kanban Tab ── */}
-      {activeTab === "kanban" && (
+      {activeTab === "procesos" && (
         <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
       )}
 
@@ -1556,7 +1557,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {activeTab === "storage" && <StorageTab workspaceId={activeWorkspaceId} />}
 
       {/* ── Settings Tab ── */}
-      {activeTab === "settings" && (
+      {activeTab === "configuracion" && (
         <WorkspaceConsole
           mode="settings"
           workspaceId={activeWorkspaceId}
@@ -1938,7 +1939,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
                 </div>
                 <button type="button" className="bento-btn"
-                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("templates"); }}>Reiniciar</button>
+                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("archivos"); }}>Reiniciar</button>
               </div>
             </div>
 
@@ -2029,7 +2030,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       )}
 
       {/* ── Graph Tab ── */}
-      {activeTab === "graph" && (
+      {activeTab === "contactos" && (
         <div data-tour="graph-view" style={{ flex: 1, overflow: "hidden", padding: 20 }}>
           <GraphTab
             workspaceId={activeWorkspaceId}
@@ -2121,8 +2122,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       <OnboardingTour
         page="dashboard"
         onAction={(action: TourAction) => {
-          if (action === "tab-templates") setActiveTab("templates");
-          else if (action === "tab-graph") setActiveTab("graph");
+          if (action === "tab-templates") setActiveTab("archivos");
+          else if (action === "tab-graph") setActiveTab("contactos");
           else if (action === "open-first-template") {
             const t = templates[0];
             if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });

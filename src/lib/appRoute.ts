@@ -2,12 +2,12 @@
  *  Keeping the tab in the URL (rather than in React state alone) is what
  *  makes a refresh land back on the same tab, and makes a tab linkable. */
 export const WORKSPACE_TABS = [
-  "templates", "kanban", "texts", "recipes", "storage", "settings", "graph", "workspace",
+  "archivos", "procesos", "calendario", "recipes", "storage", "configuracion", "contactos", "workspace",
 ] as const;
 export type WorkspaceTab = typeof WORKSPACE_TABS[number];
 
 /** "templates" is the default, so it's the one tab left out of the URL. */
-export const DEFAULT_WORKSPACE_TAB: WorkspaceTab = "templates";
+export const DEFAULT_WORKSPACE_TAB: WorkspaceTab = "archivos";
 
 export function isWorkspaceTab(value: string): value is WorkspaceTab {
   return (WORKSPACE_TABS as readonly string[]).includes(value);
