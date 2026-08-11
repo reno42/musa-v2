@@ -5774,135 +5774,36 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {rightPanelTab === "contextual" && !selectedElement && !selectedFrame && selectedOrphanIds.size === 1 && (() => {
             const orphan = canvasObjects.find(o => selectedOrphanIds.has(o.id));
             if (!orphan) return null;
+            const tag = orphan.html.match(/<(\w+)/)?.[1] || "div";
+            const selector = `[data-layer-id="${orphan.id}"]`;
+            const ruleBlock = getExactRuleDeclarations(orphan.css, selector);
+            const declarations = ruleBlock ? parseCssDeclarations(ruleBlock) : [];
+            const computedStyles: Record<string, string> = {};
+            for (const d of declarations) computedStyles[d.property] = d.value;
+            const isSvg = orphan.html.includes("<svg");
+            const syntheticElement: SelectedElementInfo = {
+              layerId: orphan.id,
+              tag,
+              selector,
+              computedStyles,
+              frameId: orphan.id,
+              isSvg,
+              layerKind: orphan.kind,
+              childLayerCount: 0,
+              movableLayers: [{ layerId: orphan.id, position: "absolute", left: "0", top: "0", translate: "none", display: "block" }],
+            };
             return (
-              <>
-                {contextualSubTab === "properties" && (
-                  <div style={{ padding: "4px", display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1 }}>
-                    {/* Name / Tag */}
-                    <div style={{ padding: "6px 10px", fontSize: 13, fontWeight: 600, color: "#f0ebe0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                      {orphan.name}
-                    </div>
-
-                    {/* Tag selector */}
-                    <div style={{ padding: "0 10px" }}>
-                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Tag</div>
-                      <select
-                        value={orphan.kind === "text" ? "p" : (orphan.html.match(/<(\w+)/)?.[1] || "div")}
-                        onChange={(e) => handleOrphanTagChange(orphan.id, e.target.value)}
-                        style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.04)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, width: "100%" }}
-                      >
-                        {["div", "section", "article", "aside", "header", "footer", "nav", "main", "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "button", "label", "input", "form", "ul", "ol", "li", "img", "figure", "figcaption", "table", "thead", "tbody", "tr", "td", "th"].map(tag => (
-                          <option key={tag} value={tag}>{tag}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Position */}
-                    <div style={{ padding: "0 10px" }}>
-                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Position</div>
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                        <span style={{ fontSize: 9, color: "#555" }}>X</span>
-                        <input
-                          type="number"
-                          value={orphan.x}
-                          onChange={(e) => handleOrphanPositionChange(orphan.id, "x", Number(e.target.value))}
-                          style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
-                        />
-                        <span style={{ fontSize: 9, color: "#555" }}>Y</span>
-                        <input
-                          type="number"
-                          value={orphan.y}
-                          onChange={(e) => handleOrphanPositionChange(orphan.id, "y", Number(e.target.value))}
-                          style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Dimensions */}
-                    <div style={{ padding: "0 10px" }}>
-                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Dimensions</div>
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                        <input
-                          type="number"
-                          value={orphan.width}
-                          onChange={(e) => { const v = Number(e.target.value); if (v >= 1) handleOrphanDimensionChange(orphan.id, "width", v); }}
-                          style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
-                          min={1}
-                        />
-                        <span style={{ color: "#555", fontSize: 11, flexShrink: 0 }}>×</span>
-                        <input
-                          type="number"
-                          value={orphan.height}
-                          onChange={(e) => { const v = Number(e.target.value); if (v >= 1) handleOrphanDimensionChange(orphan.id, "height", v); }}
-                          style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
-                          min={1}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Z-Index */}
-                    <div style={{ padding: "0 10px" }}>
-                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Z-Index</div>
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                        <input
-                          type="number"
-                          value={orphan.zIndex}
-                          onChange={(e) => handleOrphanZIndexSet(orphan.id, Number(e.target.value))}
-                          style={{ flex: 1, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11, fontFamily: "monospace", minWidth: 0 }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Move to frame button */}
-                    {frames.length > 0 && (
-                      <div style={{ padding: "0 10px" }}>
-                        <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Move to Frame</div>
-                        <select
-                          value=""
-                          onChange={(e) => { if (e.target.value) handleOrphanDropToFrame(orphan.id, e.target.value); }}
-                          style={{ width: "100%", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.04)", color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 11 }}
-                        >
-                          <option value="">Select frame…</option>
-                          {frames.map(f => (
-                            <option key={f.id} value={f.id}>{f.name} ({f.width}×{f.height})</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    {/* Inline CSS editor */}
-                    <div style={{ padding: "0 10px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                      <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>CSS</div>
-                      <textarea
-                        value={orphan.css}
-                        onChange={(e) => handleOrphanCssChange(orphan.id, e.target.value)}
-                        style={{
-                          flex: 1, minHeight: 80,
-                          background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.05)",
-                          color: "#f0ebe0", borderRadius: 4, padding: "6px 8px", fontSize: 11,
-                          fontFamily: "monospace", resize: "vertical", lineHeight: 1.6, tabSize: 2,
-                        }}
-                        spellCheck={false}
-                      />
-                    </div>
-                  </div>
-                )}
-                {contextualSubTab === "code" && (
-                  <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: 8 }}>
-                    <CodePanel
-                      html={orphan.html}
-                      css={orphan.css}
-                      onHtmlChange={(newHtml) => handleOrphanHtmlChange(orphan.id, newHtml)}
-                      onCssChange={(newCss) => handleOrphanCssChange(orphan.id, newCss)}
-                    />
-                  </div>
-                )}
-                {contextualSubTab === "animation" && (
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a7668", fontSize: 12, padding: 24, textAlign: "center", lineHeight: 1.6 }}>
-                    Sin herramientas de animación todavía.
-                  </div>
-                )}
-              </>
+              <HtmlContextualPanel
+                workspaceId={templateWorkspaceId}
+                element={syntheticElement}
+                html={orphan.html}
+                css={orphan.css}
+                onCssChange={(newCss) => handleOrphanCssChange(orphan.id, newCss)}
+                onChangeTag={(newTag) => handleOrphanTagChange(orphan.id, newTag)}
+                frameWidth={orphan.width}
+                frameHeight={orphan.height}
+                subTab={contextualSubTab}
+              />
             );
           })()}
           {rightPanelTab === "contextual" && !selectedElement && !selectedFrame && selectedOrphanIds.size === 0 && (
