@@ -41,6 +41,8 @@ interface Props {
   onHideToggle?: (frameId: string, layerId: string, hidden: boolean) => void;
   lockedLayersByFrame?: Map<string, Set<string>>;
   hiddenLayersByFrame?: Map<string, Set<string>>;
+  /** Drop an orphan onto a frame (layers-panel drag) */
+  onOrphanDropToFrame?: (orphanId: string, targetFrameId: string) => void;
 }
 
 interface FrameTree {
@@ -61,7 +63,12 @@ interface FrameDragSource {
   frameId: string;
 }
 
-type DragSource = LayerDragSource | FrameDragSource;
+interface OrphanDragSource {
+  kind: "orphan";
+  orphanId: string;
+}
+
+type DragSource = LayerDragSource | FrameDragSource | OrphanDragSource;
 
 type DropTarget =
   | { kind: "layer"; frameId: string; layerId: string; placement: LayerDropPlacement }
@@ -162,7 +169,7 @@ function getLayerDropPlacement(bounds: DOMRect, clientY: number, canContain: boo
 }
 
 function getFrameDropPlacement(bounds: DOMRect, clientY: number, source: DragSource): LayerDropPlacement {
-  if (source.kind === "layer") return "inside";
+  if (source.kind === "layer" || source.kind === "orphan") return "inside";
   return clientY < bounds.top + bounds.height / 2 ? "above" : "below";
 }
 
@@ -191,6 +198,7 @@ export function HtmlLayersPanel({
   onHideToggle,
   lockedLayersByFrame,
   hiddenLayersByFrame,
+  onOrphanDropToFrame,
 }: Props) {
   const frameTrees = useMemo(() => buildFrameTrees(frames), [frames]);
   const totalLayers = useMemo(
@@ -314,6 +322,11 @@ export function HtmlLayersPanel({
         onFrameReorder(source.frameId, target.frameId, target.placement);
         setStatus("");
       }
+    } else if (source.kind === "orphan") {
+      if (target.kind === "frame") {
+        onOrphanDropToFrame?.(source.orphanId, target.frameId);
+        setStatus("");
+      }
     } else {
       const targetLayerId = target.kind === "layer" ? target.layerId : null;
       if (source.frameId !== target.frameId || source.layerId !== targetLayerId) {
@@ -322,7 +335,7 @@ export function HtmlLayersPanel({
       }
     }
     clearDragState();
-  }, [onFrameReorder, onLayerDrop, clearDragState]);
+  }, [onFrameReorder, onLayerDrop, onOrphanDropToFrame, clearDragState]);
 
   const handleGroup = useCallback(() => {
     if (!selectedFrameId || multiSelect.size < 2) return;
@@ -641,6 +654,7 @@ export function HtmlLayersPanel({
             {[...canvasObjects].sort((a, b) => b.zIndex - a.zIndex).map(obj => {
               const isSelected = selectedOrphanIds.has(obj.id);
               const meta = KIND_META[obj.kind as LayerKind] || KIND_META.shape;
+              const isDragging = dragging?.kind === "orphan" && dragging.orphanId === obj.id;
               return (
                 <div
                   ref={isSelected ? selectedRowRef : undefined}
@@ -648,7 +662,12 @@ export function HtmlLayersPanel({
                   role="treeitem"
                   aria-level={1}
                   aria-selected={isSelected}
-                  className={`layers-tree-row${isSelected ? " is-selected" : ""}`}
+                  className={`layers-tree-row${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}`}
+                  data-layer-drop-kind="orphan"
+                  onPointerDown={event => beginPointerDrag(event, { kind: "orphan", orphanId: obj.id })}
+                  onPointerMove={updatePointerDrag}
+                  onPointerUp={finishPointerDrag}
+                  onPointerCancel={clearDragState}
                   onClick={(event) => {
                     if (suppressLayerClickRef.current) return;
                     if (event.shiftKey) onOrphanShiftClick?.(obj.id);

@@ -72,6 +72,8 @@ interface InfiniteHtmlCanvasProps {
   onOrphanShiftClick?: (id: string) => void;
   onOrphanMove?: (id: string, x: number, y: number) => void;
   onDeleteOrphan?: (id: string) => void;
+  /** Drop an orphan onto a frame (drag-end detection on canvas). */
+  onOrphanDropToFrame?: (orphanId: string, targetFrameId: string) => void;
   /** Eyedropper: reports the sampled color (hex/rgb) when user clicks on canvas. */
   onEyedropperPick?: (color: string) => void;
   /** Inline text editing of orphan objects (double-click, or auto after create). */
@@ -115,7 +117,7 @@ export function InfiniteHtmlCanvas({
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
-  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
+  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
@@ -509,11 +511,37 @@ export function InfiniteHtmlCanvas({
     // Orphan drag commit
     if (orphanDragRef.current) {
       const od = orphanDragRef.current;
-      const dx = (e.clientX - od.startX) / zoom;
-      const dy = (e.clientY - od.startY) / zoom;
       const el = document.querySelector(`[data-canvas-object-id="${od.id}"]`) as HTMLElement | null;
       if (el) el.style.transform = "";
-      if (od.moved) onOrphanMove?.(od.id, Math.round(od.origX + dx), Math.round(od.origY + dy));
+      if (od.moved) {
+        // Check if the orphan was dropped over a frame body
+        let targetFrameId: string | null = null;
+        let hitEl = document.elementFromPoint(e.clientX, e.clientY);
+        // Traverse through Shadow DOM to find the DesignFrame content
+        while (hitEl) {
+          if (hitEl instanceof HTMLElement) {
+            const frameWrapper = hitEl.closest("[data-frame-id]") as HTMLElement | null;
+            if (frameWrapper) {
+              targetFrameId = frameWrapper.dataset.frameId || null;
+              break;
+            }
+          }
+          if (hitEl instanceof ShadowRoot) {
+            hitEl = hitEl.elementFromPoint(e.clientX, e.clientY) || hitEl.host;
+          } else if ((hitEl as Element).shadowRoot) {
+            hitEl = (hitEl as Element).shadowRoot!.elementFromPoint(e.clientX, e.clientY) || hitEl;
+          } else {
+            hitEl = (hitEl as Element).parentElement;
+          }
+        }
+        if (targetFrameId && onOrphanDropToFrame) {
+          onOrphanDropToFrame(od.id, targetFrameId);
+        } else {
+          const dx = (e.clientX - od.startX) / zoom;
+          const dy = (e.clientY - od.startY) / zoom;
+          onOrphanMove?.(od.id, Math.round(od.origX + dx), Math.round(od.origY + dy));
+        }
+      }
       orphanDragRef.current = null;
       setIsDraggingOrphan(false);
     }
