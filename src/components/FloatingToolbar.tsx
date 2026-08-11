@@ -7,6 +7,7 @@ import {
   IconIntersect, IconShapes,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
+  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers,
 } from "../shared/icons";
 
 interface Props {
@@ -24,6 +25,15 @@ interface Props {
   onUngroup?: () => void;
   canGroup?: boolean;
   canUngroup?: boolean;
+  // Color tools
+  foregroundColor?: string;
+  backgroundColor?: string;
+  onForegroundColorChange?: (color: string) => void;
+  onBackgroundColorChange?: (color: string) => void;
+  onSwapColors?: () => void;
+  // Layers panel
+  showLayersPanel?: boolean;
+  onToggleLayers?: () => void;
 }
 
 const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
@@ -47,6 +57,12 @@ const TEXT_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; 
   { key: "text-path",  icon: <IconTextPath size={16} />,    shortcut: "⇧T", title: "Text on Path — click a path to write along its curve" },
 ];
 
+const COLOR_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
+  { key: "eyedropper",   icon: <IconEyedropper size={16} />,   shortcut: "I", title: "Eyedropper — pick a color from the canvas" },
+  { key: "paint-bucket", icon: <IconPaintBucket size={16} />,  shortcut: "K", title: "Paint Bucket — fill a shape with the foreground color" },
+  { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Gradient — apply a gradient fill" },
+];
+
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
   bottom: 1,
@@ -63,12 +79,16 @@ export function FloatingToolbar({
   multiSelectCount, onPathfinder, onSvgImport,
   onIconPicker,
   onGroup, onUngroup, canGroup, canUngroup,
+  foregroundColor = "#000000", backgroundColor = "#ffffff",
+  onForegroundColorChange, onBackgroundColorChange, onSwapColors,
+  showLayersPanel, onToggleLayers,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | null>(null);
+  const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | "colors" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
   const [defaultText, setDefaultText] = useState<string>("text");
+  const [defaultColor, setDefaultColor] = useState<string>("eyedropper");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | undefined>(undefined);
@@ -97,7 +117,7 @@ export function FloatingToolbar({
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = undefined; }
   }, []);
 
-  const hoverOpen = useCallback((which: "shapes" | "pen" | "text") => {
+  const hoverOpen = useCallback((which: "shapes" | "pen" | "text" | "colors") => {
     cancelClose();
     setOpenFlyout(which);
   }, [cancelClose]);
@@ -108,7 +128,7 @@ export function FloatingToolbar({
   }, [cancelClose]);
 
   // Chevron click — explicit toggle (works on all devices)
-  const chevronToggle = useCallback((which: "shapes" | "pen" | "text") => {
+  const chevronToggle = useCallback((which: "shapes" | "pen" | "text" | "colors") => {
     setOpenFlyout(prev => prev === which ? null : which);
   }, []);
 
@@ -126,6 +146,11 @@ export function FloatingToolbar({
   const activeTextKey = TEXT_TOOLS.find(tx => tx.key === tool)?.key;
   const displayTextKey = activeTextKey || (defaultText as HtmlToolName);
   const displayText = TEXT_TOOLS.find(tx => tx.key === displayTextKey) || TEXT_TOOLS[0];
+
+  // Which color tool icon to show on the main button
+  const activeColorKey = COLOR_TOOLS.find(c => c.key === tool)?.key;
+  const displayColorKey = activeColorKey || (defaultColor as HtmlToolName);
+  const displayColor = COLOR_TOOLS.find(c => c.key === displayColorKey) || COLOR_TOOLS[0];
 
   // ── Standalone tool button ──
   const toolBtn = (name: HtmlToolName, icon: React.ReactNode, shortcut: string, title: string) => (
@@ -224,7 +249,7 @@ export function FloatingToolbar({
     isActive,
     children,
   }: {
-    which: "shapes" | "pen" | "text";
+    which: "shapes" | "pen" | "text" | "colors";
     mainIcon: React.ReactNode;
     mainShortcut: string | null;
     mainTitle: string;
@@ -429,6 +454,136 @@ export function FloatingToolbar({
           </button>
         ))}
       </SplitButton>
+
+      {divider}
+
+      {/* ── Color tools split button + flyout ── */}
+      <SplitButton
+        which="colors"
+        mainIcon={displayColor.icon}
+        mainShortcut={displayColor.shortcut}
+        mainTitle={displayColor.title}
+        onMainClick={() => onToolChange(displayColor.key)}
+        isActive={!!activeColorKey}
+      >
+        {COLOR_TOOLS.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => {
+              onToolChange(item.key);
+              setDefaultColor(item.key);
+              setOpenFlyout(null);
+            }}
+            title={`${item.title} (${item.shortcut})`}
+            style={flyoutItem(tool === item.key)}
+            onMouseEnter={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))";
+            }}
+            onMouseLeave={(e) => {
+              if (tool !== item.key) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {item.icon}
+            <span style={shortcutLabel}>{item.shortcut}</span>
+          </button>
+        ))}
+      </SplitButton>
+
+      {divider}
+
+      {/* ── Foreground / Background color swatches ── */}
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+        padding: "2px 0",
+      }}>
+        {/* Foreground (top) */}
+        <div style={{ position: "relative" }}>
+          <input
+            type="color"
+            value={foregroundColor}
+            onChange={e => onForegroundColorChange?.(e.target.value)}
+            title="Foreground Color — used for painting and filling"
+            style={{
+              width: 28, height: 28,
+              border: "2px solid var(--glass-border, rgba(255,255,255,0.15))",
+              borderRadius: 4,
+              cursor: "pointer", padding: 0,
+              background: foregroundColor,
+              boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+            }}
+          />
+          <span style={{
+            position: "absolute", top: -5, left: -5,
+            fontSize: 7, color: "#7a7668", fontWeight: 700,
+            lineHeight: 1,
+          }}>F</span>
+        </div>
+
+        {/* Swap button */}
+        <button
+          type="button"
+          onClick={onSwapColors}
+          title="Swap foreground and background colors"
+          style={{
+            width: 20, height: 16,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 3, cursor: "pointer",
+            background: "transparent", border: "1px solid transparent",
+            color: "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+            padding: 0,
+          }}
+        >
+          <IconSwap size={12} />
+        </button>
+
+        {/* Background (bottom) */}
+        <div style={{ position: "relative" }}>
+          <input
+            type="color"
+            value={backgroundColor}
+            onChange={e => onBackgroundColorChange?.(e.target.value)}
+            title="Background Color — used for gradients and erasing"
+            style={{
+              width: 24, height: 24,
+              border: "2px solid var(--glass-border, rgba(255,255,255,0.1))",
+              borderRadius: 4,
+              cursor: "pointer", padding: 0,
+              background: backgroundColor,
+              boxShadow: "0 1px 2px rgba(0,0,0,0.3)",
+              marginTop: -2,
+            }}
+          />
+          <span style={{
+            position: "absolute", bottom: -5, left: -5,
+            fontSize: 7, color: "#7a7668", fontWeight: 700,
+            lineHeight: 1,
+          }}>B</span>
+        </div>
+      </div>
+
+      {divider}
+
+      {/* ── Layers panel toggle ── */}
+      {onToggleLayers && (
+        <button
+          type="button"
+          onClick={onToggleLayers}
+          title="Toggle Layers Panel"
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 8, cursor: "pointer",
+            background: showLayersPanel ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+            border: showLayersPanel ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+            color: showLayersPanel ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          <IconLayers size={16} />
+        </button>
+      )}
 
       {divider}
 

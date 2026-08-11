@@ -13,6 +13,7 @@ import { DesignImportModal } from "../components/DesignImportModal";
 import { ImportRouterModal, type ImportRoute, detectRoute as detectImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
+import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameMarqueeRegistry } from "../components/DesignFrame";
@@ -308,6 +309,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [templateName, setTemplateName] = useState("New Design");
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
+  const [foregroundColor, setForegroundColor] = useState("#000000");
+  const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.5);
   const [editingZoomTopbar, setEditingZoomTopbar] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(270);
@@ -377,6 +380,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     strokeLinejoin: "round",
     strokeDasharray: "none",
   });
+
+  // When foreground color changes, update the pen style fill
+  useEffect(() => {
+    lastPenStyleRef.current = { ...lastPenStyleRef.current, fill: foregroundColor };
+  }, [foregroundColor]);
 
   // ── Selected element (inside a frame) ──
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
@@ -454,6 +462,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     isDirtyRef.current = true;
     autoSaveRef.current(cur);
   }, [store]);
+
+  // ── Swap foreground / background colors ──
+  const handleSwapColors = useCallback(() => {
+    const fg = foregroundColor;
+    const bg = backgroundColor;
+    setForegroundColor(bg);
+    setBackgroundColor(fg);
+  }, [foregroundColor, backgroundColor]);
 
   // ── Load template → parse into frames ──
   useEffect(() => {
@@ -1316,6 +1332,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (selectedElement) {
       newCss = updateCssProperty(newCss, selectedElement.selector, "font-family", `'${fontFamily}' !important`);
     }
+    handleCssChange(newCss);
+  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+
+  // ── Context menu: font size change ──
+  const handleContextFontSizeChange = useCallback((fontSize: string) => {
+    if (!selectedFrameId || !selectedElement) return;
+    let newCss = updateCssProperty(activeCss, selectedElement.selector, "font-size", `${fontSize} !important`);
+    handleCssChange(newCss);
+  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+
+  // ── Context menu: text color change ──
+  const handleContextTextColorChange = useCallback((color: string) => {
+    if (!selectedFrameId || !selectedElement) return;
+    let newCss = updateCssProperty(activeCss, selectedElement.selector, "color", `${color} !important`);
+    handleCssChange(newCss);
+  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+
+  // ── Context menu: text alignment change ──
+  const handleContextTextAlignChange = useCallback((align: string) => {
+    if (!selectedFrameId || !selectedElement) return;
+    let newCss = updateCssProperty(activeCss, selectedElement.selector, "text-align", `${align} !important`);
     handleCssChange(newCss);
   }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
 
@@ -3340,6 +3377,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [templateId, templateName, frames]);
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showInsertBar, setShowInsertBar] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showVersionPanel, setShowVersionPanel] = useState(false);
@@ -5329,7 +5367,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         )}
 
         {/* ── Canvas (fills remaining space) ── */}
-        <div id="canvas-container" className="editor-v2-canvas-area">
+        <div
+          id="canvas-container"
+          className="editor-v2-canvas-area"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }}
+        >
           {/* ── Insert Toolbar (toggleable) ── */}
           {showInsertBar && (
             <div className="editor-v2-insert-bar">
@@ -5483,6 +5528,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onUngroup={handleUngroup}
           canGroup={multiSelectLayerIds.length >= 2 || selectedOrphanIds.size >= 2}
           canUngroup={(!!selectedElement && !!selectedElement.childLayerCount) || selectedOrphanIds.size > 0}
+          foregroundColor={foregroundColor}
+          backgroundColor={backgroundColor}
+          onForegroundColorChange={setForegroundColor}
+          onBackgroundColorChange={setBackgroundColor}
+          onSwapColors={handleSwapColors}
+          showLayersPanel={showLayersPanel}
+          onToggleLayers={() => setShowLayersPanel(v => !v)}
         />
       </div>
 
@@ -6088,6 +6140,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           else if (action === "show-props") setShowRightPanel(true);
         }}
       />
+
+      {/* ═══ Canvas Context Menu (right-click) ═══ */}
+      {contextMenu && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 999 }}
+            onClick={() => setContextMenu(null)}
+          />
+          <CanvasContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            selectedElement={selectedElement}
+            foregroundColor={foregroundColor}
+            onClose={() => setContextMenu(null)}
+            onFontChange={handleFontSelect}
+            onFontSizeChange={handleContextFontSizeChange}
+            onTextColorChange={handleContextTextColorChange}
+            onTextAlignChange={handleContextTextAlignChange}
+          />
+        </>
+      )}
     </div>
   );
 }

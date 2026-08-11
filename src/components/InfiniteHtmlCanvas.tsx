@@ -23,7 +23,7 @@ import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type Elemen
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "eyedropper" | "paint-bucket" | "gradient";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];

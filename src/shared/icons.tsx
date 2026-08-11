@@ -460,3 +460,42 @@ export const IconLayers = (p: React.ComponentProps<typeof Icon>) => (
     <polyline points="2,18 12,22 22,18" />
   </Icon>
 );
+
+// ── Eyedropper (color picker) ──────────────────────────
+export const IconEyedropper = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <path d="M2 22l1-1h3l9-9" />
+    <path d="M18.2 6.8a2.4 2.4 0 00-3.4 0l-1.4 1.4 3.4 3.4 1.4-1.4a2.4 2.4 0 000-3.4z" />
+    <path d="M18 7l-8.2 8.2" />
+    <path d="M7 18l-5 5" />
+  </Icon>
+);
+
+// ── Paint Bucket (fill) ─────────────────────────────────
+export const IconPaintBucket = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <path d="M19.6 12.6L11.4 4.4a1 1 0 00-1.4 0l-7 7a1 1 0 000 1.4l8.2 8.2a1 1 0 001.4 0l7-7a1 1 0 000-1.4z" />
+    <path d="M4 19l3-3" />
+    <path d="M19 20c-.6 1-1.5 2-2 2s-1.4-1-2-2c0 0 1.5-2 2-2s2 2 2 2z" />
+  </Icon>
+);
+
+// ── Gradient (color transition) ─────────────────────────
+export const IconGradient = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <line x1="3" y1="9" x2="21" y2="9" />
+    <line x1="3" y1="15" x2="21" y2="15" />
+    <line x1="9" y1="3" x2="9" y2="21" />
+    <line x1="15" y1="3" x2="15" y2="21" />
+  </Icon>
+);
+
+// ── Swap (exchange colors) ──────────────────────────────
+export const IconSwap = (p: React.ComponentProps<typeof Icon>) => (
+  <Icon {...p}>
+    <polyline points="7 16 3 12 7 8" />
+    <polyline points="17 8 21 12 17 16" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+  </Icon>
+);
