@@ -8,6 +8,10 @@ import { CoverFlow } from "./CoverFlow";
 import { StorageTab } from "./StorageTab";
 import { ContentTab } from "./ContentTab";
 import { KanbanTab } from "./KanbanTab";
+import { KanbanTableView } from "./KanbanTableView";
+import { AgentsPanel } from "./AgentsPanel";
+import { BrandGraphCanvas } from "./BrandGraphCanvas";
+import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
@@ -286,6 +290,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [deleteSkipUntil, setDeleteSkipUntil] = useState(0);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  // Sub-tabs inside Diseño and Agentes.
+  const [designSubTab, setDesignSubTab] = useState<"files" | "graph" | "table">("files");
+  const [agentSubTab, setAgentSubTab] = useState<"kanban" | "table" | "agents">("kanban");
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
   const searchRef = useRef("");
@@ -1041,14 +1048,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Centered: fixed nav tabs */}
           <div className="dash-nav-tabs" style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flex: 1 }}>
             {([
-              { id: "archivos", label: "Archivos", icon: <IconFile size={14} /> },
-              { id: "procesos", label: "Procesos", icon: (
+              { id: "diseno", label: "Diseño", icon: <IconFile size={14} /> },
+              { id: "agentes", label: "Agentes", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="7" height="18" rx="1" />
                   <rect x="14" y="3" width="7" height="10" rx="1" />
                 </svg>
               )},
-{ id: "calendario", label: "Calendario", icon: (
+{ id: "copywriting", label: "Copywriting", icon: (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                   <line x1="16" y1="2" x2="16" y2="6" />
@@ -1157,26 +1164,26 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                       </div>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("archivos"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("diseno"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
-                        <IconFile size={14} /> Archivos
+                        <IconFile size={14} /> Diseño
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("procesos"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("agentes"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1" /><rect x="14" y="3" width="7" height="10" rx="1" /></svg>
-                        Procesos
+                        Agentes
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setActiveTab("calendario"); setUserMenuOpen(false); }}
+                        onClick={() => { setActiveTab("copywriting"); setUserMenuOpen(false); }}
                         style={{ ...dropdownItemStyle, display: "flex", alignItems: "center", gap: 8 }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                        Calendario
+                        Copywriting
                       </button>
                       <button
                         type="button"
@@ -1319,8 +1326,17 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         </aside>
       )}
 
-      {/* Template Grid */}
-      {activeTab === "archivos" && (
+      {/* ── Diseño Tab (sub-tabs: Archivos / Grafo / Tablas) ── */}
+      {activeTab === "diseno" && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Sub-tab bar */}
+          <div style={{ display: "flex", gap: 4, padding: "6px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0 }}>
+            <button type="button" onClick={() => setDesignSubTab("files")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "files" ? 600 : 400, color: designSubTab === "files" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "files" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "files" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Archivos</button>
+            <button type="button" onClick={() => setDesignSubTab("graph")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "graph" ? 600 : 400, color: designSubTab === "graph" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "graph" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "graph" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Grafo</button>
+            <button type="button" onClick={() => setDesignSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: designSubTab === "table" ? 600 : 400, color: designSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: designSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: designSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tablas</button>
+          </div>
+          {/* Sub-tab content */}
+          {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
         flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
         background: "#06080d",
@@ -1483,16 +1499,41 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         )}
       </div>
+      ) : designSubTab === "graph" ? (
+            <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+              <BrandGraphCanvas workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
+            </div>
+          ) : (
+            <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+              <BrandGraphDataTable workspaceId={activeWorkspaceId} onOpenTemplate={(id) => onSelectTemplate(id)} />
+            </div>
+          )}
+        </div>
       )}
 
-      {/* ── Texts Tab ── */}
-      {activeTab === "calendario" && (
+      {/* ── Copywriting Tab ── */}
+      {activeTab === "copywriting" && (
         <ContentTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
-      {/* ── Kanban Tab ── */}
-      {activeTab === "procesos" && (
-        <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
+      {/* ── Agentes Tab (sub-tabs: Kanban / Tabla / Agentes) ── */}
+      {activeTab === "agentes" && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Sub-tab bar */}
+          <div style={{ display: "flex", gap: 4, padding: "6px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0 }}>
+            <button type="button" onClick={() => setAgentSubTab("kanban")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "kanban" ? 600 : 400, color: agentSubTab === "kanban" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "kanban" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "kanban" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Kanban</button>
+            <button type="button" onClick={() => setAgentSubTab("table")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "table" ? 600 : 400, color: agentSubTab === "table" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "table" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "table" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Tabla</button>
+            <button type="button" onClick={() => setAgentSubTab("agents")} style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: agentSubTab === "agents" ? 600 : 400, color: agentSubTab === "agents" ? "#fff" : "rgba(255,255,255,0.45)", background: agentSubTab === "agents" ? "rgba(99,102,241,0.22)" : "transparent", border: agentSubTab === "agents" ? "1px solid rgba(99,102,241,0.5)" : "1px solid transparent", fontFamily: "inherit", transition: "all 0.15s" }}>Agentes</button>
+          </div>
+          {/* Sub-tab content */}
+          {agentSubTab === "kanban" ? (
+            <KanbanTab workspaceId={activeWorkspaceId ?? ""} />
+          ) : agentSubTab === "table" ? (
+            <KanbanTableView workspaceId={activeWorkspaceId ?? ""} />
+          ) : (
+            <AgentsPanel />
+          )}
+        </div>
       )}
 
 {/* Key Visuals / Recipes Grid */}
@@ -1942,7 +1983,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
                 </div>
                 <button type="button" className="bento-btn"
-                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("archivos"); }}>Reiniciar</button>
+                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("diseno"); }}>Reiniciar</button>
               </div>
             </div>
 
@@ -2141,7 +2182,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       <OnboardingTour
         page="dashboard"
         onAction={(action: TourAction) => {
-          if (action === "tab-templates") setActiveTab("archivos");
+          if (action === "tab-templates") setActiveTab("diseno");
           else if (action === "tab-graph") setActiveTab("contactos");
           else if (action === "open-first-template") {
             const t = templates[0];

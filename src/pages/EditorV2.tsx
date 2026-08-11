@@ -272,9 +272,9 @@ p {
  * dashboard reads the one left in sessionStorage on mount and switches to it.
  */
 const EDITOR_NAV_TABS = [
-  { id: "archivos", label: "Archivos" },
-  { id: "procesos", label: "Procesos" },
-  { id: "calendario", label: "Calendario" },
+  { id: "diseno", label: "Diseño" },
+  { id: "agentes", label: "Agentes" },
+  { id: "copywriting", label: "Copywriting" },
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },
   { id: "recipes", label: "Recetas" },

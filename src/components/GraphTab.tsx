@@ -12,8 +12,7 @@ import {
 } from "../lib/designGraph";
 import { DEFAULT_GRAPH_PANE, isGraphPane, type GraphPane } from "../lib/appRoute";
 import { GraphDataTable } from "./GraphDataTable";
-import { BrandGraphCanvas } from "./BrandGraphCanvas";
-import { BrandGraphDataTable } from "./BrandGraphDataTable";
+// BrandGraphCanvas and BrandGraphDataTable moved to Dashboard's Diseño tab
 import { CrmWorkspace } from "./CrmWorkspace";
 import { StorageTab } from "./StorageTab";
 
@@ -118,8 +117,6 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
   // table instead of snapping back to the graph.
   const brandView: GraphPane = pane && isGraphPane(pane) ? pane : DEFAULT_GRAPH_PANE;
   const setBrandView = useCallback((next: GraphPane) => { onPaneChange?.(next); }, [onPaneChange]);
-  // Key to force BrandGraphCanvas remount on data change
-  const [brandRefreshKey, setBrandRefreshKey] = useState(0);
 
   const hierarchy = useMemo(
     () => buildDesignHierarchy(designNodes, brandAccounts, contacts, workspace),
@@ -626,23 +623,16 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
           </>
         ) : view === "brands" ? (
           <>
-            {/* Sub-tab: graph vs table */}
+            {/* Sub-tab: Pipeline / Marcas y Personas / Storage
+                (Grafo and Tabla moved to the Diseño tab) */}
             <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
-              <TabBtn active={brandView === "graph"} onClick={() => setBrandView("graph")}>◈ Grafo</TabBtn>
-              <TabBtn active={brandView === "table"} onClick={() => setBrandView("table")}>▤ Tabla</TabBtn>
               <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Pipeline</TabBtn>
               <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas y Personas</TabBtn>
               <TabBtn active={brandView === "storage"} onClick={() => setBrandView("storage")}>Storage</TabBtn>
               <div style={{ flex: 1 }} />
-              {/* "Refrescar" removed: it reloaded the graph while the table has
-                  its own Sincronizar, and only one pane is ever visible. */}
             </div>
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-              {brandView === "graph" ? (
-                <BrandGraphCanvas key={brandRefreshKey} workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
-              ) : brandView === "table" ? (
-                <BrandGraphDataTable workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} onRefreshGraph={() => setBrandRefreshKey(k => k + 1)} />
-              ) : brandView === "storage" ? (
+              {brandView === "storage" ? (
                 <div style={{ position: "absolute", inset: 0, overflow: "auto" }}>
                   <StorageTab workspaceId={workspaceId} />
                 </div>
