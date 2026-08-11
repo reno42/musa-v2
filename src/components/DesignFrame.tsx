@@ -2551,15 +2551,27 @@ export function DesignFrame({
           ? `0 0 0 1px ${SEL}, 0 8px 32px rgba(59,130,246,0.15)`
           : "0 4px 16px rgba(0,0,0,0.25)",
       }} />
-      {/* Label above frame — interactive: draggable + double-click to rename (Phase 1).
-          Rendered last so it's on top. bottom: 100% places it visually above the frame. */}
+      {/* Label above frame — interactive: draggable + double-click to rename.
+          Rendered last so it's on top. bottom: 100% places it visually above.
+
+          Counter-scaled by the zoom. The label lives in frame coordinates, so
+          it used to shrink with the canvas: at 50% an 11px label drew at 5.5
+          real pixels, which is why it was there but not clickable. Dividing by
+          the zoom holds it at a constant SCREEN size, so it reads and can be
+          hit the same whether you are at 10% or 400% — and it no longer eats
+          the artboard when you zoom out to see everything. */}
       <div
         data-frame-label-id={frame.id}
         aria-label={`Move frame ${frame.name}`}
         style={{
           position: "absolute", bottom: "100%", left: 0,
-          padding: "2px 8px", marginBottom: 4,
-          fontSize: 11, fontFamily: "Inter, system-ui, sans-serif",
+          transform: `scale(${1 / (zoom || 1)})`,
+          // Anchored where the label meets the frame's top-left, so growing it
+          // pushes away from the artwork rather than over it.
+          transformOrigin: "bottom left",
+          padding: "4px 10px", marginBottom: 6,
+          fontSize: 14, fontFamily: "Inter, system-ui, sans-serif",
+          fontWeight: 500,
           color: isActive ? "#60a5fa" : "#999",
           whiteSpace: "nowrap",
           pointerEvents: "auto",
@@ -2587,16 +2599,17 @@ export function DesignFrame({
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
-              fontSize: 11, fontFamily: "Inter, system-ui, sans-serif",
+              // Matches the label it replaces: renaming should not resize it.
+              fontSize: 14, fontFamily: "Inter, system-ui, sans-serif",
               background: "rgba(30,30,30,0.95)", color: "#fff",
               border: "1px solid #3B82F6", borderRadius: 3,
-              padding: "1px 6px", outline: "none", width: 120,
+              padding: "2px 8px", outline: "none", width: 160,
             }}
           />
         ) : (
           <>
             {frame.name}
-            <span style={{ marginLeft: 6, fontSize: 10, color: "#555" }}>
+            <span style={{ marginLeft: 8, fontSize: 12, color: "#666" }}>
               {frame.width}×{frame.height}
             </span>
           </>
