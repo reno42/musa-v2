@@ -23,14 +23,48 @@ export const GRAPH_PANES = ["pipeline", "accounts"] as const;
 export type GraphPane = typeof GRAPH_PANES[number];
 export const DEFAULT_GRAPH_PANE: GraphPane = "pipeline";
 
+/**
+ * Sub-tabs of Diseño. They were React state alone, so a refresh on the graph,
+ * the table or the Papelera dropped back to Archivos — the same loss the pane
+ * in the URL was introduced to stop, reappearing when the tabs were
+ * restructured. Any pane is accepted in the URL; each tab validates its own.
+ */
+export const DESIGN_PANES = ["files", "graph", "table", "trash"] as const;
+export type DesignPane = typeof DESIGN_PANES[number];
+export const DEFAULT_DESIGN_PANE: DesignPane = "files";
+
+export function isDesignPane(value: string): value is DesignPane {
+  return (DESIGN_PANES as readonly string[]).includes(value);
+}
+
+/** Sub-tabs of Agentes, in the URL for the same reason as Diseño's. */
+export const AGENT_PANES = ["kanban", "table", "agents"] as const;
+export type AgentPane = typeof AGENT_PANES[number];
+export const DEFAULT_AGENT_PANE: AgentPane = "kanban";
+
+export function isAgentPane(value: string): value is AgentPane {
+  return (AGENT_PANES as readonly string[]).includes(value);
+}
+
 export function isGraphPane(value: string): value is GraphPane {
   return (GRAPH_PANES as readonly string[]).includes(value);
 }
 
+/** Each tab's own default pane — the one left out of the URL, the way the
+ *  default TAB is left out. Compared against the graph's default regardless of
+ *  tab, this wrote "files" into every Diseño URL and swallowed "pipeline". */
+const DEFAULT_PANE_BY_TAB: Partial<Record<WorkspaceTab, string>> = {
+  diseno: DEFAULT_DESIGN_PANE,
+  agentes: DEFAULT_AGENT_PANE,
+  // Contactos is where the Red de Marcas graph lives, so it owns the
+  // pipeline/accounts panes — not Agentes, which has its own three.
+  contactos: DEFAULT_GRAPH_PANE,
+};
+
 /** Build the canonical URL for a dashboard tab, optionally with a pane. */
 export function workspaceTabUrl(tab: WorkspaceTab, pane?: string): string {
   const base = tab === DEFAULT_WORKSPACE_TAB ? "/#workspace" : `/#workspace/${tab}`;
-  return pane && pane !== DEFAULT_GRAPH_PANE ? `${base}/${pane}` : base;
+  return pane && pane !== DEFAULT_PANE_BY_TAB[tab] ? `${base}/${pane}` : base;
 }
 
 export type AppRoute =

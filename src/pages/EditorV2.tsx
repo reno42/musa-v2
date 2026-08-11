@@ -5835,7 +5835,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onAssetUploaded={handleAssetUploaded}
               selectedImageSrc={selectedElement?.src}
               onManageStorage={() => {
-                sessionStorage.setItem("dashboardInitialTab", "storage");
+                // "storage" stopped being a tab when Diseño gained sub-tabs;
+                // it is the Papelera pane now. The old id matched nothing, so
+                // this button quietly landed on Archivos instead.
+                sessionStorage.setItem("dashboardInitialTab", "diseno");
+                sessionStorage.setItem("dashboardInitialPane", "trash");
                 setShowRightPanel(false);
                 onBack();
               }}

@@ -15,7 +15,10 @@ import { BrandGraphDataTable } from "./BrandGraphDataTable";
 import { mcpCall } from "../lib/mcpClient";
 import { useToast } from "./Toast";
 import { saveCurrentRoute } from "../lib/routePersistence";
-import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, type WorkspaceTab } from "../lib/appRoute";
+import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, type WorkspaceTab,
+  DEFAULT_DESIGN_PANE, isDesignPane, type DesignPane,
+  DEFAULT_AGENT_PANE, isAgentPane, type AgentPane,
+} from "../lib/appRoute";
 import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
 import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
@@ -206,11 +209,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // parent, reliably wins that race and applies last.
   useEffect(() => {
     const pending = sessionStorage.getItem("dashboardInitialTab");
-    if (pending && isWorkspaceTab(pending)) {
-      sessionStorage.removeItem("dashboardInitialTab");
-      setActiveTab(pending);
-    }
-  }, [setActiveTab]);
+    if (!pending || !isWorkspaceTab(pending)) return;
+    sessionStorage.removeItem("dashboardInitialTab");
+    // A caller may also name the pane — "take me to the Papelera", not just
+    // "take me to Diseño". Read before setActiveTab, which clears the pane.
+    const pendingPane = sessionStorage.getItem("dashboardInitialPane");
+    sessionStorage.removeItem("dashboardInitialPane");
+    setActiveTab(pending);
+    if (pendingPane) setActivePane(pendingPane);
+  }, [setActiveTab, setActivePane]);
   const [tourEnabled, setTourEnabled] = useState(() => isOnboardingEnabled());
   const [cardMode, setCardMode] = useState<"grid" | "flow">(() => {
     try { return localStorage.getItem("futuraria-card-mode") as "grid" | "flow" || "grid"; } catch { return "grid"; }
@@ -291,8 +298,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   // Sub-tabs inside Diseño and Agentes.
-  const [designSubTab, setDesignSubTab] = useState<"files" | "graph" | "table" | "trash">("files");
-  const [agentSubTab, setAgentSubTab] = useState<"kanban" | "table" | "agents">("kanban");
+  // Read from the URL, written back to it: refreshing on the Grafo, the Tabla
+  // or the Papelera must stay there. This lived in React state alone, which is
+  // exactly the loss the pane segment exists to prevent.
+  const designSubTab: DesignPane = activePane && isDesignPane(activePane) ? activePane : DEFAULT_DESIGN_PANE;
+  const setDesignSubTab = useCallback((pane: DesignPane) => setActivePane(pane), [setActivePane]);
+  // In the URL, like Diseño's: a refresh on the agents table or the roster
+  // should not drop back to the Kanban.
+  const agentSubTab: AgentPane = activePane && isAgentPane(activePane) ? activePane : DEFAULT_AGENT_PANE;
+  const setAgentSubTab = useCallback((pane: AgentPane) => setActivePane(pane), [setActivePane]);
   const newTplInputRef = useRef<HTMLInputElement>(null);
   const renamingRef = useRef(false);
   const searchRef = useRef("");

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = resolve(fileURLToPath(import.meta.url), "..");
 const modulePath = "file://" + resolve(__dirname, "..", "src", "lib", "appRoute.ts");
-const { readAppRoute, routeRequiresAccount, workspaceTabUrl } = await import(modulePath);
+const routeModule = await import(modulePath);
+const { readAppRoute, routeRequiresAccount, workspaceTabUrl } = routeModule;
 
 function location(pathname = "/", search = "", hash = "") {
   return { pathname, search, hash };
@@ -70,7 +71,9 @@ describe("startup routing", () => {
   });
 
   it("leaves the default pane out of the URL, the way the default tab is", () => {
-    assert.equal(workspaceTabUrl("agentes", "pipeline"), "/#workspace/agentes");
+    // Contactos owns the pipeline/accounts panes — it is where the Red de
+    // Marcas graph lives.
+    assert.equal(workspaceTabUrl("contactos", "pipeline"), "/#workspace/contactos");
     assert.equal(workspaceTabUrl("diseno"), "/#workspace");
   });
 
@@ -83,5 +86,47 @@ describe("startup routing", () => {
       readAppRoute(location("/", "?template=tpl_123&reset=1")),
       { kind: "password-recovery" },
     );
+  });
+});
+
+/**
+ * Panes belong to a tab, and each tab has its own default.
+ *
+ * These exist because the tabs were restructured and the pane logic still
+ * compared against the graph's default for every tab — so Diseño wrote its
+ * default into the URL and swallowed the one pane it should have kept.
+ */
+describe("panes per tab", () => {
+  const {
+    DEFAULT_DESIGN_PANE, DEFAULT_AGENT_PANE, isDesignPane, isAgentPane,
+  } = routeModule;
+
+  it("each tab omits its OWN default pane, not another tab's", () => {
+    assert.equal(workspaceTabUrl("diseno", DEFAULT_DESIGN_PANE), "/#workspace");
+    assert.equal(workspaceTabUrl("agentes", DEFAULT_AGENT_PANE), "/#workspace/agentes");
+  });
+
+  it("a non-default pane survives into the URL", () => {
+    assert.equal(workspaceTabUrl("diseno", "trash"), "/#workspace/trash");
+    assert.equal(workspaceTabUrl("agentes", "agents"), "/#workspace/agentes/agents");
+  });
+
+  it("one tab's default is not mistaken for another's", () => {
+    // "kanban" is meaningless under Diseño and must not be swallowed there.
+    assert.equal(workspaceTabUrl("diseno", "kanban"), "/#workspace/kanban");
+  });
+
+  it("every pane a tab renders is one the tab recognises", () => {
+    for (const pane of ["files", "graph", "table", "trash"]) {
+      assert.equal(isDesignPane(pane), true, `Diseño must accept ${pane}`);
+    }
+    for (const pane of ["kanban", "table", "agents"]) {
+      assert.equal(isAgentPane(pane), true, `Agentes must accept ${pane}`);
+    }
+  });
+
+  it("a pane from the wrong tab is rejected rather than rendered blank", () => {
+    assert.equal(isDesignPane("kanban"), false);
+    assert.equal(isAgentPane("trash"), false);
   });
 });
