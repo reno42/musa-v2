@@ -104,3 +104,59 @@ export async function saveRemotePreferences(roleConfig: unknown): Promise<void> 
     console.warn("[chat] no se pudo guardar la preferencia de modelo:", err);
   }
 }
+
+// ── Provider keys ──────────────────────────────────────────────────────────
+
+export interface StoredKey { provider: string; last4: string; updated_at?: string }
+
+/** Which providers the account has a key for. Never the key itself. */
+export async function fetchProviderKeys(): Promise<StoredKey[]> {
+  try {
+    const res = await apiFetch<{ success?: boolean; data?: StoredKey[] }>("/api/chat/keys");
+    return Array.isArray(res?.data) ? res.data : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Stores or rotates a key. Resolves to the last four, never the key. */
+export async function saveProviderKeyRemote(provider: string, key: string): Promise<string> {
+  const res = await apiFetch<{ success?: boolean; last4?: string; error?: string }>("/api/chat/keys", {
+    method: "PUT",
+    body: JSON.stringify({ provider, key }),
+  });
+  if (res?.success === false) throw new Error(res.error || "No se pudo guardar la llave");
+  return res?.last4 || key.slice(-4);
+}
+
+export async function deleteProviderKeyRemote(provider: string): Promise<void> {
+  await apiFetch(`/api/chat/keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
+}
+
+/**
+ * Moves keys this browser is still holding up to the account, then erases
+ * them locally.
+ *
+ * The erase is the point, not a tidy-up. Until the local copy is gone the key
+ * is still readable by an extension or an XSS, so migrating without deleting
+ * would leave the exposure exactly where it was and only add a second copy.
+ * Only deletes what the server confirmed it took.
+ */
+export async function migrateLocalKeys(
+  localKeys: Record<string, string>,
+  forget: (provider: string) => void,
+): Promise<string[]> {
+  const moved: string[] = [];
+  for (const [provider, key] of Object.entries(localKeys)) {
+    if (!key || key.length < 8) continue;
+    try {
+      await saveProviderKeyRemote(provider, key);
+      forget(provider);
+      moved.push(provider);
+    } catch {
+      // Left in place deliberately: dropping a key we failed to store would
+      // lock the user out of their own agent.
+    }
+  }
+  return moved;
+}

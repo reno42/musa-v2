@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { appendRemoteHistory, fetchRemoteHistory } from "../lib/chatHistory";
+import {
+  appendRemoteHistory, fetchRemoteHistory, fetchProviderKeys,
+  saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
+} from "../lib/chatHistory";
 import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS, LLM_PROXY_URL, proxyBody } from "../lib/aiProviders";
@@ -131,17 +134,32 @@ function getProviderKey(providerId: string): string {
     // Migration: if old global key exists and old provider matches, copy it
     const oldKey = localStorage.getItem(LS_LLM_KEY_KEY);
     const oldProvider = localStorage.getItem(LS_PROVIDER_KEY);
-    if (oldKey && oldProvider === providerId) {
-      localStorage.setItem(LS_PROVIDER_KEYS_PREFIX + providerId, oldKey);
-      return oldKey;
-    }
+    // Read, never re-written: the migration below hands it to the server and
+    // erases it. Copying it into a second local slot would only widen the
+    // exposure this whole change exists to close.
+    if (oldKey && oldProvider === providerId) return oldKey;
   } catch {}
   return "";
 }
 
-/** Set API key for a provider. */
-function setProviderKey(providerId: string, key: string) {
-  try { localStorage.setItem(LS_PROVIDER_KEYS_PREFIX + providerId, key); } catch {}
+/**
+ * Erases a provider key from this device.
+ *
+ * There is deliberately no local writer any more. A key is a password that
+ * spends money, and localStorage is readable by any extension and any XSS on
+ * the page — so keys go to the account, encrypted, and this only cleans up
+ * what older versions left behind.
+ */
+function forgetLocalProviderKey(providerId: string) {
+  try {
+    localStorage.removeItem(LS_PROVIDER_KEYS_PREFIX + providerId);
+    // The pre-multi-provider slots, so a migration does not leave a copy in
+    // the one place nobody thinks to look.
+    if (localStorage.getItem(LS_PROVIDER_KEY) === providerId) {
+      localStorage.removeItem(LS_LLM_KEY_KEY);
+      localStorage.removeItem(LS_PROVIDER_KEY);
+    }
+  } catch {}
 }
 
 /** Load all provider keys as a map. */
@@ -153,20 +171,27 @@ function loadAllProviderKeys(): Record<string, string> {
   return keys;
 }
 
-/** Resolve the LLM config (provider, model, key, endpoint) for a given role.
- *  Used by module-level spawnSubagent (reads localStorage directly). */
+/**
+ * Resolve the LLM config for a role: which provider and model to ask for.
+ *
+ * No key. The browser does not have one any more and must not: requests go to
+ * /api/chat/llm, which holds the credential and answers 412 with `needsKey`
+ * when the account has not configured that provider. Deciding "no key, do not
+ * try" here would mean guessing at server state from the one place that is
+ * not allowed to know it.
+ */
 function resolveRoleLLM(role: AgentRole): {
   providerId: string; model: string; apiKey: string; endpoint: string; isAnthropic: boolean;
 } | null {
   const cfg = loadRoleConfig()[role];
-  const apiKey = getProviderKey(cfg.provider);
-  if (!apiKey) return null;
   const prov = PROVIDERS.find(p => p.id === cfg.provider) || PROVIDERS[0];
   return {
     providerId: cfg.provider,
     model: cfg.model || prov.defaultModel,
-    apiKey,
-    endpoint: prov.endpoint,
+    // Kept in the shape so callers do not all have to change; the proxy is
+    // what actually authenticates.
+    apiKey: "server",
+    endpoint: LLM_PROXY_URL,
     isAnthropic: cfg.provider === "anthropic",
   };
 }
@@ -1871,11 +1896,26 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
   // ── Multi-model per role: each role can use a different provider+model ──
   const [roleConfig, setRoleConfig] = useState<RoleConfigMap>(() => loadRoleConfig());
-  const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadAllProviderKeys());
+  /** Which providers the account has a key for — last four only. */
+  const [storedKeys, setStoredKeys] = useState<StoredKey[]>([]);
+  /** What is being typed right now, before it is sent. Never persisted. */
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [keyStatus, setKeyStatus] = useState("");
+  /** Kept only so the runtime can tell "configured" from "not". The value is
+   *  never read for a request any more — the server holds it. */
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
   const leaderProvider = roleConfig.leader.provider;
   const leaderModel = roleConfig.leader.model;
   const leaderKey = providerKeys[leaderProvider] || "";
-  const [showSettings, setShowSettings] = useState(!leaderKey);
+  // Starts closed and opens only once the account is known to have no key.
+  // Opening on mount would flash the settings panel at every user on every
+  // load, because the key list arrives from the server a moment later.
+  const [showSettings, setShowSettings] = useState(false);
+  const keysLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!keysLoadedRef.current || leaderKey) return;
+    setShowSettings(true);
+  }, [leaderKey, storedKeys]);
   const [accordion, setAccordion] = useState<"config" | "chat" | "tools" | null>("chat");
   
   // ── Governance panel state ──
@@ -1887,11 +1927,56 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
   // Persist settings
   useEffect(() => { saveRoleConfig(roleConfig); }, [roleConfig]);
+  // ── Keys live on the server ──
+  // Anything this browser is still holding is moved up and then erased. The
+  // erase is the point: until the local copy is gone the key is still readable
+  // by an extension or an XSS, so migrating without deleting would only add a
+  // second copy of the same exposure.
   useEffect(() => {
-    for (const [pid, key] of Object.entries(providerKeys)) {
-      setProviderKey(pid, key);
+    let cancelled = false;
+    void (async () => {
+      const leftovers = loadAllProviderKeys();
+      if (Object.keys(leftovers).length > 0) {
+        const moved = await migrateLocalKeys(leftovers, forgetLocalProviderKey);
+        if (!cancelled && moved.length) {
+          setKeyStatus(`${moved.length} llave${moved.length === 1 ? "" : "s"} movida${moved.length === 1 ? "" : "s"} a tu cuenta y borrada${moved.length === 1 ? "" : "s"} de este navegador.`);
+        }
+      }
+      const remote = await fetchProviderKeys();
+      if (cancelled) return;
+      keysLoadedRef.current = true;
+      setStoredKeys(remote);
+      // The runtime only needs to know a key EXISTS; the value stays server-side.
+      setProviderKeys(Object.fromEntries(remote.map(k => [k.provider, "stored"])));
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const submitKey = useCallback(async (provider: string) => {
+    const value = (keyDraft[provider] || "").trim();
+    if (value.length < 8) { setKeyStatus("Esa llave es demasiado corta."); return; }
+    setKeyStatus("Guardando…");
+    try {
+      const last4 = await saveProviderKeyRemote(provider, value);
+      setStoredKeys(prev => [...prev.filter(k => k.provider !== provider), { provider, last4 }]);
+      setProviderKeys(prev => ({ ...prev, [provider]: "stored" }));
+      setKeyDraft(prev => ({ ...prev, [provider]: "" }));
+      setKeyStatus(`Guardada en tu cuenta (····${last4}). Disponible desde cualquier dispositivo.`);
+    } catch (e) {
+      setKeyStatus(e instanceof Error ? e.message : "No se pudo guardar la llave");
     }
-  }, [providerKeys]);
+  }, [keyDraft]);
+
+  const removeKey = useCallback(async (provider: string) => {
+    try {
+      await deleteProviderKeyRemote(provider);
+      setStoredKeys(prev => prev.filter(k => k.provider !== provider));
+      setProviderKeys(prev => { const next = { ...prev }; delete next[provider]; return next; });
+      setKeyStatus("Llave eliminada de tu cuenta.");
+    } catch (e) {
+      setKeyStatus(e instanceof Error ? e.message : "No se pudo eliminar");
+    }
+  }, []);
 
   // Persist messages locally, for instant render and offline reading.
   useEffect(() => { saveMessages(messages); }, [messages]);
@@ -2633,19 +2718,62 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             <div id="chat-config-panel" style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
               {/* ── API Keys per provider ── */}
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1 }}>API Keys</div>
-              {PROVIDERS.map(p => (
-                <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  <label htmlFor={`provider-key-${p.id}`} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.label}</label>
-                  <input
-                    id={`provider-key-${p.id}`}
-                    type="password"
-                    value={providerKeys[p.id] || ""}
-                    onChange={e => setProviderKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
-                    placeholder={`${p.keyPrefix}... ${p.label} key`}
-                    style={{ ...inputBase, padding: "5px 10px", fontSize: 11, fontFamily: "monospace" }}
-                  />
-                </div>
-              ))}
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                Se guardan cifradas en tu cuenta, no en este navegador, así que te siguen
+                a cualquier dispositivo. Una vez guardadas no se pueden volver a leer.
+              </div>
+              {PROVIDERS.map(p => {
+                const stored = storedKeys.find(k => k.provider === p.id);
+                return (
+                  <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <label htmlFor={`provider-key-${p.id}`} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "flex", gap: 6 }}>
+                      <span>{p.label}</span>
+                      {stored && (
+                        <span style={{ color: "rgba(120,220,150,0.85)" }}>
+                          guardada ····{stored.last4}
+                        </span>
+                      )}
+                    </label>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input
+                        id={`provider-key-${p.id}`}
+                        type="password"
+                        autoComplete="off"
+                        value={keyDraft[p.id] || ""}
+                        onChange={e => setKeyDraft(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void submitKey(p.id); } }}
+                        placeholder={stored ? "Pega una nueva para rotarla" : `${p.keyPrefix}... ${p.label} key`}
+                        style={{ ...inputBase, flex: 1, padding: "5px 10px", fontSize: 11, fontFamily: "monospace" }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void submitKey(p.id)}
+                        disabled={!(keyDraft[p.id] || "").trim()}
+                        style={{
+                          padding: "5px 10px", fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                          background: "rgba(255,255,255,0.08)", color: "#fff",
+                          border: "1px solid rgba(255,255,255,0.18)", borderRadius: 4,
+                        }}
+                      >{stored ? "Rotar" : "Guardar"}</button>
+                      {stored && (
+                        <button
+                          type="button"
+                          onClick={() => void removeKey(p.id)}
+                          title="Eliminar de tu cuenta"
+                          style={{
+                            padding: "5px 8px", fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                            background: "transparent", color: "rgba(255,255,255,0.5)",
+                            border: "1px solid rgba(255,255,255,0.14)", borderRadius: 4,
+                          }}
+                        >×</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {keyStatus && (
+                <div role="status" style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>{keyStatus}</div>
+              )}
           
               {/* ── Model per role ── */}
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>Modelos por Rol</div>
