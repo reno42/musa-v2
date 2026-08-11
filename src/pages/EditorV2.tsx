@@ -4162,9 +4162,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
     const bake = measureContainerForBake(selectedFrameId, selectedElement.layerId);
-    const newHtml = bake
-      ? ungroupPreservingLayout(frame.html, bake)
-      : ungroupLayerInHtml(frame.html, selectedElement.layerId);
+    if (!bake) {
+      addToast("No se pudo medir el grupo para desagruparlo de forma segura. Intenta de nuevo en un momento.", "error");
+      return;
+    }
+    const newHtml = ungroupPreservingLayout(frame.html, bake);
     if (!newHtml) return;
     const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: newHtml } : f);
     store.replaceAllWithUndo(updated, "ungroup");

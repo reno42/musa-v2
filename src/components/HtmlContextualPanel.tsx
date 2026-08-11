@@ -267,6 +267,24 @@ function ColorRow({ label, value, onChange }: {
 }) {
   const hex = toHex(value);
   const alpha = parseAlpha(value);
+  const [text, setText] = useState(value || "");
+
+  useEffect(() => { setText(value || ""); }, [value]);
+
+  const commit = useCallback(() => {
+    const trimmed = text.trim();
+    const normalized = trimmed.startsWith("#") ? trimmed : "#" + trimmed;
+    if (/^#[0-9a-fA-F]{6}$/.test(normalized) || /^#[0-9a-fA-F]{3}$/.test(normalized)) {
+      if (alpha < 1) {
+        onChange(hexToRgba(normalized, alpha));
+      } else {
+        onChange(normalized);
+      }
+    } else {
+      setText(value || "");
+    }
+  }, [text, alpha, value, onChange]);
+
   return (
     <PropRow label={label}>
       <input type="color" value={hex} onChange={e => {
@@ -276,9 +294,9 @@ function ColorRow({ label, value, onChange }: {
           onChange(e.target.value);
         }
       }} style={colorInp} />
-      <input value={value || ""} onChange={e => onChange(e.target.value)}
-        onBlur={() => onChange(value)}
-        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      <input value={text} onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") { commit(); (e.target as HTMLInputElement).blur(); } }}
         style={inp} />
     </PropRow>
   );
@@ -941,6 +959,49 @@ export function HtmlContextualPanel({
               })}
             </div>
           )}
+
+          {/* ══ Typography (moved here from "animation" — text props belong in Properties) ══ */}
+          {(isText || isSvgText) && (
+            <>
+              <SectionHead label="Typography" section="typography" expanded={expanded} toggle={toggle} />
+              {expanded.typography && (
+                <div style={sectionBody}>
+                  <PropRow label="Font">
+                    <GoogleFontPicker value={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""} onChange={(f) => update(selector, "font-family", `'${f}'`)} />
+                  </PropRow>
+                  <PropRow label="Size">
+                    <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />
+                  </PropRow>
+                  <SelectRow label="Weight" value={s["font-weight"] || "400"} options={FONT_WEIGHTS} onChange={v => update(selector, "font-weight", v)} />
+                  <PropRow label="Align">
+                    <div style={{ display: "flex", gap: 2, flex: 1 }}>
+                      {TEXT_ALIGNMENTS.map(a => (
+                        <button key={a.value} type="button" title={a.title}
+                          onClick={() => update(selector, "text-align", a.value)}
+                          style={{ flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
+                            background: s["text-align"] === a.value ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
+                            border: s["text-align"] === a.value ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.04)",
+                            color: s["text-align"] === a.value ? "#c8b898" : "#7a7668" }}>
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </PropRow>
+                  <PropRow label="Spacing">
+                    <ScrubbyInput value={s["letter-spacing"] || "normal"} onChange={v => update(selector, "letter-spacing", v)} />
+                  </PropRow>
+                  <PropRow label="Line-H">
+                    <ScrubbyInput value={s["line-height"] || ""} onChange={v => update(selector, "line-height", v)} />
+                  </PropRow>
+                  <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(selector, "text-decoration", v)} />
+                  <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(selector, "text-transform", v)} />
+                  <PropRow label="Txt Shadow">
+                    <input value={s["text-shadow"] || "none"} placeholder="0 2px 4px rgba(0,0,0,0.2)" onChange={e => update(selector, "text-shadow", e.target.value)} style={inp} />
+                  </PropRow>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -1024,49 +1085,6 @@ export function HtmlContextualPanel({
 
       {subTab === "animation" && (
         <div style={{ overflow: "auto", flex: 1 }}>
-          {/* ── Typography ── */}
-          {(isText || isSvgText) && (
-            <>
-              <SectionHead label="Typography" section="typography" expanded={expanded} toggle={toggle} />
-              {expanded.typography && (
-                <div style={sectionBody}>
-                  <PropRow label="Font">
-                    <GoogleFontPicker value={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""} onChange={(f) => update(selector, "font-family", `'${f}'`)} />
-                  </PropRow>
-                  <PropRow label="Size">
-                    <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />
-                  </PropRow>
-                  <SelectRow label="Weight" value={s["font-weight"] || "400"} options={FONT_WEIGHTS} onChange={v => update(selector, "font-weight", v)} />
-                  <PropRow label="Align">
-                    <div style={{ display: "flex", gap: 2, flex: 1 }}>
-                      {TEXT_ALIGNMENTS.map(a => (
-                        <button key={a.value} type="button" title={a.title}
-                          onClick={() => update(selector, "text-align", a.value)}
-                          style={{ flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
-                            background: s["text-align"] === a.value ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
-                            border: s["text-align"] === a.value ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.04)",
-                            color: s["text-align"] === a.value ? "#c8b898" : "#7a7668" }}>
-                          {a.label}
-                        </button>
-                      ))}
-                    </div>
-                  </PropRow>
-                  <PropRow label="Spacing">
-                    <ScrubbyInput value={s["letter-spacing"] || "normal"} onChange={v => update(selector, "letter-spacing", v)} />
-                  </PropRow>
-                  <PropRow label="Line-H">
-                    <ScrubbyInput value={s["line-height"] || ""} onChange={v => update(selector, "line-height", v)} />
-                  </PropRow>
-                  <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(selector, "text-decoration", v)} />
-                  <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(selector, "text-transform", v)} />
-                  <PropRow label="Txt Shadow">
-                    <input value={s["text-shadow"] || "none"} placeholder="0 2px 4px rgba(0,0,0,0.2)" onChange={e => update(selector, "text-shadow", e.target.value)} style={inp} />
-                  </PropRow>
-                </div>
-              )}
-            </>
-          )}
-
           {/* ── Shape (parametric star/polygon controls) ── */}
           {element.shapeOptions && onShapeOptionsChange && (
             <>
