@@ -1,4 +1,5 @@
 import { cloneLayerCss } from "./cssMutations";
+import { classifyLayer } from "./layerKind";
 
 function parseFragment(html: string): Document {
   return new DOMParser().parseFromString(html, "text/html");
@@ -134,29 +135,19 @@ export function ensureLayerIds(html: string, createId: () => string): string {
       element.setAttribute("data-layer-id", createId());
       changed = true;
     }
-    // Classify element kind for scope-based selection (Sprint 3).
-    // - "group": structural containers with children (drillable on dblclick)
-    // - "text": inline text elements
-    // - "shape": SVG graphics
-    // - "image": embedded media
-    // - "container": everything else
+    // Classify element kind for scope-based selection. The rules live in
+    // lib/layerKind.ts, where they are testable: "group" is now reserved for
+    // pure scaffolding, so a painted card and a text block stop presenting
+    // themselves as things you have to ungroup to reach.
     if (!element.hasAttribute("data-layer-kind")) {
-      const tag = element.tagName.toLowerCase();
-      let kind: string;
-      if (tag === "svg") {
-        kind = "shape";
-      } else if (["img", "video", "canvas", "picture"].includes(tag)) {
-        kind = "image";
-      } else if (["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "a", "em",
-        "strong", "small", "b", "i", "code", "pre", "blockquote", "label",
-        "button", "figcaption", "cite", "q", "sub", "sup", "mark", "del",
-        "ins", "u", "s"].includes(tag)) {
-        kind = element.children.length > 0 ? "group" : "text";
-      } else if (element.children.length > 0) {
-        kind = "group";
-      } else {
-        kind = "container";
-      }
+      const kind = classifyLayer({
+        tag: element.tagName,
+        styleAttr: element.getAttribute("style"),
+        children: Array.from(element.children).map(child => ({
+          tag: child.tagName,
+          hasChildren: child.children.length > 0,
+        })),
+      });
       element.setAttribute("data-layer-kind", kind);
       changed = true;
     }
