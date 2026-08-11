@@ -34,6 +34,8 @@ import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/s
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import fontCatalog from "./data/google-fonts.json" with { type: "json" };
+import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
+import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
 const app = express();
@@ -150,29 +152,31 @@ app.use("/api/storage", storageRoutes);
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse 94 popular Google Fonts by name or category
 // GET /api/fonts/catalog?search=mont&category=sans-serif&limit=20&offset=0
-app.get("/api/fonts/catalog", (req, res) => {
-  try {
-    const search = (req.query.search as string || "").toLowerCase();
-    const category = req.query.category as string || "";
-    let fonts = fontCatalog as Array<{family:string; category:string; variants:string[]}>;
-    if (category) {
-      fonts = fonts.filter(f => f.category === category);
-    }
-    if (search) {
-      fonts = fonts.filter(f =>
-        f.family.toLowerCase().includes(search) ||
-        f.category.toLowerCase().includes(search)
-      );
-    }
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-    const offset = parseInt(req.query.offset as string) || 0;
-    const total = fonts.length;
-    const paged = fonts.slice(offset, offset + limit);
-    res.json({ success: true, data: { fonts: paged, total, limit, offset } });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+app.get("/api/fonts/catalog", asyncRoute(async (req, res) => {
+  const search = (req.query.search as string || "").toLowerCase();
+  const category = req.query.category as string || "";
+
+  // System fonts first, then Google — bundled, or the full ~1800 when
+  // GOOGLE_FONTS_API_KEY is set.
+  let fonts = await buildCatalog(fontCatalog as Array<{family: string; category: string; variants: string[]}>);
+  if (category) fonts = fonts.filter(f => f.category === category);
+  if (search) {
+    fonts = fonts.filter(f =>
+      f.family.toLowerCase().includes(search) || f.category.toLowerCase().includes(search));
   }
-});
+
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
+  const offset = parseInt(req.query.offset as string) || 0;
+  const total = fonts.length;
+  const paged = fonts.slice(offset, offset + limit);
+
+  // A search that found nothing because the font is licensed gets told so,
+  // with what to use instead. An empty list on its own reads as a broken
+  // editor rather than as an unavailable typeface.
+  const note = paged.length === 0 ? licensedNote(search) : null;
+
+  res.json({ success: true, data: { fonts: paged, total, limit, offset, note } });
+}));
 
 /**
  * Last resort. Anything that reaches `next(err)` — a rejected async gate, a

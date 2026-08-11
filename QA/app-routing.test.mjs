@@ -42,36 +42,36 @@ describe("startup routing", () => {
   // the way back to Archivos.
   it("carries the pane inside a workspace tab", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/graph/table")),
-      { kind: "workspace", tab: "graph", pane: "table" },
+      readAppRoute(location("/", "", "#workspace/agentes/accounts")),
+      { kind: "workspace", tab: "agentes", pane: "accounts" },
     );
   });
 
   it("keeps the tab when the pane is unknown, since the tab is the bigger loss", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/graph/inventado")),
-      { kind: "workspace", tab: "graph", pane: "inventado" },
+      readAppRoute(location("/", "", "#workspace/agentes/inventado")),
+      { kind: "workspace", tab: "agentes", pane: "inventado" },
     );
   });
 
   it("falls back to the default tab when the tab itself is unknown", () => {
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/inventado/table")),
+      readAppRoute(location("/", "", "#workspace/inventado/accounts")),
       { kind: "workspace" },
     );
   });
 
   it("round-trips a tab and pane through the URL builder", () => {
-    assert.equal(workspaceTabUrl("graph", "pipeline"), "/#workspace/graph/pipeline");
+    assert.equal(workspaceTabUrl("agentes", "accounts"), "/#workspace/agentes/accounts");
     assert.deepEqual(
-      readAppRoute(location("/", "", "#workspace/graph/pipeline")),
-      { kind: "workspace", tab: "graph", pane: "pipeline" },
+      readAppRoute(location("/", "", "#workspace/agentes/accounts")),
+      { kind: "workspace", tab: "agentes", pane: "accounts" },
     );
   });
 
   it("leaves the default pane out of the URL, the way the default tab is", () => {
-    assert.equal(workspaceTabUrl("graph", "graph"), "/#workspace/graph");
-    assert.equal(workspaceTabUrl("templates"), "/#workspace");
+    assert.equal(workspaceTabUrl("agentes", "pipeline"), "/#workspace/agentes");
+    assert.equal(workspaceTabUrl("diseno"), "/#workspace");
   });
 
   it("prioritizes invitation and recovery flows over template params", () => {
