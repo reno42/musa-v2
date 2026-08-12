@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enforceGroupsDoNotPaint, paintsABox } from "../api/src/services/groupPaint.ts";
+import { enforceGroupsDoNotPaint } from "../api/src/services/groupPaint.ts";
+import { paintsABox } from "../shared/paintDetection.ts";
 
 test("recognises the ways a box gets painted", () => {
   assert.equal(paintsABox("background-color: #fff"), true);

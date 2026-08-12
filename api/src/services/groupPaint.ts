@@ -22,42 +22,12 @@
  * today's tools, tomorrow's, the UI, and any agent — rather than at each of
  * the eighty-odd places that save a template.
  *
- * The paint rules mirror `src/lib/layerKind.ts`, which classifies layers on
- * the frontend. The two packages are sealed to their own `src`, so the list
- * lives in both; keep them in step.
+ * Whether a style paints is asked of shared/paintDetection — the same answer
+ * the editor's classifier gets, which is the point: a layer cannot change
+ * meaning on its way from one to the other.
  */
 
-/** CSS that means "somebody drew this box". */
-const PAINT_PROPS = [
-  "background", "background-color", "background-image",
-  "border", "border-width", "border-top", "border-right", "border-bottom", "border-left",
-  "box-shadow", "backdrop-filter",
-];
-
-/** Values that look like paint but are not. */
-const BLANK_PAINT = new Set([
-  "none", "transparent", "0", "0px", "initial", "unset", "inherit", "rgba(0, 0, 0, 0)", "rgba(0,0,0,0)",
-]);
-
-/** True when this block of declarations paints a visible box. */
-export function paintsABox(declarations: string | null | undefined): boolean {
-  const style = (declarations || "").toLowerCase();
-  if (!style) return false;
-
-  for (const prop of PAINT_PROPS) {
-    // The boundary stops `background-color:` matching inside `background-clip:`
-    // and `border-width` inside `-webkit-border-width`.
-    const hit = style.match(new RegExp(`(^|[;{])\\s*${prop}\\s*:\\s*([^;]+)`, "i"));
-    if (!hit) continue;
-    const value = hit[2].trim().replace(/!important$/, "").trim();
-    if (!value || BLANK_PAINT.has(value)) continue;
-    // A zero-width BORDER draws nothing. Scoped to borders on purpose: a
-    // shadow legitimately starts at a zero offset.
-    if (prop.startsWith("border") && /^0(px)?(\s|$)/.test(value)) continue;
-    return true;
-  }
-  return false;
-}
+import { paintsABox } from "../../../shared/paintDetection.ts";
 
 /** The declaration block of the rule addressing one layer, across the stylesheet. */
 function declarationsForLayer(css: string, layerId: string): string {

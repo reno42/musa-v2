@@ -6,7 +6,7 @@ import {
   isGroupLayer,
   paintPropertiesFor,
   summarizeFills,
-} from "../src/lib/layerPaint.ts";
+} from "../shared/paintModel.ts";
 
 const svgShape = { tag: "svg", isSvg: true, svgChildTag: "path", layerKind: "shape" };
 const svgText = { tag: "svg", isSvg: true, svgChildTag: "text", layerKind: "shape" };

@@ -2820,8 +2820,9 @@ interface TemplateMetadata {
 Bridges the Express application to Netlify's serverless function interface:
 
 ```javascript
-// 1. Import the Express app (compiled TypeScript → dist/)
-import app from "../../api/dist/index.js";
+// 1. Import the Express app straight from source — esbuild bundles the
+//    TypeScript when packaging the function, so there is no dist/ step.
+import app from "../../api/src/index.js";
 
 // 2. Convert Netlify event to Node.js IncomingMessage
 function createRequest(event) {

@@ -5,7 +5,7 @@ import { setTransformFunction, updateCssProperty as setCssProperty, getCssProper
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import { styleTargets } from "../lib/selectionModel";
-import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../lib/layerPaint";
+import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../../shared/paintModel.ts";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";

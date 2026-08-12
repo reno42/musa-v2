@@ -20,45 +20,11 @@
  *   selects as a unit. It is not two texts that were grouped.
  *
  * Pure and DOM-free so QA can cover it; htmlMutations calls it while walking
- * the tree.
+ * the tree. Whether a style paints is asked of shared/paintDetection, so the
+ * editor and the server cannot disagree about what counts as paint.
  */
 
-/** CSS that means "somebody drew this box". */
-const PAINT_PROPS = [
-  "background", "background-color", "background-image",
-  "border", "border-width", "border-top", "border-right", "border-bottom", "border-left",
-  "box-shadow", "backdrop-filter",
-];
-
-/** Values that look like paint but are not. */
-const BLANK_PAINT = new Set(["none", "transparent", "0", "0px", "initial", "unset", "inherit", "rgba(0, 0, 0, 0)"]);
-
-/**
- * True when this inline style paints a visible box.
- *
- * Reads the style attribute rather than computed styles on purpose: this runs
- * over HTML strings during normalisation, where there is no layout to compute
- * from. A class-based background is missed here and the element stays a group
- * — which is why the editor re-checks against the live DOM before ungrouping.
- */
-export function paintsABox(styleAttr: string | null | undefined): boolean {
-  const style = (styleAttr || "").toLowerCase();
-  if (!style) return false;
-  for (const prop of PAINT_PROPS) {
-    // `background-color:` must not match inside `background-clip:`.
-    const re = new RegExp(`(^|;)\\s*${prop}\\s*:\\s*([^;]+)`, "i");
-    const hit = style.match(re);
-    if (!hit) continue;
-    const value = hit[2].trim();
-    if (!value || BLANK_PAINT.has(value)) continue;
-    // A zero-width BORDER draws nothing. Scoped to borders on purpose: a
-    // shadow legitimately starts at zero offset — `box-shadow: 0 2px 8px …`
-    // is one of the most common ways to paint a card.
-    if (prop.startsWith("border") && /^0(px)?(\s|$)/.test(value)) continue;
-    return true;
-  }
-  return false;
-}
+import { paintsABox } from "../../shared/paintDetection.ts";
 
 const TEXT_TAGS = new Set([
   "p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "a", "em", "strong", "small",

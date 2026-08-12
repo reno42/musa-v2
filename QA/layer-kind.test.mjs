@@ -9,7 +9,8 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyLayer, paintsABox, isTextBlock, styleFingerprint } from "../src/lib/layerKind.ts";
+import { classifyLayer, isTextBlock, styleFingerprint } from "../src/lib/layerKind.ts";
+import { paintsABox } from "../shared/paintDetection.ts";
 
 const text = (tag = "span", styleAttr = null) => ({ tag, hasChildren: false, styleAttr });
 const box = (tag = "div") => ({ tag, hasChildren: true });
