@@ -282,13 +282,18 @@ design-main/
 │   │   └── data/
 │   │       └── google-fonts.json # 94-font catalog with family/category/variants
 │   │
-│   ├── dist/                     # Compiled API output
 │   ├── package.json              # API-specific dependencies
 │   └── tsconfig.json             # API-specific TypeScript config
+│                                 #   (typecheck only — see note below)
+│
+├── shared/                       # 🔒 THE DESIGN RULES — one copy, every surface
+│   ├── paintModel.ts             # What a layer's fill and stroke map to
+│   ├── paintDetection.ts         # Whether a style paints a visible box
+│   └── README.md                 # How each toolchain reaches this folder
 │
 ├── netlify/functions/
 │   ├── api.mjs                   # Express → Netlify serverless bridge (96 lines)
-│   ├── mcp.mjs                   # 🔥 MCP SERVER — JSON-RPC 2.0 + SSE (4390 lines, 100+ tools)
+│   ├── mcp.mjs                   # 🔥 MCP SERVER — JSON-RPC 2.0 + SSE (13.8k lines, 213 tools)
 │   └── render.mjs                # Self-rendering HTML page (254 lines)
 │
 ├── docs/
@@ -354,6 +359,31 @@ design-main/
     ├── test_mcp.mjs              # MCP test script
     └── test_render.mjs           # Render test script
 ```
+
+### Why `shared/` exists
+
+`src/` and `api/` are separate TypeScript packages, each `include`-scoped to
+its own folder, so neither can read the other's files. Rules that must hold on
+both sides therefore got written twice — and two copies of a rule is how the
+editor and an agent end up disagreeing about what "fill" means, with nothing to
+say so. `shared/` is the one copy both read.
+
+Note this is **not** `src/shared/`, which is frontend-only UI (icons). The
+root-level folder is the cross-package one.
+
+Keep it dependency-free — no React, no Express, no Supabase, no DOM. It is
+loaded by a browser bundle, a Node server, an esbuild-packaged function and
+node's test runner, so anything one of them cannot load breaks a deploy.
+Import it with an explicit `.ts` extension; that is the only specifier all four
+resolve. See `shared/README.md`.
+
+### Neither `tsc` emits anything
+
+Both packages compile with `--noEmit`. Nothing downstream consumes their
+output: the editor ships through Vite, and the functions through esbuild
+bundling `netlify/functions/*.mjs` **from source** — which is why `api.mjs`
+imports `../../api/src/index.js` and not a build artefact. Both `tsc` runs are
+type gates, so there is no compiled layout for anything to depend on.
 
 ---
 

@@ -14,7 +14,7 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
 4. **Get the onboarding guide:** Call the public tool `get_agent_guide` (no auth needed).
 5. **Ask the user for their API key** — they create it at the website under Settings -> API Keys. The key starts with `fdr_ws_` and is permanent.
 
-**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 145+ MCP tools. The platform renders, stores, and exports them.
+**What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 213 MCP tools. The platform renders, stores, and exports them.
 
 ---
 
@@ -129,8 +129,12 @@ design-main/
 │   │   ├── templateApi.ts        — API client + localStorage fallback
 │   │   ├── supabase.ts           — Fetch wrapper
 │   │   └── supabaseRealtime.ts   — Supabase realtime subscriptions + broadcast
-│   └── shared/
+│   └── shared/                   — frontend-only bits (NOT the rules folder below)
 │       └── icons.tsx             — SVG icon library
+├── shared/                       — THE DESIGN RULES, read by every surface
+│   ├── paintModel.ts             — what a layer's fill and stroke map to
+│   ├── paintDetection.ts         — whether a style paints a visible box
+│   └── README.md                 — how each toolchain reaches this folder
 ├── api/                          — Express API (serverless via Netlify Functions)
 │   ├── src/
 │   │   ├── index.ts              — Express app factory
@@ -148,7 +152,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 114 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 213 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -259,7 +263,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **213 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -282,6 +286,7 @@ Agent (Claude / Cursor / Custom)
 | Templates | `create_template`, `get_template`, `update_template`, `export_template` | 8 |
 | Frames | `create_frame`, `create_html_frame`, `update_html_frame`, `update_frame_content` | 8 |
 | HTML/CSS | `set_html`, `set_css`, `add_element`, `update_element`, `remove_element` | 12 |
+| Paint | `set_paint` — fill and stroke, translated per layer kind; on a group it reaches every object inside | 1 |
 | Structure | `get_template_structure`, `select_element`, `reorder_element` | 6 |
 | Drawing | `draw_shape`, `draw_path`, `draw_bezier`, `edit_path_points`, `edit_path_point`, `transform_element`, `group_elements`, `align_elements` | 9 |
 | SVG | `import_svg`, `pathfinder`, `shape_to_path`, `draw_bezier`, `edit_path_points`, `edit_path_point` | 6 |
@@ -319,6 +324,7 @@ Agent (Claude / Cursor / Custom)
 | `draw_shape` | `templateId`, `frameId`, `type` | `x`, `y`, `width`, `height`, `color`, `borderRadius`, `sides` | `{ layerName }` |
 | `set_html` | `templateId`, `frameId` | `html` | `{ success }` |
 | `set_css` | `templateId`, `frameId` | `css` | `{ success }` |
+| `set_paint` | `templateId`, `frameId`, `elementId` | `fill`, `stroke`, `strokeWidth` | `{ painted: [{ elementId, ...declarations }], fannedOutToGroup }` — picks the property this layer paints with; a group paints its members |
 | `get_template` | `templateId` | — | `{ id, frames, html, css, metadata }` |
 | `duplicate_frame` | `templateId`, `sourceFrameId` | `newName` | `{ frameId, contentHash }` |
 | `delete_html_frame` | `templateId`, `frameId` | — | `{ success }` |
@@ -1018,15 +1024,63 @@ A wrapper whose children are all plain text runs is classified as a text block
 and behaves as one element. A wrapper holding anything else is a group, and
 the editor will offer to flatten it — which is a job you handed the user.
 
-**A container that paints is not a group.** If a box has a background, a
-border or a shadow, it is a card and it is a real element. Never put paint on a
-wrapper you intended as scaffolding: ungrouping used to throw that background
-away, because the paint lived on the thing being dissolved.
+**A group cannot paint. This is enforced, not advised.** If a wrapper you
+marked `data-layer-kind="group"` carries a background, a border or a shadow, it
+is saved back as a `container` — every write goes through one place that checks
+this. Nothing you painted is lost; the label changes, because painting a box is
+a deliberate act and calling that box scaffolding is the mistake. Ungrouping is
+then free to dissolve real scaffolding without throwing a backdrop away.
+
+So: to colour several objects, do not wrap them and paint the wrapper. Paint
+the objects — `set_paint` on a group does exactly that, reaching every object
+inside it.
 
 **Use `padding`, never `margin`.** The selection frame is the element's box,
 and `margin` inflates it — so the handles sit away from the artwork and every
 snap and guide lands in the wrong place. Padding is inside the box and does
 not move the frame. If you need space around something, pad its parent.
+
+---
+
+## 🎨 Fill and Stroke — The Only Two Paints
+
+A layer has exactly two paints: a **fill** that colours its interior, and a
+**stroke** that colours its outline. There is no third thing called a
+background. The person using the editor sees exactly these two, so an agent
+that thinks in other terms produces files they cannot edit back.
+
+Which CSS property carries the fill depends on what the layer is, because that
+is what the medium requires:
+
+| layer | fill | stroke |
+|---|---|---|
+| `<div>` shape or container | `background-color` | `border-color` + `border-width` |
+| SVG shape (`<path>`, `<circle>`, …) | `fill` | `stroke` + `stroke-width` |
+| text | `color` | `-webkit-text-stroke-*` |
+| image | — its interior is its own pixels | — |
+| **group** | **none — it has no paint of its own** | **none** |
+
+`set_paint` does this translation for you, which is the point of it:
+
+```js
+set_paint({ templateId, frameId, elementId: "hero_box", fill: "#3B82F6" })
+// a div  → background-color: #3B82F6
+// a path → fill: #3B82F6
+// a text → color: #3B82F6
+```
+
+**On a group it paints every object inside**, because a group has no interior
+of its own. Five outlined shapes grouped together, given a fill, come back as
+five filled shapes — not a rectangle behind them.
+
+You may still write CSS directly with `set_css`, `add_element`,
+`set_frame_layers` and the rest; nothing is taken away. `set_paint` exists so
+you do not have to know which property this particular layer paints with, and
+so "fill the group" means what a designer means by it.
+
+**A frame's background is a different thing and stays untouched.** A frame is
+the canvas — `create_html_frame({ background: "#ffffff" })` is how you paint
+it, and that has nothing to do with a layer's fill.
 
 ---
 
@@ -1233,7 +1287,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (145+ tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (213 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1297,10 +1351,13 @@ design-main/
 │   │   │   └── rateLimit.ts      — Rate limiting (100 req/15s window)
 │   │   └── types.ts              — Shared TypeScript types
 │   └── package.json
+├── shared/                       — THE DESIGN RULES, read by every surface
+│   ├── paintModel.ts             — what a layer's fill and stroke map to
+│   └── paintDetection.ts         — whether a style paints a visible box
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 145+ tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 213 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -1397,7 +1454,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **145+ tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **213 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -2052,5 +2109,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~7800 | MCP server (145+ tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (213 tools) |
 | `netlify.toml` | 22 | Build config + redirects |

@@ -1687,7 +1687,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_css",
-    description: "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML.",
+    description: "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1724,7 +1724,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_element",
-    description: "Update an HTML element's content or CSS rules by its data-layer-id",
+    description: "Update an HTML element's content or CSS rules by its data-layer-id A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1739,7 +1739,7 @@ const MCP_TOOLS = [
   },
   {
     name: "add_element",
-    description: "Add one independent HTML layer. REQUIRES frameId. Keep parentSelector='body' for normal design objects and give the layer explicit position/left/top/width/height in css. Prefer set_frame_layers when creating several objects; nesting is reserved for intentional components/groups.",
+    description: "Add one independent HTML layer. REQUIRES frameId. Keep parentSelector='body' for normal design objects and give the layer explicit position/left/top/width/height in css. Prefer set_frame_layers when creating several objects; nesting is reserved for intentional components/groups. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1778,7 +1778,7 @@ const MCP_TOOLS = [
   },
   {
     name: "set_frame_layers",
-    description: "RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML.",
+    description: "RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2898,7 +2898,7 @@ const MCP_TOOLS = [
   },
   {
     name: "paste_style",
-    description: "Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule.",
+    description: "Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     inputSchema: {
       type: "object",
       properties: {

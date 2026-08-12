@@ -62,3 +62,34 @@
 - Por defecto no se escriben. Solo cuando explican un *por qué* no obvio.
 - En `mcp.mjs` cada `case` lleva un comentario `// ── Sección ──` para
   navegación, y los nuevos `harness_*` siguen ese patrón.
+
+## Dónde vive una regla
+
+`src/` (editor) y `api/` (servidor) son paquetes TypeScript separados, cada uno
+acotado a su propia carpeta: **ninguno puede leer archivos del otro**.
+
+Por eso, una regla que deba cumplirse en los dos lados va en **`shared/`**, en
+la raíz. Escribirla dos veces es cómo el editor y un agente terminan
+entendiendo cosas distintas por la misma palabra, sin que nada avise — es la
+misma forma del bug de alineación, donde el editor mandaba `alignment` y el
+servidor leía `align`.
+
+- No confundir con `src/shared/`, que es UI solo del frontend (iconos).
+- `shared/` no depende de nada: ni React, ni Express, ni Supabase, ni DOM. Lo
+  cargan un bundle de navegador, un servidor Node, una función empaquetada con
+  esbuild y el corredor de pruebas de node.
+- **Importar con extensión `.ts` explícita.** Es el único formato que resuelven
+  los cuatro. El resto de `api/` importa a sus vecinos como `.js` y deja que el
+  empaquetador lo traduzca; node no hace esa traducción.
+- Detalles en `shared/README.md`.
+
+## Reglas de diseño que ya viven ahí
+
+- **Una capa tiene fill y stroke. No tiene background.** Qué propiedad CSS
+  lleva el fill depende de la capa (`background-color` en un div, `fill` en un
+  path, `color` en un texto). `set_paint` hace esa traducción.
+- **Un grupo no pinta.** Si un wrapper marcado `group` lleva pintura, se guarda
+  como `container`. Se comprueba al persistir, así que aplica a todo el que
+  escriba. No pintes un wrapper para colorear lo que hay dentro: pinta los
+  objetos.
+- El fondo de un **frame** es otra cosa y no le afecta: el frame es el lienzo.
