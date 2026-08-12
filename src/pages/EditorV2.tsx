@@ -81,7 +81,7 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
-import { updateSelection } from "../lib/selectionModel";
+import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
 import { findCanvasObjectPosition, normalizeCanvasObject } from "../lib/canvasObjects";
@@ -1370,6 +1370,22 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setZoom(Math.round(Math.min(cw / bw, ch / bh, 1) * 100) / 100);
   }, [frames]);
 
+  /**
+   * Applies a declaration to everything selected.
+   *
+   * These handlers each wrote to `selectedElement.selector` alone, so a tool
+   * used on a multi-selection only ever reached one object. Selecting several
+   * things and applying a tool means applying it to all of them.
+   */
+  const applyToSelection = useCallback((css: string, prop: string, value: string) => {
+    if (!selectedElement) return css;
+    let out = css;
+    for (const target of styleTargets(selectedElement.selector, selectedElement.layerId, multiSelectLayerIds)) {
+      out = updateCssProperty(out, target, prop, value);
+    }
+    return out;
+  }, [selectedElement, multiSelectLayerIds]);
+
   // ── Font select ──
   const handleFontSelect = useCallback((fontFamily: string) => {
     if (!fontFamily || !selectedFrameId) return;
@@ -1384,35 +1400,30 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       newCss = ensureGoogleFontImport(newCss, family);
       injectGoogleFontIntoFrames(family);
     }
-    if (selectedElement) {
-      // Quoting the whole stack would name a single family with commas in it,
-      // which nothing has installed — the browser then falls back to its own
-      // default serif, whatever font was actually picked.
-      newCss = updateCssProperty(newCss, selectedElement.selector, "font-family", `${cssFontFamily(fontFamily)} !important`);
-    }
+    // Quoting the whole stack would name a single family with commas in it,
+    // which nothing has installed — the browser then falls back to its own
+    // default serif, whatever font was actually picked.
+    newCss = applyToSelection(newCss, "font-family", `${cssFontFamily(fontFamily)} !important`);
     handleCssChange(newCss);
-  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+  }, [activeCss, selectedFrameId, applyToSelection, handleCssChange]);
 
   // ── Context menu: font size change ──
   const handleContextFontSizeChange = useCallback((fontSize: string) => {
     if (!selectedFrameId || !selectedElement) return;
-    let newCss = updateCssProperty(activeCss, selectedElement.selector, "font-size", `${fontSize} !important`);
-    handleCssChange(newCss);
-  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+    handleCssChange(applyToSelection(activeCss, "font-size", `${fontSize} !important`));
+  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
 
   // ── Context menu: text color change ──
   const handleContextTextColorChange = useCallback((color: string) => {
     if (!selectedFrameId || !selectedElement) return;
-    let newCss = updateCssProperty(activeCss, selectedElement.selector, "color", `${color} !important`);
-    handleCssChange(newCss);
-  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+    handleCssChange(applyToSelection(activeCss, "color", `${color} !important`));
+  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
 
   // ── Context menu: text alignment change ──
   const handleContextTextAlignChange = useCallback((align: string) => {
     if (!selectedFrameId || !selectedElement) return;
-    let newCss = updateCssProperty(activeCss, selectedElement.selector, "text-align", `${align} !important`);
-    handleCssChange(newCss);
-  }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
+    handleCssChange(applyToSelection(activeCss, "text-align", `${align} !important`));
+  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
 
   // ── Eyedropper: sample color and apply fill + stroke to selected element ──
   const handleEyedropperPick = useCallback((rawColor: string) => {
@@ -1420,13 +1431,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setForegroundColor(hex);
     // Apply fill (background-color) and stroke (border-color + outline-color)
     if (selectedElement && selectedFrameId) {
-      let newCss = updateCssProperty(activeCss, selectedElement.selector, "background-color", `${hex} !important`);
-      newCss = updateCssProperty(newCss, selectedElement.selector, "border-color", `${hex} !important`);
-      newCss = updateCssProperty(newCss, selectedElement.selector, "outline-color", `${hex} !important`);
+      let newCss = applyToSelection(activeCss, "background-color", `${hex} !important`);
+      newCss = applyToSelection(newCss, "border-color", `${hex} !important`);
+      newCss = applyToSelection(newCss, "outline-color", `${hex} !important`);
       handleCssChange(newCss);
     }
     setActiveTool("select");
-  }, [selectedElement, selectedFrameId, activeCss, handleCssChange]);
+  }, [selectedElement, selectedFrameId, activeCss, applyToSelection, handleCssChange]);
 
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
@@ -5681,6 +5692,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <HtmlContextualPanel
               workspaceId={templateWorkspaceId}
               element={selectedElement}
+              selectedLayerIds={multiSelectLayerIds}
               html={activeHtml}
               css={activeCss}
               onCssChange={handleContextualCssChange}

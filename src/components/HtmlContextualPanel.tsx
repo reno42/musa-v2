@@ -4,6 +4,7 @@ import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
+import { styleTargets } from "../lib/selectionModel";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";
@@ -20,6 +21,9 @@ import { toHexColor } from "../lib/colorUtils";
 interface Props {
   workspaceId: string;
   element: SelectedElementInfo | null;
+  /** Every layer currently selected. A style change applies to all of them,
+   *  not only to the one `element` happens to hold. */
+  selectedLayerIds?: string[];
   /** The frame's full HTML — only used by the Code tab to show this
    *  element's own markup fragment. */
   html: string;
@@ -574,7 +578,7 @@ const smallBtnActive: React.CSSProperties = {
 // ── Main Component ──
 
 export function HtmlContextualPanel({
-  workspaceId, element, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
+  workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange,
   frameWidth, frameHeight, subTab,
 }: Props) {
@@ -589,33 +593,53 @@ export function HtmlContextualPanel({
 
   const toggle = (s: string) => setExpanded(prev => ({ ...prev, [s]: !prev[s] }));
 
+  /**
+   * Every selector a change applies to. The panel is handed one element, so
+   * each control wrote to that alone and a multi-selection had its fill —
+   * and everything else — applied to a single object.
+   *
+   * Only the element's own selector fans out. A pseudo-element or a nested
+   * selector passed by a specific control means that exact target.
+   */
+  const targetsFor = useCallback((selector: string) => (
+    element && selector === element.selector
+      ? styleTargets(element.selector, element.layerId, selectedLayerIds ?? [])
+      : [selector]
+  ), [element, selectedLayerIds]);
+
   const update = useCallback((selector: string, prop: string, value: string) => {
-    let updated = updateElementCssProperty(css, selector, prop, value);
-    // Auto-set border-style to solid when border-width becomes non-zero
-    if (prop === "border-width" && parseFloat(value) > 0) {
-      const existingStyle = getCssPropertyValue(updated, selector, "border-style");
-      if (!existingStyle || existingStyle === "none") {
-        updated = updateElementCssProperty(updated, selector, "border-style", "solid");
+    let updated = css;
+    for (const target of targetsFor(selector)) {
+      updated = updateElementCssProperty(updated, target, prop, value);
+      // Auto-set border-style to solid when border-width becomes non-zero
+      if (prop === "border-width" && parseFloat(value) > 0) {
+        const existingStyle = getCssPropertyValue(updated, target, "border-style");
+        if (!existingStyle || existingStyle === "none") {
+          updated = updateElementCssProperty(updated, target, "border-style", "solid");
+        }
       }
     }
     if (prop === "font-family" && needsWebfont(value)) {
       // A hand-written list of installed families used to stand in for this,
       // and it could only ever go stale against the catalogue. Carrying a
       // fallback stack is the reliable signal that a font is already local.
+      // The webfont is fetched once, not once per selected object.
       const fontName = primaryFamily(value);
       updated = ensureGoogleFontImport(updated, fontName);
       injectGoogleFontIntoFrames(fontName);
     }
     onCssChange(updated);
-  }, [css, onCssChange]);
+  }, [css, onCssChange, targetsFor]);
 
   const updateMulti = useCallback((selector: string, props: Record<string, string>) => {
     let updated = css;
-    for (const [k, v] of Object.entries(props)) {
-      updated = updateElementCssProperty(updated, selector, k, v);
+    for (const target of targetsFor(selector)) {
+      for (const [k, v] of Object.entries(props)) {
+        updated = updateElementCssProperty(updated, target, k, v);
+      }
     }
     onCssChange(updated);
-  }, [css, onCssChange]);
+  }, [css, onCssChange, targetsFor]);
 
   const applyCustomCss = useCallback(() => {
     if (!element || !customCssText.trim()) return;
