@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { loadGoogleFontInDocument } from "../lib/googleFonts";
+import { cssFontFamily, primaryFamily } from "../lib/fontFamily";
 
 interface FontEntry {
   family: string;
@@ -104,10 +105,13 @@ export function GoogleFontPicker({ value, onChange }: Props) {
         style={{
           width: "100%", background: "#111118", border: "1px solid #1c1c26",
           color: "#f0ebe0", borderRadius: 4, padding: "3px 6px", fontSize: 12,
-          textAlign: "left", cursor: "pointer", fontFamily: value,
+          textAlign: "left", cursor: "pointer", fontFamily: cssFontFamily(value),
         }}
       >
-        {value || "Select font..."}
+        {/* The label shows the family, not its substitutes — callers pass
+            whichever they hold, and "Helvetica, Arial, sans-serif" is not a
+            font name a person picked. */}
+        {primaryFamily(value) || "Select font..."}
       </button>
       {open && (
         <div style={{

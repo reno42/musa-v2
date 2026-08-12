@@ -3,6 +3,7 @@ import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
+import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";
@@ -597,12 +598,13 @@ export function HtmlContextualPanel({
         updated = updateElementCssProperty(updated, selector, "border-style", "solid");
       }
     }
-    if (prop === "font-family") {
-      const fontName = value.replace(/^['"]|['"]$/g, "").split(",")[0].trim();
-      if (fontName && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|initial|unset|Arial|Helvetica|Times New Roman|Georgia|Verdana|Courier New|Impact|Comic Sans|Trebuchet|Tahoma|Geneva|Inter)$/i.test(fontName)) {
-        updated = ensureGoogleFontImport(updated, fontName);
-        injectGoogleFontIntoFrames(fontName);
-      }
+    if (prop === "font-family" && needsWebfont(value)) {
+      // A hand-written list of installed families used to stand in for this,
+      // and it could only ever go stale against the catalogue. Carrying a
+      // fallback stack is the reliable signal that a font is already local.
+      const fontName = primaryFamily(value);
+      updated = ensureGoogleFontImport(updated, fontName);
+      injectGoogleFontIntoFrames(fontName);
     }
     onCssChange(updated);
   }, [css, onCssChange]);
@@ -967,7 +969,7 @@ export function HtmlContextualPanel({
               {expanded.typography && (
                 <div style={sectionBody}>
                   <PropRow label="Font">
-                    <GoogleFontPicker value={s["font-family"]?.replace(/['"]/g, "").split(",")[0] || ""} onChange={(f) => update(selector, "font-family", `'${f}'`)} />
+                    <GoogleFontPicker value={primaryFamily(s["font-family"] || "")} onChange={(f) => update(selector, "font-family", cssFontFamily(f))} />
                   </PropRow>
                   <PropRow label="Size">
                     <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />

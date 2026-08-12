@@ -74,6 +74,7 @@ import {
   type LayerStackPlacement,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
+import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import {
   persistDesignClipboard,
   readDesignClipboard,
@@ -1374,10 +1375,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!fontFamily || !selectedFrameId) return;
     setSelectedFont(fontFamily);
     setShowFontPicker(false);
-    let newCss = ensureGoogleFontImport(activeCss, fontFamily);
-    injectGoogleFontIntoFrames(fontFamily);
+    let newCss = activeCss;
+    // A system font arrives as its whole fallback stack, which is already
+    // installed. Asking a webfont host for it builds a bogus request out of the
+    // commas, and the silent fallback reads as the picker ignoring the click.
+    if (needsWebfont(fontFamily)) {
+      const family = primaryFamily(fontFamily);
+      newCss = ensureGoogleFontImport(newCss, family);
+      injectGoogleFontIntoFrames(family);
+    }
     if (selectedElement) {
-      newCss = updateCssProperty(newCss, selectedElement.selector, "font-family", `'${fontFamily}' !important`);
+      // Quoting the whole stack would name a single family with commas in it,
+      // which nothing has installed — the browser then falls back to its own
+      // default serif, whatever font was actually picked.
+      newCss = updateCssProperty(newCss, selectedElement.selector, "font-family", `${cssFontFamily(fontFamily)} !important`);
     }
     handleCssChange(newCss);
   }, [activeCss, selectedFrameId, selectedElement, handleCssChange]);
