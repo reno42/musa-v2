@@ -130,6 +130,9 @@ interface DesignFrameProps {
   zoom?: number;
   onActivate: (frameId: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
+  /** A drag carried these layers entirely past the frame's edge, so they
+   *  belong on the canvas now. Position is in frame coordinates. */
+  onLayerEscape?: (layerIds: string[], box: { x: number; y: number; width: number; height: number }) => void;
   selectionRequest?: LayerSelectionRequest | null;
   selectedLayerId?: string | null;
   selectedLayerIds?: readonly string[];
@@ -208,7 +211,7 @@ const TRACKED_PROPS = [
 ];
 
 export function DesignFrame({
-  frame, isActive, zoom, onActivate, onElementSelect, onCssChange, onHtmlChange,
+  frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
@@ -255,6 +258,8 @@ export function DesignFrame({
   onHtmlChangeRef.current = onHtmlChange;
   const onElementSelectRef = useRef(onElementSelect);
   onElementSelectRef.current = onElementSelect;
+  const onLayerEscapeRef = useRef(onLayerEscape);
+  onLayerEscapeRef.current = onLayerEscape;
   const onLayerSelectionChangeRef = useRef(onLayerSelectionChange);
   onLayerSelectionChangeRef.current = onLayerSelectionChange;
   const editingTextRef = useRef<Element | null>(null);
@@ -2050,6 +2055,37 @@ export function DesignFrame({
         document.removeEventListener("mouseup", onDragUp);
         hideSnapGuides();
         if (!moved) return;
+
+        // ── Did it leave the frame? ──
+        // Dragged far enough that its whole box clears the frame's edge, the
+        // object is no longer part of this frame. Anything still overlapping
+        // stays put and is simply clipped, which is what a frame is for.
+        // Read before the commit loop below, which clears the translates.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const item of dragItems) {
+          const delta = parseCssTranslate((item.el as HTMLElement).style.translate);
+          const x = item.origVisualX + delta.x;
+          const y = item.origVisualY + delta.y;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x + item.elW);
+          maxY = Math.max(maxY, y + item.elH);
+        }
+        const escaped = maxX <= 0 || minX >= frame.width || maxY <= 0 || minY >= frame.height;
+
+        if (escaped && onLayerEscapeRef.current) {
+          // The escaping units are what was SELECTED, not the drag items: a
+          // group is expanded into its children to move them, and ejecting
+          // those one by one would take the group apart.
+          const layerIds = dragTargets
+            .map(el => el.getAttribute("data-layer-id"))
+            .filter((id): id is string => Boolean(id));
+          if (layerIds.length) {
+            for (const item of dragItems) (item.el as HTMLElement).style.translate = "";
+            onLayerEscapeRef.current(layerIds, { x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+            return;
+          }
+        }
 
         // Commit: translate transform deltas back to CSS left/top for all dragged items
         let updatedCss = cssRef.current;

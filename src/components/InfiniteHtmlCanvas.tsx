@@ -45,6 +45,8 @@ interface InfiniteHtmlCanvasProps {
   onDuplicateFrames?: (copies: { sourceId: string; x: number; y: number }[]) => void;
   onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
+  /** A drag carried these layers clear of their frame. */
+  onLayerEscape?: (frameId: string, layerIds: string[], box: { x: number; y: number; width: number; height: number }) => void;
   /** Click on frame body resolves the topmost layer under the cursor (layer-panel order). */
   onRequestLayerSelect?: (frameId: string, layerId: string, additive?: boolean) => void;
   layerSelectionRequest?: LayerSelectionRequest | null;
@@ -113,7 +115,7 @@ export function InfiniteHtmlCanvas({
   frames, canvasObjects, selectedFrameIds, selectedOrphanIds, contentFrameId, activeTool, zoom,
   onSelectFrame, onActivateFrame, onFrameShiftClick, onMarqueeSelect, onEnterContentMode,
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
-  onElementSelect, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
+  onElementSelect, onLayerEscape, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
@@ -854,6 +856,7 @@ export function InfiniteHtmlCanvas({
               zoom={zoom}
               onActivate={onActivateFrame ?? onSelectFrame}
               onElementSelect={onElementSelect}
+              onLayerEscape={(layerIds, box) => onLayerEscape?.(frame.id, layerIds, box)}
               selectionRequest={layerSelectionRequest?.frameId === frame.id ? layerSelectionRequest : null}
               selectedLayerId={selectedElement?.frameId === frame.id ? selectedElement.layerId : null}
               selectedLayerIds={selectedElement?.frameId === frame.id ? selectedLayerIds : []}

@@ -42,6 +42,7 @@ import {
   cloneLayerCss,
   cloneLayerTreeCss,
   filterCssDeclarations,
+  extractLayerTreeCss,
   getCssPropertyValue,
   getExactRuleDeclarations,
   getLayerIdsWithDeclaration,
@@ -1432,6 +1433,70 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     setActiveTool("select");
   }, [selectedElement, selectedFrameId, activeCss, applyToSelection, handleCssChange]);
+
+  /**
+   * A drag carried layers clear of their frame, so they become canvas objects.
+   *
+   * Only a mouse drag does this. Nudging with the arrow keys, setting `left`
+   * in the panel or an agent writing CSS all leave the layer where it is and
+   * simply clipped — a frame clips on purpose, and a coordinate written by
+   * hand is not someone dragging something out of a box.
+   */
+  const handleLayerEscape = useCallback((
+    frameId: string,
+    layerIds: string[],
+    box: { x: number; y: number; width: number; height: number },
+  ) => {
+    const frame = framesRef.current.find(f => f.id === frameId);
+    if (!frame) return;
+
+    const escaping: HtmlCanvasObject[] = [];
+    let html = frame.html;
+    let css = frame.css;
+    let zIndex = canvasObjectsRef.current.length + framesRef.current.length;
+
+    for (const layerId of layerIds) {
+      const extracted = extractLayerFromHtml(html, layerId);
+      if (!extracted) continue;
+
+      // The layer's own rules travel with it; the frame keeps none of them.
+      const layerCss = extractLayerTreeCss(css, extracted.layerHtml, extracted.layerIds);
+      const withoutLayer = deleteLayerFromHtml(html, layerId);
+      if (withoutLayer === null) continue;
+      html = withoutLayer;
+      css = removeLayersCss(css, extracted.layerIds);
+
+      escaping.push({
+        id: createOrphanId(),
+        name: `Suelto ${escaping.length + 1}`,
+        kind: "shape",
+        frameId: null,
+        html: extracted.layerHtml,
+        css: layerCss,
+        // Frame coordinates become canvas coordinates by adding the frame's own.
+        x: Math.round(frame.x + box.x),
+        y: Math.round(frame.y + box.y),
+        width: Math.round(box.width) || 1,
+        height: Math.round(box.height) || 1,
+        zIndex: zIndex++,
+      });
+    }
+
+    if (!escaping.length) return;
+
+    const updatedFrames = framesRef.current.map(f => f.id === frameId ? { ...f, html, css } : f);
+    store.replaceAllWithUndo(updatedFrames, "edit");
+    commitCanvasObjects([...canvasObjectsRef.current, ...escaping], updatedFrames);
+    setSelectedElement(null);
+    setMultiSelectLayerIds([]);
+    setSelectedOrphanIds(new Set(escaping.map(o => o.id)));
+    addToast(
+      escaping.length === 1
+        ? "El objeto salió del frame y ahora vive en el lienzo."
+        : `${escaping.length} objetos salieron del frame.`,
+      "success",
+    );
+  }, [commitCanvasObjects, addToast]);
 
   // ── Element selection from DesignFrame ──
   const handleElementSelect = useCallback((info: SelectedElementInfo | null) => {
@@ -4165,7 +4230,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return;
     }
     // ── Frame element grouping (local, consistent with layers panel) ──
-    if (!selectedFrameId || multiSelectLayerIds.length < 2) return;
+    if (!selectedFrameId) return;
+    if (multiSelectLayerIds.length < 2) {
+      addToast("Selecciona dos o más capas para agruparlas.", "info");
+      return;
+    }
     const frame = frames.find(f => f.id === selectedFrameId);
     if (!frame) return;
     const result = groupLayersInHtml(
@@ -4173,12 +4242,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       [...multiSelectLayerIds],
       `grp_${Date.now().toString(36)}`,
     );
-    if (result) {
-      const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: result } : f);
-      store.replaceAllWithUndo(updated, "group");
-      autoSave(updated);
+    if (!result) {
+      // Grouping only joins siblings. It used to fail here in silence, so a
+      // click on Group simply did nothing and never said why — and the common
+      // case is exactly this one: something inside a card selected together
+      // with something at the root.
+      addToast(
+        "Solo se pueden agrupar capas que compartan el mismo padre. Estas están en niveles distintos del árbol.",
+        "error",
+      );
+      return;
     }
-  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, frames, autoSave, commitCanvasObjects]);
+    const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html: result } : f);
+    store.replaceAllWithUndo(updated, "group");
+    autoSave(updated);
+  }, [selectedFrameId, multiSelectLayerIds, selectedOrphanIds, canvasObjects, frames, autoSave, commitCanvasObjects, addToast]);
 
   const handleUngroup = useCallback(async () => {
     // ── Orphan ungrouping ──
@@ -5724,6 +5802,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onDuplicateFrames={handleDuplicateFramesAtPositions}
             onRenameFrame={handleRenameFrame}
             onElementSelect={handleElementSelect}
+            onLayerEscape={handleLayerEscape}
             onRequestLayerSelect={(frameId, layerId, additive) => handleSelectLayerElement(frameId, layerId, undefined, additive)}
             layerSelectionRequest={layerSelectionRequest}
             selectedElement={selectedElement}
