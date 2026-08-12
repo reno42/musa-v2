@@ -1797,8 +1797,35 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [pasteChoiceText, pasteChoiceSnoozeEnabled, pasteChoiceSnoozeDays, snoozePasteImagePrompt, resolvePasteAsImage, handlePasteTextAsBlock]);
 
   // ── Wrap selection in a frame (Ctrl+Alt+G) — Figma-style "frame selection" ──
-  // Measures rendered layer bounds through the frame's shadow DOM, then nests
-  // the layers inside a new frame container that becomes their coordinate system.
+  // Measures layer geometry in frame coordinates, through the frame's shadow DOM.
+  // The stylesheet alone cannot answer this: an auto-sized text carries no width
+  // or height rule, so anything that needs a real box — aligning to a right or
+  // centre edge, wrapping a selection — has to read the rendered result.
+  const measureLayerRects = useCallback((frameId: string, layerIds: string[]) => {
+    const wrapper = document.querySelector(`[data-frame-id="${frameId}"]`);
+    const host = wrapper && [...wrapper.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
+    const content = host?.shadowRoot?.getElementById("__df_content");
+    if (!content) return null;
+    const contentRect = content.getBoundingClientRect();
+    const scale = zoom || 1;
+    const rects: Array<{ layerId: string; left: number; top: number; width: number; height: number }> = [];
+    for (const layerId of layerIds) {
+      const element = content.querySelector(`[data-layer-id="${layerId}"]`);
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      rects.push({
+        layerId,
+        left: (rect.left - contentRect.left) / scale,
+        top: (rect.top - contentRect.top) / scale,
+        width: rect.width / scale,
+        height: rect.height / scale,
+      });
+    }
+    return rects;
+  }, [zoom]);
+
+  // Nests the selected layers inside a new frame container that becomes their
+  // coordinate system.
   const handleWrapSelectionInFrame = useCallback(() => {
     if (!selectedFrameId) return;
     const layerIds = multiSelectLayerIds.length > 0
@@ -1813,27 +1840,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const frame = frames.find(candidate => candidate.id === selectedFrameId);
     if (!frame) return;
 
-    const wrapper = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
-    const host = wrapper && [...wrapper.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
-    const content = host?.shadowRoot?.getElementById("__df_content");
-    if (!content) return;
-    const contentRect = content.getBoundingClientRect();
-    const scale = zoom || 1;
-    const rects: Array<{ layerId: string; left: number; top: number; width: number; height: number }> = [];
-    for (const layerId of layerIds) {
-      const element = content.querySelector(`[data-layer-id="${layerId}"]`);
-      if (!element) {
-        addToast("No se encontró una de las capas seleccionadas.", "error");
-        return;
-      }
-      const rect = element.getBoundingClientRect();
-      rects.push({
-        layerId,
-        left: (rect.left - contentRect.left) / scale,
-        top: (rect.top - contentRect.top) / scale,
-        width: rect.width / scale,
-        height: rect.height / scale,
-      });
+    const rects = measureLayerRects(selectedFrameId, layerIds);
+    if (!rects) {
+      addToast("No se encontró una de las capas seleccionadas.", "error");
+      return;
     }
 
     const minX = Math.floor(Math.min(...rects.map(r => r.left)));
@@ -4060,18 +4070,31 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleAlign = useCallback(async (alignment: string) => {
     if (!selectedFrameId || !selectedElement) return;
     setMcpLoading("align");
+    const elementIds = multiSelectLayerIds.length > 1 ? multiSelectLayerIds : [selectedElement.layerId];
+    // The server can only read the stylesheet, where an auto-sized text has no
+    // width or height. Sending what the browser actually rendered is what lets
+    // right/centre alignment land on the real edge of the box.
+    const bounds = measureLayerRects(selectedFrameId, elementIds);
+    const frame = frames.find(f => f.id === selectedFrameId);
     try {
       await callMcp("align_elements", {
         templateId, frameId: selectedFrameId,
-        elementIds: multiSelectLayerIds.length > 1 ? multiSelectLayerIds : [selectedElement.layerId],
-        alignment,
+        elementIds,
+        // `align` is the name this tool's schema declares. It used to be sent
+        // as `alignment`, which the server never read, so every button did the
+        // same thing regardless of which edge you picked.
+        align: alignment,
+        ...(bounds ? { bounds } : {}),
+        ...(frame?.width ? { frameWidth: frame.width, frameHeight: frame.height } : {}),
       });
       await reloadFromServer();
       setMcpMsg("✓ Aligned");
-    } catch { setMcpMsg("✗ Align failed"); }
+    } catch (e) {
+      setMcpMsg(`✗ ${e instanceof Error ? e.message : "Align failed"}`);
+    }
     setMcpLoading(null);
     setTimeout(() => setMcpMsg(""), 2000);
-  }, [selectedFrameId, selectedElement, multiSelectLayerIds, templateId, callMcp, reloadFromServer]);
+  }, [selectedFrameId, selectedElement, multiSelectLayerIds, templateId, callMcp, reloadFromServer, measureLayerRects, frames]);
 
   const handleGroup = useCallback(async () => {
     // ── Orphan grouping ──

@@ -117,10 +117,10 @@ export function SvgImportDialog({ workspaceId, onImported, onRasterImported, onC
   }, []);
 
   // Also save the imported file into the workspace's Asset library — same
-  // /assets/upload endpoint the Assets modal uses, so it shows up there too.
+  // /api/assets/upload endpoint the Assets modal uses, so it shows up there too.
   const saveToAssetLibrary = useCallback(async (dataUrl: string, name: string) => {
     try {
-      await apiFetch("/assets/upload", {
+      await apiFetch("/api/assets/upload", {
         method: "POST",
         body: JSON.stringify({ name, data: dataUrl, workspaceId }),
       });

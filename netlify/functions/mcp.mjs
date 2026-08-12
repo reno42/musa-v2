@@ -16,6 +16,7 @@ import { buildHtmlCarousel } from "./html-carousel.mjs";
 import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
 import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
+import { alignElements } from "./align-geometry.mjs";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
 
@@ -2501,6 +2502,21 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Frame ID" },
         elementIds: { type: "array", items: { type: "string" }, description: "Array of element data-layer-ids to align" },
         align: { type: "string", enum: ["left", "center", "right", "top", "middle", "bottom"], description: "Alignment axis" },
+        bounds: {
+          type: "array",
+          description: "Optional rendered geometry in frame coordinates. Supply this when the caller can measure the DOM: an auto-sized element carries no width/height in the stylesheet, and right/centre alignment needs its real box. Omitted, the stylesheet is used.",
+          items: {
+            type: "object",
+            properties: {
+              layerId: { type: "string" },
+              left: { type: "number" }, top: { type: "number" },
+              width: { type: "number" }, height: { type: "number" },
+            },
+            required: ["layerId", "left", "top", "width", "height"],
+          },
+        },
+        frameWidth: { type: "number", description: "Frame width, used when a single element aligns against its frame" },
+        frameHeight: { type: "number", description: "Frame height, used when a single element aligns against its frame" },
       },
       required: ["templateId", "frameId", "elementIds", "align"],
     },
@@ -8333,61 +8349,32 @@ async function handleMethod(method, params, userId, auth) {
       const frame = tpl.frames.find(f => f.id === params.frameId);
       if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
 
-      const { align, elementIds } = params;
-      const elementData = [];
-      for (const elId of elementIds) {
-        const selector = `[data-layer-id="${elId}"]`;
-        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const ruleRe = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`);
-        const match = ruleRe.exec(frame.css || "");
-        if (match) {
-          const decl = match[1];
-          const left = parseInt(/left:\s*(\d+)/.exec(decl)?.[1] || "0");
-          const top = parseInt(/top:\s*(\d+)/.exec(decl)?.[1] || "0");
-          const width = parseInt(/width:\s*(\d+)/.exec(decl)?.[1] || "0");
-          const height = parseInt(/height:\s*(\d+)/.exec(decl)?.[1] || "0");
-          elementData.push({ id: elId, left, top, width, height });
-        }
+      let aligned;
+      try {
+        aligned = alignElements({
+          css: frame.css,
+          elementIds: params.elementIds,
+          align: params.align,
+          // The editor's toolbar sends `alignment`; reading only `align` left
+          // it undefined on every click, so all six buttons did the same thing.
+          alignment: params.alignment,
+          bounds: params.bounds,
+          frameWidth: params.frameWidth ?? frame.width,
+          frameHeight: params.frameHeight ?? frame.height,
+        });
+      } catch (err) {
+        throw { code: -32000, message: err.message };
       }
-      if (elementData.length < 2) throw { code: -32000, message: "Need at least 2 elements to align" };
-
-      let alignValue;
-      if (["left", "center", "right"].includes(align)) {
-        if (align === "left") alignValue = Math.min(...elementData.map(e => e.left));
-        else if (align === "right") alignValue = Math.max(...elementData.map(e => e.left + e.width));
-        else alignValue = elementData.reduce((sum, e) => sum + e.left + e.width / 2, 0) / elementData.length;
-      } else {
-        if (align === "top") alignValue = Math.min(...elementData.map(e => e.top));
-        else if (align === "bottom") alignValue = Math.max(...elementData.map(e => e.top + e.height));
-        else alignValue = elementData.reduce((sum, e) => sum + e.top + e.height / 2, 0) / elementData.length;
-      }
-
-      for (const el of elementData) {
-        const selector = `[data-layer-id="${el.id}"]`;
-        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
-        const ruleMatch = ruleRe.exec(frame.css);
-        if (!ruleMatch) continue;
-        let decl = ruleMatch[2];
-        let prop, value;
-        if (["left", "center", "right"].includes(align)) {
-          prop = "left";
-          value = align === "left" ? alignValue : align === "right" ? alignValue - el.width : Math.round(alignValue - el.width / 2);
-        } else {
-          prop = "top";
-          value = align === "top" ? alignValue : align === "bottom" ? alignValue - el.height : Math.round(alignValue - el.height / 2);
-        }
-        const propRe = new RegExp(`${prop}\\s*:[^;]*;?`);
-        if (propRe.test(decl)) {
-          decl = decl.replace(propRe, `${prop}: ${value}px;`);
-        } else {
-          decl = decl.trimEnd() + `\n  ${prop}: ${value}px;\n`;
-        }
-        frame.css = frame.css.replace(ruleRe, `${ruleMatch[1]}${decl}${ruleMatch[3]}`);
-      }
+      frame.css = aligned.css;
 
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, align, elementsAligned: elementData.length };
+      return {
+        success: true,
+        templateId: params.templateId,
+        align: aligned.align,
+        elementsAligned: aligned.elementsAligned,
+        ...(aligned.unpositioned.length ? { skipped: aligned.unpositioned } : {}),
+      };
     }
 
     // ── Export frame as SVG or PDF (native SVG, importable into Figma/Illustrator) ──

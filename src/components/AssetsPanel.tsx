@@ -86,7 +86,7 @@ export function AssetsPanel({ workspaceId, onAssetUploaded, onManageStorage, sel
   useEffect(() => { loadAssets(); }, [loadAssets]);
 
   const uploadDataUrl = useCallback(async (name: string, dataUrl: string) => {
-    const result = await apiFetch<{ assetId: string; name: string; url: string; mimeType: string; sizeBytes: number }>("/assets/upload", {
+    const result = await apiFetch<{ assetId: string; name: string; url: string; mimeType: string; sizeBytes: number }>("/api/assets/upload", {
       method: "POST",
       body: JSON.stringify({ name, data: dataUrl, workspaceId }),
     });
