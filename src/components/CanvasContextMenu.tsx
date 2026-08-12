@@ -1,410 +1,173 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SelectedElementInfo } from "./DesignFrame";
-import { GoogleFontPicker } from "./GoogleFontPicker";
-import {
-  IconAlignLeft, IconAlignCenter, IconAlignRight,
-  IconType, IconX,
-} from "../shared/icons";
 
-const COMMON_FONT_SIZES = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72];
+/**
+ * The canvas right-click menu.
+ *
+ * It used to be a text-formatting panel — font, size, colour, alignment —
+ * which duplicated the right-hand panel and offered none of the commands a
+ * right click is actually reached for. Those live here now; formatting stays
+ * where it belongs, in the contextual panel.
+ *
+ * A command that cannot apply to the current selection is shown disabled
+ * rather than hidden, so the menu keeps a stable shape and says why.
+ */
 
-interface Props {
+export interface ContextMenuActions {
+  onCopy: () => void;
+  onPaste: () => void;
+  onPasteAllFrames: () => void;
+  onStackChange: (move: "forward" | "backward" | "front" | "back") => void;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onUngroupAll: () => void;
+  onToggleVisibility: () => void;
+  onToggleLock: () => void;
+  onFlip: (axis: "horizontal" | "vertical") => void;
+  onCopyCode: () => void;
+  onCopyCss: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onBatchAMator: () => void;
+  onFrameToTemplate: () => void;
+  onExtractDesignSystem: () => void;
+  onInspect: () => void;
+}
+
+interface Props extends ContextMenuActions {
   x: number;
   y: number;
   selectedElement: SelectedElementInfo | null;
-  foregroundColor: string;
+  /** Layers selected right now — grouping needs two or more. */
+  selectedLayerCount: number;
+  hasFrameSelection: boolean;
+  isHidden: boolean;
+  isLocked: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  hasClipboard: boolean;
   onClose: () => void;
-  onFontChange: (fontFamily: string) => void;
-  onFontSizeChange: (fontSize: string) => void;
-  onTextColorChange: (color: string) => void;
-  onTextAlignChange: (align: string) => void;
 }
 
+interface MenuEntry {
+  /** A separator carries no label. */
+  separator?: true;
+  label?: string;
+  hint?: string;
+  disabled?: boolean;
+  run?: () => void;
+}
+
+const MENU_WIDTH = 250;
+/** Kept clear of the viewport edge so the menu never sits flush against it. */
+const VIEWPORT_MARGIN = 8;
+
 export function CanvasContextMenu({
-  x, y,
-  selectedElement,
-  foregroundColor,
-  onClose,
-  onFontChange,
-  onFontSizeChange,
-  onTextColorChange,
-  onTextAlignChange,
+  x, y, selectedElement, selectedLayerCount, hasFrameSelection,
+  isHidden, isLocked, canUndo, canRedo, hasClipboard, onClose,
+  onCopy, onPaste, onPasteAllFrames, onStackChange, onGroup, onUngroup, onUngroupAll,
+  onToggleVisibility, onToggleLock, onFlip, onCopyCode, onCopyCss,
+  onUndo, onRedo, onBatchAMator, onFrameToTemplate, onExtractDesignSystem, onInspect,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [showFontPicker, setShowFontPicker] = useState(false);
-  const [localFontSize, setLocalFontSize] = useState("");
-  const [localColor, setLocalColor] = useState(foregroundColor);
+  const [position, setPosition] = useState({ left: x, top: y });
 
-  const isTextElement = selectedElement?.tag?.toLowerCase() === "div"
-    || selectedElement?.layerKind === "text"
-    || selectedElement?.computedStyles?.["font-family"];
-
-  const currentFontFamily = selectedElement?.computedStyles?.["font-family"]?.replace(/['"]/g, "") || "";
-  const currentFontSize = selectedElement?.computedStyles?.["font-size"] || "";
-  const currentTextAlign = selectedElement?.computedStyles?.["text-align"] || "left";
-  const currentColor = selectedElement?.computedStyles?.color || "#000000";
-
-  // Initialize local state from element
   useEffect(() => {
-    setLocalFontSize(currentFontSize.replace("px", ""));
-    setLocalColor(currentColor);
-  }, [currentFontSize, currentColor]);
-
-  // Close on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  // Close on click outside
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        // Small delay to allow sub-menu clicks (font picker)
-        setTimeout(() => onClose(), 50);
-      }
-    };
-    window.addEventListener("mousedown", handler);
-    return () => window.removeEventListener("mousedown", handler);
-  }, [onClose]);
+  // Measured after layout rather than guessed: the menu's height depends on
+  // how many entries it ends up with, and a right click near the bottom of the
+  // window would otherwise open a menu running off the screen.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const { width, height } = menu.getBoundingClientRect();
+    setPosition({
+      left: Math.max(VIEWPORT_MARGIN, Math.min(x, window.innerWidth - width - VIEWPORT_MARGIN)),
+      top: Math.max(VIEWPORT_MARGIN, Math.min(y, window.innerHeight - height - VIEWPORT_MARGIN)),
+    });
+  }, [x, y]);
 
-  const handleFontSizeApply = useCallback(() => {
-    const num = parseFloat(localFontSize);
-    if (!isNaN(num) && num > 0) {
-      onFontSizeChange(`${num}px`);
-    }
-  }, [localFontSize, onFontSizeChange]);
+  const hasElement = Boolean(selectedElement);
+  const isGroup = Boolean(selectedElement?.childLayerCount);
 
-  const handleColorApply = useCallback(() => {
-    onTextColorChange(localColor);
-  }, [localColor, onTextColorChange]);
+  const run = (action: () => void) => () => { action(); onClose(); };
 
-  // Adjust position to keep menu within viewport
-  const adjustedX = Math.min(x, window.innerWidth - 260);
-  const adjustedY = Math.min(y, window.innerHeight - (isTextElement ? 340 : 120));
+  const entries: MenuEntry[] = [
+    { label: "Copiar", hint: "Ctrl+C", disabled: !hasElement && !hasFrameSelection, run: onCopy },
+    { label: "Pegar", hint: "Ctrl+V", disabled: !hasClipboard, run: onPaste },
+    { label: "Pegar en todos los frames", disabled: !hasClipboard, run: onPasteAllFrames },
+    { separator: true },
+    { label: "Bring forward", disabled: !hasElement, run: () => onStackChange("forward") },
+    { label: "Bring backward", disabled: !hasElement, run: () => onStackChange("backward") },
+    { label: "Bring to front", disabled: !hasElement, run: () => onStackChange("front") },
+    { label: "Bring to back", disabled: !hasElement, run: () => onStackChange("back") },
+    { separator: true },
+    { label: "Agrupar", hint: "Ctrl+G", disabled: selectedLayerCount < 2, run: onGroup },
+    { label: "Desagrupar", disabled: !isGroup, run: onUngroup },
+    { label: "Desagrupar todo", disabled: !isGroup, run: onUngroupAll },
+    { separator: true },
+    { label: isHidden ? "Show" : "Hide", disabled: !hasElement, run: onToggleVisibility },
+    { label: isLocked ? "Unlock" : "Lock", disabled: !hasElement, run: onToggleLock },
+    { label: "Flip Horizontal", disabled: !hasElement, run: () => onFlip("horizontal") },
+    { label: "Flip Vertical", disabled: !hasElement, run: () => onFlip("vertical") },
+    { separator: true },
+    // Both copy the SELECTED element's markup, so without one there is
+    // nothing to copy and the command would silently do nothing.
+    { label: "Copiar código (HTML + CSS)", disabled: !hasElement, run: onCopyCode },
+    { label: "Copiar CSS", disabled: !hasElement, run: onCopyCss },
+    { separator: true },
+    { label: "Undo", hint: "Ctrl+Z", disabled: !canUndo, run: onUndo },
+    { label: "Redo", hint: "Ctrl+Shift+Z", disabled: !canRedo, run: onRedo },
+    { separator: true },
+    { label: "BatchAMator", run: onBatchAMator },
+    { label: "Convertir frame en plantilla", disabled: !hasFrameSelection, run: onFrameToTemplate },
+    { label: "Convertir archivo en design system", run: onExtractDesignSystem },
+    { separator: true },
+    { label: "Inspeccionar", hint: "F12", disabled: !hasElement, run: onInspect },
+  ];
 
-  if (!selectedElement) {
-    // Generic context menu for non-text elements
-    return (
-      <div
-        ref={menuRef}
-        style={{
-          position: "fixed",
-          left: adjustedX,
-          top: adjustedY,
-          zIndex: 1000,
-          minWidth: 180,
-          background: "var(--glass-bg, rgba(12,12,12,0.92))",
-          backdropFilter: "blur(20px) saturate(180%)",
-          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-          border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-          borderRadius: 10,
-          padding: 6,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          fontSize: 12,
-          color: "var(--text-main, #c4c0b4)",
-        }}
-      >
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "4px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-          marginBottom: 4,
-        }}>
-          <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>
-            Element
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              background: "none", border: "none", cursor: "pointer",
-              color: "#7a7668", padding: 2,
-            }}
-          >
-            <IconX size={12} />
-          </button>
-        </div>
-        <div style={{ padding: "4px 8px", fontSize: 11, color: "#7a7668" }}>
-          Select a text element to see font options.
-        </div>
-      </div>
-    );
-  }
-
-  if (!isTextElement) {
-    // Non-text element selected
-    return (
-      <div
-        ref={menuRef}
-        style={{
-          position: "fixed",
-          left: adjustedX,
-          top: adjustedY,
-          zIndex: 1000,
-          minWidth: 180,
-          background: "var(--glass-bg, rgba(12,12,12,0.92))",
-          backdropFilter: "blur(20px) saturate(180%)",
-          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-          border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-          borderRadius: 10,
-          padding: 6,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          fontSize: 12,
-          color: "var(--text-main, #c4c0b4)",
-        }}
-      >
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "4px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-          marginBottom: 4,
-        }}>
-          <span style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>
-            {selectedElement!.tag} {selectedElement!.layerKind ? `· ${selectedElement!.layerKind}` : ""}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              background: "none", border: "none", cursor: "pointer",
-              color: "#7a7668", padding: 2,
-            }}
-          >
-            <IconX size={12} />
-          </button>
-        </div>
-        <div style={{ padding: "4px 8px", fontSize: 11, color: "#7a7668" }}>
-          Text tools only available for text elements.
-        </div>
-      </div>
-    );
-  }
-
-  // Text element context menu
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label="Acciones del lienzo"
       style={{
-        position: "fixed",
-        left: adjustedX,
-        top: adjustedY,
-        zIndex: 1000,
-        minWidth: 240,
-        background: "var(--glass-bg, rgba(12,12,12,0.92))",
-        backdropFilter: "blur(20px) saturate(180%)",
-        WebkitBackdropFilter: "blur(20px) saturate(180%)",
-        border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-        borderRadius: 10,
-        padding: 6,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-        fontSize: 12,
-        color: "var(--text-main, #c4c0b4)",
+        position: "fixed", left: position.left, top: position.top, zIndex: 1000,
+        width: MENU_WIDTH, maxHeight: `calc(100vh - ${VIEWPORT_MARGIN * 2}px)`, overflowY: "auto",
+        background: "rgba(17,17,24,0.98)", border: "1px solid #26262f", borderRadius: 8,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.55)", padding: 4,
+        backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)",
       }}
-      onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "4px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-        marginBottom: 8,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <IconType size={12} />
-          <span style={{ fontSize: 11, fontWeight: 600 }}>Text</span>
-        </div>
+      {entries.map((entry, index) => entry.separator ? (
+        <div key={`sep-${index}`} style={{ height: 1, background: "#26262f", margin: "4px 6px" }} />
+      ) : (
         <button
+          key={entry.label}
           type="button"
-          onClick={onClose}
+          role="menuitem"
+          disabled={entry.disabled}
+          onClick={entry.disabled ? undefined : run(entry.run as () => void)}
           style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: "#7a7668", padding: 2,
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+            gap: 12, background: "transparent", border: "none", borderRadius: 4,
+            padding: "5px 8px", fontSize: 12.5, textAlign: "left",
+            color: entry.disabled ? "#5a5850" : "#f0ebe0",
+            cursor: entry.disabled ? "default" : "pointer",
           }}
+          onMouseOver={e => { if (!entry.disabled) e.currentTarget.style.background = "rgba(255,255,255,0.07)"; }}
+          onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
         >
-          <IconX size={12} />
-        </button>
-      </div>
-
-      {/* Font Family */}
-      <div style={{ padding: "0 4px", marginBottom: 8 }}>
-        <div style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Font Family
-        </div>
-        <div style={{ position: "relative" }}>
-          <button
-            type="button"
-            onClick={() => setShowFontPicker(v => !v)}
-            style={{
-              width: "100%", padding: "5px 8px",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 6, color: "#f0ebe0",
-              fontSize: 11, fontFamily: "inherit",
-              cursor: "pointer", textAlign: "left",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-            }}
-          >
-            <span style={{
-              fontFamily: currentFontFamily || "inherit",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>
-              {currentFontFamily || "Select font..."}
-            </span>
-            <span style={{ fontSize: 9, color: "#7a7668", marginLeft: 8 }}>▼</span>
-          </button>
-          {showFontPicker && (
-            <>
-              <div
-                style={{ position: "fixed", inset: 0, zIndex: 999 }}
-                onClick={() => setShowFontPicker(false)}
-              />
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0,
-                marginTop: 4, zIndex: 1001,
-                maxHeight: 240, overflow: "auto",
-                background: "var(--glass-bg, rgba(12,12,12,0.95))",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                border: "1px solid var(--glass-border, rgba(255,255,255,0.06))",
-                borderRadius: 8,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-              }}>
-                <GoogleFontPicker
-                  value={currentFontFamily}
-                  onChange={(font) => {
-                    onFontChange(font);
-                    setShowFontPicker(false);
-                  }}
-                />
-              </div>
-            </>
+          <span>{entry.label}</span>
+          {entry.hint && (
+            <span style={{ fontSize: 10.5, color: entry.disabled ? "#4a4842" : "#7a7668" }}>{entry.hint}</span>
           )}
-        </div>
-      </div>
-
-      {/* Font Size */}
-      <div style={{ padding: "0 4px", marginBottom: 8 }}>
-        <div style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Font Size
-        </div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <input
-            type="number"
-            value={localFontSize}
-            onChange={e => setLocalFontSize(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleFontSizeApply(); }}
-            onBlur={handleFontSizeApply}
-            min={1}
-            max={512}
-            step={1}
-            style={{
-              flex: 1, minWidth: 0,
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 6, color: "#f0ebe0",
-              fontSize: 11, fontFamily: "SF Mono, monospace",
-              padding: "5px 8px", outline: "none",
-            }}
-            placeholder="Size"
-          />
-          <span style={{ fontSize: 10, color: "#7a7668", flexShrink: 0 }}>px</span>
-        </div>
-        {/* Quick size presets */}
-        <div style={{ display: "flex", gap: 2, marginTop: 4, flexWrap: "wrap" }}>
-          {COMMON_FONT_SIZES.slice(0, 8).map(size => (
-            <button
-              key={size}
-              type="button"
-              onClick={() => {
-                setLocalFontSize(String(size));
-                onFontSizeChange(`${size}px`);
-              }}
-              style={{
-                padding: "1px 5px",
-                background: currentFontSize === `${size}px` ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-                border: currentFontSize === `${size}px` ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-                borderRadius: 4, color: currentFontSize === `${size}px` ? "#c8b898" : "#7a7668",
-                fontSize: 9, fontFamily: "SF Mono, monospace",
-                cursor: "pointer",
-              }}
-            >
-              {size}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Text Color */}
-      <div style={{ padding: "0 4px", marginBottom: 8 }}>
-        <div style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Text Color
-        </div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <input
-            type="color"
-            value={localColor.startsWith("#") ? localColor : "#000000"}
-            onChange={e => {
-              setLocalColor(e.target.value);
-              onTextColorChange(e.target.value);
-            }}
-            style={{
-              width: 28, height: 28,
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 4, cursor: "pointer", padding: 0,
-              background: "none", flexShrink: 0,
-            }}
-          />
-          <input
-            type="text"
-            value={localColor}
-            onChange={e => setLocalColor(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleColorApply(); }}
-            onBlur={handleColorApply}
-            style={{
-              flex: 1, minWidth: 0,
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 6, color: "#f0ebe0",
-              fontSize: 11, fontFamily: "SF Mono, monospace",
-              padding: "5px 8px", outline: "none",
-            }}
-            placeholder="#000000"
-          />
-        </div>
-      </div>
-
-      {/* Text Alignment */}
-      <div style={{ padding: "0 4px", marginBottom: 4 }}>
-        <div style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-          Alignment
-        </div>
-        <div style={{ display: "flex", gap: 2 }}>
-          {([
-            { value: "left", icon: <IconAlignLeft size={14} />, label: "Left" },
-            { value: "center", icon: <IconAlignCenter size={14} />, label: "Center" },
-            { value: "right", icon: <IconAlignRight size={14} />, label: "Right" },
-          ] as const).map(({ value, icon, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onTextAlignChange(value)}
-              title={label}
-              style={{
-                flex: 1,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                padding: "5px 0",
-                background: currentTextAlign === value ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-                border: currentTextAlign === value ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-                borderRadius: 6, color: currentTextAlign === value ? "#c8b898" : "#7a7668",
-                cursor: "pointer",
-              }}
-            >
-              {icon}
-            </button>
-          ))}
-        </div>
-      </div>
+        </button>
+      ))}
     </div>
   );
 }

@@ -252,6 +252,7 @@ export function moveLayerBefore(html: string, layerId: string, targetLayerId: st
 
 export type LayerStackPlacement = "above" | "below";
 export type LayerStackDirection = "forward" | "backward";
+export type LayerStackEdge = "front" | "back";
 export type LayerDropPlacement = LayerStackPlacement | "inside";
 
 export interface LayerStackChange {
@@ -320,6 +321,50 @@ export function reorderLayerInStack(
   if (direction === "forward") target.after(element);
   else target.before(element);
   return stackChange(document, parent);
+}
+
+/**
+ * Sends a layer all the way to the front or the back of its siblings.
+ *
+ * Distinct from stepping: repeating a single step would work, but a caller
+ * cannot know how many steps are left without re-parsing between each one.
+ */
+export function moveLayerToStackEdge(
+  html: string,
+  layerId: string,
+  edge: LayerStackEdge,
+): LayerStackChange | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  const parent = element?.parentElement;
+  if (!element || !parent) return null;
+
+  const siblings = [...parent.children].filter(sibling => sibling.hasAttribute("data-layer-id"));
+  const target = edge === "front" ? siblings[siblings.length - 1] : siblings[0];
+  if (!target || target === element) return null;
+
+  if (edge === "front") target.after(element);
+  else target.before(element);
+  return stackChange(document, parent);
+}
+
+/**
+ * The ids of every group nested under a layer, outermost first.
+ *
+ * "Ungroup all" needs the list rather than doing the dissolving itself:
+ * dissolving has to preserve layout, which means measuring each group on the
+ * canvas between passes. Doing it here from the markup alone would move the
+ * contents, which is the bug the layout-preserving path exists to avoid.
+ */
+export function nestedGroupIds(html: string, rootLayerId?: string): string[] {
+  const document = parseFragment(html);
+  const root = rootLayerId ? findLayer(document, rootLayerId) : document.body;
+  if (!root) return [];
+
+  const candidates = rootLayerId ? [root, ...root.querySelectorAll("*")] : [...root.querySelectorAll("*")];
+  return candidates
+    .filter(element => element.getAttribute("data-layer-kind") === "group" && element.hasAttribute("data-layer-id"))
+    .map(element => element.getAttribute("data-layer-id") as string);
 }
 
 /** Reparents a layer inside the same frame, including into semantic groups. */

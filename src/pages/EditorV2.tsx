@@ -50,6 +50,8 @@ import {
   removeLayerCss,
   removeLayersCss,
   removeCssOverride,
+  removeTransformFunction,
+  setTransformFunction,
   updateCssProperty,
 } from "../lib/cssMutations";
 import {
@@ -62,8 +64,11 @@ import {
   extractLayerFromHtml,
   groupLayersInHtml,
   insertLayerIntoHtml,
+  moveLayerToStackEdge,
+  nestedGroupIds,
   pasteLayerFromHtml,
   remapLayerTreeForTarget,
+  reorderLayerInStack,
   reparentLayerInHtml,
   replaceLayerPathData,
   replaceLayerText,
@@ -71,6 +76,8 @@ import {
   wrapLayersInFrame,
   type LayerDropPlacement,
   type LayerStackChange,
+  type LayerStackDirection,
+  type LayerStackEdge,
   type LayerStackPlacement,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
@@ -1407,23 +1414,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     handleCssChange(newCss);
   }, [activeCss, selectedFrameId, applyToSelection, handleCssChange]);
 
-  // ── Context menu: font size change ──
-  const handleContextFontSizeChange = useCallback((fontSize: string) => {
-    if (!selectedFrameId || !selectedElement) return;
-    handleCssChange(applyToSelection(activeCss, "font-size", `${fontSize} !important`));
-  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
-
-  // ── Context menu: text color change ──
-  const handleContextTextColorChange = useCallback((color: string) => {
-    if (!selectedFrameId || !selectedElement) return;
-    handleCssChange(applyToSelection(activeCss, "color", `${color} !important`));
-  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
-
-  // ── Context menu: text alignment change ──
-  const handleContextTextAlignChange = useCallback((align: string) => {
-    if (!selectedFrameId || !selectedElement) return;
-    handleCssChange(applyToSelection(activeCss, "text-align", `${align} !important`));
-  }, [activeCss, selectedFrameId, selectedElement, applyToSelection, handleCssChange]);
+  // Font size, text colour and text alignment used to have their own handlers
+  // here, feeding a formatting-only right-click menu. That menu is now a
+  // command menu and the formatting lives in the contextual panel, which
+  // already owns those controls.
 
   // ── Eyedropper: sample color and apply fill + stroke to selected element ──
   const handleEyedropperPick = useCallback((rawColor: string) => {
@@ -3471,13 +3465,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [templateId, templateName, frames]);
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-
-  // Auto-close the context menu when the selected element is cleared
-  // (e.g. when panning with the hand tool deselects the element).
-  useEffect(() => {
-    if (!selectedElement) setContextMenu(null);
-  }, [selectedElement]);
+  // `hasClipboard` is sampled when the menu opens rather than read on every
+  // render: the clipboard lives in localStorage, and the menu only needs to
+  // know whether Paste is worth offering at the moment it is shown.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; hasClipboard: boolean } | null>(null);
 
   const [showInsertBar, setShowInsertBar] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -4287,6 +4278,163 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
     setSelectedElement(null);
   }, [selectedFrameId, selectedElement, selectedOrphanIds, canvasObjects, frames, autoSave, commitCanvasObjects]);
+
+  /**
+   * Dissolves every group nested under the selection, not only the outermost.
+   *
+   * Every group is measured against the live canvas BEFORE anything changes,
+   * the same way a single ungroup does — dissolving first and measuring after
+   * would read a layout that no longer matches, and the contents would drift.
+   * Outermost first, which is the order the markup yields them in.
+   */
+  const handleUngroupAll = useCallback(() => {
+    if (!selectedFrameId || !selectedElement) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+
+    const groupIds = nestedGroupIds(frame.html, selectedElement.layerId);
+    if (groupIds.length === 0) {
+      addToast("No hay grupos que deshacer en esta selección.", "info");
+      return;
+    }
+
+    let html = frame.html;
+    let dissolved = 0;
+    let unmeasured = 0;
+    for (const groupId of groupIds) {
+      const bake = measureContainerForBake(selectedFrameId, groupId);
+      // Leave a group that cannot be measured alone rather than guess at its
+      // layout and move its contents.
+      if (!bake) { unmeasured++; continue; }
+      const next = ungroupPreservingLayout(html, bake);
+      if (next) { html = next; dissolved++; }
+    }
+
+    if (!dissolved) {
+      addToast("No se pudo medir ningún grupo para desagruparlo con seguridad.", "error");
+      return;
+    }
+    const updated = frames.map(f => f.id === selectedFrameId ? { ...f, html } : f);
+    store.replaceAllWithUndo(updated, "ungroup");
+    autoSave(updated);
+    setSelectedElement(null);
+    addToast(unmeasured
+      ? `${dissolved} grupo(s) deshecho(s); ${unmeasured} sin medir quedaron intactos.`
+      : `${dissolved} grupo(s) deshecho(s).`, unmeasured ? "info" : "success");
+  }, [selectedFrameId, selectedElement, frames, autoSave, addToast]);
+
+  /** Moves the selected layer one step through its siblings, or to either end. */
+  const handleStackChange = useCallback((move: LayerStackDirection | LayerStackEdge) => {
+    if (!selectedFrameId || !selectedElement) return;
+    const frame = frames.find(f => f.id === selectedFrameId);
+    if (!frame) return;
+
+    const change = move === "front" || move === "back"
+      ? moveLayerToStackEdge(frame.html, selectedElement.layerId, move)
+      : reorderLayerInStack(frame.html, selectedElement.layerId, move);
+    if (!change) {
+      addToast("La capa ya está en ese extremo de su grupo.", "info");
+      return;
+    }
+    const updated = frames.map(f => f.id === selectedFrameId
+      ? { ...f, html: change.html, css: applyLayerStack(f.css, change.siblingLayerIds) }
+      : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [selectedFrameId, selectedElement, frames, autoSave, addToast]);
+
+  /**
+   * Mirrors the selection. Written as a transform function rather than a whole
+   * `transform` value so a rotation or translate already on the element
+   * survives, and applying it twice returns to the original.
+   */
+  const handleFlip = useCallback((axis: "horizontal" | "vertical") => {
+    if (!selectedFrameId || !selectedElement) return;
+    const fn = axis === "horizontal" ? "scaleX" : "scaleY";
+    let newCss = activeCss;
+    for (const target of styleTargets(selectedElement.selector, selectedElement.layerId, multiSelectLayerIds)) {
+      const current = getCssPropertyValue(newCss, target, "transform");
+      const flipped = current.includes(`${fn}(-1)`)
+        ? removeTransformFunction(current, fn)
+        : setTransformFunction(current, fn, "-1");
+      newCss = updateCssProperty(newCss, target, "transform", flipped || "none");
+    }
+    handleCssChange(newCss);
+  }, [selectedFrameId, selectedElement, multiSelectLayerIds, activeCss, handleCssChange]);
+
+  /**
+   * Pastes the copied element into every frame at once.
+   *
+   * Each frame gets its own fresh layer ids, or the second paste would collide
+   * with the first and the CSS would address both at the same time.
+   */
+  const handlePasteInAllFrames = useCallback(() => {
+    const clipboard = readDesignClipboard();
+    if (!clipboard || clipboard.kind !== "element") {
+      addToast("Copia un elemento primero (pegar en todos los frames no aplica a frames enteros).", "error");
+      return;
+    }
+    if (frames.length === 0) return;
+    const sourceLayer = extractLayerFromHtml(clipboard.html, clipboard.layerId);
+    if (!sourceLayer) {
+      addToast("No se pudo leer el elemento copiado.", "error");
+      return;
+    }
+
+    let pastedInto = 0;
+    const updated = frames.map(frame => {
+      const pasted = pasteLayerFromHtml(frame.html, clipboard.html, clipboard.layerId, createLayerId, 0);
+      if (!pasted) return frame;
+      const pastedCss = cloneLayerTreeCss(clipboard.css, sourceLayer.layerHtml, sourceLayer.layerIds, pasted.idMap, 0);
+      pastedInto++;
+      return { ...frame, html: pasted.html, css: mergeCssRules(frame.css, pastedCss) };
+    });
+
+    if (!pastedInto) {
+      addToast("No se pudo pegar en ningún frame.", "error");
+      return;
+    }
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(`Pegado en ${pastedInto} frame(s).`, "success");
+  }, [frames, autoSave, addToast]);
+
+  /** Lock and visibility for the selection, mirroring the layers panel's toggles. */
+  const selectedIsLocked = selectedFrameId && selectedElement
+    ? lockedLayersByFrame.get(selectedFrameId)?.has(selectedElement.layerId) || false
+    : false;
+  const selectedIsHidden = selectedFrameId && selectedElement
+    ? hiddenLayersByFrame.get(selectedFrameId)?.has(selectedElement.layerId) || false
+    : false;
+
+  const handleToggleSelectedLock = useCallback(() => {
+    if (!selectedFrameId || !selectedElement) return;
+    handleLockToggle(selectedFrameId, selectedElement.layerId, !selectedIsLocked);
+  }, [selectedFrameId, selectedElement, selectedIsLocked, handleLockToggle]);
+
+  const handleToggleSelectedVisibility = useCallback(() => {
+    if (!selectedFrameId || !selectedElement) return;
+    handleHideToggle(selectedFrameId, selectedElement.layerId, !selectedIsHidden);
+  }, [selectedFrameId, selectedElement, selectedIsHidden, handleHideToggle]);
+
+  /**
+   * A page cannot open the browser's DevTools — there is no API for it, by
+   * design. What it can do is hand the real node to the console, where
+   * "Reveal in Elements panel" takes you the rest of the way.
+   */
+  const handleInspectElement = useCallback(() => {
+    if (!selectedFrameId || !selectedElement) return;
+    const wrapper = document.querySelector(`[data-frame-id="${selectedFrameId}"]`);
+    const host = wrapper && [...wrapper.querySelectorAll("div")].find(el => el.shadowRoot?.getElementById("__df_content"));
+    const node = host?.shadowRoot?.getElementById("__df_content")?.querySelector(selectedElement.selector);
+    if (!node) {
+      addToast("No se encontró el nodo en el lienzo.", "error");
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log("[Futuraria] Elemento seleccionado:", selectedElement.selector, node);
+    addToast("Elemento enviado a la consola. Abre DevTools (F12) y haz clic derecho → «Revelar en el panel Elements».", "info");
+  }, [selectedFrameId, selectedElement, addToast]);
 
   // ── Figma-style container semantics toggle: Grupo (posiciones fijas) ⇄ Contenedor (auto layout) ──
   const handleGroupModeChange = useCallback((layerId: string, frameId: string, mode: "group" | "container") => {
@@ -5483,7 +5631,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           className="editor-v2-canvas-area"
           onContextMenu={(e) => {
             e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY });
+            setContextMenu({ x: e.clientX, y: e.clientY, hasClipboard: readDesignClipboard() !== null });
           }}
         >
           {/* ── Insert Toolbar (toggleable) ── */}
@@ -6309,12 +6457,32 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             x={contextMenu.x}
             y={contextMenu.y}
             selectedElement={selectedElement}
-            foregroundColor={foregroundColor}
+            selectedLayerCount={multiSelectLayerIds.length || selectedOrphanIds.size}
+            hasFrameSelection={Boolean(selectedFrameId) || selectedFrameIds.size > 0}
+            isHidden={selectedIsHidden}
+            isLocked={selectedIsLocked}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            hasClipboard={contextMenu.hasClipboard}
             onClose={() => setContextMenu(null)}
-            onFontChange={handleFontSelect}
-            onFontSizeChange={handleContextFontSizeChange}
-            onTextColorChange={handleContextTextColorChange}
-            onTextAlignChange={handleContextTextAlignChange}
+            onCopy={copySelection}
+            onPaste={pasteSelection}
+            onPasteAllFrames={handlePasteInAllFrames}
+            onStackChange={handleStackChange}
+            onGroup={handleGroup}
+            onUngroup={handleUngroup}
+            onUngroupAll={handleUngroupAll}
+            onToggleVisibility={handleToggleSelectedVisibility}
+            onToggleLock={handleToggleSelectedLock}
+            onFlip={handleFlip}
+            onCopyCode={() => handleCopyAs("html")}
+            onCopyCss={() => handleCopyAs("css")}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            onBatchAMator={() => { setShowRightPanel(true); setRightPanelTab("batch"); }}
+            onFrameToTemplate={handleSaveRecipe}
+            onExtractDesignSystem={handleExtractDesignSystem}
+            onInspect={handleInspectElement}
           />
         </>
       )}
