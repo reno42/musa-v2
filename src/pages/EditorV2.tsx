@@ -975,23 +975,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const oname = nameMap[type] || type;
     if (type === "rect") {
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n}`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n}`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n}`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #EF4444;\n  border-radius: 50%;\n}`;
     } else if (type === "triangle") {
-      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}`;
     } else if (type === "star") {
       const s = Math.max(w, h);
       const d = generateStarPath(s, 5, 0.4);
-      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="star" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="star" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
     } else if (type === "polygon") {
       const n = clampShapeCount(6);
       const s = Math.max(w, h);
       const d = generatePolygonPath(s, n);
-      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="polygon" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="svg" data-shape="polygon" viewBox="0 0 ${s} ${s}" style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}`;
     } else if (type === "pen" || type === "pencil") {
       html = `<svg data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="bezier" viewBox="0 0 ${w} ${h}" style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;"><path d="M 0 ${h} C ${w * 0.25} ${h * 0.25}, ${w * 0.75} ${h * 0.75}, ${w} 0" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round"/></svg>`;
@@ -1521,25 +1521,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     let css: string;
     const defaultSize = type === "polygon" ? 120 : (type === "star" ? 130 : 150);
     if (type === "rect") {
-      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape" style="width:200px;height:150px;background:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape" style="width:200px;height:150px;background-color:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
-      html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape" style="width:150px;height:150px;background:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape" style="width:150px;height:150px;background-color:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background-color: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
       const w = 150, h = 150;
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = 130;
       const d = generateStarPath(s, 5, 0.4);
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else if (type === "polygon") {
       const n = clampShapeCount(sides || 6);
       const s = 120;
       const d = generatePolygonPath(s, n);
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       html = `<div data-layer-id="${layerId}" data-layer-name="Text" data-layer-kind="text" style="font-size:24px;color:#333;position:absolute;left:${x}px;top:${y}px;">Type something</div>`;
@@ -1564,24 +1564,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     let css: string;
     if (type === "rect") {
       html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "triangle") {
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Triangle" data-layer-kind="svg" viewBox="0 0 ${w} ${h}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:visible;"><path d="M${w / 2} 0 L0 ${h} L${w} ${h} Z" fill="#10B981" stroke="#059669" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${w}px;\n  height: ${h}px;\n  overflow: visible;\n}\n`;
     } else if (type === "star") {
       const s = Math.max(w, h);
       const d = generateStarPath(s, 5, 0.4);
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Star" data-layer-kind="svg" data-shape="star" data-shape-count="5" data-shape-ratio="0.4" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#F59E0B" stroke="#D97706" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     } else {
       // polygon — parametric path with configurable sides
       const n = clampShapeCount(sides || 6);
       const s = Math.max(w, h);
       const d = generatePolygonPath(s, n);
-      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="2"/></svg>`;
+      html = `<svg data-layer-id="${layerId}" data-layer-name="Polygon" data-layer-kind="svg" data-shape="polygon" data-shape-count="${n}" data-shape-corner-radius="0" data-shape-size="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;overflow:visible;"><path d="${d}" fill="#8B5CF6" stroke="#7C3AED" stroke-width="0"/></svg>`;
       css = `[data-layer-id="${layerId}"] {\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n  width: ${s}px;\n  height: ${s}px;\n  overflow: visible;\n}\n`;
     }
     const updated = frames.map(f =>
@@ -1655,7 +1655,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       name: `Frame ${nextFrameNumber(frames)}`,
       x, y, width: w, height: h,
       html: "",
-      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background: #ffffff;\n  overflow: hidden;\n}\n`,
+      css: `body {\n  font-family: 'Inter', system-ui, sans-serif;\n  position: relative;\n  width: ${w}px;\n  height: ${h}px;\n  margin: 0;\n  background-color: #ffffff;\n  overflow: hidden;\n}\n`,
       background: "#ffffff",
     };
         const updated = [...frames, newFrame];

@@ -5,6 +5,7 @@ import { setTransformFunction, updateCssProperty as setCssProperty, getCssProper
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import { styleTargets } from "../lib/selectionModel";
+import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../lib/layerPaint";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";
@@ -265,6 +266,57 @@ function SelectRow({ label, value, options, onChange }: {
       </select>
     </PropRow>
   );
+}
+
+interface PaintTarget {
+  layerId: string;
+  selector: string;
+  /** The property this particular layer paints its interior through. */
+  property: string;
+  strokeColor: string;
+  strokeWidth: string;
+}
+
+/**
+ * The paintable layers under a group.
+ *
+ * A group has no fill of its own — this IS its fill. Walking to the leaves is
+ * what makes "set the fill of a group" mean "paint the interior of everything
+ * inside it" rather than "draw a rectangle behind it". A nested group is
+ * skipped and its own children are reached, since it paints nothing either.
+ */
+function paintableDescendants(html: string, layerId: string): PaintTarget[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const root = [...doc.body.querySelectorAll("[data-layer-id]")]
+    .find(el => el.getAttribute("data-layer-id") === layerId);
+  if (!root) return [];
+
+  const targets: PaintTarget[] = [];
+  for (const el of root.querySelectorAll("[data-layer-id]")) {
+    const id = el.getAttribute("data-layer-id");
+    if (!id) continue;
+    const tag = el.tagName.toLowerCase();
+    const isSvg = tag === "svg";
+    const paint = paintPropertiesFor({
+      tag,
+      isSvg,
+      // An <svg> wrapper paints through the shape inside it.
+      svgChildTag: isSvg
+        ? el.querySelector("path,rect,circle,ellipse,polygon,polyline,line,text")?.tagName.toLowerCase()
+        : undefined,
+      layerKind: el.getAttribute("data-layer-kind") || undefined,
+    });
+    if (paint.fill) {
+      targets.push({
+        layerId: id,
+        selector: `[data-layer-id="${id}"]`,
+        property: paint.fill,
+        strokeColor: paint.strokeColor as string,
+        strokeWidth: paint.strokeWidth as string,
+      });
+    }
+  }
+  return targets;
 }
 
 function ColorRow({ label, value, onChange }: {
@@ -574,6 +626,10 @@ const smallBtn: React.CSSProperties = {
 const smallBtnActive: React.CSSProperties = {
   ...smallBtn, background: "rgba(200,184,152,0.18)", border: "1px solid #c8b898",
 };
+/** Explains what a control will do when the answer is not obvious from it. */
+const mutedNote: React.CSSProperties = {
+  fontSize: 10, lineHeight: 1.5, color: "#7a7668", padding: "2px 2px 4px",
+};
 
 // ── Main Component ──
 
@@ -733,6 +789,80 @@ export function HtmlContextualPanel({
 
   const s = element.computedStyles;
   const selector = element.selector;
+
+  /**
+   * A layer has exactly two paints: a fill and a stroke. Which property
+   * carries the fill depends on what the layer is — a div colours its interior
+   * with background-color, a path with fill, a glyph with color — but the
+   * control is called Fill in every case, and a group gets none of its own.
+   */
+  const isGroup = isGroupLayer({ tag: element.tag, layerKind: element.layerKind });
+  const fillProperty = paintPropertiesFor({
+    tag: element.tag,
+    isSvg: element.isSvg,
+    svgChildTag: element.svgChildTag,
+    layerKind: element.layerKind,
+  }).fill;
+
+  const groupTargets = useMemo(
+    () => (isGroup ? paintableDescendants(html, element.layerId) : []),
+    [isGroup, html, element.layerId],
+  );
+  const groupTargetCount = groupTargets.length;
+  const groupFills = useMemo(
+    () => summarizeFills(groupTargets.map(target => ({
+      layerId: target.layerId,
+      value: getCssPropertyValue(css, target.selector, target.property),
+    }))),
+    [groupTargets, css],
+  );
+
+  /** Writes a fill to specific members of the group, each through its own property. */
+  const setGroupFill = useCallback((layerIds: string[], value: string) => {
+    const wanted = new Set(layerIds);
+    let updated = css;
+    for (const target of groupTargets) {
+      if (!wanted.has(target.layerId)) continue;
+      updated = updateElementCssProperty(updated, target.selector, target.property, value);
+    }
+    onCssChange(updated);
+  }, [css, groupTargets, onCssChange]);
+
+  const fillWholeGroup = useCallback((value: string) => {
+    setGroupFill(groupTargets.map(target => target.layerId), value);
+  }, [setGroupFill, groupTargets]);
+
+  /**
+   * A group's stroke outlines its members, not the rectangle around them —
+   * the same reasoning as its fill. Written per member, since each one strokes
+   * through a different property.
+   */
+  const setGroupStroke = useCallback((prop: "color" | "width", value: string) => {
+    let updated = css;
+    for (const target of groupTargets) {
+      updated = updateElementCssProperty(
+        updated, target.selector,
+        prop === "color" ? target.strokeColor : target.strokeWidth,
+        value,
+      );
+      // A border with no style draws nothing however wide it is set.
+      if (prop === "width" && target.strokeWidth === "border-width" && parseFloat(value) > 0) {
+        const style = getCssPropertyValue(updated, target.selector, "border-style");
+        if (!style || style === "none") {
+          updated = updateElementCssProperty(updated, target.selector, "border-style", "solid");
+        }
+      }
+    }
+    onCssChange(updated);
+  }, [css, groupTargets, onCssChange]);
+
+  const groupStrokes = useMemo(
+    () => summarizeFills(groupTargets.map(target => ({
+      layerId: target.layerId,
+      value: getCssPropertyValue(css, target.selector, target.strokeColor),
+    }))),
+    [groupTargets, css],
+  );
   const isText = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "label", "button", "em", "strong", "small", "b", "i"].includes(element.tag);
   const isFlex = s["display"] === "flex" || s["display"] === "inline-flex";
   const isGrid = s["display"] === "grid" || s["display"] === "inline-grid";
@@ -839,27 +969,65 @@ export function HtmlContextualPanel({
                   )}
                   <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
                 </>
-              ) : isSvgShape ? (
+              ) : isGroup ? (
+                /* A group paints nothing itself. Its fill is the fill of
+                   everything inside it, listed one entry per distinct colour
+                   so each hex can be read and copied. */
                 <>
-                  <ColorRow label="Color" value={s["fill"] || s["color"] || "#c8b898"} onChange={v => update(selector, "fill", v)} />
+                  {groupFills.length === 0 ? (
+                    <>
+                      <ColorRow label="Fill" value="" onChange={fillWholeGroup} />
+                      <div style={mutedNote}>
+                        Nada dentro tiene relleno. El color pintará el interior de los {groupTargetCount} objetos,
+                        no un rectángulo detrás.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {groupFills.map((entry, index) => (
+                        <ColorRow
+                          key={entry.layerIds.join(",")}
+                          label={groupFills.length > 1 ? `Fill ${index + 1}` : "Fill"}
+                          value={entry.value}
+                          onChange={v => setGroupFill(entry.layerIds, v)}
+                        />
+                      ))}
+                      {groupFills.length > 1 && (
+                        <PropRow label="Todos">
+                          <button type="button" style={smallBtn} onClick={() => fillWholeGroup(groupFills[0].value)}>
+                            Igualar los {groupFills.length} rellenos
+                          </button>
+                        </PropRow>
+                      )}
+                    </>
+                  )}
+                  <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
+                </>
+              ) : isSvgShape || isSvgText ? (
+                <>
+                  <ColorRow label="Fill" value={s["fill"] || "#c8b898"} onChange={v => update(selector, "fill", v)} />
                   <OpacityRow label="Opacity" value={s["fill-opacity"] || "1"} onChange={v => update(selector, "fill-opacity", v)} />
                 </>
-              ) : isSvgText ? (
+              ) : fillProperty ? (
                 <>
-                  <ColorRow label="Fill" value={s["fill"] || s["color"] || "#333"} onChange={v => update(selector, "fill", v)} />
-                  <OpacityRow label="Opacity" value={s["fill-opacity"] || "1"} onChange={v => update(selector, "fill-opacity", v)} />
+                  {/* One control named Fill, whatever property the medium
+                      paints with. A text used to get a second one called "BG"
+                      that drew a box behind the glyphs instead of colouring
+                      them. */}
+                  <ColorRow label="Fill" value={s[fillProperty] || ""} onChange={v => update(selector, fillProperty, v)} />
+                  <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
+                  {!isText && (
+                    <>
+                      <GradientBuilder key={element.layerId} value={s["background-image"] || ""} onChange={(v) => update(selector, "background-image", v)} />
+                      <PropRow label="Img">
+                        <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleBgImageUpload} ref={bgImageInputRef} />
+                        <button type="button" onClick={() => bgImageInputRef.current?.click()} style={smallBtn}>🖼 Image</button>
+                      </PropRow>
+                    </>
+                  )}
                 </>
               ) : (
-                <>
-                  {isText && <ColorRow label="Text" value={s["color"] || ""} onChange={v => update(selector, "color", v)} />}
-                  <ColorRow label={isText ? "BG" : "Fill"} value={s["background-color"] || s["background"] || ""} onChange={v => update(selector, "background-color", v)} />
-                  <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
-                  <GradientBuilder key={element.layerId} value={s["background-image"] || ""} onChange={(v) => update(selector, "background-image", v)} />
-                  <PropRow label="Img">
-                    <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleBgImageUpload} ref={bgImageInputRef} />
-                    <button type="button" onClick={() => bgImageInputRef.current?.click()} style={smallBtn}>🖼 Image</button>
-                  </PropRow>
-                </>
+                <div style={mutedNote}>Este elemento no tiene relleno propio.</div>
               )}
             </div>
           )}
@@ -868,7 +1036,23 @@ export function HtmlContextualPanel({
           <SectionHead label="Stroke" section="stroke" expanded={expanded} toggle={toggle} />
           {expanded.stroke && (
             <div style={sectionBody}>
-              {isSvgShape ? (
+              {isGroup ? (
+                /* Outlines the members, not the rectangle around them. */
+                <>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <InlineField label="Color">
+                      <input type="color" value={toHex(groupStrokes[0]?.value)} onChange={e => setGroupStroke("color", e.target.value)} style={colorInp} />
+                    </InlineField>
+                    <InlineField label="Weight">
+                      <ScrubbyInput value="0" min={0} onChange={v => setGroupStroke("width", `${Math.max(0, parseFloat(v) || 0)}px`)} suffix="px" />
+                    </InlineField>
+                  </div>
+                  <div style={mutedNote}>
+                    Se aplica al contorno de los {groupTargetCount} objetos del grupo.
+                    {groupStrokes.length > 1 && ` Ahora tienen ${groupStrokes.length} colores distintos.`}
+                  </div>
+                </>
+              ) : isSvgShape ? (
                 <>
                   <div style={{ display: "flex", gap: 8 }}>
                     <InlineField label="Color">
