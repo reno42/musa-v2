@@ -3021,12 +3021,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // PUT on the template would take the long road — read the design, set
       // one string, write the whole blob back — and this runs on a timer.
       //
-      // workspaceId is not optional: the tool stores the capture at
-      // {workspaceId}/thumbnails/{templateId}.{ext}, so omitting it files
-      // every workspace's snapshots together under a literal "undefined".
-      await mcpCall("update_thumbnail", {
-        templateId, workspaceId: templateWorkspaceId, thumbnail: dataUrl,
-      });
+      // No workspaceId on purpose. The tool resolves the template's own
+      // workspace for the storage path, and the tenancy guard rejects a
+      // mismatch — which is what it should do, and what this was tripping:
+      // a snapshot fires seconds after an edit, so the client's idea of the
+      // current workspace can already have moved on.
+      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
       state.capturedRevision = revisionAtStart;
       state.lastCaptureAt = Date.now();
     } catch (err) {

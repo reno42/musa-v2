@@ -3163,11 +3163,11 @@ const MCP_TOOLS = [
         templateId: { type: "string", description: "Template ID" },
         workspaceId: {
           type: "string",
-          description: "Workspace that owns the template. Required: it decides the storage folder ({workspaceId}/thumbnails/{templateId}.{ext}), and omitting it files every workspace's snapshots together under a literal 'undefined'.",
+          description: "Optional. The storage folder is derived from the template's own workspace, so this is only a fallback — and passing one that disagrees is rejected by the tenancy guard.",
         },
         thumbnail: { type: "string", description: "Base64 data URL (max 1MB as a string) or HTTPS image URL for the thumbnail preview" },
       },
-      required: ["templateId", "workspaceId", "thumbnail"],
+      required: ["templateId", "thumbnail"],
     },
   },
   {
@@ -11331,7 +11331,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             const mime = mMatch[1];
             const buf = Buffer.from(mMatch[2], "base64");
             const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" ? "webp" : "png";
-            const path = `${params.workspaceId}/thumbnails/${params.templateId}.${ext}`;
+            // The template's OWN workspace decides the path, not the caller's
+            // idea of it. A snapshot fires seconds after an edit, by which
+            // time the client's notion of "current workspace" may have moved
+            // on — and a thumbnail belongs where its template lives, not
+            // where the browser happened to be looking.
+            const ownerWorkspace = await getTemplateWorkspaceId(params.templateId)
+              || params.workspaceId;
+            const path = `${ownerWorkspace}/thumbnails/${params.templateId}.${ext}`;
             const { error: thErr } = await sbT.storage.from("design-covers")
               .upload(path, buf, { contentType: mime, upsert: true });
             if (!thErr) {
@@ -11339,7 +11346,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               // different extension — otherwise every format switch leaves a
               // stale file behind for good.
               await removeStalePreviewFiles(
-                "design-covers", `${params.workspaceId}/thumbnails`, params.templateId, path);
+                "design-covers", `${ownerWorkspace}/thumbnails`, params.templateId, path);
               const { data: thUrl } = await sbT.storage.from("design-covers").createSignedUrl(path, 31536000);
               if (thUrl?.signedUrl) thumb = thUrl.signedUrl;
             }

@@ -21,35 +21,64 @@ interface StorageFile {
  * use flat {folder}/{file} layouts: workspace ids, "covers", "thumbnails").
  */
 async function listBucketFiles(sb: any, bucket: string, workspaceId: string, maxFiles = 400): Promise<StorageFile[]> {
-  const out: StorageFile[] = [];
   const baseUrl = process.env.SUPABASE_URL || "";
-  const toFile = async (path: string, item: any): Promise<StorageFile> => ({
+
+  // Phase 1: walk the folders and collect what is there. No signing yet.
+  //
+  // This used to sign each file as it was found — an awaited network round
+  // trip per object, inside a sequential loop. Four hundred files meant four
+  // hundred serial requests, which is why opening the Papelera took half a
+  // minute. Listing is cheap; signing is what costs, so it is worth doing
+  // separately and in bulk.
+  const found: Array<{ path: string; item: any }> = [];
+  const { data: root, error } = await sb.storage.from(bucket)
+    .list(workspaceId, { limit: 100, sortBy: { column: "updated_at", order: "desc" } });
+  if (error || !root) return [];
+
+  // Folders are listed together rather than one after another: they are
+  // independent, and waiting for each in turn is latency spent for nothing.
+  const folders = root.filter((item: any) => !item.id);
+  const folderContents = await Promise.all(folders.map((folder: any) =>
+    sb.storage.from(bucket)
+      .list(`${workspaceId}/${folder.name}`, { limit: 200, sortBy: { column: "updated_at", order: "desc" } })
+      .then((r: any) => ({ folder: folder.name, children: r.data || [] }))
+      .catch(() => ({ folder: folder.name, children: [] as any[] }))));
+
+  for (const item of root) {
+    if (found.length >= maxFiles) break;
+    if (item.id) found.push({ path: `${workspaceId}/${item.name}`, item });
+  }
+  for (const { folder, children } of folderContents) {
+    for (const child of children) {
+      if (found.length >= maxFiles) break;
+      if (child.id) found.push({ path: `${workspaceId}/${folder}/${child.name}`, item: child });
+    }
+  }
+  if (found.length === 0) return [];
+
+  // Phase 2: one signing call for every path, instead of one per path.
+  let signed = new Map<string, string>();
+  try {
+    const { data } = await sb.storage.from(bucket)
+      .createSignedUrls(found.map(f => f.path), 3600);
+    for (const entry of data || []) {
+      if (entry?.path && entry?.signedUrl) signed.set(entry.path, entry.signedUrl);
+    }
+  } catch {
+    // An unsigned URL still identifies the object, and the list is more
+    // useful than a failure — the row just cannot be previewed.
+    signed = new Map();
+  }
+
+  return found.map(({ path, item }) => ({
     bucket,
     path,
     name: item.name,
     sizeBytes: item.metadata?.size || 0,
     mimeType: item.metadata?.mimetype || "application/octet-stream",
     updatedAt: item.updated_at || item.created_at || null,
-    url: (await sb.storage.from(bucket).createSignedUrl(path, 3600)).data?.signedUrl || `${baseUrl}/storage/v1/object/authenticated/${bucket}/${path}`,
-  });
-  const { data: root, error } = await sb.storage.from(bucket).list(workspaceId, { limit: 100, sortBy: { column: "updated_at", order: "desc" } });
-  if (error || !root) return out;
-  for (const item of root) {
-    if (out.length >= maxFiles) break;
-    if (item.id) {
-      // A file at the bucket root
-      out.push(await toFile(`${workspaceId}/${item.name}`, item));
-    } else {
-      // A folder — list its contents
-      const { data: children } = await sb.storage.from(bucket)
-        .list(`${workspaceId}/${item.name}`, { limit: 200, sortBy: { column: "updated_at", order: "desc" } });
-      for (const child of children || []) {
-        if (out.length >= maxFiles) break;
-        if (child.id) out.push(await toFile(`${workspaceId}/${item.name}/${child.name}`, child));
-      }
-    }
-  }
-  return out;
+    url: signed.get(path) || `${baseUrl}/storage/v1/object/authenticated/${bucket}/${path}`,
+  }));
 }
 
 /**

@@ -1064,7 +1064,7 @@ cannot recognise in a list of forty.
   "method": "update_thumbnail",
   "params": {
     "templateId": "tpl_...",
-    "workspaceId": "ws_...",   // REQUIRED: it decides the storage folder
+    // workspaceId is optional: the folder comes from the template itself
     "thumbnail": "data:image/jpeg;base64,..."
   }
 }
@@ -1072,9 +1072,9 @@ cannot recognise in a list of forty.
 
 Rules that matter:
 
-- **`workspaceId` is not optional.** The capture is stored at
-  `{workspaceId}/thumbnails/{templateId}.{ext}`. Omit it and every workspace's
-  snapshots land together under a literal `undefined`.
+- **Do not pass `workspaceId`.** The capture is stored under the template's
+  OWN workspace, resolved server-side. Passing one that disagrees is rejected
+  by the tenancy guard — and a client's idea of "current workspace" drifts.
 - **One file per design, forever.** That path is deterministic and written with
   `upsert`, and a capture in a different format removes the previous one. There
   is no history and there must not be one — a snapshot per save would fill the
