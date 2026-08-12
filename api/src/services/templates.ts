@@ -1,6 +1,7 @@
 import { store } from "./store.js";
 import { getSupabase } from "./supabase.js";
 import { slugify } from "./slugify.js";
+import { enforceGroupsDoNotPaint } from "./groupPaint.js";
 import { v4 as uuid } from "uuid";
 import type { DesignTemplate, CanvasData, LayerOverride } from "../types.js";
 
@@ -422,6 +423,39 @@ async function renameInSupabase(id: string, name: string): Promise<DesignTemplat
   }
 }
 
+/**
+ * Holds the one rule a group has: it does not paint.
+ *
+ * Applied here rather than at each of the eighty-odd tools that save a
+ * template, so it covers every writer — the editor, today's MCP tools and any
+ * added later. A layer that paints and calls itself a group is re-marked a
+ * container; the paint is left exactly as it was, since drawing that box was
+ * deliberate and it is the label that was wrong. Ungrouping then leaves it
+ * alone, which is the whole point.
+ */
+function applyGroupPaintRule(updates: Partial<DesignTemplate> & Record<string, any>): void {
+  const retagged: string[] = [];
+
+  if (typeof updates.html === "string") {
+    const result = enforceGroupsDoNotPaint(updates.html, typeof updates.css === "string" ? updates.css : "");
+    updates.html = result.html;
+    retagged.push(...result.retagged);
+  }
+
+  if (Array.isArray(updates.frames)) {
+    for (const frame of updates.frames) {
+      if (!frame || typeof frame.html !== "string") continue;
+      const result = enforceGroupsDoNotPaint(frame.html, typeof frame.css === "string" ? frame.css : "");
+      frame.html = result.html;
+      retagged.push(...result.retagged);
+    }
+  }
+
+  if (retagged.length) {
+    console.info(`[templates] ${retagged.length} painted group(s) re-marked as containers: ${retagged.join(", ")}`);
+  }
+}
+
 export async function updateTemplate(
   id: string, updates: Partial<DesignTemplate> & Record<string, any>
 ): Promise<DesignTemplate | null> {
@@ -431,6 +465,8 @@ export async function updateTemplate(
     const renamed = await renameInSupabase(id, updates.name);
     if (renamed) return renamed;
   }
+
+  applyGroupPaintRule(updates);
 
   let tpl = store.updateTemplate(id, updates);
   if (!tpl) {

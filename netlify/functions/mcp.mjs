@@ -17,6 +17,8 @@ import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
 import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
+import { canPaint, isGroupLayer, paintDeclarations } from "../../api/src/services/paintModel.js";
+import { setCssDeclaration } from "./css-rules.mjs";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
 
@@ -2519,6 +2521,22 @@ const MCP_TOOLS = [
         frameHeight: { type: "number", description: "Frame height, used when a single element aligns against its frame" },
       },
       required: ["templateId", "frameId", "elementIds", "align"],
+    },
+  },
+  {
+    name: "set_paint",
+    description: "Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        elementId: { type: "string", description: "data-layer-id of the layer to paint" },
+        fill: { type: "string", description: "Colour for the layer's interior, e.g. '#3B82F6'. On a group, every object inside it is filled." },
+        stroke: { type: "string", description: "Colour for the layer's outline" },
+        strokeWidth: { type: ["string", "number"], description: "Outline thickness; a bare number is read as px. 0 removes the outline." },
+      },
+      required: ["templateId", "frameId", "elementId"],
     },
   },
   {
@@ -8338,6 +8356,75 @@ async function handleMethod(method, params, userId, auth) {
 
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
       return { success: true, templateId: params.templateId, groupId, childrenCount: childHtmls.length };
+    }
+
+    // ── set_paint: the only way to colour a layer ──
+    case "set_paint": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      const frame = tpl.frames?.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const intent = {};
+      if (params.fill !== undefined) intent.fill = params.fill;
+      if (params.stroke !== undefined) intent.stroke = params.stroke;
+      if (params.strokeWidth !== undefined) intent.strokeWidth = params.strokeWidth;
+      if (!Object.keys(intent).length) {
+        throw { code: -32602, message: "Give at least one of fill, stroke or strokeWidth" };
+      }
+
+      const $ = cheerio.load(frame.html || "", { xmlMode: false });
+      const target = $(`[data-layer-id="${params.elementId}"]`).first();
+      if (!target.length) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+
+      const describe = el => {
+        const node = $(el);
+        const tag = (el.tagName || el.name || "").toLowerCase();
+        return {
+          layerId: node.attr("data-layer-id"),
+          tag,
+          layerKind: node.attr("data-layer-kind"),
+          svgChildTag: tag === "svg"
+            ? (node.find("path,rect,circle,ellipse,polygon,polyline,line,text").first()[0]?.tagName || "").toLowerCase()
+            : undefined,
+        };
+      };
+
+      // A group paints nothing itself, so the paint goes to the objects inside
+      // it — the same thing the editor's Fill does when a group is selected.
+      const self = describe(target[0]);
+      const layers = isGroupLayer(self)
+        ? target.find("[data-layer-id]").toArray().map(describe).filter(canPaint)
+        : [self].filter(canPaint);
+
+      if (!layers.length) {
+        throw {
+          code: -32000,
+          message: isGroupLayer(self)
+            ? `Nothing inside ${params.elementId} can be painted`
+            : `${params.elementId} has no fill of its own (an image is its own pixels)`,
+        };
+      }
+
+      let css = frame.css || "";
+      const painted = [];
+      for (const layer of layers) {
+        const declarations = paintDeclarations(layer, intent);
+        if (!Object.keys(declarations).length) continue;
+        for (const [prop, value] of Object.entries(declarations)) {
+          css = setCssDeclaration(css, `[data-layer-id="${layer.layerId}"]`, prop, value);
+        }
+        painted.push({ elementId: layer.layerId, ...declarations });
+      }
+      frame.css = css;
+
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true,
+        templateId: params.templateId,
+        fannedOutToGroup: isGroupLayer(self),
+        painted,
+      };
     }
 
     // ── Phase C: align_elements ──

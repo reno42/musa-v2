@@ -17,6 +17,8 @@
  *  - the property rewrite matched `left` inside `border-left`.
  */
 
+import { setCssDeclaration } from "./css-rules.mjs";
+
 export const HORIZONTAL_ALIGNMENTS = ["left", "center", "right"];
 export const VERTICAL_ALIGNMENTS = ["top", "middle", "bottom"];
 
@@ -125,26 +127,9 @@ export function applyAlignment({ css, elements, align, alignValue }) {
 
   for (const el of elements) {
     const value = targetPosition(el, align, alignValue);
-    const selector = selectorFor(el.id);
-    const ruleRe = new RegExp(`(${escapeForRegExp(selector)}\\s*\\{)([^}]*)(\\})`);
-    const rule = ruleRe.exec(out);
-
-    if (!rule) {
-      out = `${out}\n${selector} {\n  position: absolute;\n  ${prop}: ${value}px;\n}`;
-      continue;
-    }
-
-    let declaration = rule[2];
-    // The boundary is captured, not just required, so the `;` that ended the
-    // previous declaration survives the rewrite.
-    const propRe = new RegExp(`(^|[;{\\s])${prop}\\s*:[^;]*;?`);
-    declaration = propRe.test(declaration)
-      ? declaration.replace(propRe, (_m, boundary) => `${boundary}\n  ${prop}: ${value}px;`)
-      : `${declaration.trimEnd()}\n  ${prop}: ${value}px;\n`;
-
-    // A function replacer, so a `$&` or `$1` inside a declaration is not
-    // re-read as a substitution pattern.
-    out = out.replace(ruleRe, () => `${rule[1]}${declaration}${rule[3]}`);
+    // `position` has to come along when the rule is new, or left/top do
+    // nothing at all.
+    out = setCssDeclaration(out, selectorFor(el.id), prop, `${value}px`, "position: absolute;");
   }
   return out;
 }
