@@ -339,6 +339,8 @@ export function KanbanTab({ workspaceId }: Props) {
   const cardBase: React.CSSProperties = {
     background: "rgba(255,255,255,0.03)",
     borderRadius: 12,
+    userSelect: "text",
+    WebkitUserSelect: "text",
     padding: "14px 16px",
     border: "1px solid rgba(255,255,255,0.05)",
     transition: "all 0.2s ease",
@@ -419,6 +421,8 @@ export function KanbanTab({ workspaceId }: Props) {
             background: "rgba(18,18,36,0.97)", borderRadius: 16,
             border: "1px solid rgba(255,255,255,0.1)", padding: 28,
             width: 420, maxWidth: "90vw",
+            userSelect: "text",
+            WebkitUserSelect: "text",
           }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 20px", color: "rgba(255,255,255,0.85)" }}>Nueva tarea de diseño</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -515,6 +519,8 @@ export function KanbanTab({ workspaceId }: Props) {
               border: "1px solid rgba(255,255,255,0.08)",
               width: "min(680px, 94vw)", maxHeight: "min(90vh, 820px)",
               overflowY: "auto", padding: 24,
+              userSelect: "text",
+              WebkitUserSelect: "text",
             }} onClick={e => e.stopPropagation()}>
               {/* Close */}
               <button type="button" onClick={() => setDetailCardId(null)} style={{

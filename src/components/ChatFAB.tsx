@@ -84,6 +84,13 @@ const LS_PROVIDER_KEYS_PREFIX = "futuraria-chat-key-";
  * to disk anywhere.
  */
 const memoryKeyCache: Record<string, string> = {};
+
+/** Prevents the Leader from accidentally delegating the same task to the
+ *  implementer twice. Maps `${taskId}:${role}` → last successful result +
+ *  timestamp. The entry expires after 10 minutes to allow legitimate re-work
+ *  after moving the card to "feedback". */
+const lastDelegationPerTask = new Map<string, { result: string; timestamp: number }>();
+
 /** Panel open/closed and the half-typed draft, so a reload behind the chat
  *  leaves the chat exactly where it was. */
 const LS_OPEN_KEY = "futuraria-chat-open";
@@ -291,6 +298,16 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
    - No puede editar. Solo verifica.
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
 7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
+
+REGLA ANTI-DUPLICACIÓN (CRÍTICA — el humano ya vio trabajo duplicado por esto):
+- NUNCA delegues el mismo taskId al implementer dos veces. Una vez que el implementer devuelve "done" (sin verification_failed), AVANZAS al paso 5 (reviewer). No re-delegas al implementer.
+- Si ves "_dedup_notice" en el resultado de harness_delegate_task, significa que el sistema detectó un intento de doble delegación y te devolvió el resultado anterior. NO re-intentes: avanza al siguiente paso del flujo (reviewer).
+- Esto puede pasar si tu contexto se compacta o si una respuesta truncada te hace creer que no delegaste cuando ya lo hiciste.
+
+REGLA ANTI-ESTANCAMIENTO EN REVIEW (CRÍTICA):
+- Después de mover la tarjeta a "review" (paso 4), DELEGAS AL REVIEWER INMEDIATAMENTE (paso 5). No dejes tarjetas estancadas en "review".
+- Si no lanzas el reviewer, la tarea se queda trabada en "review" para siempre y el humano no puede avanzarla manualmente.
+- El reviewer es tu responsabilidad. Una tarjeta en "review" sin reviewer corriendo es un bug tuyo.
 
 REGLA DE "NUNCA TOQUES TRABAJO AJENO" (CRÍTICA — el humano ya perdió trabajo por esto):
 - Solo pasa un templateId a harness_delegate_task cuando el humano pidió explícitamente modificar/editar algo que YA EXISTE (dijo "esto", "el diseño actual", nombró un template/frame específico, o está claramente continuando una conversación sobre ese archivo).
@@ -1091,6 +1108,27 @@ async function spawnSubagent(params: {
   templateIds?: string[];
   contract?: WorkContract;
 }, signal?: AbortSignal, onProgress?: SubagentProgressHandler): Promise<string> {
+
+  // ── Dedup guard: if the same task was already delegated to an implementer
+  //    successfully within the last 10 minutes, return the cached result
+  //    instead of re-running. Prevents accidental double-delegation when the
+  //    Leader loses track of what it already did (e.g. after context compaction
+  //    or a truncated response that the Leader misreads as "not done yet").
+  if (params.taskId && params.role === "implementer") {
+    const dedupKey = `${params.taskId}:${params.role}`;
+    const prev = lastDelegationPerTask.get(dedupKey);
+    if (prev && (Date.now() - prev.timestamp) < 600_000) {
+      const elapsed = Math.round((Date.now() - prev.timestamp) / 1000);
+      try {
+        const cached = JSON.parse(prev.result);
+        return serializeValidJson({
+          ...cached,
+          _dedup_notice: `Esta task ya fue delegada hace ${elapsed}s. Devolviendo el resultado anterior en lugar de re-ejecutar. Avanza al siguiente paso del flujo (reviewer).`,
+        });
+      } catch { /* cache corrupt — fall through */ }
+    }
+  }
+
   const contractValidation = validateWorkContract(params.contract);
   if (!contractValidation.ok) {
     return serializeValidJson({ delegated: false, outcome: "error", verification_failed: true, error: contractValidation.error });
@@ -1326,7 +1364,15 @@ async function spawnSubagent(params: {
     }
     window.clearTimeout(deadlineTimer);
     signal?.removeEventListener("abort", forwardParentAbort);
-    return serializeValidJson({ ...payload, stats: runStats() });
+    const finalJson = serializeValidJson({ ...payload, stats: runStats() });
+    // Cache successful implementer delegations for dedup (see guard at top of function)
+    if (params.taskId && params.role === "implementer" && !payload.verification_failed) {
+      lastDelegationPerTask.set(`${params.taskId}:${params.role}`, {
+        result: finalJson,
+        timestamp: Date.now(),
+      });
+    }
+    return finalJson;
   };
   emitProgress("starting");
 
