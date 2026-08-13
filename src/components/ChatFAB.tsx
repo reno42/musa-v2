@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  appendRemoteHistory, fetchRemoteHistory, fetchProviderKeys,
+  appendRemoteHistory, fetchRemoteHistory, fetchProviderKeys, fetchDecryptedKey,
   saveProviderKeyRemote, deleteProviderKeyRemote, migrateLocalKeys, type StoredKey,
 } from "../lib/chatHistory";
-import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
-import { CHAT_PROVIDERS as PROVIDERS, LLM_PROXY_URL, proxyBody } from "../lib/aiProviders";
+import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
@@ -74,6 +73,17 @@ const MAX_STORED_MESSAGES = 50;
 // provider reuse the same key.
 const LS_ROLE_CONFIG_KEY = "futuraria-chat-role-config";
 const LS_PROVIDER_KEYS_PREFIX = "futuraria-chat-key-";
+
+/**
+ * In-memory cache of decrypted provider keys.
+ *
+ * Keys live here — never in localStorage — so they survive within a session
+ * (allowing direct browser→provider calls) but are cleared on every reload.
+ * They are re-fetched from the server on mount, which means the same key
+ * follows the user to any device they sign in on without being persisted
+ * to disk anywhere.
+ */
+const memoryKeyCache: Record<string, string> = {};
 /** Panel open/closed and the half-typed draft, so a reload behind the chat
  *  leaves the chat exactly where it was. */
 const LS_OPEN_KEY = "futuraria-chat-open";
@@ -174,24 +184,23 @@ function loadAllProviderKeys(): Record<string, string> {
 /**
  * Resolve the LLM config for a role: which provider and model to ask for.
  *
- * No key. The browser does not have one any more and must not: requests go to
- * /api/chat/llm, which holds the credential and answers 412 with `needsKey`
- * when the account has not configured that provider. Deciding "no key, do not
- * try" here would mean guessing at server state from the one place that is
- * not allowed to know it.
+ * Returns the actual decrypted key (from the in-memory cache) and the
+ * provider's direct endpoint. The browser calls the provider directly —
+ * a server-side proxy cannot survive Netlify freemium's 10s limit when
+ * LLM completions take 15-60s.
  */
 function resolveRoleLLM(role: AgentRole): {
   providerId: string; model: string; apiKey: string; endpoint: string; isAnthropic: boolean;
 } | null {
   const cfg = loadRoleConfig()[role];
   const prov = PROVIDERS.find(p => p.id === cfg.provider) || PROVIDERS[0];
+  const key = memoryKeyCache[cfg.provider] || "";
+  if (!key) return null;
   return {
     providerId: cfg.provider,
     model: cfg.model || prov.defaultModel,
-    // Kept in the shape so callers do not all have to change; the proxy is
-    // what actually authenticates.
-    apiKey: "server",
-    endpoint: LLM_PROXY_URL,
+    apiKey: key,
+    endpoint: prov.endpoint,
     isAnthropic: cfg.provider === "anthropic",
   };
 }
@@ -1451,10 +1460,15 @@ async function spawnSubagent(params: {
       }
       const reqBody = JSON.stringify({ model: model || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: subConv, tools: toolsForAnthropic(tools), tool_choice: { type: "auto" } });
       lastRequestBody = reqBody;
-      const resp = await fetchWithRetry(LLM_PROXY_URL, {
+      const resp = await fetchWithRetry(endpoint, {
         method: "POST",
-        headers: getApiHeaders(),
-        body: proxyBody(reqBody, prov.id),
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": llmKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: reqBody,
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -1471,10 +1485,13 @@ async function spawnSubagent(params: {
       }
       const reqBody = JSON.stringify({ model: model || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...subConv], max_tokens: LLM_MAX_TOKENS, tools, tool_choice: "auto" });
       lastRequestBody = reqBody;
-      const resp = await fetchWithRetry(LLM_PROXY_URL, {
+      const resp = await fetchWithRetry(endpoint, {
         method: "POST",
-        headers: getApiHeaders(),
-        body: proxyBody(reqBody, prov.id),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${llmKey}`,
+        },
+        body: reqBody,
       }, retryOptions);
       if (!resp.ok) {
         const classified = classifyHttpError(resp.status, await resp.text());
@@ -1946,8 +1963,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       if (cancelled) return;
       keysLoadedRef.current = true;
       setStoredKeys(remote);
-      // The runtime only needs to know a key EXISTS; the value stays server-side.
       setProviderKeys(Object.fromEntries(remote.map(k => [k.provider, "stored"])));
+      // Fetch decrypted keys into memory for direct browser→provider calls.
+      // The key never touches localStorage — it lives only in JS memory for
+      // this session and is re-fetched from the server on every reload.
+      await Promise.all(remote.map(async (k) => {
+        const decKey = await fetchDecryptedKey(k.provider);
+        if (decKey && !cancelled) memoryKeyCache[k.provider] = decKey;
+      }));
     })();
     return () => { cancelled = true; };
   }, []);
@@ -1961,6 +1984,9 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       setStoredKeys(prev => [...prev.filter(k => k.provider !== provider), { provider, last4 }]);
       setProviderKeys(prev => ({ ...prev, [provider]: "stored" }));
       setKeyDraft(prev => ({ ...prev, [provider]: "" }));
+      // Fetch the key into memory for direct provider calls.
+      const decKey = await fetchDecryptedKey(provider);
+      if (decKey) memoryKeyCache[provider] = decKey;
       setKeyStatus(`Guardada en tu cuenta (····${last4}). Disponible desde cualquier dispositivo.`);
     } catch (e) {
       setKeyStatus(e instanceof Error ? e.message : "No se pudo guardar la llave");
@@ -1972,6 +1998,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       await deleteProviderKeyRemote(provider);
       setStoredKeys(prev => prev.filter(k => k.provider !== provider));
       setProviderKeys(prev => { const next = { ...prev }; delete next[provider]; return next; });
+      delete memoryKeyCache[provider];
       setKeyStatus("Llave eliminada de tu cuenta.");
     } catch (e) {
       setKeyStatus(e instanceof Error ? e.message : "No se pudo eliminar");
@@ -2182,11 +2209,16 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             break;
           }
           const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, max_tokens: LLM_MAX_TOKENS, system: systemPrompt, messages: conversation, tools: toolsForAnthropic(leaderTools), tool_choice: { type: "auto" } });
-          const resp = await fetchWithRetry(LLM_PROXY_URL, {
-        method: "POST",
-        headers: getApiHeaders(),
-        body: proxyBody(reqBody, prov.id),
-      }, { signal });
+          const resp = await fetchWithRetry(prov.endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": memoryKeyCache[leaderProvider] || "",
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            },
+            body: reqBody,
+          }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
             if (resp.status === 400) {
@@ -2221,11 +2253,14 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             break;
           }
           const reqBody = JSON.stringify({ model: leaderModel || prov.defaultModel, messages: [{ role: "system", content: systemPrompt }, ...conversation], max_tokens: LLM_MAX_TOKENS, tools: leaderTools, tool_choice: "auto" });
-          const resp = await fetchWithRetry(LLM_PROXY_URL, {
-        method: "POST",
-        headers: getApiHeaders(),
-        body: proxyBody(reqBody, prov.id),
-      }, { signal });
+          const resp = await fetchWithRetry(prov.endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${memoryKeyCache[leaderProvider] || ""}`,
+            },
+            body: reqBody,
+          }, { signal });
           if (!resp.ok) {
             const body = (await resp.text()).slice(0, 500);
             if (resp.status === 400) {
@@ -2598,6 +2633,18 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       if (e?.name === "AbortError") {
         setMessages(prev => [...prev, { role: "assistant", content: "Detenido.", ts: Date.now() }]);
       } else {
+        // Log to harness_error_logs so the governance panel can show it,
+        // even when the Leader failed before creating a session (e.g. a
+        // 504 timeout before any delegation could happen).
+        try {
+          await mcpCall("harness_report_error", {
+            tool: "leader_llm_call",
+            args: { provider: leaderProvider, model: leaderModel },
+            error_message: e?.message || "no se pudo contactar al proveedor",
+            provider: leaderProvider,
+            source: "chatfab",
+          }).catch(() => {});
+        } catch { /* best-effort */ }
         setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e?.message || "no se pudo contactar al proveedor"}. Verifica tu API key.`, ts: Date.now() }]);
       }
     } finally {

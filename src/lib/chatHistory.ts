@@ -109,28 +109,57 @@ export async function saveRemotePreferences(roleConfig: unknown): Promise<void> 
 
 export interface StoredKey { provider: string; last4: string; updated_at?: string }
 
-/** Which providers the account has a key for. Never the key itself. */
+/**
+ * Which providers the account has a key for. Never the key itself —
+ * the response carries last4 only.
+ *
+ * Calls the Netlify keys function (GET /api/keys), which returns
+ * { [provider]: { configured, model, last4 } }.
+ */
 export async function fetchProviderKeys(): Promise<StoredKey[]> {
   try {
-    const res = await apiFetch<{ success?: boolean; data?: StoredKey[] }>("/api/chat/keys");
-    return Array.isArray(res?.data) ? res.data : [];
+    const res = await apiFetch<Record<string, { configured?: boolean; last4?: string; model?: string }>>("/api/keys");
+    if (!res || typeof res !== "object") return [];
+    return Object.entries(res)
+      .filter(([, v]) => v?.configured)
+      .map(([provider, v]) => ({ provider, last4: v.last4 || "" }));
   } catch {
     return [];
   }
 }
 
-/** Stores or rotates a key. Resolves to the last four, never the key. */
+/**
+ * Fetches the decrypted key for a provider.
+ *
+ * The raw key is needed for direct browser→provider calls (necessary on
+ * Netlify freemium where a server-side proxy times out at 10s).
+ * The key lives in JS memory only — never localStorage — and is cleared
+ * on page reload.
+ */
+export async function fetchDecryptedKey(provider: string): Promise<string | null> {
+  try {
+    const res = await apiFetch<{ key?: string }>(`/api/keys/${encodeURIComponent(provider)}/decrypt`);
+    return res?.key || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stores or rotates a key. Resolves to the last four, never the key.
+ * Calls PUT /api/keys/:provider (Netlify keys function).
+ */
 export async function saveProviderKeyRemote(provider: string, key: string): Promise<string> {
-  const res = await apiFetch<{ success?: boolean; last4?: string; error?: string }>("/api/chat/keys", {
-    method: "PUT",
-    body: JSON.stringify({ provider, key }),
-  });
+  const res = await apiFetch<{ success?: boolean; last4?: string; error?: string }>(
+    `/api/keys/${encodeURIComponent(provider)}`,
+    { method: "PUT", body: JSON.stringify({ key }) },
+  );
   if (res?.success === false) throw new Error(res.error || "No se pudo guardar la llave");
   return res?.last4 || key.slice(-4);
 }
 
 export async function deleteProviderKeyRemote(provider: string): Promise<void> {
-  await apiFetch(`/api/chat/keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
+  await apiFetch(`/api/keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
 }
 
 /**

@@ -17,6 +17,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { getSupabaseAdmin } from "../../api/src/services/supabase.js";
+import { decryptWorkspaceSecret } from "../../api/src/services/secrets.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 
 const ALGO = "aes-256-gcm";
@@ -115,24 +116,34 @@ export async function handler(event) {
     return jsonBody(503, { error: "Database not configured on the server." });
   }
 
-  // ── Parse path: /api/keys or /api/keys/:provider ──
+  // ── Parse path: /api/keys, /api/keys/:provider, or /api/keys/:provider/decrypt ──
   const path = (event.path || "").replace(/^\/+|\/+$/g, ""); // trim slashes
   const segments = path.split("/");
-  // segments: ["api", "keys"] or ["api", "keys", ":provider"]
+  // segments: ["api", "keys"], ["api", "keys", ":provider"], or ["api", "keys", ":provider", "decrypt"]
   const provider = segments.length >= 3 ? decodeURIComponent(segments[2]) : null;
+  const action = segments.length >= 4 ? decodeURIComponent(segments[3]) : null;
 
-  // ── GET /api/keys — list all configured providers ──
+  // ── GET /api/keys/:provider/decrypt — return decrypted key to owner ──
+  if (event.httpMethod === "GET" && provider && action === "decrypt") {
+    const { key, model } = await getUserKey(userId, provider);
+    if (!key) {
+      return jsonBody(404, { error: `No key configured for ${provider}` });
+    }
+    return jsonBody(200, { key, model });
+  }
+
+  // ── GET /api/keys — list all configured providers (last4 only, never the key) ──
   if (event.httpMethod === "GET" && !provider) {
     const { data, error } = await sb
       .from("user_api_keys")
-      .select("provider, model")
+      .select("provider, model, last4")
       .eq("user_id", userId);
 
     if (error) return jsonBody(500, { error: error.message });
 
     const result = {};
     for (const row of data || []) {
-      result[row.provider] = { configured: true, model: row.model || null };
+      result[row.provider] = { configured: true, model: row.model || null, last4: row.last4 || null };
     }
     return jsonBody(200, result);
   }
@@ -175,13 +186,13 @@ export async function handler(event) {
     const { error } = await sb
       .from("user_api_keys")
       .upsert(
-        { user_id: userId, provider, encrypted_key: encrypted, model: model || null, updated_at: new Date().toISOString() },
+        { user_id: userId, provider, encrypted_key: encrypted, last4: key.slice(-4), model: model || null, updated_at: new Date().toISOString() },
         { onConflict: "user_id,provider" },
       );
 
     if (error) return jsonBody(500, { error: error.message });
 
-    return jsonBody(200, { success: true, provider, configured: true });
+    return jsonBody(200, { success: true, provider, configured: true, last4: key.slice(-4) });
   }
 
   // ── DELETE /api/keys/:provider — remove ──
@@ -203,11 +214,19 @@ export async function handler(event) {
 /**
  * Exported for use by other server-side functions (mcp.mjs, quiver-stream.mjs).
  * Decrypts and returns a user's key for a given provider.
+ *
+ * Includes automatic migration from user_provider_keys (the old Express-only
+ * table encrypted with a different salt). If the key isn't in user_api_keys
+ * but exists in user_provider_keys, it is decrypted, re-encrypted, saved to
+ * user_api_keys, and deleted from the old table — all transparently.
+ *
  * Returns { key: string|null, model: string|null }.
  */
 export async function getUserKey(userId, provider) {
   const sb = getSupabaseAdmin();
   if (!sb) return { key: null, model: null };
+
+  // ── Primary: user_api_keys (this system's table) ──
   const { data, error } = await sb
     .from("user_api_keys")
     .select("encrypted_key, model")
@@ -215,10 +234,42 @@ export async function getUserKey(userId, provider) {
     .eq("provider", provider)
     .maybeSingle();
 
-  if (error || !data) return { key: null, model: null };
-  try {
-    return { key: decrypt(data.encrypted_key), model: data.model || null };
-  } catch {
-    return { key: null, model: null };
+  if (!error && data?.encrypted_key) {
+    try {
+      return { key: decrypt(data.encrypted_key), model: data.model || null };
+    } catch {
+      // Fall through to migration check — a corrupt ciphertext shouldn't
+      // block a valid key that might live in the old table.
+    }
   }
+
+  // ── Migration: user_provider_keys (old Express system, different salt) ──
+  // The old table uses secrets.ts format (v1.iv.tag.ciphertext, salt
+  // 'futuraria-workspace-secrets-v1'). This decrypts with that format,
+  // re-encrypts with keys.mjs format, and moves the row.
+  const { data: oldData } = await sb
+    .from("user_provider_keys")
+    .select("key_cipher")
+    .eq("user_id", userId)
+    .eq("provider", provider)
+    .maybeSingle();
+
+  if (oldData?.key_cipher) {
+    try {
+      const rawKey = decryptWorkspaceSecret(oldData.key_cipher);
+      const reencrypted = encrypt(rawKey);
+      await sb.from("user_api_keys").upsert(
+        { user_id: userId, provider, encrypted_key: reencrypted, last4: rawKey.slice(-4), model: null, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,provider" },
+      );
+      // Remove from old table so this branch never runs again.
+      await sb.from("user_provider_keys")
+        .delete().eq("user_id", userId).eq("provider", provider);
+      return { key: rawKey, model: null };
+    } catch {
+      return { key: null, model: null };
+    }
+  }
+
+  return { key: null, model: null };
 }
