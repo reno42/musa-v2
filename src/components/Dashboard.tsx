@@ -389,9 +389,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // ── Musa Daily Batch automation (Settings → Automatización) ──
   // The LLM key itself is NOT stored here: process_daily_batch resolves it
   // per-user via BYOK (Ajustes de IA → claves), falling back to BATCH_LLM_KEY.
+  // No hour/timezone: the single global cron runs once a day and every
+  // enabled workspace is processed on every run.
   const [autoConfig, setAutoConfig] = useState({
-    enabled: false, time: "06:00", timezone: "America/Argentina/Buenos_Aires",
-    maxItems: 50, tag: "auto", provider: "deepseek",
+    enabled: false, maxItems: 50, tag: "auto", provider: "deepseek",
   });
   const [autoConfigSaving, setAutoConfigSaving] = useState(false);
   const [autoConfigMsg, setAutoConfigMsg] = useState("");
@@ -405,8 +406,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       if (c) {
         setAutoConfig({
           enabled: !!c.auto_process_enabled,
-          time: c.auto_process_time || "06:00",
-          timezone: c.auto_process_timezone || "America/Argentina/Buenos_Aires",
           maxItems: typeof c.auto_process_max_items === "number" ? c.auto_process_max_items : 50,
           tag: c.auto_process_tag || "auto",
           provider: c.batch_llm_provider || "deepseek",
@@ -427,8 +426,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       const res = await mcpCall("task_queue_update_config", {
         workspaceId: activeWorkspaceId,
         autoProcessEnabled: autoConfig.enabled,
-        autoProcessTime: autoConfig.time,
-        autoProcessTimezone: autoConfig.timezone,
         autoProcessMaxItems: autoConfig.maxItems,
         autoProcessTag: autoConfig.tag,
         batchLlmProvider: autoConfig.provider,
@@ -1804,8 +1801,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 )}
               </div>
               <div className="bento-sub">
-                Musa procesa tu cola de diseño automáticamente a la hora que elijas. Usa tu API key de IA
-                (Ajustes de IA → claves), sin guardar keys acá.
+                Musa procesa tu cola de diseño en cada corrida diaria del cron global (9:00 UTC).
+                Usa tu API key de IA (Ajustes de IA → claves), sin guardar keys acá.
               </div>
               <div className="bento-row" style={{ alignItems: "center" }}>
                 <span className="bento-row-label">Procesar la cola</span>
@@ -1817,17 +1814,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 10 }}>
-                <div className="bento-field">
-                  <label htmlFor="auto-time">Hora (tu zona)</label>
-                  <input id="auto-time" type="time" className="bento-input" value={autoConfig.time}
-                    onChange={e => setAutoConfig(c => ({ ...c, time: e.target.value || "06:00" }))} />
-                </div>
-                <div className="bento-field">
-                  <label htmlFor="auto-tz">Zona horaria (tz)</label>
-                  <input id="auto-tz" className="bento-input" value={autoConfig.timezone}
-                    onChange={e => setAutoConfig(c => ({ ...c, timezone: e.target.value }))}
-                    placeholder="America/Argentina/Buenos_Aires" />
-                </div>
                 <div className="bento-field">
                   <label htmlFor="auto-max">Máx. diseños por corrida</label>
                   <input id="auto-max" type="number" min={1} max={200} className="bento-input" value={autoConfig.maxItems}

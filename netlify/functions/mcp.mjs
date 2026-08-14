@@ -3919,7 +3919,7 @@ const MCP_TOOLS = [
   },
   {
     name: "task_queue_get_config",
-    description: "Read the automation configuration for a workspace. Returns auto_process_enabled, schedule, provider, and other settings. Use this to load the initial toggle state in the UI.",
+    description: "Read the automation configuration for a workspace. Returns auto_process_enabled, provider, limits, and notification settings. Use this to load the initial toggle state in the UI.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3930,14 +3930,12 @@ const MCP_TOOLS = [
   },
   {
     name: "task_queue_update_config",
-    description: "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure schedule, provider, and limits.",
+    description: "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. No schedule field: the global daily cron processes every enabled workspace on each run.",
     inputSchema: {
       type: "object",
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         autoProcessEnabled: { type: "boolean", description: "Enable/disable automated design processing" },
-        autoProcessTime: { type: "string", description: "Scheduled time in HH:MM format (default: '06:00')" },
-        autoProcessTimezone: { type: "string", description: "IANA timezone (default: 'America/Argentina/Buenos_Aires')" },
         autoProcessMaxItems: { type: "number", description: "Max items per batch run (default: 50)" },
         autoProcessTag: { type: "string", description: "Queue tag to process (default: 'auto')" },
         notifyOnComplete: { type: "boolean", description: "Send Telegram notification when batch finishes" },
@@ -13322,8 +13320,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           config: {
             workspace_id: params.workspaceId,
             auto_process_enabled: false,
-            auto_process_time: "06:00",
-            auto_process_timezone: "America/Argentina/Buenos_Aires",
             auto_process_max_items: 50,
             auto_process_tag: "auto",
             notify_on_complete: false,
@@ -13332,7 +13328,12 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           },
         };
       }
-      return { found: true, config: { ...config, batch_llm_key_encrypted: undefined } };
+      // auto_process_time / auto_process_timezone intentionally not returned:
+      // the single global cron runs once a day, so every enabled workspace
+      // is processed on every run regardless of hour. Columns stay in the
+      // DB for backward compat but are no longer read or written.
+      const { auto_process_time: _t, auto_process_timezone: _tz, ...rest } = config;
+      return { found: true, config: { ...rest, batch_llm_key_encrypted: undefined } };
     }
 
     case "task_queue_update_config": {
@@ -13343,8 +13344,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const config = {
         workspace_id: params.workspaceId,
         auto_process_enabled: params.autoProcessEnabled ?? true,
-        auto_process_time: params.autoProcessTime || "06:00",
-        auto_process_timezone: params.autoProcessTimezone || "America/Argentina/Buenos_Aires",
         auto_process_max_items: params.autoProcessMaxItems || 50,
         auto_process_tag: params.autoProcessTag || "auto",
         notify_on_complete: params.notifyOnComplete ?? false,
@@ -13352,6 +13351,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         batch_llm_provider: params.batchLlmProvider || "deepseek",
         // batch_llm_key_encrypted intentionally removed — keys are now resolved
         // per-user via BYOK (getUserKey in process_daily_batch).
+        // auto_process_time / auto_process_timezone no longer written: the
+        // global cron runs once a day and every enabled workspace processes
+        // on every run (columns kept in DB for backward compat).
       };
 
       const { data: existing } = await sb.from("workspace_config").select("workspace_id").eq("workspace_id", params.workspaceId).maybeSingle();
@@ -13384,22 +13386,6 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const batchResults = [];
 
       for (const ws of workspaces) {
-        // Timezone check — only process within ±1 hour window of configured time
-        const configuredHour = parseInt((ws.auto_process_time || "06:00").split(":")[0], 10);
-        try {
-          const localHour = parseInt(new Date().toLocaleString("en-US", {
-            timeZone: ws.auto_process_timezone || "UTC",
-            hour: "2-digit",
-            hour12: false,
-          }), 10);
-          if (Math.abs(localHour - configuredHour) > 1) {
-            batchResults.push({ workspaceId: ws.workspace_id, skipped: true, reason: `Not in time window (local ${localHour}:00 vs configured ${configuredHour}:00)` });
-            continue;
-          }
-        } catch {
-          // If timezone parsing fails, process anyway (fail-open)
-        }
-
         // ── Resolve LLM key: BYOK per-user, fallback to BATCH_LLM_KEY ──
         const provider = ws.batch_llm_provider || "deepseek";
         let llmKey = "";
