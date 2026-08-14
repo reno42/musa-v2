@@ -3887,6 +3887,67 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "task_queue_add",
+    description: "Add a design task to the workspace's automated processing queue. The task will be picked up by process_daily_batch on the next scheduled run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        instructions: { type: "string", description: "Design instructions for the LLM" },
+        width: { type: "number", description: "Canvas width in px (default: 1080)" },
+        height: { type: "number", description: "Canvas height in px (default: 1080)" },
+        style: { type: "string", description: "Optional style guidance" },
+        name: { type: "string", description: "Template name for the generated design" },
+        tag: { type: "string", description: "Queue tag (default: 'auto')" },
+        priority: { type: "number", description: "Priority (higher = first, default: 0)" },
+      },
+      required: ["workspaceId", "instructions"],
+    },
+  },
+  {
+    name: "task_queue_list",
+    description: "List tasks in a workspace's processing queue.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        status: { type: "string", description: "Filter by status: pending, processing, done, failed" },
+        tag: { type: "string", description: "Filter by tag" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "task_queue_get_config",
+    description: "Read the automation configuration for a workspace. Returns auto_process_enabled, schedule, provider, and other settings. Use this to load the initial toggle state in the UI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "task_queue_update_config",
+    description: "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure schedule, provider, and limits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        autoProcessEnabled: { type: "boolean", description: "Enable/disable automated design processing" },
+        autoProcessTime: { type: "string", description: "Scheduled time in HH:MM format (default: '06:00')" },
+        autoProcessTimezone: { type: "string", description: "IANA timezone (default: 'America/Argentina/Buenos_Aires')" },
+        autoProcessMaxItems: { type: "number", description: "Max items per batch run (default: 50)" },
+        autoProcessTag: { type: "string", description: "Queue tag to process (default: 'auto')" },
+        notifyOnComplete: { type: "boolean", description: "Send Telegram notification when batch finishes" },
+        notifyChatId: { type: "string", description: "Telegram chat ID for notifications" },
+        batchLlmProvider: { type: "string", description: "LLM provider: deepseek, openai, anthropic (default: deepseek). The API key is resolved per-user via BYOK." },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
     name: "process_daily_batch",
     description: "Process all queued design tasks for workspaces with auto_process_enabled. Runs the headless design pipeline (LLM generation → template creation → render) and updates Kanban cards. Intended to be called by a scheduled cron (e.g. GitHub Actions 'Musa Daily Design Batch').",
     inputSchema: {
@@ -13247,6 +13308,33 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { items: items || [], count: (items || []).length };
     }
 
+    case "task_queue_get_config": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Requires Supabase." };
+
+      const { data: config, error } = await sb.from("workspace_config")
+        .select("*").eq("workspace_id", params.workspaceId).maybeSingle();
+      if (error) throw { code: -32000, message: "Config read failed: " + error.message };
+
+      if (!config) {
+        return {
+          found: false,
+          config: {
+            workspace_id: params.workspaceId,
+            auto_process_enabled: false,
+            auto_process_time: "06:00",
+            auto_process_timezone: "America/Argentina/Buenos_Aires",
+            auto_process_max_items: 50,
+            auto_process_tag: "auto",
+            notify_on_complete: false,
+            notify_chat_id: null,
+            batch_llm_provider: "deepseek",
+          },
+        };
+      }
+      return { found: true, config: { ...config, batch_llm_key_encrypted: undefined } };
+    }
+
     case "task_queue_update_config": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Requires Supabase." };
@@ -13262,6 +13350,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         notify_on_complete: params.notifyOnComplete ?? false,
         notify_chat_id: params.notifyChatId || null,
         batch_llm_provider: params.batchLlmProvider || "deepseek",
+        // batch_llm_key_encrypted intentionally removed — keys are now resolved
+        // per-user via BYOK (getUserKey in process_daily_batch).
       };
 
       const { data: existing } = await sb.from("workspace_config").select("workspace_id").eq("workspace_id", params.workspaceId).maybeSingle();
@@ -13275,7 +13365,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (error) throw { code: -32000, message: "Config insert failed: " + error.message };
         result = data;
       }
-      return { success: true, config: { ...result, batch_llm_key_encrypted: result.batch_llm_key_encrypted ? "[set]" : null } };
+      return { success: true, config: result };
     }
 
     case "process_daily_batch": {
@@ -13310,6 +13400,35 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           // If timezone parsing fails, process anyway (fail-open)
         }
 
+        // ── Resolve LLM key: BYOK per-user, fallback to BATCH_LLM_KEY ──
+        const provider = ws.batch_llm_provider || "deepseek";
+        let llmKey = "";
+        let llmModel = null;
+        let llmSource = "none";
+
+        // Look up workspace owner_id to fetch their encrypted key
+        const { data: wsRow } = await sb.from("workspaces")
+          .select("owner_id").eq("id", ws.workspace_id).maybeSingle();
+        const ownerId = wsRow?.owner_id || null;
+
+        if (ownerId && UUID_RE.test(ownerId)) {
+          // Valid UUID owner — use BYOK
+          try {
+            const { key, model } = await getUserKey(ownerId, provider);
+            if (key) {
+              llmKey = key;
+              llmModel = model;
+              llmSource = "byok";
+            }
+          } catch { /* decrypt failure — fall through */ }
+        }
+
+        // Fallback: global BATCH_LLM_KEY (for workspaces with null/invalid owner_id)
+        if (!llmKey && process.env.BATCH_LLM_KEY) {
+          llmKey = process.env.BATCH_LLM_KEY;
+          llmSource = "env";
+        }
+
         // 2. Fetch pending tasks
         const maxItems = ws.auto_process_max_items || 50;
         const { data: tasks, error: tErr } = await sb.from("task_queue")
@@ -13319,6 +13438,28 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
         if (!tasks || tasks.length === 0) {
           batchResults.push({ workspaceId: ws.workspace_id, success: 0, failed: 0, total: 0, skipped: true });
+          continue;
+        }
+
+        // If no key and there are tasks: mark them all as failed with NO_LLM_KEY
+        if (!llmKey) {
+          const noKeyMsg = "NO_LLM_KEY: configurá tu API key en Ajustes de IA para que el batch pueda generar diseños.";
+          for (const task of tasks) {
+            await sb.from("task_queue").update({
+              status: "failed",
+              error_message: noKeyMsg,
+              processed_at: new Date().toISOString(),
+            }).eq("id", task.id);
+            if (task.task_id) {
+              try {
+                await sb.from("design_kanban_tasks").update({
+                  status: "feedback",
+                  blocker_reason: noKeyMsg,
+                }).eq("id", task.task_id);
+              } catch { /* non-fatal */ }
+            }
+          }
+          batchResults.push({ workspaceId: ws.workspace_id, success: 0, failed: tasks.length, total: tasks.length, errors: [{ error: noKeyMsg }] });
           continue;
         }
 
@@ -13339,7 +13480,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           }
 
           try {
-            const result = await executeDesignCreation(task.action, ws, task);
+            const result = await executeDesignCreation(task.action, { llmKey, provider, model: llmModel, workspaceId: ws.workspace_id }, task);
 
             // Mark as done
             await sb.from("task_queue").update({
@@ -13419,19 +13560,21 @@ const PROVIDER_ENDPOINTS = {
   anthropic: "https://api.anthropic.com/v1/messages",
 };
 
-async function executeDesignCreation(action, wsConfig, task) {
+async function executeDesignCreation(action, llmConfig, task) {
   if (!action || action.type !== "create_design") {
     throw new Error("Invalid action type: " + (action?.type || "none"));
   }
 
-  // Resolve LLM key: workspace config > env var
-  const provider = wsConfig.batch_llm_provider || "deepseek";
-  const llmKey = wsConfig.batch_llm_key_encrypted || process.env.BATCH_LLM_KEY || "";
-  if (!llmKey) throw new Error("No LLM key configured for batch. Set BATCH_LLM_KEY or workspace_config.batch_llm_key_encrypted.");
+  // LLM config is pre-resolved by process_daily_batch:
+  // { llmKey: string, provider: string, model: string|null, workspaceId: string }
+  const provider = llmConfig.provider || "deepseek";
+  const llmKey = llmConfig.llmKey || "";
+  if (!llmKey) throw new Error("NO_LLM_KEY: configurá tu API key en Ajustes de IA para que el batch pueda generar diseños.");
 
-  const model = provider === "anthropic" ? "claude-3-5-sonnet-20241022" :
-                provider === "openai" ? "gpt-4o-mini" :
-                "deepseek-chat";
+  const model = llmConfig.model ||
+    (provider === "anthropic" ? "claude-3-5-sonnet-20241022" :
+     provider === "openai" ? "gpt-4o-mini" :
+     "deepseek-chat");
   const endpoint = PROVIDER_ENDPOINTS[provider] || PROVIDER_ENDPOINTS.deepseek;
 
   const width = action.width || 1080;

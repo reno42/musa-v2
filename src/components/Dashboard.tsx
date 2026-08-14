@@ -386,6 +386,62 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setProfileSaving(false);
   };
 
+  // ── Musa Daily Batch automation (Settings → Automatización) ──
+  // The LLM key itself is NOT stored here: process_daily_batch resolves it
+  // per-user via BYOK (Ajustes de IA → claves), falling back to BATCH_LLM_KEY.
+  const [autoConfig, setAutoConfig] = useState({
+    enabled: false, time: "06:00", timezone: "America/Argentina/Buenos_Aires",
+    maxItems: 50, tag: "auto", provider: "deepseek",
+  });
+  const [autoConfigSaving, setAutoConfigSaving] = useState(false);
+  const [autoConfigMsg, setAutoConfigMsg] = useState("");
+
+  const loadAutoConfig = useCallback(async (wsId?: string) => {
+    const id = wsId ?? activeWorkspaceId;
+    if (!id) return;
+    try {
+      const res = await mcpCall("task_queue_get_config", { workspaceId: id });
+      const c = res?.config;
+      if (c) {
+        setAutoConfig({
+          enabled: !!c.auto_process_enabled,
+          time: c.auto_process_time || "06:00",
+          timezone: c.auto_process_timezone || "America/Argentina/Buenos_Aires",
+          maxItems: typeof c.auto_process_max_items === "number" ? c.auto_process_max_items : 50,
+          tag: c.auto_process_tag || "auto",
+          provider: c.batch_llm_provider || "deepseek",
+        });
+      }
+    } catch { /* config not readable — keep defaults */ }
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (activeTab === "configuracion") void loadAutoConfig();
+  }, [activeTab, loadAutoConfig]);
+
+  const handleSaveAutoConfig = async () => {
+    if (!activeWorkspaceId) return;
+    setAutoConfigSaving(true);
+    setAutoConfigMsg("");
+    try {
+      const res = await mcpCall("task_queue_update_config", {
+        workspaceId: activeWorkspaceId,
+        autoProcessEnabled: autoConfig.enabled,
+        autoProcessTime: autoConfig.time,
+        autoProcessTimezone: autoConfig.timezone,
+        autoProcessMaxItems: autoConfig.maxItems,
+        autoProcessTag: autoConfig.tag,
+        batchLlmProvider: autoConfig.provider,
+      });
+      if (!res?.success) throw new Error("Respuesta inesperada del servidor");
+      setAutoConfigMsg("✓ Guardado");
+      setTimeout(() => setAutoConfigMsg(""), 2500);
+    } catch (e: any) {
+      setAutoConfigMsg(e?.message || "No se pudo guardar");
+    }
+    setAutoConfigSaving(false);
+  };
+
   // ── Server-side BYOK key management (replaces localStorage) ──
   // Keys are encrypted server-side. The browser only knows whether a key
   // is configured and which model is selected — never the actual value.
@@ -1734,6 +1790,64 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <span className="bento-row-label">Tokens (est.)</span>
                   <span className="bento-row-value">~{estimatedTokens.toLocaleString()}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Automatización — Musa Daily Batch */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🤖 Automatización diaria</div>
+                {autoConfigMsg && (
+                  <span style={{ fontSize: 11, color: autoConfigMsg.startsWith("✓") ? "#4ade80" : "#facc15", textAlign: "right", maxWidth: 240 }}>
+                    {autoConfigMsg}
+                  </span>
+                )}
+              </div>
+              <div className="bento-sub">
+                Musa procesa tu cola de diseño automáticamente a la hora que elijas. Usa tu API key de IA
+                (Ajustes de IA → claves), sin guardar keys acá.
+              </div>
+              <div className="bento-row" style={{ alignItems: "center" }}>
+                <span className="bento-row-label">Procesar la cola</span>
+                <div className="bento-seg">
+                  <button type="button" data-active={!autoConfig.enabled}
+                    onClick={() => setAutoConfig(c => ({ ...c, enabled: false }))}>Apagado</button>
+                  <button type="button" data-active={autoConfig.enabled}
+                    onClick={() => setAutoConfig(c => ({ ...c, enabled: true }))}>Activado</button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 10 }}>
+                <div className="bento-field">
+                  <label htmlFor="auto-time">Hora (tu zona)</label>
+                  <input id="auto-time" type="time" className="bento-input" value={autoConfig.time}
+                    onChange={e => setAutoConfig(c => ({ ...c, time: e.target.value || "06:00" }))} />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="auto-tz">Zona horaria (tz)</label>
+                  <input id="auto-tz" className="bento-input" value={autoConfig.timezone}
+                    onChange={e => setAutoConfig(c => ({ ...c, timezone: e.target.value }))}
+                    placeholder="America/Argentina/Buenos_Aires" />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="auto-max">Máx. diseños por corrida</label>
+                  <input id="auto-max" type="number" min={1} max={200} className="bento-input" value={autoConfig.maxItems}
+                    onChange={e => setAutoConfig(c => ({ ...c, maxItems: Math.max(1, Number(e.target.value) || 1) }))} />
+                </div>
+                <div className="bento-field">
+                  <label htmlFor="auto-provider">Proveedor LLM</label>
+                  <select id="auto-provider" className="bento-input" value={autoConfig.provider}
+                    onChange={e => setAutoConfig(c => ({ ...c, provider: e.target.value }))}>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                <button type="button" className="bento-btn bento-btn--primary"
+                  onClick={handleSaveAutoConfig} disabled={autoConfigSaving}>
+                  {autoConfigSaving ? "Guardando…" : "Guardar automatización"}
+                </button>
               </div>
             </div>
 
