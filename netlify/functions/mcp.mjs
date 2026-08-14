@@ -3886,6 +3886,18 @@ const MCP_TOOLS = [
       required: ["templateId", "prompt"],
     },
   },
+  {
+    name: "process_daily_batch",
+    description: "Process all queued design tasks for workspaces with auto_process_enabled. Runs the headless design pipeline (LLM generation → template creation → render) and updates Kanban cards. Intended to be called by a scheduled cron (e.g. GitHub Actions 'Musa Daily Design Batch').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Optional: limit the batch to a single workspace ID." },
+        dryRun: { type: "boolean", description: "Optional: if true, only list what would be processed without generating." },
+      },
+      required: [],
+    },
+  },
 ];
 
 function getUserId(event) {
