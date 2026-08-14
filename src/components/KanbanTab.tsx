@@ -45,6 +45,8 @@ type KanbanTask = {
   total_cost_cents?: number | null;
   // Musa batch v2: enabled=false → el batch diario la salta
   enabled?: boolean;
+  // Musa batch v2.2: no_tocar=true → NINGUNA IA la toca (batch + agentes)
+  no_tocar?: boolean;
 };
 
 type KanbanColumns = Record<string, KanbanTask[]>;
@@ -159,7 +161,7 @@ export function KanbanTab({ workspaceId }: Props) {
   const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", source: "mcp", aiModel: "", contentType: "organico" });
   // Musa batch v2 CRUD state
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", tone: "", cta: "", assignedTo: "", contentType: "organico", aiModel: "" });
+  const [editForm, setEditForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", tone: "", cta: "", assignedTo: "", contentType: "organico", aiModel: "", noTocar: false });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [savingCardId, setSavingCardId] = useState<string | null>(null);
   // Musa batch v2.1: one-click trigger
@@ -378,6 +380,39 @@ export function KanbanTab({ workspaceId }: Props) {
     }
   }, [tasks, fetchTasks]);
 
+  // ── v2.2 CRUD: no_tocar toggle (hard lock against ANY AI) ──
+  const toggleCardNoTocar = useCallback(async (cardId: string) => {
+    const task = tasks.find(t => t.id === cardId);
+    if (!task) return;
+    const next = !task.no_tocar; // undefined/false → true
+    setSavingCardId(cardId);
+    // Optimistic update in both tasks and columns
+    setTasks(prev => prev.map(t => t.id === cardId ? { ...t, no_tocar: next } : t));
+    setColumns(prev => {
+      const nextCols = { ...prev };
+      for (const key of Object.keys(nextCols)) {
+        nextCols[key] = nextCols[key].map(t => t.id === cardId ? { ...t, no_tocar: next } : t);
+      }
+      return nextCols;
+    });
+    try {
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_update_card",
+          params: { cardId, no_tocar: next },
+          id: 1,
+        }),
+      });
+    } catch (e: any) {
+      setError(e?.message || "Error al cambiar no_tocar");
+      fetchTasks();
+    } finally {
+      setSavingCardId(null);
+    }
+  }, [tasks, fetchTasks]);
+
   // ── v2 CRUD: edit ──
   const openEdit = useCallback((task: KanbanTask) => {
     setEditForm({
@@ -391,6 +426,7 @@ export function KanbanTab({ workspaceId }: Props) {
       assignedTo: task.assigned_to || "",
       contentType: task.content_type || "organico",
       aiModel: task.ai_model || "",
+      noTocar: task.no_tocar || false,
     });
     setEditingCardId(task.id);
   }, []);
@@ -415,6 +451,7 @@ export function KanbanTab({ workspaceId }: Props) {
             assignedTo: editForm.assignedTo.trim() || undefined,
             contentType: editForm.contentType,
             aiModel: editForm.aiModel.trim() || undefined,
+            no_tocar: editForm.noTocar,
           },
           id: 1,
         }),
@@ -738,6 +775,15 @@ export function KanbanTab({ workspaceId }: Props) {
                 onChange={e => setEditForm(f => ({ ...f, aiModel: e.target.value }))}
                 style={inputStyle}
               />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#fca5a5", marginTop: 4, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={editForm.noTocar}
+                  onChange={e => setEditForm(f => ({ ...f, noTocar: e.target.checked }))}
+                  style={{ accentColor: "#ef4444", width: 15, height: 15, cursor: "pointer" }}
+                />
+                🔒 No tocar — bloqueada para IA (batch y agentes)
+              </label>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" onClick={() => setEditingCardId(null)} style={btnSecondary}>Cancelar</button>
                 <button type="button" onClick={handleUpdateCard} disabled={!editForm.title.trim()} style={btnPrimary(!!editForm.title.trim())}>Guardar</button>
@@ -948,7 +994,7 @@ export function KanbanTab({ workspaceId }: Props) {
                   type="button"
                   disabled={savingCardId === task.id}
                   onClick={() => toggleCardEnabled(task.id)}
-                  title={task.enabled === false ? "El batch diario (Musa) la salta. Clic para activar." : "El batch diario (Musa) la procesa. Clic para pausar."}
+                  title={task.enabled === false ? "El batch (Musa) la salta. Clic para activar." : "El batch (Musa) la procesa. Clic para pausar."}
                   style={{
                     ...btnSecondary, padding: "8px 14px", fontSize: 12,
                     border: task.enabled === false ? "1px solid rgba(251,191,36,0.35)" : "1px solid rgba(52,211,153,0.25)",
@@ -956,6 +1002,19 @@ export function KanbanTab({ workspaceId }: Props) {
                     opacity: savingCardId === task.id ? 0.5 : 1,
                   }}>
                   {task.enabled === false ? "▶ Activar en batch" : "⏸ Pausar en batch"}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingCardId === task.id}
+                  onClick={() => toggleCardNoTocar(task.id)}
+                  title={task.no_tocar ? "Bloqueada para TODAS las IAs (batch + agentes). Clic para desbloquear." : "Ninguna IA la toca. Clic para bloquear para IA (batch y agentes)."}
+                  style={{
+                    ...btnSecondary, padding: "8px 14px", fontSize: 12,
+                    border: task.no_tocar ? "1px solid rgba(248,113,113,0.5)" : "1px solid rgba(248,113,113,0.25)",
+                    color: "#fca5a5",
+                    opacity: savingCardId === task.id ? 0.5 : 1,
+                  }}>
+                  {task.no_tocar ? "🔒 Desbloquear IA" : "🔒 Bloquear IA"}
                 </button>
                 <button type="button" onClick={() => openEdit(task)} style={{ ...btnSecondary, padding: "8px 14px", fontSize: 12 }}>✏️ Editar</button>
                 {confirmDeleteId === task.id ? (
@@ -1127,8 +1186,13 @@ export function KanbanTab({ workspaceId }: Props) {
                             </span>
                           )}
                           {task.enabled === false && (
-                            <span title="El batch diario (Musa) la salta" style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 100, background: "rgba(251,191,36,0.12)", color: "#fbbf24" }}>
+                            <span title="El batch (Musa) la salta" style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 100, background: "rgba(251,191,36,0.12)", color: "#fbbf24" }}>
                               ⏸ Pausado
+                            </span>
+                          )}
+                          {task.no_tocar && (
+                            <span title="Bloqueada para TODAS las IAs: el batch la salta y ningún agente puede reclamarla" style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 100, background: "rgba(248,113,113,0.14)", color: "#fca5a5" }}>
+                              🔒 Bloqueado
                             </span>
                           )}
                           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>

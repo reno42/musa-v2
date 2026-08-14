@@ -25,6 +25,16 @@ import { getUserKey } from "./keys.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Provider-default models — resolved in resolveBatchKey so every step
+// (leader, implementer, reviewer) always receives a valid model string.
+// user_api_keys.model can be null/empty, which used to produce
+// "LLM 400: model: invalid type: null, expected a string".
+const DEFAULT_MODELS = {
+  deepseek: "deepseek-chat",
+  openai: "gpt-4o-mini",
+  anthropic: "claude-3-5-sonnet-20241022",
+};
+
 const PROVIDER_ENDPOINTS = {
   deepseek: "https://api.deepseek.com/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
@@ -500,7 +510,11 @@ async function resolveBatchKey(sb, ws) {
     llmKey = process.env.BATCH_LLM_KEY;
     llmSource = "env";
   }
-  return { llmKey, provider, model: llmModel, llmSource };
+  // Single fallback point: null/empty model (empty user_api_keys.model
+  // or the env-key path) → provider default, so runLLMStep and
+  // executeDesignCreation always receive a valid model string.
+  const model = (llmModel && String(llmModel).trim()) || DEFAULT_MODELS[provider] || DEFAULT_MODELS.deepseek;
+  return { llmKey, provider, model, llmSource };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -568,12 +582,13 @@ export async function runDailyBatch({ workspaceId = null, dryRun = false } = {})
       total: 0,
     };
 
-    // ── Fetch cards: enabled, not done/feedback, ordered ──
+    // ── Fetch cards: enabled, not hard-locked (no_tocar), not done/feedback, ordered ──
     const maxItems = ws.auto_process_max_items || 50;
     const { data: cards, error: cErr } = await sb.from("design_kanban_tasks")
       .select("*")
       .eq("workspace_id", ws.workspace_id)
       .eq("enabled", true)
+      .eq("no_tocar", false)
       .in("status", PROCESSABLE_STATUSES)
       .order("priority", { ascending: true })
       .order("deadline", { ascending: true, nullsFirst: false })

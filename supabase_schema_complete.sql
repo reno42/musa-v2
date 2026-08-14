@@ -330,3 +330,12 @@ ALTER TABLE design_kanban_tasks
   ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_dkt_enabled
   ON design_kanban_tasks (enabled) WHERE enabled = TRUE;
+
+-- ---------------------------------------------------------------
+-- Musa batch v2.2 — no_tocar: hard lock against ANY AI
+-- (see supabase_migrations/musa_batch_v22_no_tocar.sql)
+-- ---------------------------------------------------------------
+ALTER TABLE design_kanban_tasks
+  ADD COLUMN IF NOT EXISTS no_tocar BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_dkt_no_tocar
+  ON design_kanban_tasks (no_tocar) WHERE no_tocar = TRUE;

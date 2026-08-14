@@ -12164,7 +12164,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!currentUpd) throw { code: -32000, message: "Card not found: " + params.cardId };
       // Whitelist of updatable fields — anything else is ignored so callers
       // can't corrupt internal columns (id, account_id, created_at, ...).
-      const updatableFields = ["title", "brand_id", "style_name", "workspace_id", "type", "format", "frame_count", "status", "priority", "deadline", "brief", "tone", "cta", "template_id", "assigned_to", "tags", "acceptance", "source", "ai_model", "content_type", "enabled"];
+      const updatableFields = ["title", "brand_id", "style_name", "workspace_id", "type", "format", "frame_count", "status", "priority", "deadline", "brief", "tone", "cta", "template_id", "assigned_to", "tags", "acceptance", "source", "ai_model", "content_type", "enabled", "no_tocar"];
       const patch = {};
       for (const key of updatableFields) {
         if (params[key] !== undefined) patch[key] = params[key];
@@ -12379,6 +12379,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       let q = sb.from("design_kanban_tasks")
         .select("id, title, type, status, priority, deadline, brief, acceptance, assigned_to, brand_id, workspace_id, template_id, created_at")
         .eq("status", status)
+        .eq("no_tocar", false) // hard-locked cards are invisible to AI agents
         .in("workspace_id", accessibleIds)
         .order("priority", { ascending: true })
         .order("deadline", { ascending: true, nullsFirst: false })
@@ -12401,6 +12402,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "Harness requires Supabase." };
       await assertHarnessAccess(sb, auth, userId, { taskId: params.taskId });
       const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      // no_tocar: hard human lock — no AI (leader/implementer/reviewer)
+      // may claim a locked card.
+      const { data: targetCard } = await sb.from("design_kanban_tasks")
+        .select("id, no_tocar").eq("id", params.taskId).maybeSingle();
+      if (!targetCard) throw { code: -32000, message: "Task not found: " + params.taskId };
+      if (targetCard.no_tocar) throw {
+        code: -32000,
+        message: "Esta tarjeta está bloqueada para IA (no_tocar). Desbloqueala desde el Kanban para que un agente pueda tomarla."
+      };
 
       // Hard rule: only 1 in_progress (draft or design) per account.
       if (accountId) {
