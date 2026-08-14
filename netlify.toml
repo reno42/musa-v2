@@ -67,6 +67,13 @@
 [functions.harness-cron]
   schedule = "0 * * * *"
 
+# Scheduled function: Musa daily batch (Kanban pipeline v2).
+# 0 9 * * * = 9:00 UTC = 4:00 am Perú. Advances every enabled Kanban card one
+# step (leader/implementer/reviewer) for enabled workspaces. Lives in a
+# scheduled function because the LLM pipeline exceeds the ~10s sync limit.
+[functions.musa-batch]
+  schedule = "0 9 * * *"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

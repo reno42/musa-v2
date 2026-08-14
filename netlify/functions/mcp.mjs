@@ -3486,6 +3486,47 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "studio_update_card",
+    description: "Update fields of a Kanban card. Whitelisted fields only: title, brief, tone, cta, priority, deadline, status, type, format, frame_count, tags, acceptance, assigned_to, brand_id, style_name, template_id, source, ai_model, content_type, enabled. The enabled boolean controls whether the Musa daily batch (scheduled function musa-batch) processes the card.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID to update" },
+        title: { type: "string", description: "Card title" },
+        brief: { type: "string", description: "Design brief / instructions" },
+        tone: { type: "string", description: "Copy tone (e.g. 'profesional', 'cercano')" },
+        cta: { type: "string", description: "Call to action text" },
+        priority: { type: "integer", minimum: 1, maximum: 3, description: "Priority: 1=urgent, 2=normal, 3=low" },
+        deadline: { type: "string", description: "Deadline in YYYY-MM-DD format" },
+        status: { type: "string", enum: ["backlog","research","draft","design","review","feedback","done"], description: "New Kanban column" },
+        type: { type: "string", enum: ["banner","post","deck","template","landing","factura","cotizacion","story","square","other"], description: "Design type" },
+        format: { type: "string", description: "Format descriptor with dimensions (e.g. '1080x1920')" },
+        frameCount: { type: "integer", minimum: 1, description: "Number of frames" },
+        tags: { type: "array", items: { type: "string" }, description: "Free-form tags" },
+        acceptance: { type: "array", items: { type: "string" }, description: "Acceptance criteria — objective verifiable items" },
+        assignedTo: { type: "string", description: "Agent/person assigned to this task" },
+        brandId: { type: "string", description: "Brand guideline ID" },
+        styleName: { type: "string", description: "Human-readable style name" },
+        aiModel: { type: "string", description: "AI model to use for this card" },
+        contentType: { type: "string", enum: ["ad", "organico"], description: "ad (paid) or organico (organic)" },
+        enabled: { type: "boolean", description: "If false, the Musa daily batch skips this card" },
+        comment: { type: "string", description: "Optional activity log comment when status changes" },
+      },
+      required: ["cardId"],
+    },
+  },
+  {
+    name: "studio_delete_card",
+    description: "Delete a Kanban card together with its activity log and agent time rows. Irreversible — the card disappears from the board and the batch immediately.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID to delete" },
+      },
+      required: ["cardId"],
+    },
+  },
+  {
     name: "studio_log_agent_time",
     description: "Log time, tokens, and model usage for an agent session on a Kanban task. Accumulates totals on the card and calculates cost from the deterministic ai_model_pricing table. Call this when an agent (leader/implementer/reviewer) finishes work on a task.",
     inputSchema: {
@@ -3888,7 +3929,7 @@ const MCP_TOOLS = [
   },
   {
     name: "task_queue_add",
-    description: "Add a design task to the workspace's automated processing queue. The task will be picked up by process_daily_batch on the next scheduled run.",
+    description: "DEPRECATED: creates a Kanban card (design_kanban_tasks) in backlog instead of a task_queue row. The Musa daily batch (scheduled function musa-batch, 9 UTC) processes Kanban cards by status. Prefer studio_create_card for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3906,7 +3947,7 @@ const MCP_TOOLS = [
   },
   {
     name: "task_queue_list",
-    description: "List tasks in a workspace's processing queue.",
+    description: "DEPRECATED: returns Kanban cards (design_kanban_tasks) instead of task_queue rows. Prefer studio_list_cards, which also groups by status column.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3947,7 +3988,7 @@ const MCP_TOOLS = [
   },
   {
     name: "process_daily_batch",
-    description: "Process all queued design tasks for workspaces with auto_process_enabled. Runs the headless design pipeline (LLM generation → template creation → render) and updates Kanban cards. Intended to be called by a scheduled cron (e.g. GitHub Actions 'Musa Daily Design Batch').",
+    description: "Manual trigger for testing the Musa batch (dryRun only). The real daily run lives in the Netlify scheduled function musa-batch (netlify.toml, schedule 0 9 * * * = 9 UTC = 4am Perú) which executes the full leader/implementer/reviewer pipeline over enabled Kanban cards. dryRun:true previews what the batch would do without LLM calls.",
     inputSchema: {
       type: "object",
       properties: {
@@ -12103,6 +12144,59 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       };
     }
 
+    // ── Studio Board: update card fields (CRUD) ──
+    case "studio_update_card": {
+      const sbUpd = getSupabaseAdmin();
+      if (!sbUpd) throw { code: -32000, message: "Studio Board requires Supabase." };
+      const { data: currentUpd } = await sbUpd.from("design_kanban_tasks").select("id, status").eq("id", params.cardId).single();
+      if (!currentUpd) throw { code: -32000, message: "Card not found: " + params.cardId };
+      // Whitelist of updatable fields — anything else is ignored so callers
+      // can't corrupt internal columns (id, account_id, created_at, ...).
+      const updatableFields = ["title", "brand_id", "style_name", "workspace_id", "type", "format", "frame_count", "status", "priority", "deadline", "brief", "tone", "cta", "template_id", "assigned_to", "tags", "acceptance", "source", "ai_model", "content_type", "enabled"];
+      const patch = {};
+      for (const key of updatableFields) {
+        if (params[key] !== undefined) patch[key] = params[key];
+      }
+      // Normalize acceptance like studio_create_card does (string → array)
+      if (params.acceptance !== undefined) {
+        patch.acceptance = Array.isArray(params.acceptance)
+          ? params.acceptance
+          : typeof params.acceptance === "string"
+            ? params.acceptance.split("\n").map(s => s.trim()).filter(Boolean)
+            : [];
+      }
+      if (Object.keys(patch).length === 0) throw { code: -32602, message: "No updatable fields provided." };
+      patch.updated_at = new Date().toISOString();
+      const { data: updatedCard, error: updErr } = await sbUpd.from("design_kanban_tasks")
+        .update(patch).eq("id", params.cardId).select().single();
+      if (updErr) throw { code: -32000, message: "Failed to update card: " + updErr.message };
+      if (!updatedCard) throw { code: -32000, message: "Card not found: " + params.cardId };
+      // Log a status transition when status changed
+      if (patch.status !== undefined && patch.status !== currentUpd.status) {
+        await sbUpd.from("design_kanban_activity_log").insert({
+          id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          task_id: params.cardId,
+          from_status: currentUpd.status,
+          to_status: patch.status,
+          comment: params.comment || "Card updated via MCP",
+          created_by: "mcp",
+        });
+      }
+      return { success: true, card: updatedCard, cardId: params.cardId };
+    }
+
+    // ── Studio Board: delete card + child logs (CRUD) ──
+    case "studio_delete_card": {
+      const sbDel = getSupabaseAdmin();
+      if (!sbDel) throw { code: -32000, message: "Studio Board requires Supabase." };
+      const { data: deletedCard } = await sbDel.from("design_kanban_tasks").delete().eq("id", params.cardId).select().single();
+      if (!deletedCard) throw { code: -32000, message: "Card not found: " + params.cardId };
+      // Clean up child rows (activity log + agent time)
+      await sbDel.from("design_kanban_activity_log").delete().eq("task_id", params.cardId);
+      await sbDel.from("design_kanban_agent_time").delete().eq("task_id", params.cardId);
+      return { success: true, cardId: params.cardId, deletedTitle: deletedCard.title };
+    }
+
     // ── Studio Board: log agent time + tokens + cost ──
     case "studio_log_agent_time": {
       const sbTime = getSupabaseAdmin();
@@ -13239,71 +13333,67 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // MUSA DAILY BATCH — task_queue + automated design processing
+    // MUSA DAILY BATCH — Kanban pipeline (v2).
+    // design_kanban_tasks is the single source of truth; the heavy
+    // pipeline lives in musa-batch-core.mjs (run by the scheduled
+    // function musa-batch at 0 9 * * *). process_daily_batch here is a
+    // manual trigger for testing (dryRun). task_queue_* are deprecated
+    // adapters over the Kanban so legacy callers don't hit dead ends.
     // ═══════════════════════════════════════════════════════════════
 
+    // DEPRECATED — task_queue_add now creates a Kanban card directly
+    // (status backlog, enabled true). The Musa batch v2 processes the
+    // Kanban, not the task_queue table.
     case "task_queue_add": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Task queue requires Supabase." };
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
-      const action = {
-        type: "create_design",
-        instructions: params.instructions || "",
-        width: params.width || 1080,
-        height: params.height || 1080,
-        style: params.style || "",
-        templateId: params.templateId || null,
-        name: params.name || `Batch design ${new Date().toISOString().slice(0, 10)}`,
-      };
-
-      // Create a Kanban card so the result is visible in the UI
+      const title = params.name || `Batch design ${new Date().toISOString().slice(0, 10)}`;
+      const instructions = params.instructions || "";
       const taskId = "card_batch_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
-      try {
-        await sb.from("design_kanban_tasks").insert({
-          id: taskId,
-          account_id: accountId,
-          title: action.name,
-          workspace_id: params.workspaceId,
-          type: "post",
-          status: "backlog",
-          priority: 2,
-          brief: action.instructions,
-          tags: [params.tag || "auto", "batch"],
-          created_by: "task_queue_add",
-        });
-      } catch { /* non-fatal — task_queue works without kanban */ }
-
-      const { data: item, error } = await sb.from("task_queue").insert({
-        workspace_id: params.workspaceId,
+      const { data: card, error } = await sb.from("design_kanban_tasks").insert({
+        id: taskId,
         account_id: accountId,
-        task_id: taskId,
-        action,
-        tag: params.tag || "auto",
-        status: "pending",
-        priority: params.priority || 0,
+        title,
+        workspace_id: params.workspaceId,
+        type: "post",
+        format: params.width && params.height ? `${params.width}x${params.height}` : null,
+        status: "backlog",
+        priority: params.priority || 2,
+        brief: [instructions, params.style ? `Estilo visual: ${params.style}.` : ""].filter(Boolean).join("\n") || null,
+        tags: [params.tag || "auto", "batch"],
+        enabled: true,
+        created_by: "task_queue_add",
       }).select().single();
-      if (error) throw { code: -32000, message: "Queue insert failed: " + error.message };
-
+      if (error) throw { code: -32000, message: "Card insert failed: " + error.message };
+      await sb.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: taskId,
+        to_status: "backlog",
+        comment: "Card created via task_queue_add (deprecated — Kanban is the source of truth)",
+        created_by: "task_queue_add",
+      });
       return {
         success: true,
-        queueId: item.id,
         taskId,
-        message: `Item enqueued for batch processing (tag: ${params.tag || "auto"}). It will be processed on the next daily batch run.`,
+        message: "Card creada en backlog del Kanban. El batch diario (Musa v2) la procesará si está enabled.",
       };
     }
 
+    // DEPRECATED — returns Kanban cards instead of task_queue rows.
+    // Keep the response shape (items/count) so legacy callers don't break.
     case "task_queue_list": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Task queue requires Supabase." };
 
-      let query = sb.from("task_queue").select("*").eq("workspace_id", params.workspaceId).order("created_at", { ascending: false }).limit(50);
+      let query = sb.from("design_kanban_tasks").select("*").eq("workspace_id", params.workspaceId).order("created_at", { ascending: false }).limit(50);
       if (params.status) query = query.eq("status", params.status);
-      if (params.tag) query = query.eq("tag", params.tag);
+      if (params.tag) query = query.overlaps("tags", [params.tag]);
 
       const { data: items, error } = await query;
       if (error) throw { code: -32000, message: "Queue list failed: " + error.message };
-      return { items: items || [], count: (items || []).length };
+      return { items: items || [], count: (items || []).length, message: "Deprecated: returns Kanban cards (design_kanban_tasks)." };
     }
 
     case "task_queue_get_config": {
@@ -13370,305 +13460,27 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { success: true, config: result };
     }
 
+    // Manual trigger for testing. The real daily run lives in the scheduled
+    // function musa-batch (netlify.toml, 0 9 * * * = 9 UTC = 4am Perú),
+    // which imports the same runDailyBatch from musa-batch-core.mjs.
+    // This sync /mcp endpoint only supports dryRun: the heavy LLM steps
+    // would exceed the ~10s sync limit, so a non-dryRun call is refused
+    // with instructions instead of timing out mid-pipeline.
     case "process_daily_batch": {
-      const sb = getSupabaseAdmin();
-      if (!sb) throw { code: -32000, message: "Batch processing requires Supabase." };
-
-      // 1. Get all workspaces with auto-processing enabled
-      const { data: workspaces, error: wsErr } = await sb.from("workspace_config")
-        .select("*").eq("auto_process_enabled", true);
-      if (wsErr) throw { code: -32000, message: "Workspace config query failed: " + wsErr.message };
-
-      if (!workspaces || workspaces.length === 0) {
-        return { processed: [], message: "No workspaces have auto-process enabled." };
+      if (!params.dryRun) {
+        return {
+          processed: [],
+          summary: { workspaces: 0, totalSuccess: 0, totalFailed: 0, total: 0, dryRun: false },
+          message: "process_daily_batch sin dryRun no corre en la función sync /mcp (límite ~10s). El pipeline completo vive en la scheduled function musa-batch (netlify.toml, 0 9 * * *). Usá dryRun:true para previsualizar qué procesaría el batch.",
+        };
       }
-
-      const batchResults = [];
-
-      for (const ws of workspaces) {
-        // ── Resolve LLM key: BYOK per-user, fallback to BATCH_LLM_KEY ──
-        const provider = ws.batch_llm_provider || "deepseek";
-        let llmKey = "";
-        let llmModel = null;
-        let llmSource = "none";
-
-        // Look up workspace owner_id to fetch their encrypted key
-        const { data: wsRow } = await sb.from("workspaces")
-          .select("owner_id").eq("id", ws.workspace_id).maybeSingle();
-        const ownerId = wsRow?.owner_id || null;
-
-        if (ownerId && UUID_RE.test(ownerId)) {
-          // Valid UUID owner — use BYOK
-          try {
-            const { key, model } = await getUserKey(ownerId, provider);
-            if (key) {
-              llmKey = key;
-              llmModel = model;
-              llmSource = "byok";
-            }
-          } catch { /* decrypt failure — fall through */ }
-        }
-
-        // Fallback: global BATCH_LLM_KEY (for workspaces with null/invalid owner_id)
-        if (!llmKey && process.env.BATCH_LLM_KEY) {
-          llmKey = process.env.BATCH_LLM_KEY;
-          llmSource = "env";
-        }
-
-        // 2. Fetch pending tasks
-        const maxItems = ws.auto_process_max_items || 50;
-        const { data: tasks, error: tErr } = await sb.from("task_queue")
-          .select("*").eq("workspace_id", ws.workspace_id).eq("status", "pending").eq("tag", ws.auto_process_tag || "auto")
-          .order("priority", { ascending: false }).order("created_at", { ascending: true }).limit(maxItems);
-        if (tErr) throw { code: -32000, message: "Task queue query failed: " + tErr.message };
-
-        if (!tasks || tasks.length === 0) {
-          batchResults.push({ workspaceId: ws.workspace_id, success: 0, failed: 0, total: 0, skipped: true });
-          continue;
-        }
-
-        // If no key and there are tasks: mark them all as failed with NO_LLM_KEY
-        if (!llmKey) {
-          const noKeyMsg = "NO_LLM_KEY: configurá tu API key en Ajustes de IA para que el batch pueda generar diseños.";
-          for (const task of tasks) {
-            await sb.from("task_queue").update({
-              status: "failed",
-              error_message: noKeyMsg,
-              processed_at: new Date().toISOString(),
-            }).eq("id", task.id);
-            if (task.task_id) {
-              try {
-                await sb.from("design_kanban_tasks").update({
-                  status: "feedback",
-                  blocker_reason: noKeyMsg,
-                }).eq("id", task.task_id);
-              } catch { /* non-fatal */ }
-            }
-          }
-          batchResults.push({ workspaceId: ws.workspace_id, success: 0, failed: tasks.length, total: tasks.length, errors: [{ error: noKeyMsg }] });
-          continue;
-        }
-
-        let success = 0;
-        let failed = 0;
-        const errors = [];
-
-        // 3. Process each task
-        for (const task of tasks) {
-          // Mark as processing
-          await sb.from("task_queue").update({ status: "processing" }).eq("id", task.id);
-
-          // Move kanban card to "design"
-          if (task.task_id) {
-            try {
-              await sb.from("design_kanban_tasks").update({ status: "design" }).eq("id", task.task_id);
-            } catch { /* non-fatal */ }
-          }
-
-          try {
-            const result = await executeDesignCreation(task.action, { llmKey, provider, model: llmModel, workspaceId: ws.workspace_id }, task);
-
-            // Mark as done
-            await sb.from("task_queue").update({
-              status: "done",
-              result: { templateId: result.templateId, renderUrl: result.renderUrl },
-              processed_at: new Date().toISOString(),
-            }).eq("id", task.id);
-
-            // Move kanban card to "done"
-            if (task.task_id) {
-              await sb.from("design_kanban_tasks").update({
-                status: "done",
-                template_id: result.templateId,
-                render_url: result.renderUrl,
-                completed_at: new Date().toISOString(),
-              }).eq("id", task.task_id);
-            }
-
-            success++;
-          } catch (err) {
-            // Mark as failed
-            await sb.from("task_queue").update({
-              status: "failed",
-              error_message: (err.message || String(err)).slice(0, 500),
-              processed_at: new Date().toISOString(),
-            }).eq("id", task.id);
-
-            // Move kanban card to "feedback"
-            if (task.task_id) {
-              try {
-                await sb.from("design_kanban_tasks").update({
-                  status: "feedback",
-                  blocker_reason: `Batch error: ${(err.message || "").slice(0, 200)}`,
-                }).eq("id", task.task_id);
-              } catch { /* non-fatal */ }
-            }
-
-            errors.push({ taskId: task.id, error: err.message });
-            failed++;
-          }
-        }
-
-        batchResults.push({ workspaceId: ws.workspace_id, success, failed, total: tasks.length, errors: errors.length > 0 ? errors : undefined });
-
-        // 4. Telegram notification
-        if (ws.notify_on_complete && ws.notify_chat_id) {
-          try {
-            const { sendTelegram, formatBatchMessage } = await import("./telegram-notify.mjs");
-            const msg = formatBatchMessage({ workspaceId: ws.workspace_id, success, failed, total: tasks.length });
-            await sendTelegram(ws.notify_chat_id, msg);
-          } catch { /* best-effort */ }
-        }
-      }
-
-      const totalSuccess = batchResults.reduce((s, r) => s + (r.success || 0), 0);
-      const totalFailed = batchResults.reduce((s, r) => s + (r.failed || 0), 0);
-      return {
-        processed: batchResults,
-        summary: { workspaces: batchResults.length, totalSuccess, totalFailed, total: totalSuccess + totalFailed },
-      };
+      const { runDailyBatch } = await import("./musa-batch-core.mjs");
+      return await runDailyBatch({ workspaceId: params.workspaceId || null, dryRun: true });
     }
 
     default:
       throw { code: -32601, message: "Method not found: " + method };
   }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// executeDesignCreation — Server-side headless design generator.
-// Called by process_daily_batch. Uses LLM to generate HTML/CSS,
-// creates a template, and renders it — all without a browser.
-// ═══════════════════════════════════════════════════════════════
-
-const PROVIDER_ENDPOINTS = {
-  deepseek: "https://api.deepseek.com/v1/chat/completions",
-  openai: "https://api.openai.com/v1/chat/completions",
-  anthropic: "https://api.anthropic.com/v1/messages",
-};
-
-async function executeDesignCreation(action, llmConfig, task) {
-  if (!action || action.type !== "create_design") {
-    throw new Error("Invalid action type: " + (action?.type || "none"));
-  }
-
-  // LLM config is pre-resolved by process_daily_batch:
-  // { llmKey: string, provider: string, model: string|null, workspaceId: string }
-  const provider = llmConfig.provider || "deepseek";
-  const llmKey = llmConfig.llmKey || "";
-  if (!llmKey) throw new Error("NO_LLM_KEY: configurá tu API key en Ajustes de IA para que el batch pueda generar diseños.");
-
-  const model = llmConfig.model ||
-    (provider === "anthropic" ? "claude-3-5-sonnet-20241022" :
-     provider === "openai" ? "gpt-4o-mini" :
-     "deepseek-chat");
-  const endpoint = PROVIDER_ENDPOINTS[provider] || PROVIDER_ENDPOINTS.deepseek;
-
-  const width = action.width || 1080;
-  const height = action.height || 1080;
-  const name = action.name || `Batch design ${new Date().toISOString().slice(0, 10)}`;
-  const styleNote = action.style ? `Estilo visual: ${action.style}.` : "";
-
-  // 1. Call LLM to generate HTML + CSS
-  const systemPrompt = `You are a design generator. You receive instructions for a visual design and return ONLY raw HTML and CSS code. No markdown, no explanations.
-
-Rules:
-- The design must fit exactly ${width}x${height} pixels. Nothing overflows.
-- Return HTML first inside a block delimited by <HTML> and </HTML> tags.
-- Then return CSS inside a block delimited by <CSS> and </CSS> tags.
-- Use only system fonts or Google Fonts via @import.
-- The HTML is a single root <div> container. No <html>, <head>, or <body> tags.
-- Text must be readable, properly sized, and positioned within bounds.
-- Colors must be hex (#RRGGBB). No CSS variables in the output.
-${styleNote}`;
-
-  const userPrompt = `Design instructions: ${action.instructions}`;
-
-  let llmResponse;
-  if (provider === "anthropic") {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": llmKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model, max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-    if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
-    const data = await resp.json();
-    llmResponse = data.content?.map(b => b.text || "").join("") || "";
-  } else {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${llmKey}`,
-      },
-      body: JSON.stringify({
-        model, max_tokens: 4096,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
-    if (!resp.ok) throw new Error(`LLM ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
-    const data = await resp.json();
-    llmResponse = data.choices?.[0]?.message?.content || "";
-  }
-
-  // 2. Parse HTML and CSS from response
-  const htmlMatch = llmResponse.match(/<HTML>\s*([\s\S]*?)\s*<\/HTML>/i);
-  const cssMatch = llmResponse.match(/<CSS>\s*([\s\S]*?)\s*<\/CSS>/i);
-  let html = htmlMatch ? htmlMatch[1].trim() : "";
-  let css = cssMatch ? cssMatch[1].trim() : "";
-
-  // Fallback: try ```html and ```css fenced code blocks
-  if (!html) {
-    const fenced = llmResponse.match(/```html\s*([\s\S]*?)```/i);
-    if (fenced) html = fenced[1].trim();
-  }
-  if (!css) {
-    const fenced = llmResponse.match(/```css\s*([\s\S]*?)```/i);
-    if (fenced) css = fenced[1].trim();
-  }
-
-  if (!html || html.length < 20) {
-    throw new Error("LLM did not produce valid HTML. Response: " + llmResponse.slice(0, 200));
-  }
-
-  // 3. Create template
-  const tpl = await templates.createTemplate(name, width, height, null, null, task.workspace_id);
-  if (!tpl) throw new Error("Failed to create template");
-
-  tpl.engine = "html";
-  tpl.html = html;
-  tpl.css = css;
-
-  await templates.updateTemplate(tpl.id, {
-    engine: "html",
-    html,
-    css,
-    frames: tpl.frames || [],
-  });
-
-  // 4. Verify template has content
-  const verify = await templates.getTemplate(tpl.id);
-  if (!verify || !verify.html || verify.html.length < 20) {
-    throw new Error("Template verification failed — no HTML content after save");
-  }
-
-  return {
-    templateId: tpl.id,
-    renderUrl: null, // render happens lazily on first editor open
-    width,
-    height,
-  };
 }
 
 export const handler = async (event) => {

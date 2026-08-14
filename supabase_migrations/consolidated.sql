@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS design_kanban_tasks (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   assigned_to   TEXT DEFAULT 'default',
   cronjob_id    TEXT,
-  tags          TEXT[] DEFAULT '{}'
+  tags          TEXT[] DEFAULT '{}',
+  enabled       BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- ---------------------------------------------------------------------------

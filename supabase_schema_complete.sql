@@ -322,3 +322,11 @@ DROP POLICY IF EXISTS "Users delete own API keys" ON user_api_keys;
 CREATE POLICY "Users delete own API keys"
   ON user_api_keys FOR DELETE
   USING (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------
+-- Musa batch v2 (see supabase_migrations/musa_batch_v2.sql)
+-- ---------------------------------------------------------------
+ALTER TABLE design_kanban_tasks
+  ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+CREATE INDEX IF NOT EXISTS idx_dkt_enabled
+  ON design_kanban_tasks (enabled) WHERE enabled = TRUE;

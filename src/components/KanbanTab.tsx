@@ -43,6 +43,8 @@ type KanbanTask = {
   total_agent_time_ms?: number | null;
   total_tokens?: number | null;
   total_cost_cents?: number | null;
+  // Musa batch v2: enabled=false → el batch diario la salta
+  enabled?: boolean;
 };
 
 type KanbanColumns = Record<string, KanbanTask[]>;
@@ -155,6 +157,11 @@ export function KanbanTab({ workspaceId }: Props) {
   const [agentTimeLogs, setAgentTimeLogs] = useState<Record<string, any[]>>({});
   const [createAcceptance, setCreateAcceptance] = useState("");
   const [createForm, setCreateForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", source: "mcp", aiModel: "", contentType: "organico" });
+  // Musa batch v2 CRUD state
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", tone: "", cta: "", assignedTo: "", contentType: "organico", aiModel: "" });
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [savingCardId, setSavingCardId] = useState<string | null>(null);
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -334,6 +341,111 @@ export function KanbanTab({ workspaceId }: Props) {
     }
   }, [createForm, createAcceptance, workspaceId, fetchTasks]);
 
+  // ── v2 CRUD: enabled toggle ──
+  const toggleCardEnabled = useCallback(async (cardId: string) => {
+    const task = tasks.find(t => t.id === cardId);
+    if (!task) return;
+    const next = task.enabled === false; // undefined/true → true
+    setSavingCardId(cardId);
+    // Optimistic update in both tasks and columns
+    setTasks(prev => prev.map(t => t.id === cardId ? { ...t, enabled: next } : t));
+    setColumns(prev => {
+      const nextCols = { ...prev };
+      for (const key of Object.keys(nextCols)) {
+        nextCols[key] = nextCols[key].map(t => t.id === cardId ? { ...t, enabled: next } : t);
+      }
+      return nextCols;
+    });
+    try {
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_update_card",
+          params: { cardId, enabled: next },
+          id: 1,
+        }),
+      });
+    } catch (e: any) {
+      setError(e?.message || "Error al cambiar enabled");
+      fetchTasks();
+    } finally {
+      setSavingCardId(null);
+    }
+  }, [tasks, fetchTasks]);
+
+  // ── v2 CRUD: edit ──
+  const openEdit = useCallback((task: KanbanTask) => {
+    setEditForm({
+      title: task.title || "",
+      type: task.type || "post",
+      priority: task.priority || 2,
+      brief: task.brief || "",
+      deadline: task.deadline || "",
+      tone: task.tone || "",
+      cta: task.cta || "",
+      assignedTo: task.assigned_to || "",
+      contentType: task.content_type || "organico",
+      aiModel: task.ai_model || "",
+    });
+    setEditingCardId(task.id);
+  }, []);
+
+  const handleUpdateCard = useCallback(async () => {
+    if (!editingCardId || !editForm.title.trim()) return;
+    try {
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_update_card",
+          params: {
+            cardId: editingCardId,
+            title: editForm.title.trim(),
+            type: editForm.type,
+            priority: editForm.priority,
+            brief: editForm.brief.trim() || undefined,
+            deadline: editForm.deadline || undefined,
+            tone: editForm.tone.trim() || undefined,
+            cta: editForm.cta.trim() || undefined,
+            assignedTo: editForm.assignedTo.trim() || undefined,
+            contentType: editForm.contentType,
+            aiModel: editForm.aiModel.trim() || undefined,
+          },
+          id: 1,
+        }),
+      });
+      setEditingCardId(null);
+      await fetchTasks();
+    } catch (e: any) {
+      setError(e?.message || "Error al actualizar tarjeta");
+    }
+  }, [editingCardId, editForm, fetchTasks]);
+
+  // ── v2 CRUD: delete (two-step confirm) ──
+  const handleDeleteCard = useCallback(async () => {
+    if (!confirmDeleteId) return;
+    const cardId = confirmDeleteId;
+    try {
+      await apiFetch("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "studio_delete_card",
+          params: { cardId },
+          id: 1,
+        }),
+      });
+      setConfirmDeleteId(null);
+      setDetailCardId(null);
+      setEditingCardId(null);
+      await fetchTasks();
+    } catch (e: any) {
+      setError(e?.message || "Error al borrar tarjeta");
+      setConfirmDeleteId(null);
+    }
+  }, [confirmDeleteId, fetchTasks]);
+
   const tasksByStatus = (status: string) => tasks.filter(t => t.status === status);
 
   const cardBase: React.CSSProperties = {
@@ -498,6 +610,98 @@ export function KanbanTab({ workspaceId }: Props) {
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" onClick={() => setShowCreateModal(false)} style={btnSecondary}>Cancelar</button>
                 <button type="button" onClick={handleCreate} disabled={!createForm.title.trim()} style={btnPrimary(!!createForm.title.trim())}>Crear</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal — v2 CRUD (studio_update_card) */}
+      {editingCardId && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9300,
+          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={() => setEditingCardId(null)}>
+          <div style={{
+            background: "rgba(18,18,36,0.97)", borderRadius: 16,
+            border: "1px solid rgba(255,255,255,0.1)", padding: 28,
+            width: 440, maxWidth: "90vw",
+            userSelect: "text",
+            WebkitUserSelect: "text",
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 20px", color: "rgba(255,255,255,0.85)" }}>Editar tarea</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <input
+                placeholder="Título de la tarea"
+                value={editForm.title}
+                onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                style={inputStyle}
+                autoFocus
+                onKeyDown={e => e.key === "Enter" && handleUpdateCard()}
+              />
+              <div style={{ display: "flex", gap: 10 }}>
+                <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))} style={inputStyle}>
+                  {Object.keys(TYPE_ICONS).map(t => <option key={t} value={t}>{TYPE_ICONS[t]} {t}</option>)}
+                </select>
+                <select value={editForm.priority} onChange={e => setEditForm(f => ({ ...f, priority: Number(e.target.value) }))} style={inputStyle}>
+                  <option value={1}>🔴 Urgente</option>
+                  <option value={2}>🟡 Normal</option>
+                  <option value={3}>🟢 Baja</option>
+                </select>
+              </div>
+              <input
+                placeholder="Deadline (YYYY-MM-DD)"
+                value={editForm.deadline}
+                onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
+                style={inputStyle}
+              />
+              <textarea
+                placeholder="Brief / descripción"
+                value={editForm.brief}
+                onChange={e => setEditForm(f => ({ ...f, brief: e.target.value }))}
+                style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
+                rows={3}
+              />
+              <input
+                placeholder="Tono (ej: profesional, cercano)"
+                value={editForm.tone}
+                onChange={e => setEditForm(f => ({ ...f, tone: e.target.value }))}
+                style={inputStyle}
+              />
+              <input
+                placeholder="CTA (ej: Comprar ahora)"
+                value={editForm.cta}
+                onChange={e => setEditForm(f => ({ ...f, cta: e.target.value }))}
+                style={inputStyle}
+              />
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Asignado a</label>
+                  <input
+                    placeholder="agente o persona"
+                    value={editForm.assignedTo}
+                    onChange={e => setEditForm(f => ({ ...f, assignedTo: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Tipo de contenido</label>
+                  <select value={editForm.contentType} onChange={e => setEditForm(f => ({ ...f, contentType: e.target.value }))} style={inputStyle}>
+                    <option value="organico">🌱 Orgánico</option>
+                    <option value="ad">💰 Ad</option>
+                  </select>
+                </div>
+              </div>
+              <input
+                placeholder="Modelo de IA (opcional)"
+                value={editForm.aiModel}
+                onChange={e => setEditForm(f => ({ ...f, aiModel: e.target.value }))}
+                style={inputStyle}
+              />
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+                <button type="button" onClick={() => setEditingCardId(null)} style={btnSecondary}>Cancelar</button>
+                <button type="button" onClick={handleUpdateCard} disabled={!editForm.title.trim()} style={btnPrimary(!!editForm.title.trim())}>Guardar</button>
               </div>
             </div>
           </div>
@@ -698,6 +902,33 @@ export function KanbanTab({ workspaceId }: Props) {
                   <div style={{ fontSize: 12, color: "#fca5a5", background: "rgba(248,113,113,0.08)", borderRadius: 8, padding: 10 }}>{task.blocker_reason}</div>
                 </Section>
               )}
+
+              {/* ── v2 CRUD: enabled toggle + edit + delete ── */}
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={savingCardId === task.id}
+                  onClick={() => toggleCardEnabled(task.id)}
+                  title={task.enabled === false ? "El batch diario (Musa) la salta. Clic para activar." : "El batch diario (Musa) la procesa. Clic para pausar."}
+                  style={{
+                    ...btnSecondary, padding: "8px 14px", fontSize: 12,
+                    border: task.enabled === false ? "1px solid rgba(251,191,36,0.35)" : "1px solid rgba(52,211,153,0.25)",
+                    color: task.enabled === false ? "#fbbf24" : "#6ee7b7",
+                    opacity: savingCardId === task.id ? 0.5 : 1,
+                  }}>
+                  {task.enabled === false ? "▶ Activar en batch" : "⏸ Pausar en batch"}
+                </button>
+                <button type="button" onClick={() => openEdit(task)} style={{ ...btnSecondary, padding: "8px 14px", fontSize: 12 }}>✏️ Editar</button>
+                {confirmDeleteId === task.id ? (
+                  <>
+                    <span style={{ fontSize: 12, color: "#fca5a5" }}>¿Borrar definitivamente?</span>
+                    <button type="button" onClick={handleDeleteCard} style={{ ...btnPrimary(true), padding: "8px 14px", fontSize: 12 }}>Sí, borrar</button>
+                    <button type="button" onClick={() => setConfirmDeleteId(null)} style={{ ...btnSecondary, padding: "8px 14px", fontSize: 12 }}>Cancelar</button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => setConfirmDeleteId(task.id)} style={{ ...btnSecondary, padding: "8px 14px", fontSize: 12, border: "1px solid rgba(248,113,113,0.3)", color: "#fca5a5" }}>🗑 Borrar</button>
+                )}
+              </div>
             </div>
           </div>
         );
@@ -827,6 +1058,11 @@ export function KanbanTab({ workspaceId }: Props) {
                           {task.priority === 1 && (
                             <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 100, background: PRIORITY_COLORS[1], color: "#fca5a5" }}>
                               Urgente
+                            </span>
+                          )}
+                          {task.enabled === false && (
+                            <span title="El batch diario (Musa) la salta" style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 100, background: "rgba(251,191,36,0.12)", color: "#fbbf24" }}>
+                              ⏸ Pausado
                             </span>
                           )}
                           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
