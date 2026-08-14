@@ -35,6 +35,11 @@ const PROVIDER_ENDPOINTS = {
 const PROCESSABLE_STATUSES = ["backlog", "research", "draft", "design", "review"];
 
 // Cards updated by a human in the last N ms are skipped (hands-off guard).
+// Hourly-cron safety: each run advances a card ONE step and every status
+// write carries a .eq("status", <fetched status>) guard, so overlapping
+// runs (hourly cron + manual trigger) can never double-process a card nor
+// yank one that another run already advanced. The hands-off guard on top
+// protects cards a human just edited.
 const HANDS_OFF_MS = 2 * 60_000;
 
 // ─────────────────────────────────────────────────────────────
@@ -592,9 +597,12 @@ export async function runDailyBatch({ workspaceId = null, dryRun = false } = {})
       } else {
         for (const card of cards) {
           try {
+            // Status guard: only flip cards that are still where we
+            // fetched them (an overlapping run may have advanced them).
             await sb.from("design_kanban_tasks")
               .update({ status: "feedback", blocker_reason: noKeyMsg, updated_at: new Date().toISOString() })
-              .eq("id", card.id);
+              .eq("id", card.id)
+              .eq("status", card.status);
             await logActivity(sb, card.id, card.status, "feedback", noKeyMsg, "musa-batch");
           } catch { /* non-fatal */ }
         }
@@ -630,9 +638,13 @@ export async function runDailyBatch({ workspaceId = null, dryRun = false } = {})
       } catch (e) {
         const message = (e?.message || String(e)).slice(0, 300);
         try {
+          // Status guard: "changed concurrently" errors (an overlapping
+          // run already advanced this card) must NOT yank it back to
+          // feedback — only mark cards still in the fetched status.
           await sb.from("design_kanban_tasks")
             .update({ status: "feedback", blocker_reason: "Batch error: " + message, updated_at: new Date().toISOString() })
-            .eq("id", card.id);
+            .eq("id", card.id)
+            .eq("status", card.status);
           await logActivity(sb, card.id, card.status, "feedback", "Batch error: " + message, "musa-batch");
         } catch { /* non-fatal */ }
         wsResult.failed++;

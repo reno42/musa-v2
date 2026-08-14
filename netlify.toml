@@ -67,12 +67,14 @@
 [functions.harness-cron]
   schedule = "0 * * * *"
 
-# Scheduled function: Musa daily batch (Kanban pipeline v2).
-# 0 9 * * * = 9:00 UTC = 4:00 am Perú. Advances every enabled Kanban card one
-# step (leader/implementer/reviewer) for enabled workspaces. Lives in a
-# scheduled function because the LLM pipeline exceeds the ~10s sync limit.
+# Scheduled function: Musa batch (Kanban pipeline v2.1).
+# Runs EVERY HOUR so a failed run (e.g. Supabase outage) self-heals on the
+# next hour. Each run advances every enabled Kanban card ONE step
+# (leader/implementer/reviewer) — status guards make repeated/overlapping
+# runs safe. The handler also retries transient errors internally (2/4/8
+# min backoff) because Netlify never retries scheduled functions.
 [functions.musa-batch]
-  schedule = "0 9 * * *"
+  schedule = "0 * * * *"
 
 [[redirects]]
   from = "/*"

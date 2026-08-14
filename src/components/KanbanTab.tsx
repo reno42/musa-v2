@@ -162,6 +162,10 @@ export function KanbanTab({ workspaceId }: Props) {
   const [editForm, setEditForm] = useState({ title: "", type: "post", priority: 2, brief: "", deadline: "", tone: "", cta: "", assignedTo: "", contentType: "organico", aiModel: "" });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [savingCardId, setSavingCardId] = useState<string | null>(null);
+  // Musa batch v2.1: one-click trigger
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMsg, setBatchMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [batchDryRun, setBatchDryRun] = useState(false);
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -445,6 +449,41 @@ export function KanbanTab({ workspaceId }: Props) {
       setConfirmDeleteId(null);
     }
   }, [confirmDeleteId, fetchTasks]);
+
+  // ── v2.1: "Ejecutar batch" (musa_batch_run — fire-and-forget server-side) ──
+  const runBatch = useCallback(async () => {
+    setBatchBusy(true);
+    setBatchMsg(null);
+    try {
+      const json = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "musa_batch_run",
+          params: { workspaceId, dryRun: batchDryRun },
+          id: 1,
+        }),
+      });
+      if (json?.error) throw new Error(json.error.message || "Error al disparar el batch");
+      const text = json?.result?.content?.[0]?.text;
+      const data = text ? JSON.parse(text) : json?.result || {};
+      if (!data.started) throw new Error(data.error || "No se pudo iniciar el batch");
+      if (batchDryRun && data.preview) {
+        const cards = (data.preview.processed || []).flatMap((w: any) => w.cards || []);
+        const counts: Record<string, number> = {};
+        for (const c of cards) if (c.wouldRun && c.wouldRun !== "none") counts[c.wouldRun] = (counts[c.wouldRun] || 0) + 1;
+        const detail = Object.entries(counts).map(([role, n]) => `${role}: ${n}`).join(" · ");
+        setBatchMsg({ text: `Dry run listo — ${cards.length} tarjeta(s) en pipeline${detail ? ` (${detail})` : ""}`, ok: true });
+      } else {
+        setBatchMsg({ text: "Batch iniciado — las tarjetas avanzan solas (auto-refresh 10s)", ok: true });
+      }
+    } catch (e: any) {
+      setBatchMsg({ text: e?.message || "Error al disparar el batch", ok: false });
+    } finally {
+      setBatchBusy(false);
+      setTimeout(() => setBatchMsg(null), 8000);
+    }
+  }, [workspaceId, batchDryRun]);
 
   const tasksByStatus = (status: string) => tasks.filter(t => t.status === status);
 
@@ -942,7 +981,34 @@ export function KanbanTab({ workspaceId }: Props) {
             {tasks.length} tarea{tasks.length !== 1 ? "s" : ""} · vía MCP (studio_list_cards)
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {batchMsg && (
+            <span style={{ fontSize: 11, color: batchMsg.ok ? "#6ee7b7" : "#fca5a5", whiteSpace: "nowrap" }}>
+              {batchMsg.text}
+            </span>
+          )}
+          <label
+            title="Ver qué haría el batch sin gastar LLM"
+            style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.4)", cursor: "pointer", userSelect: "none" }}
+          >
+            <input type="checkbox" checked={batchDryRun} onChange={e => setBatchDryRun(e.target.checked)} style={{ accentColor: "#6c5ce7" }} />
+            Dry run
+          </label>
+          <button
+            type="button"
+            onClick={runBatch}
+            disabled={batchBusy}
+            title="Corre el pipeline del batch ahora (mismo que el cron horario)"
+            style={{
+              borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 600,
+              cursor: batchBusy ? "wait" : "pointer",
+              border: "1px solid rgba(52,211,153,0.3)",
+              background: batchBusy ? "rgba(52,211,153,0.08)" : "rgba(52,211,153,0.15)",
+              color: "#6ee7b7",
+              transition: "all 0.2s ease",
+            }}>
+            {batchBusy ? "Ejecutando…" : "▶ Ejecutar batch"}
+          </button>
           <button type="button" onClick={() => setShowCreateModal(true)}
             style={{
               borderRadius: 100, padding: "6px 20px", fontSize: 12, fontWeight: 600,
