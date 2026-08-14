@@ -1,46 +1,54 @@
 // ═══════════════════════════════════════════════════════════════
-// musa-batch.mjs — Scheduled Musa Batch (Kanban pipeline v2.1)
+// musa-batch.mjs — Musa Batch pipeline (Kanban v2.2, BACKGROUND)
 // ═══════════════════════════════════════════════════════════════
 //
-// Triggered by:
-//   1. Netlify Scheduled Functions (netlify.toml, 0 * * * * = hourly).
-//      Hourly cadence = self-healing: if a run fails on a long Supabase
-//      outage, the next hour retries on its own.
-//   2. Manual/webhook: GET /.netlify/functions/musa-batch?secret=<MUSA_BATCH_SECRET>
-//      (with workspaceId / dryRun query params). mcp.mjs musa_batch_run
-//      uses this path fire-and-forget.
+// ARCHITECTURE (v2.2 — Netlify Background Function):
+//   Scheduled functions have a 30-second execution limit and cannot be
+//   invoked by URL, so the LLM pipeline cannot live in one. This
+//   function runs as a BACKGROUND function instead
+//   ([functions.musa-batch] background = true in netlify.toml):
+//     - URL-invocable: every HTTP call gets an immediate empty 202 and
+//       this handler runs in the background for up to 15 minutes. The
+//       handler's own response NEVER reaches the HTTP caller — it only
+//       lands in the Netlify function logs.
+//     - Native retry: if this handler finishes with an error status,
+//       Netlify re-invokes it after 1 min and again after 2 min. There
+//       is no in-handler sleep-retry anymore (v2.1 removed): sleeping
+//       would bill execution credits and stack with the native retries.
+//     - Real results are delivered via Supabase (card status/activity/
+//       checkpoints) and Telegram (notify_on_complete), never via HTTP.
 //
-// What it does:
-//   - Calls runDailyBatch() from musa-batch-core.mjs.
-//   - Every enabled workspace (workspace_config.auto_process_enabled) gets
-//     its enabled Kanban cards (design_kanban_tasks.enabled = true) advanced
-//     ONE step by role: backlog/research/draft → leader, design → implementer,
-//     review → reviewer (C1-C5 → done | feedback). feedback/done untouched.
-//     Status guards on every write make repeated/overlapping runs safe.
+// Consumers (both must send x-batch-secret when MUSA_BATCH_SECRET is set):
+//   1. musa-batch-tick — scheduled function (hourly, 0 * * * *) that
+//      only dispatches here. The hourly cadence self-heals outages
+//      that outlast the native retries.
+//   2. mcp.mjs musa_batch_run — the Kanban "Ejecutar batch" button.
+//      It POSTs here, checks the 202, and answers {started:true/false}
+//      with the real dispatch result.
 //
-// Resilience (v2.1):
-//   - RETRY INSIDE THE HANDLER: Netlify does NOT retry failed scheduled
-//     functions, so transient infrastructure errors (Supabase 503, upstream
-//     connect errors, timeouts, network failures) are retried with a
-//     growing backoff (2 → 4 → 8 min; 14 min of waits + attempt time fits
-//     the ~15 min scheduled-function limit).
-//   - Business errors (missing config, invalid card) are NOT retried.
-//   - On exhausted retries: HTTP 500 with a summary body (lands in Netlify
-//     logs) + best-effort Telegram "batch no pudo correr" to workspaces
-//     with notify_on_complete = true.
+// Error policy:
+//   - Transient infra failures (Supabase 503 / upstream connect /
+//     timeout / network): return 500 → Netlify's native retry re-runs
+//     in 1/2 min. Cards already advanced are skipped on retry (every
+//     write is status-guarded), and the 2-minute hands-off guard keeps
+//     a 1-minute-later retry from double-stepping freshly-touched cards.
+//   - Business errors (missing config, invalid data, bad secret):
+//     return 200 {ok:false} → NO native retry (retrying a config error
+//     three times only burns execution credits).
+//
+// Credits note: background functions bill per execution time. A run
+// with no pending cards finishes in seconds — the 24 hourly ticks/day
+// stay cheap; only real pipeline work costs.
 // ═══════════════════════════════════════════════════════════════
 
 import { runDailyBatch } from "./musa-batch-core.mjs";
 
 const MUSA_BATCH_SECRET = process.env.MUSA_BATCH_SECRET || "";
 
-// 1 initial attempt + these 3 retries.
-const RETRY_DELAYS_MS = [2 * 60_000, 4 * 60_000, 8 * 60_000];
-
-// Transient (infrastructure) failure signatures — worth retrying. Anything
-// else (missing env, business logic) is permanent: retrying only burns the
-// run window. False positives are cheap: the pipeline is idempotent (one
-// step per card, status-guarded writes).
+// Transient (infrastructure) failure signatures — worth a native retry.
+// Anything else (missing env, business logic) is permanent: retrying
+// only burns credits. False positives are cheap: the pipeline is
+// idempotent (one step per card, status-guarded writes).
 const TRANSIENT_ERROR_RE = /(50[234])|upstream|connect|econn|timeout|timed[\s-]*out|fetch[\s-]*failed|socket|network|enotfound/i;
 
 function isTransientError(e) {
@@ -48,11 +56,10 @@ function isTransientError(e) {
   return TRANSIENT_ERROR_RE.test(hay);
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Best-effort "batch could not run" Telegram ping to every workspace with
-// notify_on_complete. If Supabase is the thing that's down, this silently
-// no-ops — nothing to read the config from until it recovers.
+// Best-effort "batch failure" Telegram ping to every workspace with
+// notify_on_complete. If Supabase is the outage itself, this silently
+// no-ops. NOTE: fires once per failed invocation — during a hard outage
+// the native retries (1/2 min) may send up to 3 pings per hourly tick.
 async function notifyBatchFailure(error) {
   try {
     const { getSupabaseAdmin } = await import("../../api/src/services/supabase.js");
@@ -63,7 +70,7 @@ async function notifyBatchFailure(error) {
       .select("workspace_id, notify_chat_id")
       .eq("notify_on_complete", true)
       .not("notify_chat_id", "is", null);
-    const msg = `🚨 Musa batch: no pudo correr tras agotar los reintentos (${String(error?.message || error).slice(0, 200)}). La próxima corrida horaria reintenta sola.`;
+    const msg = `🚨 Musa batch: falla transitoria (${String(error?.message || error).slice(0, 200)}). Reintento automático en curso; si persiste, la corrida horaria siguiente lo reintenta sola.`;
     for (const c of configs || []) {
       try {
         await sendTelegram(c.notify_chat_id, msg);
@@ -78,58 +85,55 @@ export const handler = async (event) => {
     "Content-Type": "application/json",
   };
 
-  // Auth: Netlify scheduled invocations carry x-netlify: scheduled.
-  // Manual/webhook invocations must provide the secret (when configured).
-  const isScheduled = event.headers["x-netlify"] === "scheduled" || event?.queryStringParameters?.scheduled === "1";
-  if (!isScheduled && MUSA_BATCH_SECRET) {
+  // Auth: this function is URL-invocable now, so EVERY call must carry
+  // the secret when MUSA_BATCH_SECRET is configured (callers:
+  // musa-batch-tick and mcp.mjs musa_batch_run — both send x-batch-secret).
+  // NOTE: as a background function the caller already received its empty
+  // 202 before this check runs — this status code only shows up in the
+  // function logs. It returns 200 (not 401) so Netlify does NOT waste
+  // native retries on unauthorized calls.
+  if (MUSA_BATCH_SECRET) {
     const provided = event.headers["x-batch-secret"] || event?.queryStringParameters?.secret || "";
     if (provided !== MUSA_BATCH_SECRET) {
-      return { statusCode: 401, headers, body: JSON.stringify({ error: "Unauthorized. Provide x-batch-secret header matching MUSA_BATCH_SECRET." }) };
+      console.error("[musa-batch] unauthorized call (bad or missing x-batch-secret)");
+      return { statusCode: 200, headers, body: JSON.stringify({ ok: false, error: "Unauthorized (x-batch-secret)" }) };
     }
   }
 
   const dryRun = event?.queryStringParameters?.dryRun === "1" || event?.queryStringParameters?.dryRun === "true";
   const workspaceId = event?.queryStringParameters?.workspaceId || null;
 
-  // dryRun never retries: it is a fast query-only preview, and callers
-  // (mcp.mjs musa_batch_run) await its response within the sync limit.
-  const delays = dryRun ? [] : RETRY_DELAYS_MS;
   const startedAt = Date.now();
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= delays.length + 1; attempt++) {
-    try {
-      const result = await runDailyBatch({ workspaceId, dryRun });
+  try {
+    const result = await runDailyBatch({ workspaceId, dryRun });
+    // The HTTP caller never sees this body (the 202 already went out) —
+    // it is for the Netlify function logs. Real results went to Supabase
+    // + Telegram. dryRun via URL is therefore a logs-only debugging aid;
+    // the UI's dry run is served inline by mcp.mjs musa_batch_run.
+    console.log(`[musa-batch] ok in ${Date.now() - startedAt}ms (dryRun=${dryRun})`);
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ ok: true, durationMs: Date.now() - startedAt, ...result }),
+    };
+  } catch (e) {
+    const transient = isTransientError(e);
+    console.error(`[musa-batch] failed in ${Date.now() - startedAt}ms (${transient ? "transient" : "permanent"}): ${e?.message || e}`);
+    if (transient) {
+      // 500 → Netlify native retry (1 min, then 2 min). If those also
+      // fail, the hourly musa-batch-tick keeps trying: full self-healing.
+      await notifyBatchFailure(e);
       return {
-        statusCode: 200,
+        statusCode: 500,
         headers,
-        body: JSON.stringify({ ok: true, attempts: attempt, durationMs: Date.now() - startedAt, ...result }),
+        body: JSON.stringify({ ok: false, transient: true, durationMs: Date.now() - startedAt, error: e?.message || String(e) }),
       };
-    } catch (e) {
-      lastError = e;
-      const transient = isTransientError(e);
-      console.error(`[musa-batch] attempt ${attempt}/${delays.length + 1} failed (${transient ? "transient" : "permanent"}): ${e?.message || e}`);
-      const delayMs = delays[attempt - 1];
-      if (delayMs === undefined || !transient) break; // out of retries, or business error
-      console.log(`[musa-batch] retrying in ${Math.round(delayMs / 60000)} min`);
-      await sleep(delayMs);
     }
+    // Permanent/business error: 200 so Netlify does NOT retry 3x.
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ ok: false, transient: false, durationMs: Date.now() - startedAt, error: e?.message || String(e) }),
+    };
   }
-
-  // Retries exhausted. Only transient (outage) failures ping Telegram:
-  // permanent config errors already surface in logs/results and would
-  // otherwise spam once per hour.
-  const transient = isTransientError(lastError);
-  if (transient) await notifyBatchFailure(lastError);
-  return {
-    statusCode: 500,
-    headers,
-    body: JSON.stringify({
-      ok: false,
-      transient,
-      attempts: delays.length + 1,
-      durationMs: Date.now() - startedAt,
-      error: lastError?.message || String(lastError),
-    }),
-  };
 };

@@ -67,14 +67,26 @@
 [functions.harness-cron]
   schedule = "0 * * * *"
 
-# Scheduled function: Musa batch (Kanban pipeline v2.1).
-# Runs EVERY HOUR so a failed run (e.g. Supabase outage) self-heals on the
-# next hour. Each run advances every enabled Kanban card ONE step
-# (leader/implementer/reviewer) — status guards make repeated/overlapping
-# runs safe. The handler also retries transient errors internally (2/4/8
-# min backoff) because Netlify never retries scheduled functions.
-[functions.musa-batch]
+# Scheduled function: Musa batch hourly TICK — a lightweight dispatcher.
+# Scheduled functions are capped at 30s and cannot be invoked by URL, so
+# the tick never runs the pipeline itself: it just POSTs to the
+# musa-batch BACKGROUND function (below) and exits in well under a
+# second. Hourly cadence = self-healing after outages that outlast the
+# background function's native retries (1 min → 2 min).
+[functions.musa-batch-tick]
   schedule = "0 * * * *"
+
+# Background function: the real Musa batch pipeline (leader →
+# implementer → reviewer over enabled Kanban cards). URL-invocable —
+# callers get an immediate empty 202 while it runs — with a 15-minute
+# execution limit, and Netlify retries failed invocations natively
+# (1 min, then 2 min). Consumers: the hourly musa-batch-tick and the
+# Kanban "Ejecutar batch" button (mcp.mjs musa_batch_run) — both send
+# x-batch-secret (MUSA_BATCH_SECRET).
+# Credits: background functions bill execution time; a run with no
+# pending cards finishes in seconds, so 24 hourly ticks/day stay cheap.
+[functions.musa-batch]
+  background = true
 
 [[redirects]]
   from = "/*"

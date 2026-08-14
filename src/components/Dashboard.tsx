@@ -386,11 +386,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setProfileSaving(false);
   };
 
-  // ── Musa Daily Batch automation (Settings → Automatización) ──
-  // The LLM key itself is NOT stored here: process_daily_batch resolves it
-  // per-user via BYOK (Ajustes de IA → claves), falling back to BATCH_LLM_KEY.
-  // No hour/timezone: the single global cron runs once a day and every
-  // enabled workspace is processed on every run.
+  // ── Musa batch automation (Settings → Automatización) ──
+  // The LLM key itself is NOT stored here: the batch resolves it per-user
+  // via BYOK (Ajustes de IA → claves), falling back to BATCH_LLM_KEY.
+  // No hour/timezone: the global tick (musa-batch-tick) dispatches the
+  // musa-batch background function hourly and every enabled workspace is
+  // processed on every run.
   const [autoConfig, setAutoConfig] = useState({
     enabled: false, maxItems: 50, tag: "auto", provider: "deepseek",
   });
@@ -1793,7 +1794,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             {/* Automatización — Musa Daily Batch */}
             <div className="bento-card bento-6">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🤖 Automatización diaria</div>
+                <div className="bento-title">🤖 Automatización</div>
                 {autoConfigMsg && (
                   <span style={{ fontSize: 11, color: autoConfigMsg.startsWith("✓") ? "#4ade80" : "#facc15", textAlign: "right", maxWidth: 240 }}>
                     {autoConfigMsg}
@@ -1801,7 +1802,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 )}
               </div>
               <div className="bento-sub">
-                Musa procesa tu cola de diseño en cada corrida diaria del cron global (9:00 UTC).
+                Musa procesa tu Kanban de diseño cada hora (batch automático) y on demand desde el tablero Kanban.
                 Usa tu API key de IA (Ajustes de IA → claves), sin guardar keys acá.
               </div>
               <div className="bento-row" style={{ alignItems: "center" }}>

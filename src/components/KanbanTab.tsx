@@ -450,7 +450,7 @@ export function KanbanTab({ workspaceId }: Props) {
     }
   }, [confirmDeleteId, fetchTasks]);
 
-  // ── v2.1: "Ejecutar batch" (musa_batch_run — fire-and-forget server-side) ──
+  // ── v2.2: "Ejecutar batch" (musa_batch_run → musa-batch background function) ──
   const runBatch = useCallback(async () => {
     setBatchBusy(true);
     setBatchMsg(null);
@@ -998,7 +998,7 @@ export function KanbanTab({ workspaceId }: Props) {
             type="button"
             onClick={runBatch}
             disabled={batchBusy}
-            title="Corre el pipeline del batch ahora (mismo que el cron horario)"
+            title="Dispara el pipeline del batch ahora, en background (mismo que la corrida horaria)"
             style={{
               borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 600,
               cursor: batchBusy ? "wait" : "pointer",

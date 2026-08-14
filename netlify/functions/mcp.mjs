@@ -3988,7 +3988,7 @@ const MCP_TOOLS = [
   },
   {
     name: "process_daily_batch",
-    description: "Dry-run preview of the Musa batch. The real pipeline runs in the Netlify scheduled function musa-batch (netlify.toml, hourly schedule 0 * * * *), which advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
+    description: "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch BACKGROUND function (netlify.toml), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4000,7 +4000,7 @@ const MCP_TOOLS = [
   },
   {
     name: "musa_batch_run",
-    description: "One-click trigger: run the Musa batch for a workspace NOW instead of waiting for the hourly cron. Fire-and-forget — returns { started: true } immediately while the musa-batch function runs the leader/implementer/reviewer pipeline in background (watch the Kanban cards advance). Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview (no LLM cost).",
+    description: "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
     inputSchema: {
       type: "object",
       properties: {
@@ -13472,9 +13472,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return { success: true, config: result };
     }
 
-    // Manual trigger for testing. The real runs live in the scheduled
-    // function musa-batch (netlify.toml, hourly 0 * * * *) and can be
-    // launched on demand via musa_batch_run below.
+    // Manual trigger for testing. The real runs live in the musa-batch
+    // BACKGROUND function (15-min limit), dispatched hourly by the
+    // musa-batch-tick scheduled function and on demand via
+    // musa_batch_run below.
     // This sync /mcp endpoint only supports dryRun: the heavy LLM steps
     // would exceed the ~10s sync limit, so a non-dryRun call is refused
     // with instructions instead of timing out mid-pipeline.
@@ -13490,9 +13491,10 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       return await runDailyBatch({ workspaceId: params.workspaceId || null, dryRun: true });
     }
 
-    // ── Musa batch v2.1: one-click trigger (fire-and-forget) ──
-    // The pipeline (with retries) runs for minutes inside the musa-batch
-    // function; this sync method only dispatches the run and returns.
+    // ── Musa batch v2.2: one-click trigger (202-validated dispatch) ──
+    // Dispatches the musa-batch BACKGROUND function (up to 15 min in
+    // background, native retry on failure); this sync method only
+    // validates the dispatch (202) and returns immediately.
     case "musa_batch_run": {
       const dryRun = !!params.dryRun;
       let wsId = params.workspaceId || null;
@@ -13511,48 +13513,42 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (!wsId) throw { code: -32000, message: "No se encontró un workspace propio — pasá workspaceId explícito." };
       }
 
+      // dryRun is query-only (no LLM, just a few Supabase reads) so it
+      // runs INLINE here and returns the full preview synchronously. It
+      // cannot go through musa-batch: that function is now a BACKGROUND
+      // function and answers an empty 202 — the preview JSON would never
+      // reach this sync handler.
+      if (dryRun) {
+        const { runDailyBatch } = await import("./musa-batch-core.mjs");
+        const preview = await runDailyBatch({ workspaceId: wsId, dryRun: true });
+        return { started: true, dryRun: true, preview };
+      }
+
+      // Real run: dispatch the musa-batch BACKGROUND function and VALIDATE
+      // the dispatch. Netlify answers 202 immediately (invocation queued,
+      // pipeline runs up to 15 min in background), so this fetch finishes
+      // in well under a second — no fire-and-forget race needed. Anything
+      // other than 202 means the dispatch failed (bad secret, function
+      // not deployed): return started:false with the real error.
       const qs = new URLSearchParams();
       if (wsId) qs.set("workspaceId", wsId);
-      if (dryRun) qs.set("dryRun", "1");
       const url = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "")
         + "/.netlify/functions/musa-batch" + (qs.toString() ? "?" + qs.toString() : "");
-      const runHeaders = { "Content-Type": "application/json" };
+      const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
 
-      // Never await the real run here: the pipeline (plus retry backoff)
-      // can take many minutes and /mcp has a ~10s sync limit. Give the
-      // request ~2.5s to dispatch, then answer. dryRun is query-only
-      // (seconds, no LLM) so it IS awaited — with a 6s ceiling for slow
-      // Supabase days.
-      let dispatchError = null;
-      const runPromise = fetch(url, { method: "GET", headers: runHeaders })
-        .catch(err => { dispatchError = err; return null; });
-
-      if (dryRun) {
-        const settled = await Promise.race([
-          runPromise,
-          new Promise(res => setTimeout(() => res({ timedOut: true }), 6000)),
-        ]);
-        if (dispatchError) {
-          throw { code: -32000, message: "No se pudo invocar musa-batch: " + (dispatchError.message || dispatchError) };
+      try {
+        const res = await fetch(url, { method: "POST", headers: runHeaders, signal: AbortSignal.timeout(5000) });
+        if (res.status === 202) {
+          return { started: true, workspaceId: wsId, dryRun: false, dispatchStatus: 202 };
         }
-        if (settled && !settled.timedOut) {
-          try {
-            const body = JSON.parse(await settled.text());
-            if (settled.status === 200) return { started: true, dryRun: true, preview: body };
-            return { started: false, dryRun: true, error: body?.error || ("musa-batch HTTP " + settled.status) };
-          } catch { /* unparsable body — fall through */ }
-        }
-        return { started: true, dryRun: true, note: "Dry run sigue corriendo en background — reintentá en unos segundos para ver el preview." };
+        const bodyText = await res.text().catch(() => "");
+        let detail = bodyText.slice(0, 300);
+        try { detail = JSON.parse(bodyText)?.error || detail; } catch { /* keep raw body */ }
+        return { started: false, workspaceId: wsId, dryRun: false, error: `musa-batch respondió HTTP ${res.status}${detail ? ": " + detail : ""}` };
+      } catch (e) {
+        return { started: false, workspaceId: wsId, dryRun: false, error: "No se pudo invocar musa-batch: " + (e?.message || e) };
       }
-
-      await Promise.race([runPromise, new Promise(res => setTimeout(res, 2500))]);
-      if (dispatchError) {
-        // Immediate dispatch failure (e.g. function not deployed yet):
-        // surface it plus the manual URL so the caller can trigger directly.
-        return { started: false, workspaceId: wsId, dryRun: false, error: dispatchError.message || String(dispatchError), manualUrl: url };
-      }
-      return { started: true, workspaceId: wsId, dryRun: false, triggerUrl: url };
     }
 
     default:
