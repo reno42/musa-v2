@@ -198,6 +198,26 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
         }
         return true;
       }
+      // Unique index idx_templates_slug_ws(workspace_id, slug): creating a
+      // same-name template in a workspace (e.g. the batch regenerating a
+      // card's design after feedback) collides with the previous row.
+      // Uniquify with the template id suffix and retry — and set tpl.slug so
+      // later updateTemplate upserts reuse it instead of colliding again.
+      if (/duplicate key|unique constraint|idx_templates_slug_ws/i.test(error.message || "") && row.slug) {
+        tpl.slug = `${row.slug}-${tpl.id.slice(-6)}`;
+        row.slug = tpl.slug;
+        const slugRetry = await withTimeout(sb.from("templates").upsert(row) as any, 8000);
+        if (!slugRetry) {
+          console.error(`[templates] Supabase slug-uniquified upsert TIMED OUT (8s) for template ${tpl.id}`);
+          return false;
+        }
+        const { error: errSlug } = slugRetry as any;
+        if (errSlug) {
+          console.error(`[templates] Supabase upsert failed (slug uniquified): ${errSlug.message}. Template: ${tpl.id}`);
+          return false;
+        }
+        return true;
+      }
       console.error(`[templates] Supabase upsert failed: ${error.message}. Template: ${tpl.id}, Payload size: ${JSON.stringify(tpl).length} bytes`);
       return false;
     }
