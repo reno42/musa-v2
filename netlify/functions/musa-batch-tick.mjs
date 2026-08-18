@@ -21,7 +21,7 @@
 const SITE_URL = (process.env.URL || process.env.DEPLOY_URL || "https://design.futuraria.com").replace(/\/$/, "");
 
 export const handler = async () => {
-  const url = SITE_URL + "/.netlify/functions/musa-batch";
+  const url = SITE_URL + "/.netlify/functions/musa-batch-background";
   const headers = {};
   if (process.env.MUSA_BATCH_SECRET) headers["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
 
@@ -33,7 +33,7 @@ export const handler = async () => {
     try { await res.arrayBuffer(); } catch { /* ignore */ }
 
     if (res.status !== 202) {
-      const msg = `[musa-batch-tick] dispatch FAILED: HTTP ${res.status} — is musa-batch deployed as a background function ([functions.musa-batch] background = true)? Is MUSA_BATCH_SECRET set identically on both?`;
+      const msg = `[musa-batch-tick] dispatch FAILED: HTTP ${res.status} — is musa-batch-background deployed (the -background filename suffix is what opts a function into background mode)? Is MUSA_BATCH_SECRET set identically on both?`;
       console.error(msg);
       return { statusCode: 502, body: JSON.stringify({ ok: false, error: msg }) };
     }

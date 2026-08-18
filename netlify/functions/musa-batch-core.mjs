@@ -12,7 +12,7 @@
 //   feedback / done        → never touched
 //
 // Shared by:
-//   - musa-batch.mjs (Netlify scheduled function, background ~15 min)
+//   - musa-batch-background.mjs (Netlify background function, ~15 min)
 //   - mcp.mjs process_daily_batch (manual trigger / dryRun testing)
 //
 // LLM keys are resolved per-user via BYOK (getUserKey) with a

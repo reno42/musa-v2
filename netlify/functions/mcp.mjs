@@ -13544,7 +13544,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const qs = new URLSearchParams();
       if (wsId) qs.set("workspaceId", wsId);
       const url = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "")
-        + "/.netlify/functions/musa-batch" + (qs.toString() ? "?" + qs.toString() : "");
+        + "/.netlify/functions/musa-batch-background" + (qs.toString() ? "?" + qs.toString() : "");
       const runHeaders = {};
       if (process.env.MUSA_BATCH_SECRET) runHeaders["x-batch-secret"] = process.env.MUSA_BATCH_SECRET;
 

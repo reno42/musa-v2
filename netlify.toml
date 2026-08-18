@@ -77,16 +77,18 @@
   schedule = "0 * * * *"
 
 # Background function: the real Musa batch pipeline (leader →
-# implementer → reviewer over enabled Kanban cards). URL-invocable —
+# implementer → reviewer over enabled Kanban cards). Background mode is
+# opted in by the FILENAME SUFFIX "-background" (netlify/functions/
+# musa-batch-background.mjs) — Netlify's actual mechanism. (The v2.2
+# `[functions.musa-batch] background = true` key was a no-op: the
+# function answered synchronously, caller fetch-aborts killed long runs
+# mid-LLM, and multi-frame generations never finished.) URL-invocable —
 # callers get an immediate empty 202 while it runs — with a 15-minute
-# execution limit, and Netlify retries failed invocations natively
-# (1 min, then 2 min). Consumers: the hourly musa-batch-tick and the
-# Kanban "Ejecutar batch" button (mcp.mjs musa_batch_run) — both send
-# x-batch-secret (MUSA_BATCH_SECRET).
+# execution limit. Consumers: the hourly musa-batch-tick and the Kanban
+# "Ejecutar batch" button (mcp.mjs musa_batch_run) — both send
+# x-batch-secret (MUSA_BATCH_SECRET) and validate the 202.
 # Credits: background functions bill execution time; a run with no
 # pending cards finishes in seconds, so 24 hourly ticks/day stay cheap.
-[functions.musa-batch]
-  background = true
 
 [[redirects]]
   from = "/*"

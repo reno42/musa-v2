@@ -1,40 +1,43 @@
 // ═══════════════════════════════════════════════════════════════
-// musa-batch.mjs — Musa Batch pipeline (Kanban v2.2, BACKGROUND)
+// musa-batch-background.mjs — Musa Batch pipeline (Kanban v2.3, BACKGROUND)
 // ═══════════════════════════════════════════════════════════════
 //
-// ARCHITECTURE (v2.2 — Netlify Background Function):
+// ARCHITECTURE (v2.3 — Netlify Background Function):
 //   Scheduled functions have a 30-second execution limit and cannot be
 //   invoked by URL, so the LLM pipeline cannot live in one. This
-//   function runs as a BACKGROUND function instead
-//   ([functions.musa-batch] background = true in netlify.toml):
+//   function runs as a BACKGROUND function instead — opted in by the
+//   `-background` FILENAME SUFFIX (Netlify's actual mechanism; the
+//   `[functions.musa-batch] background = true` config key we used in
+//   v2.2 was a no-op, which left the function answering SYNCHRONOUSLY:
+//   callers waited for the full pipeline, their fetch aborts killed
+//   long runs mid-LLM, and multi-frame generations never finished):
 //     - URL-invocable: every HTTP call gets an immediate empty 202 and
 //       this handler runs in the background for up to 15 minutes. The
 //       handler's own response NEVER reaches the HTTP caller — it only
 //       lands in the Netlify function logs.
-//     - Native retry: if this handler finishes with an error status,
-//       Netlify re-invokes it after 1 min and again after 2 min. There
-//       is no in-handler sleep-retry anymore (v2.1 removed): sleeping
-//       would bill execution credits and stack with the native retries.
+//     - No native retries: background functions are not re-invoked on
+//       error. Transient errors return 500 for the logs, and the hourly
+//       musa-batch-tick is the self-healing safety net.
 //     - Real results are delivered via Supabase (card status/activity/
 //       checkpoints) and Telegram (notify_on_complete), never via HTTP.
 //
 // Consumers (both must send x-batch-secret when MUSA_BATCH_SECRET is set):
 //   1. musa-batch-tick — scheduled function (hourly, 0 * * * *) that
-//      only dispatches here. The hourly cadence self-heals outages
-//      that outlast the native retries.
+//      only dispatches here. The hourly cadence self-heals failed runs
+//      (background functions have no native retries).
 //   2. mcp.mjs musa_batch_run — the Kanban "Ejecutar batch" button.
 //      It POSTs here, checks the 202, and answers {started:true/false}
 //      with the real dispatch result.
 //
 // Error policy:
 //   - Transient infra failures (Supabase 503 / upstream connect /
-//     timeout / network): return 500 → Netlify's native retry re-runs
-//     in 1/2 min. Cards already advanced are skipped on retry (every
+//     timeout / network): return 500 → logged; the next hourly tick
+//     re-runs. Cards already advanced are skipped on re-run (every
 //     write is status-guarded), and the 2-minute hands-off guard keeps
-//     a 1-minute-later retry from double-stepping freshly-touched cards.
+//     an immediate re-run from double-stepping freshly-touched cards.
 //   - Business errors (missing config, invalid data, bad secret):
-//     return 200 {ok:false} → NO native retry (retrying a config error
-//     three times only burns execution credits).
+//     return 200 {ok:false} → no point retrying a config error
+//     (it only burns execution credits).
 //
 // Credits note: background functions bill per execution time. A run
 // with no pending cards finishes in seconds — the 24 hourly ticks/day
