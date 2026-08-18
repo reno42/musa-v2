@@ -455,9 +455,17 @@ async function runReviewerStep(sb, card, llm) {
 
   let html = "";
   let css = "";
+  let frames = [];
   if (card.template_id) {
     const tpl = await templates.getTemplate(card.template_id);
-    if (tpl) { html = tpl.html || ""; css = tpl.css || ""; }
+    if (tpl) {
+      html = tpl.html || "";
+      css = tpl.css || "";
+      // Multi-frame templates: the top-level html/css is only the frame-1
+      // mirror — the real set lives in frames[]. Without it, acceptance
+      // items like "3 posts" can never pass review.
+      if (Array.isArray(tpl.frames) && tpl.frames.length > 1) frames = tpl.frames;
+    }
   }
   const persists = !!(card.template_id && html && html.length >= 20);
   codeChecks.push({
@@ -475,23 +483,44 @@ async function runReviewerStep(sb, card, llm) {
       : [];
 
   // ── LLM checks (C2 acceptance + C3 geometry) ──
-  const system = `Eres el REVIEWER de un pipeline de diseño autónomo. Evaluás el HTML/CSS generado contra los criterios de aceptación y la calidad geométrica. Sé estricto pero pragmático: solo rechazá si el diseño NO cumple el criterio de forma objetiva.
+  const system = `Eres el REVIEWER de un pipeline de diseño autónomo. Evaluás el HTML/CSS generado contra los criterios de aceptación y la calidad geométrica. Sé estricto pero pragmático: solo rechazá si el diseño NO cumple el criterio de forma objetiva. Si el diseño tiene varios frames, cada criterio aplica al CONJUNTO completo (salvo que hable de un frame específico).
 Respondé SOLO JSON válido con esta forma:
 {
   "c2": [{ "item": "texto del criterio", "passed": true, "notes": "evidencia en una línea" }],
   "c3": { "passed": true, "notes": "evaluación de desbordes/texto cortado/solapamientos" }
 }`;
+  // Multi-frame: one section per frame with a shared size budget so the
+  // prompt stays bounded even at 10 frames. Single-frame keeps the exact
+  // previous prompt shape.
+  const frameSections = frames.length > 1
+    ? frames.map((f, i) => {
+        const n = frames.length;
+        const htmlBudget = Math.max(3000, Math.floor(18000 / n));
+        const cssBudget = Math.max(1500, Math.floor(9000 / n));
+        return [
+          `── Frame ${i + 1}/${n} (${f.width}x${f.height}) ──`,
+          "HTML:",
+          (f.html || "").slice(0, htmlBudget) + ((f.html || "").length > htmlBudget ? "\n... (truncado)" : ""),
+          "CSS:",
+          (f.css || "").slice(0, cssBudget) + ((f.css || "").length > cssBudget ? "\n... (truncado)" : ""),
+        ].join("\n");
+      })
+    : null;
   const user = [
     `Tarjeta: ${card.title}`,
     `Brief: ${card.brief || "(sin brief)"}`,
     `Copy: ${card.copy_draft || "(sin copy)"}`,
     acceptance.length ? `Criterios de aceptación:\n${acceptance.map((a, i) => `${i + 1}. ${a}`).join("\n")}` : "Sin criterios de aceptación formales — evaluá solo calidad general.",
     "",
-    "HTML generado:",
-    html.length > 9000 ? html.slice(0, 9000) + "\n... (truncado)" : (html || "(vacío)"),
-    "",
-    "CSS generado:",
-    css.length > 6000 ? css.slice(0, 6000) + "\n... (truncado)" : (css || "(vacío)"),
+    frameSections
+      ? `Diseño multi-frame: ${frames.length} frames que forman un conjunto (carrusel). Los criterios sobre cantidad de posts/frames aplican al conjunto completo:\n\n${frameSections.join("\n\n")}`
+      : [
+          "HTML generado:",
+          html.length > 9000 ? html.slice(0, 9000) + "\n... (truncado)" : (html || "(vacío)"),
+          "",
+          "CSS generado:",
+          css.length > 6000 ? css.slice(0, 6000) + "\n... (truncado)" : (css || "(vacío)"),
+        ].join("\n"),
   ].join("\n");
 
   let c2 = acceptance.map(item => ({ item, passed: null, notes: null }));
