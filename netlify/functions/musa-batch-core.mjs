@@ -241,6 +241,7 @@ async function runLeaderStep(sb, card, llm) {
         brand_id: brandId,
         status: "design",
         assigned_to: "musa-batch-leader",
+        blocker_reason: null, // a successful step clears any stale blocker
         updated_at: now,
       })
       .eq("id", card.id).eq("status", card.status).select().maybeSingle();
@@ -285,6 +286,7 @@ Resolvé ambigüedades con decisiones razonables. Respondé SOLO JSON válido co
     brand_id: brandId, // server-side resolution — never from the LLM
     status: "design",
     assigned_to: "musa-batch-leader",
+    blocker_reason: null, // a successful step clears any stale blocker
     updated_at: now,
   };
   const { data: updated, error } = await sb.from("design_kanban_tasks")
@@ -426,6 +428,7 @@ async function runDesignStep(sb, card, llm) {
       render_url: result.renderUrl,
       checkpoint_json: {},
       assigned_to: "musa-batch-implementer",
+      blocker_reason: null, // a successful step clears any stale blocker
       updated_at: now,
     })
     .eq("id", card.id).eq("status", "design").select().maybeSingle();
@@ -539,7 +542,7 @@ Respondé SOLO JSON válido con esta forma:
 
   if (approved) {
     await sb.from("design_kanban_tasks")
-      .update({ status: "done", completed_at: now, updated_at: now, checkpoint_json: checkpointJson, assigned_to: "musa-batch-reviewer" })
+      .update({ status: "done", completed_at: now, updated_at: now, checkpoint_json: checkpointJson, assigned_to: "musa-batch-reviewer", blocker_reason: null })
       .eq("id", card.id).eq("status", "review");
     await logActivity(sb, card.id, "review", "done", "Reviewer batch: C1-C5 aprobados", "musa-batch-reviewer");
     return { status: "done", approved: true };

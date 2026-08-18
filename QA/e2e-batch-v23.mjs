@@ -194,6 +194,19 @@ switch (cmd) {
     break;
   }
 
+  case "render": {
+    const templateId = rest[0];
+    if (!templateId) { console.error("usage: render <templateId>"); process.exit(1); }
+    const r = await callMCP("render_html_template", { templateId });
+    console.log(JSON.stringify({ ...r, html: r.html ? `<${r.html.length} chars>` : undefined }, null, 2));
+    if (r.url) {
+      const res = await fetch(r.url);
+      const body = await res.text();
+      console.log(`render url GET → HTTP ${res.status}, ${body.length} bytes`);
+    }
+    break;
+  }
+
   case "verify": {
     const cardId = rest[0];
     if (!cardId) { console.error("usage: verify <cardId>"); process.exit(1); }
@@ -239,6 +252,6 @@ switch (cmd) {
   }
 
   default:
-    console.error("unknown or missing subcommand (check | detail | update | move | trigger | poll | log | verify)");
+    console.error("unknown or missing subcommand (check | detail | update | move | trigger | poll | log | render | verify)");
     process.exit(1);
 }
