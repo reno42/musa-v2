@@ -150,9 +150,29 @@ function buildDesignActionFromCard(card) {
     name: card.title || `Batch design ${new Date().toISOString().slice(0, 10)}`,
     width,
     height,
+    frameCount: normalizeFrameCount(card.frame_count),
+    cta: card.cta || undefined,
     instructions: parts.filter(Boolean).join("\n") || "Diseño sin instrucciones — creá algo limpio y profesional.",
     style: styleNote || undefined,
   };
+}
+
+/** Clamp card.frame_count to a safe 1..10 (null/undefined/0 → 1). */
+export function normalizeFrameCount(value) {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, 10);
+}
+
+/**
+ * Deterministic per-frame role for multi-frame cards (no LLM decisions):
+ * frame 1 = cover/hook, last = closing/CTA, middle = one key idea each.
+ */
+export function frameHint(index, total, cta) {
+  if (total <= 1) return "";
+  if (index === 1) return "This is the COVER frame: dominant title, strong hook, minimal text.";
+  if (index === total) return `This is the CLOSING frame: reinforce the call to action${cta ? ` ("${cta}")` : ""}.`;
+  return `This is a DEVELOPMENT frame (${index} of ${total}): communicate ONE key idea with supporting detail.`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -180,20 +200,65 @@ async function gatherLeaderContext(sb, card) {
 }
 
 /**
- * One LLM call. Enriches the card (copy_draft, tone, cta, brand_id,
- * frame hint) and moves it backlog/research/draft → design.
+ * Server-side brand resolution — the LLM NEVER decides database IDs
+ * (a hallucinated brand_id caused FK violations). Resolution order:
+ *   1. The card's own brand_id, if the row still exists (stale-FK defense)
+ *   2. The workspace's single brand, if exactly one exists
+ *   3. null (the column is nullable — "no brand" is valid)
+ */
+export async function resolveBrandId(sb, card) {
+  try {
+    if (card.brand_id) {
+      const { data: own } = await sb.from("brands").select("id").eq("id", card.brand_id).maybeSingle();
+      if (own) return card.brand_id;
+    }
+    if (card.workspace_id) {
+      const { data: brands } = await sb.from("brands").select("id")
+        .eq("workspace_id", card.workspace_id).limit(2);
+      if (brands && brands.length === 1) return brands[0].id;
+    }
+  } catch { /* non-fatal → null */ }
+  return null;
+}
+
+/**
+ * Moves a card backlog/research/draft → design.
+ * - If the card already carries approved copy (copy_draft), the LLM is
+ *   SKIPPED entirely — deterministic pass-through, no hallucination risk.
+ * - Otherwise one LLM call writes ONLY the copy (copy_draft, tone, cta).
+ *   brand_id is resolved server-side (see resolveBrandId), never by the LLM.
  * Returns { status: "design" } or throws.
  */
 async function runLeaderStep(sb, card, llm) {
+  const brandId = await resolveBrandId(sb, card);
+  const hasCopy = !!(card.copy_draft && String(card.copy_draft).trim());
+
+  if (hasCopy) {
+    // ── Fast path: copy already on the card → no LLM call at all ──
+    const now = new Date().toISOString();
+    const { data: updated, error } = await sb.from("design_kanban_tasks")
+      .update({
+        brand_id: brandId,
+        status: "design",
+        assigned_to: "musa-batch-leader",
+        updated_at: now,
+      })
+      .eq("id", card.id).eq("status", card.status).select().maybeSingle();
+    if (error) throw new Error("Leader step update failed: " + error.message);
+    if (!updated) throw new Error(`Leader step: card ${card.id} changed concurrently (was ${card.status})`);
+
+    await logActivity(sb, card.id, card.status, "design", "Leader batch: copy ya presente en la tarjeta — LLM omitido", "musa-batch-leader");
+    return { status: "design", notes: "copy ya presente (LLM omitido)", skippedLLM: true };
+  }
+
+  // ── LLM path: copy generation ONLY — no IDs, no sizes, no DB fields ──
   const context = await gatherLeaderContext(sb, card);
-  const system = `Eres el LEADER de un pipeline de diseño autónomo. Tu trabajo: convertir una tarjeta de Kanban en un brief listo para que un implementer genere el diseño. NO generás HTML — solo resolvés contexto y copy.
+  const system = `Eres el LEADER de un pipeline de diseño autónomo. Tu trabajo: escribir el COPY (los textos) del diseño a partir de la tarjeta. NO generás HTML. NO inventás IDs de base de datos, marcas ni medidas — solo contenido textual.
 Resolvé ambigüedades con decisiones razonables. Respondé SOLO JSON válido con esta forma:
 {
   "copy_draft": "texto final que debe aparecer en el diseño (2-5 frases)",
   "tone": "tono del contenido (profesional, casual, elegante, etc.)",
   "cta": "llamado a la acción corto, o null",
-  "brand_id": "id de marca a usar, o null",
-  "frame_count": 1,
   "ready": true,
   "notes": "decisiones tomadas en una línea"
 }`;
@@ -203,7 +268,6 @@ Resolvé ambigüedades con decisiones razonables. Respondé SOLO JSON válido co
     `Brief: ${card.brief || "(sin brief — inventá uno coherente con el título)"}`,
     card.tone ? `Tono actual: ${card.tone}` : "",
     card.cta ? `CTA actual: ${card.cta}` : "",
-    card.copy_draft ? `Borrador previo: ${card.copy_draft}` : "",
     context ? `Contexto resuelto:\n${context}` : "",
   ].filter(Boolean).join("\n");
 
@@ -218,7 +282,7 @@ Resolvé ambigüedades con decisiones razonables. Respondé SOLO JSON válido co
     copy_draft: parsed.copy_draft || card.copy_draft || null,
     tone: parsed.tone || card.tone || null,
     cta: typeof parsed.cta === "string" ? parsed.cta : null,
-    brand_id: parsed.brand_id || card.brand_id || null,
+    brand_id: brandId, // server-side resolution — never from the LLM
     status: "design",
     assigned_to: "musa-batch-leader",
     updated_at: now,
@@ -228,7 +292,7 @@ Resolvé ambigüedades con decisiones razonables. Respondé SOLO JSON válido co
   if (error) throw new Error("Leader step update failed: " + error.message);
   if (!updated) throw new Error(`Leader step: card ${card.id} changed concurrently (was ${card.status})`);
 
-  await logActivity(sb, card.id, card.status, "design", `Leader batch: ${parsed.notes || "contexto resuelto"}`, "musa-batch-leader");
+  await logActivity(sb, card.id, card.status, "design", `Leader batch: ${parsed.notes || "copy generado"}`, "musa-batch-leader");
   return { status: "design", notes: parsed.notes || null };
 }
 
@@ -254,6 +318,7 @@ async function executeDesignCreation(action, llmConfig) {
   const height = action.height || 1080;
   const name = action.name || `Batch design ${new Date().toISOString().slice(0, 10)}`;
   const styleNote = action.style ? `Estilo visual: ${action.style}.` : "";
+  const frameCount = normalizeFrameCount(action.frameCount);
 
   const systemPrompt = `You are a design generator. You receive instructions for a visual design and return ONLY raw HTML and CSS code. No markdown, no explanations.
 
@@ -266,44 +331,78 @@ Rules:
 - Text must be readable, properly sized, and positioned within bounds.
 - Colors must be hex (#RRGGBB). No CSS variables in the output.
 ${styleNote}`;
-  const userPrompt = `Design instructions: ${action.instructions}`;
 
-  const llmResponse = await runLLMStep({ system: systemPrompt, user: userPrompt, llmKey, provider, model, maxTokens: 4096 });
+  // ── One LLM call per frame (multi-frame cards honor card.frame_count) ──
+  const frameContents = [];
+  for (let i = 1; i <= frameCount; i++) {
+    const userPrompt = frameCount > 1
+      ? `Design instructions: ${action.instructions}\n\nThis design has ${frameCount} frames shown in sequence as a set. ${frameHint(i, frameCount, action.cta)}\nDesign ONLY frame ${i} of ${frameCount}. Do not repeat other frames' content.`
+      : `Design instructions: ${action.instructions}`;
 
-  const htmlMatch = llmResponse.match(/<HTML>\s*([\s\S]*?)\s*<\/HTML>/i);
-  const cssMatch = llmResponse.match(/<CSS>\s*([\s\S]*?)\s*<\/CSS>/i);
-  let html = htmlMatch ? htmlMatch[1].trim() : "";
-  let css = cssMatch ? cssMatch[1].trim() : "";
+    const llmResponse = await runLLMStep({ system: systemPrompt, user: userPrompt, llmKey, provider, model, maxTokens: 4096 });
 
-  if (!html) {
-    const fenced = llmResponse.match(/```html\s*([\s\S]*?)```/i);
-    if (fenced) html = fenced[1].trim();
-  }
-  if (!css) {
-    const fenced = llmResponse.match(/```css\s*([\s\S]*?)```/i);
-    if (fenced) css = fenced[1].trim();
-  }
-  if (!html || html.length < 20) {
-    throw new Error("LLM did not produce valid HTML. Response: " + llmResponse.slice(0, 200));
+    const htmlMatch = llmResponse.match(/<HTML>\s*([\s\S]*?)\s*<\/HTML>/i);
+    const cssMatch = llmResponse.match(/<CSS>\s*([\s\S]*?)\s*<\/CSS>/i);
+    let html = htmlMatch ? htmlMatch[1].trim() : "";
+    let css = cssMatch ? cssMatch[1].trim() : "";
+
+    if (!html) {
+      const fenced = llmResponse.match(/```html\s*([\s\S]*?)```/i);
+      if (fenced) html = fenced[1].trim();
+    }
+    if (!css) {
+      const fenced = llmResponse.match(/```css\s*([\s\S]*?)```/i);
+      if (fenced) css = fenced[1].trim();
+    }
+    if (!html || html.length < 20) {
+      throw new Error(`LLM did not produce valid HTML for frame ${i}/${frameCount}. Response: ` + llmResponse.slice(0, 200));
+    }
+    frameContents.push({ html, css });
   }
 
   const tpl = await templates.createTemplate(name, width, height, null, null, llmConfig.workspaceId || null);
   if (!tpl) throw new Error("Failed to create template");
 
+  // Top-level html/css = frame 1 (legacy consumers + reviewer C4 check).
+  // Multi-frame: real frames[] with per-frame html/css — the same shape
+  // MCP create_frame/update_html_frame persists and EditorV2 loads
+  // natively (each frame renders in its own isolated shadow root).
   tpl.engine = "html";
-  tpl.html = html;
-  tpl.css = css;
+  tpl.html = frameContents[0].html;
+  tpl.css = frameContents[0].css;
+  tpl.frames = frameCount > 1
+    ? frameContents.map((f, idx) => ({
+        id: `frame_batch_${Date.now().toString(36)}_${idx + 1}`,
+        templateId: tpl.id,
+        name: `Frame ${idx + 1}`,
+        x: idx * (width + 120), y: 0,
+        width, height,
+        fill: "#ffffff", background: "#ffffff",
+        opacity: 1, order: idx,
+        objects: [],
+        parentFrameId: null,
+        layoutMode: "NONE",
+        clipsContent: true,
+        constraints: {},
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        html: f.html,
+        css: f.css,
+      }))
+    : (tpl.frames || []);
 
   await templates.updateTemplate(tpl.id, {
     engine: "html",
-    html,
-    css,
-    frames: tpl.frames || [],
+    html: tpl.html,
+    css: tpl.css,
+    frames: tpl.frames,
   });
 
   const verify = await templates.getTemplate(tpl.id);
   if (!verify || !verify.html || verify.html.length < 20) {
     throw new Error("Template verification failed — no HTML content after save");
+  }
+  if (frameCount > 1 && (!Array.isArray(verify.frames) || verify.frames.length !== frameCount)) {
+    throw new Error(`Template verification failed — expected ${frameCount} frames, persisted ${Array.isArray(verify.frames) ? verify.frames.length : 0}`);
   }
 
   return {
@@ -311,6 +410,7 @@ ${styleNote}`;
     renderUrl: null, // render happens lazily on first editor open
     width,
     height,
+    frameCount,
   };
 }
 
@@ -332,8 +432,8 @@ async function runDesignStep(sb, card, llm) {
   if (error) throw new Error("Design step update failed: " + error.message);
   if (!updated) throw new Error(`Design step: card ${card.id} changed concurrently (was design)`);
 
-  await logActivity(sb, card.id, "design", "review", `Implementer batch: template ${result.templateId} generado`, "musa-batch-implementer");
-  return { status: "review", templateId: result.templateId };
+  await logActivity(sb, card.id, "design", "review", `Implementer batch: template ${result.templateId} generado (${result.frameCount || 1} frame${(result.frameCount || 1) > 1 ? "s" : ""})`, "musa-batch-implementer");
+  return { status: "review", templateId: result.templateId, frameCount: result.frameCount || 1 };
 }
 
 // ─────────────────────────────────────────────────────────────
