@@ -19,7 +19,7 @@
 // Reads MCP_ADMIN_KEY from .env.design-supabase (value never printed).
 // ═══════════════════════════════════════════════════════════════════
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -200,9 +200,15 @@ switch (cmd) {
     const r = await callMCP("render_html_template", { templateId });
     console.log(JSON.stringify({ ...r, html: r.html ? `<${r.html.length} chars>` : undefined }, null, 2));
     if (r.url) {
-      const res = await fetch(r.url);
+      const abs = r.url.startsWith("http") ? r.url : "https://design.futuraria.com" + r.url;
+      const res = await fetch(abs);
       const body = await res.text();
-      console.log(`render url GET → HTTP ${res.status}, ${body.length} bytes`);
+      console.log(`render url GET ${abs} → HTTP ${res.status}, ${body.length} bytes`);
+    }
+    if (r.html) {
+      const out = resolve(root, "QA", `render-${templateId}.html`);
+      writeFileSync(out, r.html, "utf-8");
+      console.log(`render html saved → ${out} (open in browser: auto-downloads the PNG)`);
     }
     break;
   }
