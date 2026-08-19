@@ -7,8 +7,71 @@ import {
   findExistingCutout,
   getSegmentJob,
 } from "../services/segmentation.js";
+import { normalizeSegmentBox, normalizeSegmentPoints } from "../../../shared/segmentPoints.ts";
 
 export const segmentationRoutes = Router();
+
+type SegmentInputResolution =
+  | { ok: true; inputUrl: string; sourceAssetId: string | null; sourceName: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Resolves a job's input image URL from { assetId | url | dataUrl } — the
+ * same contract as remove-background minus its cutout idempotency (click
+ * jobs are prompt-specific and always re-run). Returns an HTTP error
+ * descriptor instead of throwing so the caller can answer with the right
+ * status code.
+ */
+async function resolveSegmentInput(body: Record<string, unknown>): Promise<SegmentInputResolution> {
+  const { assetId, url, dataUrl, workspaceId, name } = body;
+  if (assetId) {
+    const sb = getSupabase();
+    if (!sb) return { ok: false, status: 503, error: "Supabase not configured" };
+    const { data: asset, error } = await sb.from("assets")
+      .select("id, name, url, workspace_id")
+      .eq("id", assetId)
+      .maybeSingle();
+    if (error) return { ok: false, status: 500, error: error.message };
+    if (!asset) return { ok: false, status: 404, error: "Asset not found" };
+    if (asset.workspace_id && asset.workspace_id !== workspaceId) {
+      return { ok: false, status: 403, error: "Asset belongs to another workspace" };
+    }
+    return {
+      ok: true,
+      inputUrl: asset.url,
+      sourceAssetId: asset.id,
+      sourceName: (name as string) || asset.name || "",
+    };
+  }
+  if (dataUrl) {
+    // Inline image → store it as a workspace asset first. That gives the
+    // job a bucket URL (CORS-clean) and the same src:<id> provenance.
+    const matches = String(dataUrl).match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+    if (!matches) return { ok: false, status: 400, error: "Invalid dataUrl format" };
+    const mimeType = matches[1];
+    const imageBuffer = Buffer.from(matches[2], "base64");
+    if (imageBuffer.length > 5 * 1024 * 1024) {
+      return { ok: false, status: 413, error: "La imagen supera el límite de 5MB" };
+    }
+    const id = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const ext = mimeType.split("/")[1] === "svg+xml" ? "svg" : mimeType.split("/")[1] || "png";
+    const filename = `${id}.${ext}`;
+    const publicUrl = await uploadAsset(filename, imageBuffer, mimeType, workspaceId as string);
+    const sb = getSupabase();
+    if (sb) {
+      const { error } = await sb.from("assets").upsert({
+        id, name: name || "Imagen", filename,
+        mime_type: mimeType, size_bytes: imageBuffer.length,
+        url: publicUrl, tags: [], workspace_id: workspaceId,
+      });
+      if (error) return { ok: false, status: 500, error: error.message };
+    }
+    return { ok: true, inputUrl: publicUrl, sourceAssetId: id, sourceName: (name as string) || "Imagen" };
+  }
+  const trimmed = String(url || "").trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { ok: false, status: 400, error: "url must be http(s)" };
+  return { ok: true, inputUrl: trimmed, sourceAssetId: null, sourceName: (name as string) || "" };
+}
 
 /**
  * POST /api/segment/remove-background
@@ -110,6 +173,61 @@ segmentationRoutes.post("/remove-background", async (req, res) => {
     });
   } catch (err: any) {
     console.error("[segment] remove-background failed:", err?.message || err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/segment/click
+ * Body: { assetId | url | dataUrl, workspaceId, points?: [{x,y,neg}],
+ *        box?: {x,y,w,h}, imageWidth?, imageHeight?, name? }
+ *
+ * Creates a queued segment_jobs row (kind=segment_click, MobileSAM: one
+ * encoder pass, then the decoder runs with every prompt point together) and
+ * dispatches the image-segment-background BACKGROUND function (immediate
+ * 202). Points/box are normalized 0..1 over the image; px coordinates are
+ * accepted when imageWidth/imageHeight are given. The caller polls
+ * GET /api/segment/jobs/:id.
+ */
+segmentationRoutes.post("/click", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { workspaceId } = body;
+    if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+    if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+      return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+    }
+    const points = normalizeSegmentPoints(body.points, body.imageWidth, body.imageHeight);
+    const box = normalizeSegmentBox(body.box, body.imageWidth, body.imageHeight);
+    if (!points && !box) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight",
+      });
+    }
+    const input = await resolveSegmentInput(body);
+    if (!input.ok) return res.status(input.status).json({ success: false, error: input.error });
+
+    const job = await createSegmentJob("segment_click", input.inputUrl, workspaceId, {
+      points: points || [],
+      ...(box ? { box } : {}),
+      sourceAssetId: input.sourceAssetId,
+      sourceName: input.sourceName,
+    });
+    const dispatch = await dispatchSegmentJob(job.id);
+    return res.status(202).json({
+      success: true,
+      jobId: job.id,
+      status: job.status,
+      dispatched: dispatch.dispatched,
+      ...(dispatch.dispatched ? {} : { dispatchError: dispatch.error }),
+      pollUrl: `/api/segment/jobs/${job.id}`,
+      hint: dispatch.dispatched
+        ? undefined
+        : "El job quedó queued; el sweep del background function lo procesará igual.",
+    });
+  } catch (err: any) {
+    console.error("[segment] click failed:", err?.message || err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

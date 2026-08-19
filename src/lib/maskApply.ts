@@ -8,6 +8,7 @@ import {
   readLayerBox,
   readViewBox,
   serializeBrushesAttr,
+  transformPathData,
   type Box,
   type BrushStroke,
   type MaskMode,
@@ -180,7 +181,10 @@ export function applyBrushStroke(
     svg.setAttribute("data-layer-id", pathLayerId);
     svg.setAttribute("data-layer-kind", "mask");
     svg.setAttribute("data-layer-name", "Máscara de imagen");
-    svg.setAttribute("style", `position:absolute;left:${imageBox.left}px;top:${imageBox.top}px;width:${Math.max(imageBox.width, 1)}px;height:${Math.max(imageBox.height, 1)}px;overflow:visible;`);
+    // Pinned to the FRAME ORIGIN (1×1, overflow visible): the path data is
+    // in frame coordinates, so the dashed selection outline overlays the
+    // image exactly instead of offsetting by the image's own origin.
+    svg.setAttribute("style", "position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
@@ -189,7 +193,7 @@ export function applyBrushStroke(
     // target for subsequent eraser drags. pointer-events: none on the mask
     // layer's rule keeps it out of the way even where it would overlap.
     img.before(svg);
-    css = `${css.trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: ${imageBox.left}px;\n  top: ${imageBox.top}px;\n  width: ${Math.max(imageBox.width, 1)}px;\n  height: ${Math.max(imageBox.height, 1)}px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+    css = `${css.trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
     maskCreated = true;
   }
 
@@ -199,6 +203,101 @@ export function applyBrushStroke(
 
   const mode: MaskMode = existingPath?.getAttribute("data-mask-mode") === "exclude" ? "exclude" : "include";
   const outcome = bakeOnDocument(document, css, pathLayerId, imageLayerId, mode);
+  if (!outcome) return null;
+  return { html: serializeFragment(document), css: outcome.css, pathLayerId, maskCreated };
+}
+
+/**
+ * F2 (Varita): applies a traced segmentation result to an image layer.
+ * `dNorm` is the job's svgPath.dNorm — normalized 0..1 over the image — so
+ * it is scaled into frame coordinates and stored in a mask svg pinned to
+ * the frame origin (no viewBox, overflow visible), the same convention as
+ * the eraser's auto-mask: the dashed outline overlays the subject exactly
+ * and the bake lands the clip in image-local space.
+ *
+ * When a mask path already targets the image, its d is replaced in THAT
+ * svg's own coordinate space (viewBox-aware) instead of creating a second
+ * layer; legacy no-viewBox masks get re-pinned to the frame origin.
+ */
+export function applySegmentMaskPath(
+  html: string,
+  css: string,
+  imageLayerId: string,
+  dNorm: string,
+): { html: string; css: string; pathLayerId: string; maskCreated: boolean } | null {
+  if (!dNorm || !dNorm.trim()) return null;
+  const document = parseFragment(html);
+  const img = findLayer(document, imageLayerId);
+  if (!img || img.tagName.toLowerCase() !== "img") return null;
+  const imageBox = readLayerBox(img.getAttribute("style"), css, imageLayerId);
+  if (!imageBox || imageBox.width <= 0 || imageBox.height <= 0) return null;
+
+  // dNorm is 0..1 over the image → frame coordinates over the img's box.
+  const frameD = transformPathData(dNorm, {
+    sx: imageBox.width, sy: imageBox.height, dx: imageBox.left, dy: imageBox.top,
+  });
+
+  let pathLayerId: string | null = null;
+  let maskCreated = false;
+  const existingPath = [...document.body.querySelectorAll(`path[data-mask-for="${imageLayerId}"]`)]
+    .find(element => element.getAttribute("data-mask-for") === imageLayerId);
+  if (existingPath) {
+    const svg = existingPath.matches("svg") ? existingPath : existingPath.closest("svg[data-layer-id]");
+    pathLayerId = svg?.getAttribute("data-layer-id") || existingPath.getAttribute("data-layer-id");
+  }
+
+  let d = frameD;
+  if (pathLayerId) {
+    const svg = findLayer(document, pathLayerId);
+    if (!svg) return null;
+    const vb = readViewBox(svg.getAttribute("viewBox"));
+    const pathBox = readLayerBox(svg.getAttribute("style"), css, pathLayerId);
+    if (!pathBox) return null;
+    if (vb) {
+      // Map frame coords into the svg's own space:
+      // p = (frame - svgTopLeft) / scale + vbOrigin.
+      const sx = pathBox.width / vb.width;
+      const sy = pathBox.height / vb.height;
+      if (!Number.isFinite(sx) || !Number.isFinite(sy) || Math.abs(sx) < 1e-6 || Math.abs(sy) < 1e-6) return null;
+      d = transformPathData(frameD, { sx: 1 / sx, sy: 1 / sy, dx: vb.left - pathBox.left / sx, dy: vb.top - pathBox.top / sy });
+    } else if (pathBox.left !== 0 || pathBox.top !== 0 || pathBox.width !== 1 || pathBox.height !== 1) {
+      // No-viewBox masks render in frame coordinates; pin the svg to the
+      // frame origin so the selection outline overlays the subject exactly.
+      svg.setAttribute("style", "position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;");
+      css = updateCssProperties(css, `[data-layer-id="${pathLayerId}"]`, {
+        position: "absolute",
+        left: "0px",
+        top: "0px",
+        width: "1px",
+        height: "1px",
+        overflow: "visible",
+      });
+      d = frameD;
+    }
+  } else {
+    // Fresh mask layer pinned to the frame origin (frame-coords path data).
+    pathLayerId = createLayerId();
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("data-layer-id", pathLayerId);
+    svg.setAttribute("data-layer-kind", "mask");
+    svg.setAttribute("data-layer-name", "Selección Varita");
+    svg.setAttribute("style", "position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", frameD);
+    path.setAttribute("fill", "none");
+    svg.appendChild(path);
+    img.before(svg);
+    css = `${css.trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+    maskCreated = true;
+  }
+
+  const svgEl = findLayer(document, pathLayerId);
+  const pathEl = svgEl && (svgEl.matches("path") ? svgEl : svgEl.querySelector("path"));
+  if (!pathEl) return null;
+  pathEl.setAttribute("d", d);
+
+  // A fresh subject selection: the wand always lands in include mode.
+  const outcome = bakeOnDocument(document, css, pathLayerId, imageLayerId, "include");
   if (!outcome) return null;
   return { html: serializeFragment(document), css: outcome.css, pathLayerId, maskCreated };
 }

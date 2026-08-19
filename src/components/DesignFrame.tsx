@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from "react";
-import type { HtmlToolName } from "./InfiniteHtmlCanvas";
+import type { HtmlToolName, WandClickPoint } from "./InfiniteHtmlCanvas";
 import {
   cloneLayerCss,
   getCssPropertyValue,
@@ -155,6 +155,11 @@ interface DesignFrameProps {
   onBrushStroke?: (imageLayerId: string, stroke: BrushStroke) => void;
   /** Current brush diameter in px (from the toolbar / [ ] keys). */
   brushSize?: number;
+  // ── F2 Varita ──
+  /** Accumulated SAM click prompts over an <img> (normalized 0..1; Alt = neg). */
+  onWandSegment?: (imageLayerId: string, src: string, points: WandClickPoint[]) => void;
+  /** Image layer currently being segmented — drives the inline loader. */
+  wandLoading?: string | null;
   // ── Phase 1-2: Frame-level interactions ──
   contentMode?: boolean;
   inMultiSelect?: boolean;
@@ -221,6 +226,7 @@ export function DesignFrame({
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
     onBrushStroke, brushSize = 24,
+    onWandSegment, wandLoading = null,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
   autoEditLayerId, onAutoEditHandled,
@@ -263,6 +269,18 @@ export function DesignFrame({
   onBrushStrokeRef.current = onBrushStroke;
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
+  const onWandSegmentRef = useRef(onWandSegment);
+  onWandSegmentRef.current = onWandSegment;
+  const wandLoadingRef = useRef(wandLoading);
+  wandLoadingRef.current = wandLoading;
+  // Varita click state: frame coords for markers, normalized 0..1 for the payload.
+  const wandPointsRef = useRef<Array<{ fx: number; fy: number; nx: number; ny: number; neg: boolean }>>([]);
+  const wandContextRef = useRef<{ imageLayerId: string; src: string } | null>(null);
+  const wandLastRef = useRef<{ t: number; x: number; y: number } | null>(null);
+  const wandMarkersRef = useRef<SVGElement | null>(null);
+  const wandHintRef = useRef<HTMLElement | null>(null);
+  const wandLoaderRef = useRef<HTMLElement | null>(null);
+  const wandKeysCleanupRef = useRef<(() => void) | null>(null);
   const onCssChangeRef = useRef(onCssChange);
   onCssChangeRef.current = onCssChange;
   const onHtmlChangeRef = useRef(onHtmlChange);
@@ -508,6 +526,54 @@ export function DesignFrame({
     const needsInteractive = contentMode || (activeTool && activeTool !== "select" && activeTool !== "hand");
     content.style.pointerEvents = needsInteractive ? "auto" : "";
   }, [contentMode, activeTool]);
+
+  // ── Varita: drop transient click prompts when the tool is left/unmounted ──
+  useEffect(() => () => {
+    wandPointsRef.current = [];
+    wandLastRef.current = null;
+    wandContextRef.current = null;
+    wandKeysCleanupRef.current?.();
+    wandKeysCleanupRef.current = null;
+    wandMarkersRef.current?.remove();
+    wandMarkersRef.current = null;
+    wandHintRef.current?.remove();
+    wandHintRef.current = null;
+    wandLoaderRef.current?.remove();
+    wandLoaderRef.current = null;
+  }, [activeTool]);
+
+  // ── Varita: inline loader over the image while its job runs ──
+  useEffect(() => {
+    if (!wandLoading) {
+      wandLoaderRef.current?.remove();
+      wandLoaderRef.current = null;
+      return;
+    }
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!content) return;
+    const img = content.querySelector(`[data-layer-id="${CSS.escape(wandLoading)}"]`) as HTMLElement | null;
+    if (!img) return;
+    const rect = content.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const z = zoomRef.current || 1;
+    const loader = document.createElement("div");
+    Object.assign(loader.style, {
+      position: "absolute",
+      left: `${(imgRect.left - rect.left) / z}px`,
+      top: `${(imgRect.top - rect.top) / z}px`,
+      width: `${imgRect.width / z}px`,
+      height: `${imgRect.height / z}px`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(30,30,30,0.55)",
+      color: "#fff", fontSize: "13px", fontWeight: 600,
+      pointerEvents: "none", zIndex: "9998",
+    });
+    loader.textContent = "Segmentando…";
+    content.appendChild(loader);
+    wandLoaderRef.current = loader;
+    // The DOM patch that lands the mask sweeps this element away; the
+    // ref cleanup runs when the job resolves and wandLoading clears.
+  }, [wandLoading]);
 
   // ── Sync frame.background to #__df_content inline style ──
   // This overrides CSS body background remapped to #__df_content,
@@ -1276,6 +1342,77 @@ export function DesignFrame({
       hideHoverPreview();
     });
 
+    // ── Varita (F2): transient click-prompt UI — markers, hint, commit ──
+    function clearWandState() {
+      wandPointsRef.current = [];
+      wandLastRef.current = null;
+      wandContextRef.current = null;
+      wandKeysCleanupRef.current?.();
+      wandKeysCleanupRef.current = null;
+      wandMarkersRef.current?.remove();
+      wandMarkersRef.current = null;
+      wandHintRef.current?.remove();
+      wandHintRef.current = null;
+    }
+
+    function drawWandMarkers(content: HTMLElement) {
+      const points = wandPointsRef.current;
+      let svg = wandMarkersRef.current;
+      if (!svg) {
+        svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(svg.style, {
+          position: "absolute", left: "0px", top: "0px", width: "100%", height: "100%",
+          overflow: "visible", pointerEvents: "none", zIndex: "9998",
+        });
+        content.appendChild(svg);
+        wandMarkersRef.current = svg;
+      }
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      points.forEach((p, i) => {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", String(p.fx));
+        circle.setAttribute("cy", String(p.fy));
+        circle.setAttribute("r", "6");
+        circle.setAttribute("fill", p.neg ? "#EF4444" : "#22C55E");
+        circle.setAttribute("stroke", "#ffffff");
+        circle.setAttribute("stroke-width", "2");
+        svg.appendChild(circle);
+        if (i === 0) {
+          const count = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          count.setAttribute("x", String(p.fx + 9));
+          count.setAttribute("y", String(p.fy - 9));
+          count.setAttribute("fill", "#ffffff");
+          count.setAttribute("font-size", "11");
+          count.setAttribute("font-weight", "700");
+          count.textContent = String(points.length);
+          svg.appendChild(count);
+        }
+      });
+    }
+
+    function showWandHint(content: HTMLElement) {
+      if (wandHintRef.current) return;
+      const chip = document.createElement("div");
+      Object.assign(chip.style, {
+        position: "absolute", left: "50%", top: "12px", transform: "translateX(-50%)",
+        padding: "4px 12px", borderRadius: "8px",
+        background: "rgba(30,30,30,0.85)", color: "#e5e5e5",
+        fontSize: "11px", lineHeight: 1.4, whiteSpace: "nowrap",
+        pointerEvents: "none", zIndex: "9998",
+      });
+      chip.textContent = "Varita — clic: incluir · Alt+clic: excluir · doble clic o Enter: segmentar · Esc: limpiar";
+      content.appendChild(chip);
+      wandHintRef.current = chip;
+    }
+
+    function commitWand(content: HTMLElement) {
+      const ctx = wandContextRef.current;
+      const points = wandPointsRef.current.map(p => ({ x: p.nx, y: p.ny, neg: p.neg }));
+      if (!ctx || points.length === 0) return;
+      clearWandState();
+      onWandSegmentRef.current?.(ctx.imageLayerId, ctx.src, points);
+    }
+
     // ── Unified mousedown handler ──
     content.addEventListener("mousedown", (e: Event) => {
       const me = e as MouseEvent;
@@ -1675,6 +1812,59 @@ export function DesignFrame({
 
         document.addEventListener("mousemove", onEraserMove);
         document.addEventListener("mouseup", onEraserUp);
+        return;
+      }
+
+      // ── Varita (F2): clicks on an <img> accumulate SAM prompts ──
+      if (tool === "wand") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+        if (wandLoadingRef.current) return; // a job is already running on this frame
+
+        const imgEl = (target as Element)?.closest?.("img[data-layer-id]") as HTMLElement | null;
+        const imageLayerId = imgEl?.getAttribute("data-layer-id");
+        const src = imgEl?.getAttribute("src") || "";
+        if (!imgEl || !imageLayerId || !src) return;
+
+        // Normalize the click to 0..1 over the image's rendered box
+        // (zoom-aware) — the same contract REST/MCP segment_click use.
+        const imgRect = imgEl.getBoundingClientRect();
+        const imgLeft = (imgRect.left - rect.left) / z;
+        const imgTop = (imgRect.top - rect.top) / z;
+        const imgW = imgRect.width / z;
+        const imgH = imgRect.height / z;
+        const nx = Math.min(1, Math.max(0, (mx - imgLeft) / imgW));
+        const ny = Math.min(1, Math.max(0, (my - imgTop) / imgH));
+        const neg = Boolean(me.altKey);
+        wandContextRef.current = { imageLayerId, src };
+
+        // Double-click (same spot, fast) commits the accumulated set;
+        // single clicks keep refining. Alt flips the prompt's sign.
+        const now = performance.now();
+        const last = wandLastRef.current;
+        const isDouble = Boolean(last && now - last.t < 400 && Math.hypot(mx - last.x, my - last.y) < 8);
+        wandLastRef.current = { t: now, x: mx, y: my };
+        if (isDouble && wandPointsRef.current.length > 0) {
+          wandPointsRef.current.pop(); // the re-click replaces the first hit
+          wandPointsRef.current.push({ fx: mx, fy: my, nx, ny, neg });
+          commitWand(content);
+          return;
+        }
+
+        wandPointsRef.current.push({ fx: mx, fy: my, nx, ny, neg });
+        drawWandMarkers(content);
+        showWandHint(content);
+        if (!wandKeysCleanupRef.current) {
+          const onKey = (ke: KeyboardEvent) => {
+            const t = ke.target as HTMLElement | null;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+            if (ke.key === "Escape") clearWandState();
+            else if (ke.key === "Enter") commitWand(content);
+          };
+          document.addEventListener("keydown", onKey);
+          wandKeysCleanupRef.current = () => document.removeEventListener("keydown", onKey);
+        }
         return;
       }
 

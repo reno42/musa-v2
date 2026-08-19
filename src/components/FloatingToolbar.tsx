@@ -8,6 +8,7 @@ import {
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
   IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize, IconEraser,
+  IconWand,
   IconZoomIn, IconZoomOut, IconSearch,
 } from "../shared/icons";
 
@@ -93,6 +94,15 @@ const ERASER_TOOL = {
   icon: <IconEraser size={16} />,
   shortcut: "E",
   title: "Borrador — sobre imagen enmascara sin destruir (Alt restaura), sobre otros elementos borra (E)",
+};
+
+/** F2 Varita. Its own button: clicks on an <img> feed SAM click-to-segment
+ *  prompts (Alt+click = exclude, double-click or Enter = apply, Esc = clear). */
+const WAND_TOOL = {
+  key: "wand" as HtmlToolName,
+  icon: <IconWand size={16} />,
+  shortcut: "W",
+  title: "Varita — clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)",
 };
 
 const zoomBtn: React.CSSProperties = {
@@ -536,6 +546,25 @@ export function FloatingToolbar({
           </div>
         )}
       </div>
+
+      {/* ── Varita: own button; SAM click-to-segment over images ── */}
+      <button
+        type="button"
+        onClick={() => onToolChange(WAND_TOOL.key)}
+        title={WAND_TOOL.title}
+        style={{
+          width: 46, height: 36,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", position: "relative", borderRadius: 8,
+          background: tool === "wand" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+          border: tool === "wand" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+          color: tool === "wand" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+          transition: "all 0.15s ease",
+        }}
+      >
+        {WAND_TOOL.icon}
+        <span style={shortcutLabel}>{WAND_TOOL.shortcut}</span>
+      </button>
 
       {divider}
 

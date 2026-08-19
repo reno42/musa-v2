@@ -24,7 +24,15 @@ import type { BrushStroke } from "../../shared/maskBake.ts";
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "eraser" | "eyedropper" | "paint-bucket" | "gradient";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "eraser" | "wand" | "eyedropper" | "paint-bucket" | "gradient";
+
+/** F2 Varita: one SAM click prompt, normalized 0..1 over the image.
+ *  neg = Alt+click (background/exclude). */
+export interface WandClickPoint {
+  x: number;
+  y: number;
+  neg: boolean;
+}
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -70,6 +78,11 @@ interface InfiniteHtmlCanvasProps {
   onBrushStroke?: (frameId: string, imageLayerId: string, stroke: BrushStroke) => void;
   /** Current brush diameter in px (toolbar / [ ] keys). */
   brushSize?: number;
+  // ── F2 Varita ──
+  /** Accumulated SAM click prompts over an <img> (normalized 0..1; Alt = neg). */
+  onWandSegment?: (frameId: string, imageLayerId: string, src: string, points: WandClickPoint[]) => void;
+  /** Image layer currently being segmented — drives the inline loader. */
+  wandLoading?: string | null;
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
   /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
@@ -125,6 +138,7 @@ export function InfiniteHtmlCanvas({
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
   onBrushStroke, brushSize = 24,
+  onWandSegment, wandLoading = null,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
@@ -882,6 +896,8 @@ export function InfiniteHtmlCanvas({
               onElementDuplicate={onElementDuplicate}
               onBrushStroke={(imageLayerId, stroke) => onBrushStroke?.(frame.id, imageLayerId, stroke)}
               brushSize={brushSize}
+              onWandSegment={(imageLayerId, src, points) => onWandSegment?.(frame.id, imageLayerId, src, points)}
+              wandLoading={wandLoading}
               onLabelMouseDown={handleLabelMouseDown}
               onLabelDoubleClick={handleLabelDoubleClick}
               onEnterContentMode={onEnterContentMode}

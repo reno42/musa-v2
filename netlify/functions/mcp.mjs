@@ -19,7 +19,8 @@ import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayer
 import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
-import { MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox } from "../../shared/maskBake.ts";
+import { MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
+import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
@@ -95,6 +96,87 @@ async function applyCutoutToLayer(applyTo, cutoutUrl) {
   frame.html = $.html();
   await templates.updateTemplate(applyTo.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
   return { templateId: applyTo.templateId, frameId: applyTo.frameId, layerId: applyTo.layerId, swapped: true, originalSrc: orig || null };
+}
+
+/**
+ * F2 (Varita): create (or refresh) a mask path layer over an <img> from a
+ * traced segmentation result. svgPath.dNorm is normalized 0..1 over the
+ * image, so the path is scaled into the image's frame box and stored in a
+ * mask svg pinned to the FRAME ORIGIN (no viewBox, overflow visible) — the
+ * same convention as the eraser's auto-mask, so the dashed selection
+ * outline overlays the subject exactly and the bake lands the clip in
+ * image-local space. When a mask path already targets the image, its d is
+ * replaced instead of creating a second layer.
+ */
+async function applySegmentMaskToLayer(applyTo, svgPath) {
+  const tpl = await templates.getTemplate(applyTo.templateId);
+  if (!tpl) throw { code: -32000, message: `Template not found: ${applyTo.templateId}` };
+  if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+  const frame = (tpl.frames || []).find(f => f.id === applyTo.frameId);
+  if (!frame) throw { code: -32000, message: `Frame not found: ${applyTo.frameId}` };
+  const $ = cheerio.load(frame.html || "");
+  const $img = $(`img[data-layer-id="${applyTo.layerId}"]`);
+  if (!$img.length) throw { code: -32000, message: `Image layer not found: ${applyTo.layerId}` };
+  const imageBox = readLayerBox($img.attr("style"), frame.css, applyTo.layerId);
+  if (!imageBox) throw { code: -32000, message: `Image layer ${applyTo.layerId} needs px left/top/width/height to apply a mask` };
+  const dNorm = svgPath && typeof svgPath.dNorm === "string" ? svgPath.dNorm : null;
+  if (!dNorm) throw { code: -32000, message: "The job returned no traced path (empty mask?)" };
+
+  // dNorm is 0..1 over the image → frame coordinates over the img's box.
+  const frameD = transformPathData(dNorm, {
+    sx: imageBox.width, sy: imageBox.height, dx: imageBox.left, dy: imageBox.top,
+  });
+
+  let pathLayerId = null;
+  let maskCreated = false;
+  const $existing = $(`path[data-mask-for="${applyTo.layerId}"]`).first();
+  if ($existing.length) {
+    const $svg = $existing.closest("svg[data-layer-id]");
+    pathLayerId = $svg.attr("data-layer-id") || $existing.attr("data-layer-id");
+  }
+
+  let d = frameD;
+  if (pathLayerId) {
+    const $svg = $(`svg[data-layer-id="${pathLayerId}"]`);
+    const vb = readViewBox($svg.attr("viewBox"));
+    const pathBox = readLayerBox($svg.attr("style"), frame.css, pathLayerId);
+    if (!pathBox) throw { code: -32000, message: `Mask layer ${pathLayerId} needs px left/top/width/height` };
+    if (vb) {
+      // Map frame coords into the svg's own space: p = (frame - svgTopLeft)/scale + vbOrigin.
+      const sx = pathBox.width / vb.width;
+      const sy = pathBox.height / vb.height;
+      if (!Number.isFinite(sx) || !Number.isFinite(sy) || Math.abs(sx) < 1e-6 || Math.abs(sy) < 1e-6) {
+        throw { code: -32000, message: `Mask layer ${pathLayerId} has a degenerate viewBox` };
+      }
+      d = transformPathData(frameD, { sx: 1 / sx, sy: 1 / sy, dx: vb.left - pathBox.left / sx, dy: vb.top - pathBox.top / sy });
+    } else if (pathBox.left !== 0 || pathBox.top !== 0 || pathBox.width !== 1 || pathBox.height !== 1) {
+      // No-viewBox masks render in frame coordinates; pin the svg to the
+      // frame origin so the selection outline overlays the subject exactly.
+      $svg.attr("style", "position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;");
+      let css = frame.css || "";
+      for (const property of ["position", "left", "top", "width", "height", "overflow"]) {
+        css = setCssDeclaration(css, `[data-layer-id="${pathLayerId}"]`, property, property === "position" ? "absolute" : property === "overflow" ? "visible" : property === "width" || property === "height" ? "1px" : "0px");
+      }
+      frame.css = css;
+    }
+  } else {
+    pathLayerId = `el_${Date.now().toString(36)}`;
+    const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Selección Varita" style="position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;"><path d="${frameD}" fill="none"/></svg>`;
+    $img.before(svgHtml);
+    frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+    maskCreated = true;
+  }
+
+  $($.root()).find(`path[data-mask-for="${applyTo.layerId}"]`).first().attr("d", d);
+  const baked = applyMaskServer($, frame, pathLayerId, applyTo.layerId, "include");
+  frame.html = $.html();
+  await templates.updateTemplate(applyTo.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+  return {
+    templateId: applyTo.templateId, frameId: applyTo.frameId, layerId: applyTo.layerId,
+    pathLayerId, maskCreated,
+    cssProperty: baked.property, cssValuePreview: baked.value.slice(0, 120),
+    note: "Non-destructive: the mask path is editable with edit_path_points and re-bakes.",
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2761,6 +2843,45 @@ const MCP_TOOLS = [
         jobId: { type: "string", description: "Job id returned by remove_background or segment_click" },
       },
       required: ["jobId"],
+    },
+  },
+  {
+    name: "segment_click",
+    description: "Segment an image with MobileSAM from click prompts (local ONNX, zero LLM tokens): every point runs through ONE encoder pass, and the mask comes back as a cutout PNG (alpha), a mask PNG and a traced SVG path (dNorm normalized 0..1 over the image). Points: x/y either normalized 0..1 or px with imageWidth/imageHeight; neg=true marks a background point (Alt+click in the UI). Dispatches a background job and polls ~8s; if it is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the traced mask is applied to the target <img> layer as a non-destructive mask path (F1 mechanism: editable with edit_path_points, re-bakes).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        assetId: { type: "string", description: "Workspace asset id to segment" },
+        url: { type: "string", description: "Direct image URL (http/https). Use when there is no workspace asset yet." },
+        workspaceId: { type: "string", description: "Workspace ID (optional when assetId is given — derived from the asset)" },
+        points: {
+          type: "array",
+          description: "SAM click prompts: x/y normalized 0..1 over the image (or px + imageWidth/imageHeight); neg=true = background (Alt+click)",
+          items: {
+            type: "object",
+            properties: {
+              x: { type: "number" },
+              y: { type: "number" },
+              neg: { type: "boolean", description: "Background point (Alt+click). Default false." },
+            },
+            required: ["x", "y"],
+          },
+          minItems: 1,
+        },
+        box: { type: "object", description: "Optional SAM box prompt {x,y,w,h} normalized 0..1 (or px + imageWidth/imageHeight)", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } }, required: ["x", "y", "w", "h"] },
+        imageWidth: { type: "number", description: "Source image px width — required when points/box are given in px instead of 0..1" },
+        imageHeight: { type: "number", description: "Source image px height — required when points/box are given in px instead of 0..1" },
+        applyTo: {
+          type: "object",
+          description: "Optional: apply the traced mask to an existing image layer as a non-destructive mask path",
+          properties: {
+            templateId: { type: "string", description: "Template ID" },
+            frameId: { type: "string", description: "Frame ID" },
+            layerId: { type: "string", description: "data-layer-id of the <img> layer to mask" },
+          },
+          required: ["templateId", "frameId", "layerId"],
+        },
+      },
     },
   },
   // ── Phase E: Incremental point editing ──
@@ -8491,9 +8612,12 @@ async function handleMethod(method, params, userId, auth) {
         if (!imageBox) throw { code: -32000, message: `Image layer ${params.imageLayerId} needs px left/top/width/height to auto-create a mask` };
         pathLayerId = `el_${Date.now().toString(36)}`;
         const d = `M${imageBox.left} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top + imageBox.height} L${imageBox.left} ${imageBox.top + imageBox.height} Z`;
-        const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Máscara de imagen" style="position:absolute;left:${imageBox.left}px;top:${imageBox.top}px;width:${Math.max(imageBox.width, 1)}px;height:${Math.max(imageBox.height, 1)}px;overflow:visible;"><path d="${d}" fill="none"/></svg>`;
+        // The mask svg is pinned to the FRAME ORIGIN (1×1, overflow
+        // visible): its path data is in frame coordinates, so the dashed
+        // selection outline overlays the image exactly.
+        const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Máscara de imagen" style="position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;"><path d="${d}" fill="none"/></svg>`;
         $img.before(svgHtml);
-        frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: ${imageBox.left}px;\n  top: ${imageBox.top}px;\n  width: ${Math.max(imageBox.width, 1)}px;\n  height: ${Math.max(imageBox.height, 1)}px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+        frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
         maskCreated = true;
       }
 
@@ -8576,6 +8700,72 @@ async function handleMethod(method, params, userId, auth) {
       }
       const result = polled.result_json || {};
       const applied = params.applyTo ? await applyCutoutToLayer(params.applyTo, result.cutoutUrl) : null;
+      return { success: true, jobId: job.id, status: "done", result, applied };
+    }
+
+    // ── F2: segment_click (MobileSAM, click prompts) ──
+    case "segment_click": {
+      const normPoints = normalizeSegmentPoints(params.points, params.imageWidth, params.imageHeight);
+      const normBox = normalizeSegmentBox(params.box, params.imageWidth, params.imageHeight);
+      if (!normPoints && !normBox) {
+        throw { code: -32000, message: "Provide points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight" };
+      }
+
+      let workspaceId = params.workspaceId || "";
+      let inputUrl = "";
+      let sourceAssetId = null;
+      let sourceName = "";
+
+      if (params.assetId) {
+        const sb = getSupabaseAdmin();
+        if (!sb) throw { code: -32000, message: "Supabase (service role) not configured" };
+        const { data: asset } = await sb.from("assets").select("id, name, url, workspace_id").eq("id", params.assetId).maybeSingle();
+        if (!asset) throw { code: -32000, message: `Asset not found: ${params.assetId}` };
+        const derivedWs = asset.workspace_id || "";
+        if (!auth?.isAdmin && derivedWs && !(await canAccessWorkspace(auth, derivedWs, "editor"))) {
+          throw { code: -32003, message: "Insufficient editor access for the asset's workspace" };
+        }
+        if (!workspaceId) workspaceId = derivedWs;
+        if (derivedWs && workspaceId !== derivedWs) throw { code: -32000, message: "Asset belongs to another workspace" };
+        inputUrl = asset.url;
+        sourceAssetId = asset.id;
+        sourceName = asset.name || "";
+      } else if (params.url) {
+        inputUrl = String(params.url).trim();
+        if (!/^https?:\/\//i.test(inputUrl)) throw { code: -32000, message: "url must be http(s)" };
+      } else {
+        throw { code: -32000, message: "Provide assetId or url" };
+      }
+
+      const job = await createSegmentJob("segment_click", inputUrl, workspaceId, {
+        points: normPoints || [],
+        ...(normBox ? { box: normBox } : {}),
+        sourceAssetId,
+        sourceName,
+      });
+      const dispatch = await dispatchSegmentJob(job.id);
+
+      // Poll inside the ~9s sync budget. Warm MobileSAM finishes in 2-4s;
+      // a cold start downloads the encoder first and lands in segment_status.
+      const deadline = Date.now() + 8000;
+      let polled = null;
+      while (Date.now() < deadline) {
+        await sleep(700);
+        polled = await getSegmentJob(job.id);
+        if (polled && (polled.status === "done" || polled.status === "error")) break;
+      }
+      if (!polled || (polled.status !== "done" && polled.status !== "error")) {
+        return {
+          success: true, jobId: job.id, status: polled?.status || "queued", dispatched: dispatch.dispatched,
+          result: null,
+          hint: "El job sigue corriendo en background. Llamá segment_status(jobId) para obtener cutoutUrl, maskUrl y svgPath.",
+        };
+      }
+      if (polled.status === "error") {
+        return { success: false, jobId: job.id, status: "error", error: polled.error || "Inference failed" };
+      }
+      const result = polled.result_json || {};
+      const applied = params.applyTo ? await applySegmentMaskToLayer(params.applyTo, result.svgPath) : null;
       return { success: true, jobId: job.id, status: "done", result, applied };
     }
 

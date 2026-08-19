@@ -12,7 +12,7 @@ import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
 import { ImportRouterModal, type ImportRoute, detectRoute as detectImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
-import { InfiniteHtmlCanvas, type HtmlToolName } from "../components/InfiniteHtmlCanvas";
+import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint } from "../components/InfiniteHtmlCanvas";
 import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
@@ -92,7 +92,7 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
-import { applyBrushStroke, applyPathMask, applySelectionFill, reBakePathMask } from "../lib/maskApply";
+import { applyBrushStroke, applyPathMask, applySegmentMaskPath, applySelectionFill, reBakePathMask } from "../lib/maskApply";
 import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
@@ -392,6 +392,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [brushSize, setBrushSize] = useState(24); // F4 Borrador diameter in px
+  const [wandBusy, setWandBusy] = useState<string | null>(null); // F2 Varita: image being segmented (inline loader)
   const [foregroundColor, setForegroundColor] = useState("#000000");
   const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.5);
@@ -1827,6 +1828,53 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [frames, autoSave, addToast]);
 
+  // ── F2: Varita — SAM click-to-segment over an image layer ──
+  // Accumulated normalized click prompts run one MobileSAM job; the traced
+  // outline lands as the F1 mask path (non-destructive, data-mask-for).
+  const handleWandSegment = useCallback(async (frameId: string, imageLayerId: string, src: string, points: WandClickPoint[]) => {
+    setWandBusy(imageLayerId);
+    try {
+      const res = await fetch("/api/segment/click", {
+        method: "POST",
+        headers: { ...getApiHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ url: src, workspaceId: templateWorkspaceId, points }),
+      }).then(r => r.json());
+      if (!res?.success) throw new Error(res?.error || "segment_click failed");
+
+      // Warm model returns immediately; a cold start stays pollable here so
+      // the interaction still feels synchronous (same pattern as F3).
+      let result = res.result || null;
+      if (res.jobId && !result) {
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const poll = await fetch(`/api/segment/jobs/${res.jobId}`, { headers: getApiHeaders() }).then(r => r.json());
+          if (poll?.success && poll.status === "done") { result = poll.result; break; }
+          if (poll?.success && poll.status === "error") throw new Error(poll.error || "Inference failed");
+        }
+      }
+      const dNorm: string | undefined = result?.svgPath?.dNorm;
+      if (!dNorm) throw new Error("The job did not produce a mask path");
+
+      const frame = framesRef.current.find(f => f.id === frameId);
+      if (!frame) return;
+      const applied = applySegmentMaskPath(frame.html, frame.css, imageLayerId, dNorm);
+      if (!applied) {
+        addToast("No se pudo aplicar la selección de la varita.", "error");
+        return;
+      }
+      const updated = framesRef.current.map(f => f.id === frameId ? { ...f, html: applied.html, css: applied.css } : f);
+      store.replaceAllWithUndo(updated, "edit");
+      autoSave(updated);
+      addToast("Selección aplicada con la Varita.", "success");
+    } catch (err: any) {
+      console.error("[WAND] failed:", err);
+      addToast(`Varita: ${err?.message || "segmentación fallida"}`, "error");
+    } finally {
+      setWandBusy(null);
+    }
+  }, [templateWorkspaceId, store, autoSave, addToast]);
+
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
     if (!selectedFrameId) return;
@@ -2731,6 +2779,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           case "p": setActiveTool("pen"); break;
           case "b": setActiveTool("pencil"); break;
           case "e": setActiveTool("eraser"); break;
+          // F2 Varita: W toggles SAM click-to-segment (Esc/Enter live in DesignFrame).
+          case "w": setActiveTool(t => t === "wand" ? "select" : "wand"); break;
           // F4: [ ] resize the eraser brush (only while the tool is active,
           // so reorder shortcuts Ctrl+[ / Ctrl+] keep their meaning).
           case "[":
@@ -6006,6 +6056,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onElementDuplicate={handleDuplicateElement}
             onBrushStroke={(frameId, imageLayerId, stroke) => handleBrushStroke(frameId, imageLayerId, stroke)}
             brushSize={brushSize}
+            onWandSegment={(frameId, imageLayerId, src, points) => handleWandSegment(frameId, imageLayerId, src, points)}
+            wandLoading={wandBusy}
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
             onCreateOrphanFromTool={handleCreateOrphanFromTool}
