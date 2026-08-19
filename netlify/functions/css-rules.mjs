@@ -39,6 +39,34 @@ export function setCssDeclaration(css, selector, property, value, extraOnCreate 
   return sheet.replace(ruleRe, () => `${rule[1]}${declarations}${rule[3]}`);
 }
 
+/**
+ * Removes properties from the rule for `selector`; a rule left with no
+ * declarations is dropped entirely. Counterpart of setCssDeclaration for the
+ * mask bake, which clears every stale clip/mask declaration before writing
+ * the fresh one.
+ */
+export function removeCssDeclarations(css, selector, properties) {
+  const props = Array.isArray(properties) ? properties : [properties];
+  const sheet = css || "";
+  const escaped = escapeForRegExp(selector);
+  const ruleRe = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`);
+  const rule = ruleRe.exec(sheet);
+  if (!rule) return sheet;
+
+  let declarations = rule[2];
+  for (const property of props) {
+    const propRe = new RegExp(`(^|[;{\\s])${escapeForRegExp(property)}\\s*:[^;]*;?\\s*`, "g");
+    declarations = declarations.replace(propRe, (_m, boundary) => boundary === "{" ? "{" : "");
+  }
+
+  // Dropping every declaration drops the rule — an empty husk would win the
+  // cascade over nothing and confuse the next reader.
+  if (!declarations.replace(/\s/g, "").replace(/\{/, "").trim()) {
+    return sheet.replace(ruleRe, "").replace(/\n{3,}/g, "\n\n").trimEnd();
+  }
+  return sheet.replace(ruleRe, () => `${rule[1]}${declarations}${rule[3]}`);
+}
+
 /** Reads a property off the rule for `selector`, or "" when it is not set. */
 export function readCssDeclaration(css, selector, property) {
   const escaped = escapeForRegExp(selector);

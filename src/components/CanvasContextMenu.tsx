@@ -13,6 +13,16 @@ import type { SelectedElementInfo } from "./DesignFrame";
  * rather than hidden, so the menu keeps a stable shape and says why.
  */
 
+/** The mask offer when the right click landed on a CLOSED bezier path that
+ * sits over an image layer — F1's "crear selección" context. */
+export interface MaskMenuTarget {
+  pathLayerId: string;
+  imageLayerId: string;
+  imageLayerName: string;
+  /** Mode of an already-baked mask, null when the path is unmasked so far. */
+  mode: "include" | "exclude" | null;
+}
+
 export interface ContextMenuActions {
   onCopy: () => void;
   onPaste: () => void;
@@ -32,6 +42,11 @@ export interface ContextMenuActions {
   onFrameToTemplate: () => void;
   onExtractDesignSystem: () => void;
   onInspect: () => void;
+  onCreateSelection: () => void;
+  onInvertSelection: () => void;
+  /** "Eliminar exterior" — re-applies the include clip explicitly. */
+  onDeleteExterior: () => void;
+  onFillSelection: (color: string) => void;
 }
 
 interface Props extends ContextMenuActions {
@@ -46,6 +61,8 @@ interface Props extends ContextMenuActions {
   canUndo: boolean;
   canRedo: boolean;
   hasClipboard: boolean;
+  /** Closed path over an image, or null when the click offers no mask. */
+  maskTarget: MaskMenuTarget | null;
   onClose: () => void;
 }
 
@@ -56,6 +73,8 @@ interface MenuEntry {
   hint?: string;
   disabled?: boolean;
   run?: () => void;
+  /** Renders an inline colour picker for the fill command. */
+  colorPicker?: true;
 }
 
 const MENU_WIDTH = 250;
@@ -64,13 +83,15 @@ const VIEWPORT_MARGIN = 8;
 
 export function CanvasContextMenu({
   x, y, selectedElement, selectedLayerCount, hasFrameSelection,
-  isHidden, isLocked, canUndo, canRedo, hasClipboard, onClose,
+  isHidden, isLocked, canUndo, canRedo, hasClipboard, maskTarget, onClose,
   onCopy, onPaste, onPasteAllFrames, onStackChange, onGroup, onUngroup, onUngroupAll,
   onToggleVisibility, onToggleLock, onFlip, onCopyCode, onCopyCss,
   onUndo, onRedo, onBatchAMator, onFrameToTemplate, onExtractDesignSystem, onInspect,
+  onCreateSelection, onInvertSelection, onDeleteExterior, onFillSelection,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
+  const [fillColor, setFillColor] = useState("#3B82F6");
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -96,10 +117,21 @@ export function CanvasContextMenu({
 
   const run = (action: () => void) => () => { action(); onClose(); };
 
+  // The selection block appears only for a closed path over an image: these
+  // commands act on the right-click TARGET, not on the selection, so showing
+  // them disabled everywhere would be noise rather than guidance.
+  const maskEntries: MenuEntry[] = maskTarget ? [
+    { label: "Crear selección", hint: maskTarget.imageLayerName, run: onCreateSelection },
+    { label: "Invertir selección", disabled: maskTarget.mode === null, run: onInvertSelection },
+    { label: "Eliminar exterior", run: onDeleteExterior },
+    { label: "Rellenar selección", run: () => onFillSelection(fillColor), colorPicker: true },
+  ] : [];
+
   const entries: MenuEntry[] = [
     { label: "Copiar", hint: "Ctrl+C", disabled: !hasElement && !hasFrameSelection, run: onCopy },
     { label: "Pegar", hint: "Ctrl+V", disabled: !hasClipboard, run: onPaste },
     { label: "Pegar en todos los frames", disabled: !hasClipboard, run: onPasteAllFrames },
+    ...(maskEntries.length > 0 ? [{ separator: true } as MenuEntry, ...maskEntries] : []),
     { separator: true },
     { label: "Bring forward", disabled: !hasElement, run: () => onStackChange("forward") },
     { label: "Bring backward", disabled: !hasElement, run: () => onStackChange("backward") },
@@ -163,9 +195,25 @@ export function CanvasContextMenu({
           onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
         >
           <span>{entry.label}</span>
-          {entry.hint && (
-            <span style={{ fontSize: 10.5, color: entry.disabled ? "#4a4842" : "#7a7668" }}>{entry.hint}</span>
-          )}
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {entry.colorPicker && (
+              <input
+                type="color"
+                aria-label={`Color de relleno de la selección`}
+                value={fillColor}
+                onClick={e => e.stopPropagation()}
+                onPointerDown={e => e.stopPropagation()}
+                onChange={e => setFillColor(e.target.value)}
+                style={{
+                  width: 18, height: 18, padding: 0, border: "1px solid #3f3f4a",
+                  borderRadius: 3, background: "transparent", cursor: "pointer",
+                }}
+              />
+            )}
+            {entry.hint && (
+              <span style={{ fontSize: 10.5, color: entry.disabled ? "#4a4842" : "#7a7668" }}>{entry.hint}</span>
+            )}
+          </span>
         </button>
       ))}
     </div>

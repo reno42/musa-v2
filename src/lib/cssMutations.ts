@@ -208,6 +208,21 @@ export function appendCssOverride(css: string, selector: string, property: strin
   return css.trimEnd() + `\n\n${selector} {\n  ${property}: ${value};\n}`;
 }
 
+/** Removes one or more properties from the rule for `selector`. A rule left
+ * with no declarations at all is dropped, so clearing a mask never leaves an
+ * empty husk behind. */
+export function removeCssProperties(css: string, selector: string, properties: readonly string[]): string {
+  const rule = exactRule(collectRules(css), selector);
+  if (!rule) return css;
+
+  let block = css.slice(rule.blockStart, rule.blockEnd);
+  for (const property of properties) block = removeDeclaration(block, property);
+  if (parseCssDeclarations(block).length === 0) {
+    return (css.slice(0, rule.start) + css.slice(rule.end)).replace(/\n{3,}/g, "\n\n").trimEnd();
+  }
+  return css.slice(0, rule.blockStart) + block + css.slice(rule.blockEnd);
+}
+
 export function removeCssOverride(css: string, selector: string, property: string, expectedValue: string): string {
   const rules = collectRules(css);
   const candidates = rules.filter(rule => rule.selectors.length === 1 && rule.selectors[0] === selector).reverse();

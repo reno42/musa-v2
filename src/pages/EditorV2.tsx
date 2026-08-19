@@ -89,6 +89,8 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
+import { applyPathMask, applySelectionFill, reBakePathMask } from "../lib/maskApply";
+import type { MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
@@ -289,6 +291,75 @@ const EDITOR_NAV_TABS = [
   { id: "recipes", label: "Recetas" },
   { id: "workspace", label: "Workspace" },
 ] as const;
+
+/** What the right-click mask commands act on: a closed path layer and the
+ * image beneath it, resolved inside one frame's shadow content. */
+interface ContextMenuMaskTarget {
+  frameId: string;
+  pathLayerId: string;
+  imageLayerId: string;
+  imageLayerName: string;
+  mode: MaskMode | null;
+}
+
+/** Frame-space box of a layer inside #__df_content, via offset accumulation
+ * (transform-proof, unlike getBoundingClientRect). */
+function elementBoxInContent(el: Element, content: HTMLElement) {
+  let left = 0;
+  let top = 0;
+  let node: Element | null = el;
+  while (node && node !== content) {
+    left += (node as HTMLElement).offsetLeft || 0;
+    top += (node as HTMLElement).offsetTop || 0;
+    node = (node as HTMLElement).offsetParent as Element | null;
+  }
+  if (node !== content) return null;
+  return { left, top, width: (el as HTMLElement).offsetWidth || 0, height: (el as HTMLElement).offsetHeight || 0 };
+}
+
+/**
+ * F1 detection: was this right click ON a closed bezier path that overlaps an
+ * image in the same frame? The path becomes the mask source; the image it
+ * covers most (by intersection area) is the mask target. Returns null when
+ * the click offers no mask, and the menu then shows no selection block.
+ */
+function detectMaskTarget(event: MouseEvent): ContextMenuMaskTarget | null {
+  const composed = typeof event.composedPath === "function" ? event.composedPath() : [];
+  const pathEl = composed.find((node): node is Element => node instanceof Element && node.tagName.toLowerCase() === "path");
+  if (!pathEl) return null;
+  const d = (pathEl.getAttribute("d") || "").trim();
+  if (!d || !/z\s*$/i.test(d)) return null; // only closed paths can select
+  const svg = pathEl.closest("svg");
+  const pathLayerId = svg?.getAttribute("data-layer-id");
+  if (!svg || !pathLayerId) return null;
+  const root = svg.getRootNode();
+  if (!(root instanceof ShadowRoot)) return null;
+  const content = root.getElementById("__df_content");
+  const frameId = root.host?.getAttribute("data-frame-id");
+  if (!content || !frameId) return null;
+  const svgBox = elementBoxInContent(svg, content);
+  if (!svgBox || svgBox.width <= 0 || svgBox.height <= 0) return null;
+  let best: { id: string; name: string; area: number } | null = null;
+  for (const img of Array.from(content.querySelectorAll("img[data-layer-id]"))) {
+    const box = elementBoxInContent(img, content);
+    if (!box) continue;
+    const overlapW = Math.min(svgBox.left + svgBox.width, box.left + box.width) - Math.max(svgBox.left, box.left);
+    const overlapH = Math.min(svgBox.top + svgBox.height, box.top + box.height) - Math.max(svgBox.top, box.top);
+    const area = overlapW > 0 && overlapH > 0 ? overlapW * overlapH : 0;
+    if (area > 0 && (!best || area > best.area)) {
+      best = { id: img.getAttribute("data-layer-id") || "", name: img.getAttribute("data-layer-name") || "imagen", area };
+    }
+  }
+  if (!best || !best.id) return null;
+  const modeAttr = pathEl.getAttribute("data-mask-mode");
+  return {
+    frameId,
+    pathLayerId,
+    imageLayerId: best.id,
+    imageLayerName: best.name,
+    mode: modeAttr === "include" || modeAttr === "exclude" ? modeAttr : null,
+  };
+}
 
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
@@ -1684,10 +1755,55 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       "data-bezier-singularities": String(analysis.singularities),
     });
     if (newHtml === null || newHtml === frame.html) return;
-    const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
+    // F1: editing a path that masks an image re-bakes the mask's CSS so the
+    // clip follows the corrected curve.
+    const reBaked = reBakePathMask(newHtml, frame.css, layerId);
+    const updated = frames.map(candidate => candidate.id === frameId
+      ? { ...candidate, html: reBaked?.html ?? newHtml, css: reBaked?.css ?? candidate.css }
+      : candidate);
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave]);
+
+  // ── F1: masks from closed bezier paths (right-click "selección") ──
+  const commitMaskChange = useCallback((
+    frameId: string,
+    result: { html: string; css: string } | null,
+    successMessage: string,
+    failureMessage: string,
+  ) => {
+    if (!result) {
+      addToast(failureMessage, "error");
+      return;
+    }
+    const updated = frames.map(f => f.id === frameId ? { ...f, html: result.html, css: result.css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    addToast(successMessage, "success");
+  }, [frames, autoSave, addToast]);
+
+  const handleCreateSelection = useCallback((frameId: string, pathLayerId: string, imageLayerId: string, mode: MaskMode) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const result = applyPathMask(frame.html, frame.css, pathLayerId, imageLayerId, mode);
+    commitMaskChange(
+      frameId,
+      result,
+      mode === "include" ? "Selección creada: el exterior queda recortado (editable con el trazado)." : "Selección invertida: ahora se conserva el exterior.",
+      "No se pudo crear la selección: el trazado y la imagen deben estar posicionados en px dentro del frame.",
+    );
+  }, [frames, commitMaskChange]);
+
+  const handleInvertSelection = useCallback((frameId: string, pathLayerId: string, imageLayerId: string, currentMode: MaskMode | null) => {
+    handleCreateSelection(frameId, pathLayerId, imageLayerId, currentMode === "exclude" ? "include" : "exclude");
+  }, [handleCreateSelection]);
+
+  const handleFillSelection = useCallback((frameId: string, pathLayerId: string, imageLayerId: string, color: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const result = applySelectionFill(frame.html, frame.css, pathLayerId, imageLayerId, color);
+    commitMaskChange(frameId, result, `Selección rellenada con ${color}.`, "No se pudo rellenar la selección.");
+  }, [frames, commitMaskChange]);
 
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
@@ -3533,7 +3649,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // `hasClipboard` is sampled when the menu opens rather than read on every
   // render: the clipboard lives in localStorage, and the menu only needs to
   // know whether Paste is worth offering at the moment it is shown.
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; hasClipboard: boolean } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; hasClipboard: boolean; maskTarget: ContextMenuMaskTarget | null } | null>(null);
 
   const [showInsertBar, setShowInsertBar] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -5709,7 +5825,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           className="editor-v2-canvas-area"
           onContextMenu={(e) => {
             e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY, hasClipboard: readDesignClipboard() !== null });
+            setContextMenu({
+              x: e.clientX,
+              y: e.clientY,
+              hasClipboard: readDesignClipboard() !== null,
+              maskTarget: detectMaskTarget(e.nativeEvent),
+            });
           }}
         >
           {/* ── Insert Toolbar (toggleable) ── */}
@@ -6543,6 +6664,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             canUndo={canUndo}
             canRedo={canRedo}
             hasClipboard={contextMenu.hasClipboard}
+            maskTarget={contextMenu.maskTarget ? {
+              pathLayerId: contextMenu.maskTarget.pathLayerId,
+              imageLayerId: contextMenu.maskTarget.imageLayerId,
+              imageLayerName: contextMenu.maskTarget.imageLayerName,
+              mode: contextMenu.maskTarget.mode,
+            } : null}
+            onCreateSelection={() => contextMenu.maskTarget && handleCreateSelection(contextMenu.maskTarget.frameId, contextMenu.maskTarget.pathLayerId, contextMenu.maskTarget.imageLayerId, "include")}
+            onInvertSelection={() => contextMenu.maskTarget && handleInvertSelection(contextMenu.maskTarget.frameId, contextMenu.maskTarget.pathLayerId, contextMenu.maskTarget.imageLayerId, contextMenu.maskTarget.mode)}
+            onDeleteExterior={() => contextMenu.maskTarget && handleCreateSelection(contextMenu.maskTarget.frameId, contextMenu.maskTarget.pathLayerId, contextMenu.maskTarget.imageLayerId, "include")}
+            onFillSelection={(color) => contextMenu.maskTarget && handleFillSelection(contextMenu.maskTarget.frameId, contextMenu.maskTarget.pathLayerId, contextMenu.maskTarget.imageLayerId, color)}
             onClose={() => setContextMenu(null)}
             onCopy={copySelection}
             onPaste={pasteSelection}

@@ -2542,6 +2542,7 @@ export function DesignFrame({
   return (
     <div
       ref={containerRef}
+      data-frame-id={frame.id}
       style={{
         position: "absolute",
         left: frame.x,

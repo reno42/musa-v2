@@ -18,9 +18,54 @@ import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmi
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
-import { setCssDeclaration } from "./css-rules.mjs";
+import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
+import { MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox } from "../../shared/maskBake.ts";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
+
+// ═══════════════════════════════════════════════════════════════
+// F1 mask baking — geometry/CSS contract in shared/maskBake.ts;
+// cheerio orchestration here (the editor runs the same bake through
+// src/lib/maskApply.ts, so agent and human masks can never diverge).
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Tags the path as the image's mask source and bakes the declaration into
+ * frame.css. Throws {code,message} MCP errors on unaddressable input.
+ * Mutates frame.css; the caller keeps frame.html = $(...).html().
+ */
+function applyMaskServer($, frame, pathLayerId, imageLayerId, mode) {
+  const $svg = $(`svg[data-layer-id="${pathLayerId}"]`);
+  const $path = $svg.length ? $svg.find("path").first() : $(`path[data-layer-id="${pathLayerId}"]`).first();
+  if (!$path.length) throw { code: -32000, message: `Path layer not found (no <path> in svg layer ${pathLayerId})` };
+  const $img = $(`img[data-layer-id="${imageLayerId}"]`);
+  if (!$img.length) throw { code: -32000, message: `Image layer not found (no <img> with data-layer-id ${imageLayerId})` };
+
+  const pathBox = readLayerBox($svg.attr("style"), frame.css, pathLayerId);
+  const imageBox = readLayerBox($img.attr("style"), frame.css, imageLayerId);
+  if (!pathBox) throw { code: -32000, message: `Path layer ${pathLayerId} needs px left/top/width/height (inline style or CSS rule) to bake a mask` };
+  if (!imageBox) throw { code: -32000, message: `Image layer ${imageLayerId} needs px left/top/width/height (inline style or CSS rule) to bake a mask` };
+
+  const baked = bakePathMask({
+    pathData: $path.attr("d") || "",
+    pathBox,
+    viewBox: readViewBox($svg.attr("viewBox")),
+    imageBox,
+    mode,
+    brushes: parseBrushesAttr($img.attr("data-mask-brushes")),
+  });
+  if (!baked) throw { code: -32000, message: "Mask bake failed: the path has no drawable d" };
+
+  $path.attr("data-mask-for", imageLayerId).attr("data-mask-mode", mode);
+  const imgSel = `[data-layer-id="${imageLayerId}"]`;
+  let css = frame.css || "";
+  for (const property of MASK_CSS_PROPERTIES) css = removeCssDeclarations(css, imgSel, property);
+  css = setCssDeclaration(css, imgSel, baked.property, baked.value);
+  for (const [property, value] of Object.entries(baked.companions)) css = setCssDeclaration(css, imgSel, property, value);
+  for (const [property, value] of Object.entries(SELECTION_OUTLINE)) css = setCssDeclaration(css, `[data-layer-id="${pathLayerId}"] path`, property, value);
+  frame.css = css;
+  return baked;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Server-side SVG generation from HTML+CSS (no browser needed)
@@ -2572,6 +2617,53 @@ const MCP_TOOLS = [
         newPathData: { type: "string", description: "New SVG path d-attribute value. Replaces the existing d value entirely." },
       },
       required: ["templateId", "frameId", "elementId", "newPathData"],
+    },
+  },
+  {
+    name: "create_mask_from_path",
+    description: "Turn a CLOSED SVG path into a non-destructive mask over an <img> layer. The path stays the editable source of truth (tagged data-mask-for/data-mask-mode; edit_path_points re-bakes automatically). mode 'include' clips the image to inside the path (exterior removed); 'exclude' hides the inside and keeps the exterior. Give pathElementId of an existing path layer (from draw_bezier), or raw pathData in frame coordinates to create the layer on the fly.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        pathElementId: { type: "string", description: "data-layer-id of an existing SVG path layer (e.g. from draw_bezier)" },
+        pathData: { type: "string", description: "Raw closed path d in FRAME coordinates, when the path layer does not exist yet (Z closes it if missing)" },
+        x: { type: "number", description: "With pathData: bbox X in frame coordinates (defaults to the path's own bounds)" },
+        y: { type: "number", description: "With pathData: bbox Y in frame coordinates" },
+        width: { type: "number", description: "With pathData: bbox width in frame coordinates" },
+        height: { type: "number", description: "With pathData: bbox height in frame coordinates" },
+        targetImageLayerId: { type: "string", description: "data-layer-id of the <img> layer to mask" },
+        mode: { type: "string", enum: ["include", "exclude"], description: "include = keep inside the path (default); exclude = keep the outside" },
+      },
+      required: ["templateId", "frameId", "targetImageLayerId"],
+    },
+  },
+  {
+    name: "invert_mask",
+    description: "Flip an existing path mask on an image: include becomes exclude and vice versa (the CSS re-bakes between clip-path and an inverted SVG mask). The image's pixels are never touched.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        imageLayerId: { type: "string", description: "data-layer-id of the masked <img> layer" },
+      },
+      required: ["templateId", "frameId", "imageLayerId"],
+    },
+  },
+  {
+    name: "fill_mask",
+    description: "Fill the masked subject of an image with a colour: the image gets an exclude mask (the subject becomes a hole) and a div clipped to the subject shape is placed behind it, painted with the fill colour or gradient. Delete that div layer to remove the fill.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        imageLayerId: { type: "string", description: "data-layer-id of the masked <img> layer" },
+        fill: { type: "string", description: "CSS colour or gradient for the fill, e.g. '#3B82F6' or 'linear-gradient(90deg, #f00, #00f)' (default #3B82F6)" },
+      },
+      required: ["templateId", "frameId", "imageLayerId", "fill"],
     },
   },
   // ── Phase E: Incremental point editing ──
@@ -8131,9 +8223,131 @@ async function handleMethod(method, params, userId, auth) {
         $path.attr("d", params.newPathData);
       }
 
+      // F1: if this path is an image mask source, re-bake the mask CSS so
+      // the clip follows the corrected curve.
+      let maskRebaked = false;
+      if ($path.attr("data-mask-for")) {
+        const $maskSvg = $path.closest("svg[data-layer-id]");
+        const maskPathLayerId = $maskSvg.attr("data-layer-id") || params.elementId;
+        try {
+          applyMaskServer($, frame, maskPathLayerId, $path.attr("data-mask-for"), $path.attr("data-mask-mode") === "exclude" ? "exclude" : "include");
+          maskRebaked = true;
+        } catch { /* the d update must survive a bake failure */ }
+      }
+
       frame.html = $.html();
       await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
-      return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: params.newPathData };
+      return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: params.newPathData, maskRebaked };
+    }
+
+    // ── F1: create_mask_from_path ──
+    case "create_mask_from_path": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+      if (!params.pathElementId && !params.pathData) throw { code: -32000, message: "Provide pathElementId (existing path layer) or pathData (closed d in frame coordinates)" };
+
+      const mode = params.mode === "exclude" ? "exclude" : "include";
+      let pathLayerId = params.pathElementId;
+
+      if (!pathLayerId) {
+        // Create the path layer from raw data, same shape as draw_bezier.
+        const bounds = params.x != null && params.y != null && params.width != null && params.height != null
+          ? { x: params.x, y: params.y, width: params.width, height: params.height }
+          : pathDataBounds(params.pathData);
+        if (!bounds || !(bounds.width > 0) || !(bounds.height > 0)) throw { code: -32000, message: "Cannot place path layer: give x/y/width/height or a path with measurable bounds" };
+        const closed = /\s*z\s*$/i.test(params.pathData.trim()) ? "" : " Z";
+        pathLayerId = `el_${Date.now().toString(36)}`;
+        const svgHtml = `<svg data-layer-id="${pathLayerId}" viewBox="${bounds.x} ${bounds.y} ${Math.max(bounds.width, 1)} ${Math.max(bounds.height, 1)}" style="position:absolute;left:${bounds.x}px;top:${bounds.y}px;width:${Math.max(bounds.width, 1)}px;height:${Math.max(bounds.height, 1)}px;overflow:visible;"><path d="${params.pathData}${closed}" fill="none"/></svg>`;
+        const cssRule = `[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: ${bounds.x}px;\n  top: ${bounds.y}px;\n  width: ${Math.max(bounds.width, 1)}px;\n  height: ${Math.max(bounds.height, 1)}px;\n  overflow: visible;\n}`;
+        frame.html = (frame.html || "") + "\n" + svgHtml;
+        frame.css = (frame.css || "") + "\n" + cssRule + "\n";
+      }
+
+      const $ = cheerio.load(frame.html || "");
+      const baked = applyMaskServer($, frame, pathLayerId, params.targetImageLayerId, mode);
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true, templateId: params.templateId, frameId: params.frameId,
+        pathLayerId, imageLayerId: params.targetImageLayerId, mode,
+        cssProperty: baked.property, cssValuePreview: baked.value.slice(0, 120),
+        note: "Non-destructive: the img keeps its src; edit the path with edit_path_points and the mask re-bakes.",
+      };
+    }
+
+    // ── F1: invert_mask ──
+    case "invert_mask": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $ = cheerio.load(frame.html || "");
+      const $path = $(`path[data-mask-for="${params.imageLayerId}"]`).first();
+      if (!$path.length) throw { code: -32000, message: `No mask path targets image ${params.imageLayerId}. Create one with create_mask_from_path first.` };
+      const $svg = $path.closest("svg[data-layer-id]");
+      const pathLayerId = $svg.attr("data-layer-id") || $path.attr("data-layer-id");
+      if (!pathLayerId) throw { code: -32000, message: "The mask path has no addressable layer id" };
+
+      const mode = $path.attr("data-mask-mode") === "exclude" ? "include" : "exclude";
+      const baked = applyMaskServer($, frame, pathLayerId, params.imageLayerId, mode);
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true, templateId: params.templateId, frameId: params.frameId,
+        imageLayerId: params.imageLayerId, pathLayerId, mode,
+        cssProperty: baked.property, cssValuePreview: baked.value.slice(0, 120),
+      };
+    }
+
+    // ── F1: fill_mask ──
+    case "fill_mask": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const fill = String(params.fill || "#3B82F6");
+      const $ = cheerio.load(frame.html || "");
+      const $path = $(`path[data-mask-for="${params.imageLayerId}"]`).first();
+      if (!$path.length) throw { code: -32000, message: `No mask path targets image ${params.imageLayerId}. Create one with create_mask_from_path first.` };
+      const $img = $(`img[data-layer-id="${params.imageLayerId}"]`);
+      const $svg = $path.closest("svg[data-layer-id]");
+      const pathLayerId = $svg.attr("data-layer-id") || $path.attr("data-layer-id");
+      if (!pathLayerId) throw { code: -32000, message: "The mask path has no addressable layer id" };
+
+      // The image needs the subject as a hole for the fill to show through.
+      const baked = applyMaskServer($, frame, pathLayerId, params.imageLayerId, "exclude");
+      const clip = `path("evenodd, ${baked.localPathData}")`;
+
+      let fillLayerId;
+      const $existing = $(`[data-fill-for="${params.imageLayerId}"]`).first();
+      if ($existing.length) {
+        fillLayerId = $existing.attr("data-layer-id");
+        frame.css = setCssDeclaration(frame.css, `[data-layer-id="${fillLayerId}"]`, "clip-path", clip);
+        frame.css = setCssDeclaration(frame.css, `[data-layer-id="${fillLayerId}"]`, "background", fill);
+      } else {
+        const imageBox = readLayerBox($img.attr("style"), frame.css, params.imageLayerId);
+        if (!imageBox) throw { code: -32000, message: `Image layer ${params.imageLayerId} has no px box to mirror with the fill layer` };
+        fillLayerId = `el_${Date.now().toString(36)}`;
+        $img.before(`<div data-layer-id="${fillLayerId}" data-layer-kind="fill" data-layer-name="Relleno de selección" data-fill-for="${params.imageLayerId}"></div>`);
+        frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${fillLayerId}"] {\n  position: absolute;\n  left: ${imageBox.left}px;\n  top: ${imageBox.top}px;\n  width: ${imageBox.width}px;\n  height: ${imageBox.height}px;\n  clip-path: ${clip};\n  background: ${fill};\n}`;
+      }
+
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true, templateId: params.templateId, frameId: params.frameId,
+        imageLayerId: params.imageLayerId, pathLayerId, fillLayerId, fill,
+      };
     }
 
     // ── Phase E: edit_path_point (incremental) ──
@@ -8198,8 +8412,19 @@ async function handleMethod(method, params, userId, auth) {
       if (changed) {
         d = cmds.map(c => c.join(" ")).join(" ");
         $path.attr("d", d);
+        // F1: re-bake when this path is an image mask source.
+        let maskRebaked = false;
+        if ($path.attr("data-mask-for")) {
+          const $maskSvg = $path.closest("svg[data-layer-id]");
+          const maskPathLayerId = $maskSvg.attr("data-layer-id") || params.elementId;
+          try {
+            applyMaskServer($2, frame, maskPathLayerId, $path.attr("data-mask-for"), $path.attr("data-mask-mode") === "exclude" ? "exclude" : "include");
+            maskRebaked = true;
+          } catch { /* the d update must survive a bake failure */ }
+        }
         frame.html = $2.html();
         await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+        return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: d, changed, maskRebaked };
       }
       return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: d, changed };
     }
