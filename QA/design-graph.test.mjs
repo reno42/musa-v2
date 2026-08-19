@@ -20,15 +20,19 @@ const design = (overrides) => ({
 });
 
 test("builds brand → campaign → design branches with campaign-less designs directly under brand", () => {
+  // Synthetic brands (known only from design metadata) now fold into "Sin
+  // especificar"; the branching contract is tested against a real CRM account.
   const hierarchy = buildDesignHierarchy([
-    design({ id: "direct", name: "Diseño directo", brand: "Futuraria" }),
-    design({ id: "launch-2", name: "Pieza 2", brand: " futuraria ", campaign: "Lanzamiento" }),
-    design({ id: "launch-1", name: "Pieza 1", brand: "FUTURARIA", campaign: " lanzamiento " }),
+    design({ id: "direct", name: "Diseño directo", brand: "Futuraria", brand_id: "brand-futuraria" }),
+    design({ id: "launch-2", name: "Pieza 2", brand: " futuraria ", brand_id: "brand-futuraria", campaign: "Lanzamiento" }),
+    design({ id: "launch-1", name: "Pieza 1", brand: "FUTURARIA", brand_id: "brand-futuraria", campaign: " lanzamiento " }),
     design({ id: "other", name: "Sin clasificar", brand: "" }),
+  ], [
+    { id: "brand-futuraria", name: "Futuraria", relationship_status: "client" },
   ]);
 
   assert.equal(hierarchy.length, 2);
-  const futuraria = hierarchy.find((brand) => brand.name === "Futuraria");
+  const futuraria = hierarchy.find((brand) => brand.id === "brand-futuraria");
   assert.ok(futuraria);
   assert.deepEqual(futuraria.directDesigns.map((item) => item.id), ["direct"]);
   assert.equal(futuraria.campaigns.length, 1);
@@ -36,7 +40,7 @@ test("builds brand → campaign → design branches with campaign-less designs d
   assert.deepEqual(futuraria.campaigns[0].designs.map((item) => item.id), ["launch-1", "launch-2"]);
   assert.equal(futuraria.totalDesigns, 3);
 
-  const unbranded = hierarchy.find((brand) => brand.name === "Sin marca");
+  const unbranded = hierarchy.find((brand) => brand.name === "Sin especificar");
   assert.deepEqual(unbranded.directDesigns.map((item) => item.id), ["other"]);
   assert.equal(unbranded.campaigns.length, 0);
 });
@@ -78,24 +82,27 @@ test("builds commercial accounts with stakeholders and ordered asset branches", 
   assert.equal(hierarchy.some((brand) => brand.id === "brand-client" && brand.totalDesigns === 0), true);
 });
 
-test("builds workspace → relationship → brand → campaign → asset → file graph and optionally people", () => {
+test("builds workspace → clientes → brand → campaign / asset-group → design graph", () => {
   const hierarchy = buildDesignHierarchy([
     design({ id: "file-1", brand_id: "brand-1", brand: "Acme", campaign: "Launch", asset_type: "mailing" }),
+    design({ id: "file-2", brand_id: "brand-1", brand: "Acme", asset_type: "key_visual" }),
   ], [
     { id: "brand-1", name: "Acme", relationship_status: "client" },
-  ], [
-    { id: "person-1", brand_id: "brand-1", first_name: "Grace", last_name: "Hopper" },
   ]);
 
-  const withPeople = buildKnowledgeGraph({ id: "ws-1", name: "Mi agencia" }, hierarchy, true);
-  assert.equal(withPeople.nodes.some((node) => node.id === "workspace:ws-1" && node.name === "Mi agencia"), true);
-  assert.equal(withPeople.nodes.some((node) => node.id === "status:client"), true);
-  assert.equal(withPeople.nodes.some((node) => node.kind === "person"), true);
-  assert.equal(withPeople.nodes.some((node) => node.kind === "asset_type" && node.name === "Mailing"), true);
-  assert.equal(withPeople.nodes.some((node) => node.kind === "design" && node.templateId === "file-1"), true);
-
-  const withoutPeople = buildKnowledgeGraph({ id: "ws-1", name: "Mi agencia" }, hierarchy, false);
-  assert.equal(withoutPeople.nodes.some((node) => node.kind === "person"), false);
+  // People and per-asset-type nodes are no longer part of the knowledge graph;
+  // campaign designs hang off the campaign, campaign-less ones off the brand's
+  // "Assets de marca" group.
+  const graph = buildKnowledgeGraph({ id: "ws-1", name: "Mi agencia" }, hierarchy);
+  assert.equal(graph.nodes.some((node) => node.id === "workspace:ws-1" && node.name === "Mi agencia"), true);
+  assert.equal(graph.nodes.some((node) => node.id === "status:client"), true);
+  assert.equal(graph.nodes.some((node) => node.id === "brand:brand-1"), true);
+  assert.equal(graph.nodes.some((node) => node.kind === "campaign" && node.name === "Launch"), true);
+  assert.equal(graph.nodes.some((node) => node.kind === "asset_group" && node.name === "Assets de marca"), true);
+  assert.equal(graph.nodes.some((node) => node.kind === "design" && node.templateId === "file-1"), true);
+  assert.equal(graph.nodes.some((node) => node.kind === "design" && node.templateId === "file-2"), true);
+  assert.equal(graph.edges.some((edge) => edge.source === "status:client" && edge.target === "brand:brand-1"), true);
+  assert.equal(graph.edges.some((edge) => edge.source === "workspace:ws-1" && edge.target === "status:client"), true);
 });
 
 test("normalizes legacy formats into the four commercial asset categories", () => {

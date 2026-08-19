@@ -91,8 +91,10 @@ const migrationSource = readFileSync(new URL("../supabase_migrations_v18.sql", i
 
 test("MCP schemas require workspace and non-empty style sources", () => {
   const createSchema = mcpSource.slice(mcpSource.indexOf('name: "create_brand_guideline"'), mcpSource.indexOf('name: "get_brand_guideline"'));
-  assert.match(createSchema, /minItems:\s*1/);
-  assert.match(createSchema, /required:\s*\["workspaceId",\s*"name",\s*"sourceTemplateIds"\]/);
+  // Creation no longer requires source templates (they are optional there and
+  // normalized away when empty); the update path still enforces non-empty IDs.
+  assert.match(createSchema, /required:\s*\["workspaceId",\s*"name"\]/);
+  assert.match(createSchema, /sourceTemplateIds:\s*\{[^}]*uniqueItems:\s*true/s);
   const updateSchema = mcpSource.slice(mcpSource.indexOf('name: "update_brand_guideline"'), mcpSource.indexOf('name: "delete_brand_guideline"'));
   assert.match(updateSchema, /required:\s*\["workspaceId",\s*"brandId"\]/);
   assert.match(updateSchema, /sourceTemplateIds:\s*\{[^}]*minItems:\s*1/s);
@@ -112,7 +114,9 @@ test("service writes to Supabase before mutating the fallback cache", () => {
   const update = serviceSource.slice(serviceSource.indexOf("export async function updateBrand"), serviceSource.indexOf("export async function deleteBrand"));
   assert.ok(update.indexOf('.update({ name: candidate.name') < update.indexOf("memoryStore.set(saved.id, saved)"));
   const remove = serviceSource.slice(serviceSource.indexOf("export async function deleteBrand"));
-  assert.ok(remove.indexOf("if (error) throw persistenceError") < remove.indexOf("memoryStore.delete(current.id)"));
+  // Deletion is a soft-delete now, so the cache mutation marks deletedAt instead
+  // of dropping the entry; the ordering (Supabase first) is still the invariant.
+  assert.ok(remove.indexOf('throw persistenceError("delete", error)') < remove.indexOf("memoryStore.set(cached.id, cached)"));
   assert.match(serviceSource, /error\?\.code === "23505"/);
 });
 
