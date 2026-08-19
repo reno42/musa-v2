@@ -3,9 +3,12 @@
   publish = "dist"
 
 [build.environment]
-  # onnxruntime-web (WASM) corre en Node 18+; pin 20 para que el glue
-  # Emscripten del runtime WASM siempre coincida con el build de Netlify.
-  NODE_VERSION = "20"
+  # Node >= 22 OBLIGATORIO: trae WebSocket nativo y Supabase Realtime lo
+  # requiere en el server (en Node 20 el api function muere con
+  # "Node.js 20 detected without native WebSocket support" → 502 en todo
+  # /api/*). onnxruntime-web (WASM) corre igual en cualquier Node moderno.
+  # Pre-arco de segmentación no había NODE_VERSION (default 22) y funcionaba.
+  NODE_VERSION = "22"
 
 [functions]
   node_bundler = "esbuild"
