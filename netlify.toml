@@ -2,8 +2,17 @@
   command = "npm install && npm run build:functions && npm run build"
   publish = "dist"
 
+[build.environment]
+  # onnxruntime-node requires Node ≥18; pin 20 so the native binaries in
+  # the segmentation background function always match.
+  NODE_VERSION = "20"
+
 [functions]
   node_bundler = "esbuild"
+  # Native modules for image-segment-background.mjs (ONNX inference +
+  # sharp decode/encode). External → esbuild keeps them as require() and
+  # Netlify packages the prebuilt linux binaries into the function zip.
+  external_modules = ["onnxruntime-node", "sharp"]
 
 # Serve .well-known discovery files (mcp.json, robots.txt) as static assets
 [[redirects]]

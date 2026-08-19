@@ -30,3 +30,7 @@ api/public/assets/
 
 # 0-byte artefact of a `> nul` redirect written on Windows.
 /nul
+
+# ONNX weights cache for scripts/fetch-segment-models.mjs (uploaded to
+# the ml-models Supabase bucket, never committed).
+/models-cache/
