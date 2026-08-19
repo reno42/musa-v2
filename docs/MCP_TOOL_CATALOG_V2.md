@@ -402,6 +402,84 @@ analyze_template_structure ──→ save_recipe ──→ RECIPE (JSON)
        assemble_template → validate_brand → render
 ```
 
+## 🟢 IMPLEMENTADAS — Calado, Máscaras y Selección de imágenes (8 tools)
+
+> **Estado:** ✅ Implementadas en `netlify/functions/mcp.mjs` + `api/src/routes/segmentation.ts` (Agosto 2026).  
+> **Mecanismo de máscara (F1):** el path SVG cerrado es la fuente de verdad — tag `data-mask-for="<imgLayerId>"` + `data-mask-mode="include|exclude"`. La aplicación es 100% no destructiva: `clip-path: path("evenodd,…")` (Chrome-first) o `mask-image: url("data:image/svg+xml;base64,…")` autocontenida cuando hay inversión/pinceles. Sin refs `url(#id)`.  
+> **Inferencia (F2/F3):** ONNX local en el background function `image-segment-background` (u2netp ~4.5MB, MobileSAM ~40MB, CLIPSeg int8 ~100MB) — **0 tokens de LLM** en todo el flujo. Tabla `segment_jobs` (queued→running→done|error).
+
+### Máscaras vectoriales (F1)
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| M1 | `create_mask_from_path` | `templateId, frameId, targetImageLayerId, pathElementId? \| pathData?(+x,y,width,height), mode? include\|exclude` | Path enmascarando el `<img>` (capa creada si se da `pathData`) | Context menu sobre path cerrado encima de imagen → **Crear selección** |
+| M2 | `invert_mask` | `templateId, frameId, imageLayerId` | Máscara invertida (include↔exclude, re-bake CSS) | Context menu → **Invertir selección** |
+| M3 | `fill_mask` | `templateId, frameId, imageLayerId, fill` | `div` detrás del img con el clip del sujeto + color/gradiente | Context menu → **Rellenar selección** (color picker inline) |
+| M4 | `edit_path_points` 🔄 | `templateId, frameId, elementId, newPathData` | Path actualizado + **re-bake automático** si tiene `data-mask-for` | Pen/point editing (P/C) — la máscara sigue el path |
+
+```bash
+# Crear selección: el exterior del path desaparece (include)
+curl -s -X POST https://…netlify.app/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"method":"tools/call","params":{"name":"create_mask_from_path","arguments":{"templateId":"tpl_…","frameId":"fr_…","targetImageLayerId":"img_1","pathElementId":"path_7","mode":"include"}}}'
+# → { content: [{ type: "text", text: "Mask created: path_7 → img_1 (include)" }] }
+```
+
+### Borrador sobre imagen (F4)
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| M5 | `mask_brush` | `templateId, frameId, imageLayerId, strokes: [{points:[{x,y}], size?, mode? erase\|restore}]` | Trazos baked en máscara data-URI (acumulados en `data-mask-brushes`) | Herramienta **Borrador** (E) — arrastrar enmascara, Alt restaura, [ ] tamaño |
+
+```bash
+curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
+  -d '{"method":"tools/call","params":{"name":"mask_brush","arguments":{"templateId":"tpl_…","frameId":"fr_…","imageLayerId":"img_1","strokes":[{"points":[{"x":10,"y":10},{"x":30,"y":25}],"size":24,"mode":"erase"}]}}}'
+```
+
+### Quitar fondo + Selección por IA (F3/F2/F2b)
+
+| # | Tool | Params | Returns | UI |
+|---|------|--------|---------|----|
+| M6 | `remove_background` | `assetId? \| url?, workspaceId?, applyTo?{templateId,frameId,layerId}` | `{jobId, result: {cutoutUrl, maskUrl, svgPath, bbox, width, height}}` — idempotente por asset | Botón **Quitar fondo** en HtmlContextualPanel (swap + Restaurar vía `data-orig-src`) |
+| M7 | `segment_click` | `assetId? \| url?, points?:[{x,y,neg?}], box?, prompt?, imageWidth?, imageHeight?, workspaceId?, applyTo?` | Ídem — SAM con clics **o** CLIPSeg con `prompt` (toma precedencia) | Herramienta **Varita** (W) — clic positivo, Alt+clic negativo, doble clic/Enter aplica; flyout de texto para CLIPSeg |
+| M8 | `segment_status` | `jobId` | `{status: queued\|running\|done\|error, result?}` — poll del job | Loader inline (Segmentando…) |
+
+```bash
+# Quitar fondo (u2netp, ~1-3s warm) — la respuesta trae el resultado completo
+curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
+  -d '{"method":"tools/call","params":{"name":"remove_background","arguments":{"assetId":"ast_123","applyTo":{"templateId":"tpl_…","frameId":"fr_…","layerId":"img_1"}}}}'
+
+# Varita SAM: un punto positivo (0.5,0.5) + uno negativo (Alt+clic)
+# … name:"segment_click", arguments:{"url":"https://…/foto.jpg","points":[{"x":0.5,"y":0.5},{"x":0.1,"y":0.9,"neg":true}],"workspaceId":"ws_…"}
+
+# Varita texto (CLIPSeg): segmenta "la persona" — sin puntos
+# … name:"segment_click", arguments:{"url":"https://…/foto.jpg","prompt":"la persona","workspaceId":"ws_…"}
+
+# Si el job sigue corriendo (>8s, cold start con descarga de modelo):
+# … name:"segment_status", arguments:{"jobId":"seg_…"}
+```
+
+**Respuesta completa de un job done** (`result_json`):
+```json
+{
+  "cutoutUrl": "https://…/ast_456.png",   // PNG con alpha
+  "maskUrl":   "https://…/ast_457.png",   // máscara binaria
+  "svgPath":   { "d": "M10 20 L… Z", "dNorm": "M0.1 0.2 L… Z", "bbox": { "x": 0, "y": 0, "width": 800, "height": 600 }, "subpaths": 1 },
+  "width": 800, "height": 600
+}
+```
+
+### Pitfalls
+
+| Pitfall | Detalle | Solución |
+|---------|---------|----------|
+| **UTF-8 en bash** | Payloads con acentos/ñ (`"la persona"` está OK, pero `"círculo"` o `"camión"` se corrompen si el shell no los escapa) | Mandar el payload con `ensure_ascii=True` (Python) o escapar a `\uXXXX` en bash; nunca pegar texto acentuado crudo en `-d '{…}'` |
+| Cold start | Primer job descarga el modelo del bucket `ml-models` (40–150MB) → tarda más de 8s | El MCP devuelve `jobId` + `hint`; poll con `segment_status(jobId)` |
+| CLIPSeg es lento | 5–15s CPU en int8 | Usar SAM por clics si hay un punto conocido; CLIPSeg solo para selección semántica |
+| `clip-path: path()` | Requiere Chrome ≥123 (Chrome-first OK) | Fallback: máscara SVG data-URI autocontenida (ya se usa con inversión/pinceles) |
+| Máscara en frame origin | El svg de máscara se pine a `left:0;top:0` del frame (1×1 overflow:visible) con `d` en coords del frame | No reposicionar el svg a mano — editar solo el `d` del path (`edit_path_points`) |
+| 0 LLM verificable | El flujo no llama ningún endpoint de LLM | Verificable en logs del job (`kind` + `input_url`) y en `segment-core.mjs` — solo `onnxruntime-node` |
+
 ---
 
 ## 🎯 Orden de ejecución
