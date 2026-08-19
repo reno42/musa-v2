@@ -393,6 +393,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
   const [brushSize, setBrushSize] = useState(24); // F4 Borrador diameter in px
   const [wandBusy, setWandBusy] = useState<string | null>(null); // F2 Varita: image being segmented (inline loader)
+  const [wandPrompt, setWandPrompt] = useState(""); // F2b CLIPSeg text prompt ("la persona")
   const [foregroundColor, setForegroundColor] = useState("#000000");
   const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.5);
@@ -1828,52 +1829,85 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [frames, autoSave, addToast]);
 
-  // ── F2: Varita — SAM click-to-segment over an image layer ──
-  // Accumulated normalized click prompts run one MobileSAM job; the traced
-  // outline lands as the F1 mask path (non-destructive, data-mask-for).
+  // ── F2/F2b: Varita — SAM clicks or CLIPSeg text over an image layer ──
+  // Shared pipeline: POST /api/segment/click, poll until done, apply the
+  // traced outline as the F1 mask path (non-destructive, data-mask-for).
+  const runSegmentJob = useCallback(async (
+    payload: { url: string; points?: WandClickPoint[]; prompt?: string },
+    frameId: string,
+    imageLayerId: string,
+  ): Promise<boolean> => {
+    const res = await fetch("/api/segment/click", {
+      method: "POST",
+      headers: { ...getApiHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, workspaceId: templateWorkspaceId }),
+    }).then(r => r.json());
+    if (!res?.success) throw new Error(res?.error || "segment_click failed");
+
+    // Warm model returns immediately; a cold start stays pollable here so
+    // the interaction still feels synchronous (same pattern as F3).
+    let result = res.result || null;
+    if (res.jobId && !result) {
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const poll = await fetch(`/api/segment/jobs/${res.jobId}`, { headers: getApiHeaders() }).then(r => r.json());
+        if (poll?.success && poll.status === "done") { result = poll.result; break; }
+        if (poll?.success && poll.status === "error") throw new Error(poll.error || "Inference failed");
+      }
+    }
+    const dNorm: string | undefined = result?.svgPath?.dNorm;
+    if (!dNorm) throw new Error("The job did not produce a mask path");
+
+    const frame = framesRef.current.find(f => f.id === frameId);
+    if (!frame) return false;
+    const applied = applySegmentMaskPath(frame.html, frame.css, imageLayerId, dNorm);
+    if (!applied) return false;
+    const updated = framesRef.current.map(f => f.id === frameId ? { ...f, html: applied.html, css: applied.css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    return true;
+  }, [templateWorkspaceId, store, autoSave]);
+
   const handleWandSegment = useCallback(async (frameId: string, imageLayerId: string, src: string, points: WandClickPoint[]) => {
     setWandBusy(imageLayerId);
     try {
-      const res = await fetch("/api/segment/click", {
-        method: "POST",
-        headers: { ...getApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ url: src, workspaceId: templateWorkspaceId, points }),
-      }).then(r => r.json());
-      if (!res?.success) throw new Error(res?.error || "segment_click failed");
-
-      // Warm model returns immediately; a cold start stays pollable here so
-      // the interaction still feels synchronous (same pattern as F3).
-      let result = res.result || null;
-      if (res.jobId && !result) {
-        const deadline = Date.now() + 90_000;
-        while (Date.now() < deadline) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          const poll = await fetch(`/api/segment/jobs/${res.jobId}`, { headers: getApiHeaders() }).then(r => r.json());
-          if (poll?.success && poll.status === "done") { result = poll.result; break; }
-          if (poll?.success && poll.status === "error") throw new Error(poll.error || "Inference failed");
-        }
-      }
-      const dNorm: string | undefined = result?.svgPath?.dNorm;
-      if (!dNorm) throw new Error("The job did not produce a mask path");
-
-      const frame = framesRef.current.find(f => f.id === frameId);
-      if (!frame) return;
-      const applied = applySegmentMaskPath(frame.html, frame.css, imageLayerId, dNorm);
-      if (!applied) {
-        addToast("No se pudo aplicar la selección de la varita.", "error");
-        return;
-      }
-      const updated = framesRef.current.map(f => f.id === frameId ? { ...f, html: applied.html, css: applied.css } : f);
-      store.replaceAllWithUndo(updated, "edit");
-      autoSave(updated);
-      addToast("Selección aplicada con la Varita.", "success");
+      const applied = await runSegmentJob({ url: src, points }, frameId, imageLayerId);
+      if (applied) addToast("Selección aplicada con la Varita.", "success");
+      else addToast("No se pudo aplicar la selección de la varita.", "error");
     } catch (err: any) {
       console.error("[WAND] failed:", err);
       addToast(`Varita: ${err?.message || "segmentación fallida"}`, "error");
     } finally {
       setWandBusy(null);
     }
-  }, [templateWorkspaceId, store, autoSave, addToast]);
+  }, [runSegmentJob, addToast]);
+
+  // ── F2b: Varita por texto (CLIPSeg) — segments the selected image layer ──
+  const handleWandPromptRun = useCallback(async () => {
+    const prompt = wandPrompt.trim();
+    if (!prompt) {
+      addToast("Escribí qué segmentar (ej: la persona).", "info");
+      return;
+    }
+    if (!selectedElement || selectedElement.frameId !== selectedFrameId || selectedElement.tag.toLowerCase() !== "img" || !selectedElement.src) {
+      addToast("Selecciona una imagen para segmentar por texto.", "info");
+      return;
+    }
+    const imageLayerId = selectedElement.layerId;
+    const src = selectedElement.src;
+    setWandBusy(imageLayerId);
+    try {
+      const applied = await runSegmentJob({ url: src, prompt }, selectedFrameId, imageLayerId);
+      if (applied) addToast(`Segmentación «${prompt}» aplicada.`, "success");
+      else addToast("No se pudo aplicar la segmentación por texto.", "error");
+    } catch (err: any) {
+      console.error("[WAND-PROMPT] failed:", err);
+      addToast(`Varita: ${err?.message || "segmentación fallida"}`, "error");
+    } finally {
+      setWandBusy(null);
+    }
+  }, [wandPrompt, selectedElement, selectedFrameId, runSegmentJob, addToast]);
 
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
@@ -6119,6 +6153,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onToggleLayers={() => setShowLayersPanel(v => !v)}
           brushSize={brushSize}
           onBrushSizeChange={setBrushSize}
+          wandPrompt={wandPrompt}
+          onWandPromptChange={setWandPrompt}
+          onWandPromptRun={handleWandPromptRun}
         />
       </div>
 

@@ -180,14 +180,17 @@ segmentationRoutes.post("/remove-background", async (req, res) => {
 /**
  * POST /api/segment/click
  * Body: { assetId | url | dataUrl, workspaceId, points?: [{x,y,neg}],
- *        box?: {x,y,w,h}, imageWidth?, imageHeight?, name? }
+ *        box?: {x,y,w,h}, imageWidth?, imageHeight?, prompt?, name? }
  *
- * Creates a queued segment_jobs row (kind=segment_click, MobileSAM: one
- * encoder pass, then the decoder runs with every prompt point together) and
- * dispatches the image-segment-background BACKGROUND function (immediate
- * 202). Points/box are normalized 0..1 over the image; px coordinates are
- * accepted when imageWidth/imageHeight are given. The caller polls
- * GET /api/segment/jobs/:id.
+ * Creates a queued segment_jobs row and dispatches the
+ * image-segment-background BACKGROUND function (immediate 202).
+ * - points/box → kind=segment_click (MobileSAM: one encoder pass, then the
+ *   decoder runs with every prompt point together). Normalized 0..1 over
+ *   the image; px coordinates are accepted when imageWidth/imageHeight are
+ *   given.
+ * - prompt (F2b) → kind=segment_text (CLIPSeg heatmap → binarize → same
+ *   mask/path pipeline). Takes precedence over points/box.
+ * The caller polls GET /api/segment/jobs/:id.
  */
 segmentationRoutes.post("/click", async (req, res) => {
   try {
@@ -197,23 +200,31 @@ segmentationRoutes.post("/click", async (req, res) => {
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
       return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
     }
-    const points = normalizeSegmentPoints(body.points, body.imageWidth, body.imageHeight);
-    const box = normalizeSegmentBox(body.box, body.imageWidth, body.imageHeight);
-    if (!points && !box) {
+    const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt.trim() : "";
+    const points = prompt ? null : normalizeSegmentPoints(body.points, body.imageWidth, body.imageHeight);
+    const box = prompt ? null : normalizeSegmentBox(body.box, body.imageWidth, body.imageHeight);
+    if (!prompt && !points && !box) {
       return res.status(400).json({
         success: false,
-        error: "Provide points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight",
+        error: "Provide prompt (text, CLIPSeg), points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight",
       });
     }
     const input = await resolveSegmentInput(body);
     if (!input.ok) return res.status(input.status).json({ success: false, error: input.error });
 
-    const job = await createSegmentJob("segment_click", input.inputUrl, workspaceId, {
-      points: points || [],
-      ...(box ? { box } : {}),
-      sourceAssetId: input.sourceAssetId,
-      sourceName: input.sourceName,
-    });
+    const job = await createSegmentJob(
+      prompt ? "segment_text" : "segment_click",
+      input.inputUrl,
+      workspaceId,
+      prompt
+        ? { prompt, sourceAssetId: input.sourceAssetId, sourceName: input.sourceName }
+        : {
+            points: points || [],
+            ...(box ? { box } : {}),
+            sourceAssetId: input.sourceAssetId,
+            sourceName: input.sourceName,
+          }
+    );
     const dispatch = await dispatchSegmentJob(job.id);
     return res.status(202).json({
       success: true,

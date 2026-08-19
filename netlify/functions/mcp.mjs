@@ -2847,7 +2847,7 @@ const MCP_TOOLS = [
   },
   {
     name: "segment_click",
-    description: "Segment an image with MobileSAM from click prompts (local ONNX, zero LLM tokens): every point runs through ONE encoder pass, and the mask comes back as a cutout PNG (alpha), a mask PNG and a traced SVG path (dNorm normalized 0..1 over the image). Points: x/y either normalized 0..1 or px with imageWidth/imageHeight; neg=true marks a background point (Alt+click in the UI). Dispatches a background job and polls ~8s; if it is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the traced mask is applied to the target <img> layer as a non-destructive mask path (F1 mechanism: editable with edit_path_points, re-bakes).",
+    description: "Segment an image with MobileSAM from click prompts or CLIPSeg from a text prompt (local ONNX, zero LLM tokens): every point runs through ONE encoder pass, and the mask comes back as a cutout PNG (alpha), a mask PNG and a traced SVG path (dNorm normalized 0..1 over the image). Points: x/y either normalized 0..1 or px with imageWidth/imageHeight; neg=true marks a background point (Alt+click in the UI). prompt (e.g. \"la persona\") runs CLIPSeg text mode instead and takes precedence over points/box. Dispatches a background job and polls ~8s; if it is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the traced mask is applied to the target <img> layer as a non-destructive mask path (F1 mechanism: editable with edit_path_points, re-bakes).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2869,6 +2869,7 @@ const MCP_TOOLS = [
           minItems: 1,
         },
         box: { type: "object", description: "Optional SAM box prompt {x,y,w,h} normalized 0..1 (or px + imageWidth/imageHeight)", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } }, required: ["x", "y", "w", "h"] },
+        prompt: { type: "string", description: "Optional CLIPSeg text prompt (e.g. \"la persona\", \"the red car\"). Runs segment_text instead of SAM clicks and takes precedence over points/box." },
         imageWidth: { type: "number", description: "Source image px width — required when points/box are given in px instead of 0..1" },
         imageHeight: { type: "number", description: "Source image px height — required when points/box are given in px instead of 0..1" },
         applyTo: {
@@ -8705,10 +8706,11 @@ async function handleMethod(method, params, userId, auth) {
 
     // ── F2: segment_click (MobileSAM, click prompts) ──
     case "segment_click": {
-      const normPoints = normalizeSegmentPoints(params.points, params.imageWidth, params.imageHeight);
-      const normBox = normalizeSegmentBox(params.box, params.imageWidth, params.imageHeight);
-      if (!normPoints && !normBox) {
-        throw { code: -32000, message: "Provide points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight" };
+      const prompt = typeof params.prompt === "string" && params.prompt.trim() ? params.prompt.trim() : "";
+      const normPoints = prompt ? null : normalizeSegmentPoints(params.points, params.imageWidth, params.imageHeight);
+      const normBox = prompt ? null : normalizeSegmentBox(params.box, params.imageWidth, params.imageHeight);
+      if (!prompt && !normPoints && !normBox) {
+        throw { code: -32000, message: "Provide prompt (text, CLIPSeg), points [{x,y,neg}] or box {x,y,w,h} — normalized 0..1, or px with imageWidth/imageHeight" };
       }
 
       let workspaceId = params.workspaceId || "";
@@ -8737,12 +8739,14 @@ async function handleMethod(method, params, userId, auth) {
         throw { code: -32000, message: "Provide assetId or url" };
       }
 
-      const job = await createSegmentJob("segment_click", inputUrl, workspaceId, {
-        points: normPoints || [],
-        ...(normBox ? { box: normBox } : {}),
-        sourceAssetId,
-        sourceName,
-      });
+      const job = await createSegmentJob(prompt ? "segment_text" : "segment_click", inputUrl, workspaceId, prompt
+        ? { prompt, sourceAssetId, sourceName }
+        : {
+            points: normPoints || [],
+            ...(normBox ? { box: normBox } : {}),
+            sourceAssetId,
+            sourceName,
+          });
       const dispatch = await dispatchSegmentJob(job.id);
 
       // Poll inside the ~9s sync budget. Warm MobileSAM finishes in 2-4s;

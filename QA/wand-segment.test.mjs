@@ -331,9 +331,21 @@ const readRepo = rel => readFileSync(new URL(`../${rel}`, import.meta.url), "utf
 test("F2 REST: /api/segment/click validates + queues a segment_click job", () => {
   const routes = readRepo("api/src/routes/segmentation.ts");
   assert.match(routes, /segmentationRoutes\.post\("\/click"/);
-  assert.match(routes, /createSegmentJob\("segment_click"/);
+  assert.match(routes, /prompt \? "segment_text" : "segment_click"/);
   assert.match(routes, /normalizeSegmentPoints\(body\.points/);
   assert.match(routes, /normalizeSegmentBox\(body\.box/);
+});
+
+test("F2b REST: a prompt routes to a segment_text job with precedence over points/box", () => {
+  const routes = readRepo("api/src/routes/segmentation.ts");
+  assert.match(routes, /const prompt = typeof body\.prompt === "string" && body\.prompt\.trim\(\)/);
+  assert.match(routes, /if \(!prompt && !points && !box\)/);
+  assert.match(routes, /createSegmentJob\(/);
+  // prompt takes precedence: points/box are not normalized when it is set.
+  assert.match(routes, /const points = prompt \? null : normalizeSegmentPoints/);
+  assert.match(routes, /const box = prompt \? null : normalizeSegmentBox/);
+  // the job params carry the prompt.
+  assert.match(routes, /\{ prompt, sourceAssetId: input\.sourceAssetId, sourceName: input\.sourceName \}/);
 });
 
 test("F2 shared: the normalization contract lives in shared/segmentPoints.ts", () => {
@@ -350,6 +362,15 @@ test("F2 MCP: catalog exposes segment_click and applies the mask server-side", (
   assert.match(mcp, /async function applySegmentMaskToLayer/);
   assert.match(mcp, /applySegmentMaskToLayer\(params\.applyTo, result\.svgPath\)/);
   assert.match(mcp, /neg:\s*\{\s*type:\s*"boolean"/);
+});
+
+test("F2b MCP: the tool accepts a text prompt and routes it to segment_text", () => {
+  const mcp = readRepo("netlify/functions/mcp.mjs");
+  assert.match(mcp, /prompt: \{ type: "string"/);
+  assert.match(mcp, /const prompt = typeof params\.prompt === "string" && params\.prompt\.trim\(\)/);
+  assert.match(mcp, /if \(!prompt && !normPoints && !normBox\)/);
+  assert.match(mcp, /createSegmentJob\(prompt \? "segment_text" : "segment_click"/);
+  assert.match(mcp, /\{ prompt, sourceAssetId, sourceName \}/);
 });
 
 test("F2 UI: wand is a first-class tool end to end", () => {
@@ -375,4 +396,29 @@ test("F2 UI: wand is a first-class tool end to end", () => {
   assert.match(editor, /onWandSegment=\{\(frameId, imageLayerId, src, points\)/);
   assert.match(editor, /wandLoading=\{wandBusy\}/);
   assert.match(editor, /api\/segment\/click/);
+});
+
+test("F2b UI: the wand flyout runs a CLIPSeg prompt over the selected image", () => {
+  const toolbar = readRepo("src/components/FloatingToolbar.tsx");
+  assert.match(toolbar, /wandPrompt\?: string/);
+  assert.match(toolbar, /onWandPromptChange\?: \(value: string\) => void/);
+  assert.match(toolbar, /onWandPromptRun\?: \(\) => void/);
+  assert.match(toolbar, /tool === "wand" && onWandPromptRun/);
+  assert.match(toolbar, /Segmentar por texto \(CLIPSeg\)/);
+
+  const editor = readRepo("src/pages/EditorV2.tsx");
+  assert.match(editor, /const \[wandPrompt, setWandPrompt\] = useState/);
+  assert.match(editor, /const handleWandPromptRun = useCallback/);
+  assert.match(editor, /selectedElement\.tag\.toLowerCase\(\) !== "img"/);
+  assert.match(editor, /runSegmentJob\(\{ url: src, prompt \}/);
+  assert.match(editor, /wandPrompt=\{wandPrompt\}/);
+  assert.match(editor, /onWandPromptChange=\{setWandPrompt\}/);
+  assert.match(editor, /onWandPromptRun=\{handleWandPromptRun\}/);
+});
+
+test("F2 engine: segment-core routes text jobs to CLIPSeg", () => {
+  const core = readRepo("netlify/functions/segment-core.mjs");
+  assert.match(core, /job\.kind === "segment_text"/);
+  assert.match(core, /clipsegMask\(/);
+  assert.match(core, /\(job\.params_json \|\| \{\}\)\.prompt/);
 });

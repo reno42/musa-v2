@@ -43,6 +43,10 @@ interface Props {
   // F4 Borrador: brush size (also [ ] keys in EditorV2)
   brushSize?: number;
   onBrushSizeChange?: (size: number) => void;
+  // F2b CLIPSeg text mode: segment by description ("la persona")
+  wandPrompt?: string;
+  onWandPromptChange?: (value: string) => void;
+  onWandPromptRun?: () => void;
 }
 
 const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
@@ -132,6 +136,7 @@ export function FloatingToolbar({
   onForegroundColorChange, onBackgroundColorChange, onSwapColors,
   showLayersPanel, onToggleLayers, onZoomIn, onZoomOut, onZoomFit,
   brushSize = 24, onBrushSizeChange,
+  wandPrompt = "", onWandPromptChange, onWandPromptRun,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
   const [showZoomPopover, setShowZoomPopover] = useState(false);
@@ -548,23 +553,75 @@ export function FloatingToolbar({
       </div>
 
       {/* ── Varita: own button; SAM click-to-segment over images ── */}
-      <button
-        type="button"
-        onClick={() => onToolChange(WAND_TOOL.key)}
-        title={WAND_TOOL.title}
-        style={{
-          width: 46, height: 36,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", position: "relative", borderRadius: 8,
-          background: tool === "wand" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-          border: tool === "wand" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-          color: tool === "wand" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-          transition: "all 0.15s ease",
-        }}
-      >
-        {WAND_TOOL.icon}
-        <span style={shortcutLabel}>{WAND_TOOL.shortcut}</span>
-      </button>
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => onToolChange(WAND_TOOL.key)}
+          title={WAND_TOOL.title}
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", position: "relative", borderRadius: 8,
+            background: tool === "wand" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+            border: tool === "wand" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+            color: tool === "wand" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          {WAND_TOOL.icon}
+          <span style={shortcutLabel}>{WAND_TOOL.shortcut}</span>
+        </button>
+        {tool === "wand" && onWandPromptRun && (
+          <div style={{ ...flyoutStyle, minWidth: 190, padding: 8, gap: 6 }}>
+            <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>
+              Segmentar por texto (CLIPSeg)
+            </div>
+            <input
+              type="text"
+              value={wandPrompt}
+              onChange={(e) => onWandPromptChange?.(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && wandPrompt.trim()) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onWandPromptRun();
+                }
+                if (e.key === "Escape") e.stopPropagation();
+              }}
+              placeholder="la persona, el auto rojo…"
+              style={{
+                width: "100%",
+                background: "var(--panel-bg, rgba(255,255,255,0.04))",
+                border: "1px solid var(--glass-border, rgba(255,255,255,0.08))",
+                borderRadius: 6,
+                color: "var(--text, #e8e4d8)",
+                fontSize: 12,
+                padding: "6px 8px",
+                outline: "none",
+              }}
+            />
+            <button
+              type="button"
+              onClick={onWandPromptRun}
+              disabled={!wandPrompt.trim()}
+              style={{
+                width: "100%",
+                height: 26,
+                borderRadius: 6,
+                cursor: wandPrompt.trim() ? "pointer" : "default",
+                background: wandPrompt.trim() ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+                border: wandPrompt.trim() ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+                color: wandPrompt.trim() ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+                fontSize: 11,
+                transition: "all 0.15s ease",
+              }}
+            >
+              Segmentar seleccionada
+            </button>
+            <div style={{ fontSize: 10, color: "#7a7668" }}>Usa la imagen seleccionada · Enter aplica</div>
+          </div>
+        )}
+      </div>
 
       {divider}
 
