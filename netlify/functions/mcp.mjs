@@ -2697,6 +2697,40 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "mask_brush",
+    description: "F4: paint non-destructive brush strokes on an image's mask. Each stroke is a trail of points in IMAGE-LOCAL px (0,0 = the img layer's top-left corner), a brush size and a mode (erase = black = remove, restore = white = bring back). Strokes accumulate in data-mask-brushes on the img and bake into a self-contained data-URI mask; calling again with more strokes edits non-destructively. If the image has no mask yet, a full-rect include mask is created automatically. Editing the mask path with edit_path_points re-bakes the strokes too.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the image" },
+        imageLayerId: { type: "string", description: "data-layer-id of the <img> layer" },
+        strokes: {
+          type: "array",
+          description: "Brush trails in image-local coordinates",
+          items: {
+            type: "object",
+            properties: {
+              points: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: { x: { type: "number" }, y: { type: "number" } },
+                  required: ["x", "y"],
+                },
+                minItems: 1,
+              },
+              size: { type: "number", description: "Brush diameter in px (default 24)" },
+              mode: { type: "string", enum: ["erase", "restore"], description: "erase subtracts from the mask (black), restore brings pixels back (white). Default erase." },
+            },
+            required: ["points"],
+          },
+        },
+      },
+      required: ["templateId", "frameId", "imageLayerId", "strokes"],
+    },
+  },
+  {
     name: "remove_background",
     description: "Remove the background of an image with u2netp (local ONNX, zero LLM tokens): the result is a PNG with alpha (cutoutUrl) plus a mask PNG and a traced SVG path. Give assetId (a workspace asset) or a direct url. Dispatches a background job and polls ~8s; u2netp usually finishes in 1-3s warm. If the job is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the target <img> layer's src is swapped to the cutout (original kept in data-orig-src). Idempotent per asset: re-running returns the existing cutout.",
     inputSchema: {
@@ -8410,6 +8444,74 @@ async function handleMethod(method, params, userId, auth) {
       return {
         success: true, templateId: params.templateId, frameId: params.frameId,
         imageLayerId: params.imageLayerId, pathLayerId, fillLayerId, fill,
+      };
+    }
+
+    // ── F4: mask_brush (non-destructive brush strokes on an image mask) ──
+    case "mask_brush": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      // Normalize the incoming trails the same way parseBrushesAttr would
+      // have stored them, so the persisted JSON is always well-formed.
+      const strokes = [];
+      for (const raw of Array.isArray(params.strokes) ? params.strokes : []) {
+        if (!raw || !Array.isArray(raw.points) || raw.points.length === 0) continue;
+        const points = raw.points
+          .filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))
+          .map(p => ({ x: p.x, y: p.y }));
+        if (points.length === 0) continue;
+        strokes.push({
+          points,
+          size: Math.max(1, Number(raw.size) || 24),
+          mode: raw.mode === "restore" ? "restore" : "erase",
+        });
+      }
+      if (strokes.length === 0) throw { code: -32000, message: "strokes must contain at least one valid trail: points[{x,y}] plus optional size and mode" };
+
+      const $ = cheerio.load(frame.html || "");
+      const $img = $(`img[data-layer-id="${params.imageLayerId}"]`);
+      if (!$img.length) throw { code: -32000, message: `Image layer not found (no <img> with data-layer-id ${params.imageLayerId})` };
+
+      // Reuse an existing mask path, or auto-create the full-rect include mask
+      // (same shape the editor's eraser creates on a bare image).
+      const $existing = $(`path[data-mask-for="${params.imageLayerId}"]`).first();
+      let pathLayerId = null;
+      if ($existing.length) {
+        const $svg = $existing.closest("svg[data-layer-id]");
+        pathLayerId = $svg.attr("data-layer-id") || $existing.attr("data-layer-id");
+      }
+      let maskCreated = false;
+      if (!pathLayerId) {
+        const imageBox = readLayerBox($img.attr("style"), frame.css, params.imageLayerId);
+        if (!imageBox) throw { code: -32000, message: `Image layer ${params.imageLayerId} needs px left/top/width/height to auto-create a mask` };
+        pathLayerId = `el_${Date.now().toString(36)}`;
+        const d = `M${imageBox.left} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top + imageBox.height} L${imageBox.left} ${imageBox.top + imageBox.height} Z`;
+        const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Máscara de imagen" style="position:absolute;left:${imageBox.left}px;top:${imageBox.top}px;width:${Math.max(imageBox.width, 1)}px;height:${Math.max(imageBox.height, 1)}px;overflow:visible;"><path d="${d}" fill="none"/></svg>`;
+        $img.before(svgHtml);
+        frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: ${imageBox.left}px;\n  top: ${imageBox.top}px;\n  width: ${Math.max(imageBox.width, 1)}px;\n  height: ${Math.max(imageBox.height, 1)}px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+        maskCreated = true;
+      }
+
+      // Append the new trails to the stored list and re-bake.
+      const brushes = parseBrushesAttr($img.attr("data-mask-brushes"));
+      brushes.push(...strokes);
+      $img.attr("data-mask-brushes", serializeBrushesAttr(brushes));
+
+      const mode = $existing.attr("data-mask-mode") === "exclude" ? "exclude" : "include";
+      const baked = applyMaskServer($, frame, pathLayerId, params.imageLayerId, mode);
+      frame.html = $.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return {
+        success: true, templateId: params.templateId, frameId: params.frameId,
+        imageLayerId: params.imageLayerId, pathLayerId, maskCreated,
+        strokesApplied: strokes.length, totalStrokes: brushes.length,
+        cssProperty: baked.property, cssValuePreview: baked.value.slice(0, 120),
+        note: "Non-destructive: strokes live in data-mask-brushes on the img; edit the path with edit_path_points and they re-bake.",
       };
     }
 

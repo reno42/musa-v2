@@ -92,8 +92,8 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
-import { applyPathMask, applySelectionFill, reBakePathMask } from "../lib/maskApply";
-import type { MaskMode } from "../../shared/maskBake.ts";
+import { applyBrushStroke, applyPathMask, applySelectionFill, reBakePathMask } from "../lib/maskApply";
+import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
@@ -391,6 +391,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [templateName, setTemplateName] = useState("New Design");
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
+  const [brushSize, setBrushSize] = useState(24); // F4 Borrador diameter in px
   const [foregroundColor, setForegroundColor] = useState("#000000");
   const [backgroundColor, setBackgroundColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.5);
@@ -1808,6 +1809,24 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     commitMaskChange(frameId, result, `Selección rellenada con ${color}.`, "No se pudo rellenar la selección.");
   }, [frames, commitMaskChange]);
 
+  // ── F4: Borrador brush strokes (non-destructive mask editing) ──
+  // Each completed drag arrives as one stroke in image-local coordinates;
+  // applyBrushStroke appends it to data-mask-brushes and re-bakes the mask.
+  // Silent on success — strokes are frequent, and the mask updating live is
+  // its own feedback.
+  const handleBrushStroke = useCallback((frameId: string, imageLayerId: string, stroke: BrushStroke) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const result = applyBrushStroke(frame.html, frame.css, imageLayerId, stroke);
+    if (!result) {
+      addToast("No se pudo aplicar el trazo del borrador: la imagen no tiene una caja en px.", "error");
+      return;
+    }
+    const updated = frames.map(f => f.id === frameId ? { ...f, html: result.html, css: result.css } : f);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave, addToast]);
+
   // ── Phase E: Pen path creation (supports closed paths) ──
   const handleAddPenPath = useCallback((pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => {
     if (!selectedFrameId) return;
@@ -2711,6 +2730,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             break;
           case "p": setActiveTool("pen"); break;
           case "b": setActiveTool("pencil"); break;
+          case "e": setActiveTool("eraser"); break;
+          // F4: [ ] resize the eraser brush (only while the tool is active,
+          // so reorder shortcuts Ctrl+[ / Ctrl+] keep their meaning).
+          case "[":
+            if (activeTool === "eraser") { e.preventDefault(); setBrushSize(s => Math.max(4, s - 4)); }
+            break;
+          case "]":
+            if (activeTool === "eraser") { e.preventDefault(); setBrushSize(s => Math.min(200, s + 4)); }
+            break;
           case "i": setActiveTool(t => t === "eyedropper" ? "select" : "eyedropper"); break;
           case "z": handleZoomIn(); break;
           case "delete":
@@ -2805,7 +2833,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -5976,6 +6004,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onEditPathPoints={handleEditPathPoints}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
+            onBrushStroke={(frameId, imageLayerId, stroke) => handleBrushStroke(frameId, imageLayerId, stroke)}
+            brushSize={brushSize}
             onFrameResize={handleFrameResize}
             onCreateFrame={handleCreateFrameAt}
             onCreateOrphanFromTool={handleCreateOrphanFromTool}
@@ -6035,6 +6065,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           onSwapColors={handleSwapColors}
           showLayersPanel={showLayersPanel}
           onToggleLayers={() => setShowLayersPanel(v => !v)}
+          brushSize={brushSize}
+          onBrushSizeChange={setBrushSize}
         />
       </div>
 

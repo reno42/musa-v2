@@ -26,6 +26,7 @@ import {
   type PathPoint,
   type Point,
 } from "../lib/pathData";
+import type { BrushStroke } from "../../shared/maskBake.ts";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -149,6 +150,11 @@ interface DesignFrameProps {
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
+  // ── F4 Borrador ──
+  /** One completed brush trail over an <img> layer (image-local coords). */
+  onBrushStroke?: (imageLayerId: string, stroke: BrushStroke) => void;
+  /** Current brush diameter in px (from the toolbar / [ ] keys). */
+  brushSize?: number;
   // ── Phase 1-2: Frame-level interactions ──
   contentMode?: boolean;
   inMultiSelect?: boolean;
@@ -214,6 +220,7 @@ export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
   activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+    onBrushStroke, brushSize = 24,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
   onFrameResize,
   autoEditLayerId, onAutoEditHandled,
@@ -252,6 +259,10 @@ export function DesignFrame({
   onElementDuplicateRef.current = onElementDuplicate;
   const onEditPathPointsRef = useRef(onEditPathPoints);
   onEditPathPointsRef.current = onEditPathPoints;
+  const onBrushStrokeRef = useRef(onBrushStroke);
+  onBrushStrokeRef.current = onBrushStroke;
+  const brushSizeRef = useRef(brushSize);
+  brushSizeRef.current = brushSize;
   const onCssChangeRef = useRef(onCssChange);
   onCssChangeRef.current = onCssChange;
   const onHtmlChangeRef = useRef(onHtmlChange);
@@ -1585,6 +1596,85 @@ export function DesignFrame({
 
         document.addEventListener("mousemove", onPencilMove);
         document.addEventListener("mouseup", onPencilUp);
+        return;
+      }
+
+      // ── Eraser (F4): non-destructive mask strokes over images, delete elsewhere ──
+      if (tool === "eraser") {
+        e.stopPropagation();
+        e.preventDefault();
+        onActivate(frame.id);
+
+        // An <img> under the pointer gets a mask brush stroke; any other
+        // top-level layer is deleted (the tool's second verb). Mask source
+        // paths (the dashed selection outline) are pass-throughs: deleting
+        // them would silently destroy the mask geometry.
+        const imgEl = (target as Element)?.closest?.("img[data-layer-id]") as HTMLElement | null;
+        const imageLayerId = imgEl?.getAttribute("data-layer-id");
+        if (!imgEl || !imageLayerId) {
+          const hit = resolveHitTarget(target as Element, scopeRef.current, false);
+          const hitId = hit?.getAttribute("data-layer-id");
+          const isMaskSource = Boolean(hit && (hit.matches("path[data-mask-for]") || hit.querySelector?.("path[data-mask-for]")));
+          if (hitId && !isMaskSource) onElementDeleteRef.current?.(hitId);
+          return;
+        }
+
+        // Brush trails are stored in image-local coordinates: the mask
+        // document is sized to the img's rendered box, so subtract its
+        // on-screen origin (zoom-aware) from the frame-space point.
+        const imgRect = imgEl.getBoundingClientRect();
+        const imgLeft = (imgRect.left - rect.left) / z;
+        const imgTop = (imgRect.top - rect.top) / z;
+        const size = brushSizeRef.current || 24;
+        const mode = me.altKey ? "restore" : "erase";
+        const points: Array<{ x: number; y: number }> = [{ x: Math.round(mx - imgLeft), y: Math.round(my - imgTop) }];
+
+        // Live preview: the trail painted over the image while dragging.
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        Object.assign(svg.style, {
+          position: "absolute", left: "0px", top: "0px", width: "100%", height: "100%",
+          overflow: "visible", pointerEvents: "none", zIndex: "9998",
+        });
+        const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        pathEl.setAttribute("fill", "none");
+        pathEl.setAttribute("stroke", mode === "restore" ? "#FFFFFF" : "#000000");
+        pathEl.setAttribute("stroke-opacity", "0.75");
+        pathEl.setAttribute("stroke-width", String(size));
+        pathEl.setAttribute("stroke-linecap", "round");
+        pathEl.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(pathEl);
+        content.appendChild(svg);
+
+        const drawPreview = () => {
+          pathEl.setAttribute("d", `M ${points.map(p => `${p.x + imgLeft} ${p.y + imgTop}`).join(" L ")}`);
+        };
+        drawPreview();
+
+        const onEraserMove = (ev: MouseEvent) => {
+          const cx = (ev.clientX - rect.left) / z - imgLeft;
+          const cy = (ev.clientY - rect.top) / z - imgTop;
+          const last = points[points.length - 1];
+          if (Math.hypot(cx - last.x, cy - last.y) >= 3) {
+            points.push({ x: Math.round(cx), y: Math.round(cy) });
+            drawPreview();
+          }
+        };
+
+        const onEraserUp = () => {
+          document.removeEventListener("mousemove", onEraserMove);
+          document.removeEventListener("mouseup", onEraserUp);
+          svg.remove();
+          // A click without a drag = a single dab. A stroked path with one
+          // point renders nothing, so duplicate it with a hair offset.
+          if (points.length < 2) {
+            const p = points[0];
+            points.push({ x: p.x + 0.01, y: p.y });
+          }
+          onBrushStrokeRef.current?.(imageLayerId, { points, size, mode });
+        };
+
+        document.addEventListener("mousemove", onEraserMove);
+        document.addEventListener("mouseup", onEraserUp);
         return;
       }
 

@@ -7,7 +7,7 @@ import {
   IconIntersect, IconShapes,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
-  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize,
+  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize, IconEraser,
   IconZoomIn, IconZoomOut, IconSearch,
 } from "../shared/icons";
 
@@ -39,6 +39,9 @@ interface Props {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomFit?: () => void;
+  // F4 Borrador: brush size (also [ ] keys in EditorV2)
+  brushSize?: number;
+  onBrushSizeChange?: (size: number) => void;
 }
 
 const SHAPE_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; title: string }[] = [
@@ -83,6 +86,15 @@ const FILL_TOOLS: { key: HtmlToolName; icon: React.ReactNode; shortcut: string; 
   { key: "gradient",     icon: <IconGradient size={16} />,     shortcut: "G", title: "Degradado — rellena con un degradado del frontal al de fondo" },
 ];
 
+/** F4 Borrador. Its own button: over an <img> it paints non-destructive mask
+ * strokes (Alt restores); over any other element it deletes it. */
+const ERASER_TOOL = {
+  key: "eraser" as HtmlToolName,
+  icon: <IconEraser size={16} />,
+  shortcut: "E",
+  title: "Borrador — sobre imagen enmascara sin destruir (Alt restaura), sobre otros elementos borra (E)",
+};
+
 const zoomBtn: React.CSSProperties = {
   width: 46, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
   cursor: "pointer", borderRadius: 6, background: "transparent",
@@ -109,6 +121,7 @@ export function FloatingToolbar({
   foregroundColor = "#000000", backgroundColor = "#ffffff",
   onForegroundColorChange, onBackgroundColorChange, onSwapColors,
   showLayersPanel, onToggleLayers, onZoomIn, onZoomOut, onZoomFit,
+  brushSize = 24, onBrushSizeChange,
 }: Props) {
   const [showPathfinder, setShowPathfinder] = useState(false);
   const [showZoomPopover, setShowZoomPopover] = useState(false);
@@ -483,6 +496,46 @@ export function FloatingToolbar({
           </button>
         ))}
       </SplitButton>
+
+      {/* ── Eraser: own button; size control appears while active ── */}
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => onToolChange(ERASER_TOOL.key)}
+          title={ERASER_TOOL.title}
+          style={{
+            width: 46, height: 36,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", position: "relative", borderRadius: 8,
+            background: tool === "eraser" ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
+            border: tool === "eraser" ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
+            color: tool === "eraser" ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
+            transition: "all 0.15s ease",
+          }}
+        >
+          {ERASER_TOOL.icon}
+          <span style={shortcutLabel}>{ERASER_TOOL.shortcut}</span>
+        </button>
+        {tool === "eraser" && onBrushSizeChange && (
+          <div style={{ ...flyoutStyle, minWidth: 150, padding: 8, gap: 4 }}>
+            <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Tamaño de brocha</div>
+            <input
+              type="range"
+              min={4}
+              max={120}
+              step={2}
+              value={brushSize}
+              onChange={(e) => onBrushSizeChange(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--accent, #c8b898)", cursor: "pointer" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted, #7a7668)" }}>
+              <span>{brushSize} px</span>
+              <span>[ ]</span>
+            </div>
+            <div style={{ fontSize: 10, color: "#7a7668" }}>Arrastrar enmascara · Alt restaura</div>
+          </div>
+        )}
+      </div>
 
       {divider}
 

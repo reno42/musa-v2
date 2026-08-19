@@ -2,6 +2,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
 import { CanvasGuides, type Guide, type ColumnConfig, type SmartGuide } from "./CanvasGuides";
 import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type ElementBounds } from "../lib/smartGuides";
+import type { BrushStroke } from "../../shared/maskBake.ts";
 
 /**
  * InfiniteHtmlCanvas — An infinite pannable/zoomable canvas that holds
@@ -23,7 +24,7 @@ import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type Elemen
  *  - Double-click label: rename inline
  */
 
-export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "eyedropper" | "paint-bucket" | "gradient";
+export type HtmlToolName = "select" | "hand" | "frame" | "rect" | "circle" | "triangle" | "star" | "polygon" | "text" | "text-path" | "pen" | "pen-plus" | "pen-minus" | "pen-edit" | "pencil" | "eraser" | "eyedropper" | "paint-bucket" | "gradient";
 
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
@@ -64,6 +65,11 @@ interface InfiniteHtmlCanvasProps {
   onEditPathPoints?: (frameId: string, layerId: string, newPathD: string) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
+  // ── F4 Borrador ──
+  /** One completed brush trail over an <img> layer (frame + image-local coords). */
+  onBrushStroke?: (frameId: string, imageLayerId: string, stroke: BrushStroke) => void;
+  /** Current brush diameter in px (toolbar / [ ] keys). */
+  brushSize?: number;
   onFrameResize?: (id: string, width: number, height: number, x: number, y: number) => void;
   /** Frame tool (F/A): click = default 100×100 frame, drag = custom size. */
   onCreateFrame?: (x: number, y: number, w: number, h: number) => void;
@@ -118,6 +124,7 @@ export function InfiniteHtmlCanvas({
   onElementSelect, onLayerEscape, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
   onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  onBrushStroke, brushSize = 24,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
   onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
@@ -873,6 +880,8 @@ export function InfiniteHtmlCanvas({
               onEditPathPoints={(layerId, newPathD) => onEditPathPoints?.(frame.id, layerId, newPathD)}
               onElementDelete={onElementDelete}
               onElementDuplicate={onElementDuplicate}
+              onBrushStroke={(imageLayerId, stroke) => onBrushStroke?.(frame.id, imageLayerId, stroke)}
+              brushSize={brushSize}
               onLabelMouseDown={handleLabelMouseDown}
               onLabelDoubleClick={handleLabelDoubleClick}
               onEnterContentMode={onEnterContentMode}

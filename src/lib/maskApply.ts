@@ -7,7 +7,9 @@ import {
   parseBrushesAttr,
   readLayerBox,
   readViewBox,
+  serializeBrushesAttr,
   type Box,
+  type BrushStroke,
   type MaskMode,
 } from "../../shared/maskBake.ts";
 
@@ -136,6 +138,69 @@ export function reBakePathMask(
     }
   }
   return { html: serializeFragment(document), css: updatedCss };
+}
+
+/**
+ * Appends one brush stroke to an image's mask and re-bakes. Non-destructive:
+ * the stroke is stored as JSON in `data-mask-brushes` on the img and painted
+ * into the mask document, so it stays re-editable (add strokes, or flip the
+ * whole mask back with invert) and the img's own pixels are never touched.
+ *
+ * When the image has no mask path yet, a full-rect include mask is created
+ * behind it (an svg > path layer tagged data-mask-for/mode), so the first
+ * erase stroke works exactly like it does on an image that already has a
+ * selection.
+ */
+export function applyBrushStroke(
+  html: string,
+  css: string,
+  imageLayerId: string,
+  stroke: BrushStroke,
+): { html: string; css: string; pathLayerId: string; maskCreated: boolean } | null {
+  const document = parseFragment(html);
+  const img = findLayer(document, imageLayerId);
+  if (!img || img.tagName.toLowerCase() !== "img") return null;
+
+  let pathLayerId: string | null = null;
+  let maskCreated = false;
+  const existingPath = [...document.body.querySelectorAll(`path[data-mask-for="${imageLayerId}"]`)]
+    .find(element => element.getAttribute("data-mask-for") === imageLayerId);
+  if (existingPath) {
+    const svg = existingPath.matches("svg") ? existingPath : existingPath.closest("svg[data-layer-id]");
+    pathLayerId = svg?.getAttribute("data-layer-id") || existingPath.getAttribute("data-layer-id");
+  }
+
+  if (!pathLayerId) {
+    // First stroke on a bare image: create the full-rect include mask.
+    const imageBox = readLayerBox(img.getAttribute("style"), css, imageLayerId);
+    if (!imageBox) return null;
+    pathLayerId = createLayerId();
+    const d = `M${imageBox.left} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top + imageBox.height} L${imageBox.left} ${imageBox.top + imageBox.height} Z`;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("data-layer-id", pathLayerId);
+    svg.setAttribute("data-layer-kind", "mask");
+    svg.setAttribute("data-layer-name", "Máscara de imagen");
+    svg.setAttribute("style", `position:absolute;left:${imageBox.left}px;top:${imageBox.top}px;width:${Math.max(imageBox.width, 1)}px;height:${Math.max(imageBox.height, 1)}px;overflow:visible;`);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    svg.appendChild(path);
+    // Behind the image = earlier sibling, so the img stays the hit-test
+    // target for subsequent eraser drags. pointer-events: none on the mask
+    // layer's rule keeps it out of the way even where it would overlap.
+    img.before(svg);
+    css = `${css.trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: ${imageBox.left}px;\n  top: ${imageBox.top}px;\n  width: ${Math.max(imageBox.width, 1)}px;\n  height: ${Math.max(imageBox.height, 1)}px;\n  overflow: visible;\n  pointer-events: none;\n}`;
+    maskCreated = true;
+  }
+
+  const brushes = parseBrushesAttr(img.getAttribute("data-mask-brushes"));
+  brushes.push(stroke);
+  img.setAttribute("data-mask-brushes", serializeBrushesAttr(brushes));
+
+  const mode: MaskMode = existingPath?.getAttribute("data-mask-mode") === "exclude" ? "exclude" : "include";
+  const outcome = bakeOnDocument(document, css, pathLayerId, imageLayerId, mode);
+  if (!outcome) return null;
+  return { html: serializeFragment(document), css: outcome.css, pathLayerId, maskCreated };
 }
 
 /**
