@@ -39,6 +39,11 @@ interface Props {
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
   onGroupModeChange?: (layerId: string, frameId: string, mode: "group" | "container") => void;
+  /** F3 remove-background: swap an <img> layer's src to the cutout PNG.
+   *  The editor stores the original src in data-orig-src (non-destructive). */
+  onImageSrcChange?: (frameId: string, layerId: string, newSrc: string, origSrc: string | null) => void;
+  /** F3 remove-background: restore the src saved in data-orig-src. */
+  onImageRestore?: (frameId: string, layerId: string) => void;
   /** Bounds used by the Position category's align-to-frame buttons. */
   frameWidth: number;
   frameHeight: number;
@@ -635,7 +640,7 @@ const mutedNote: React.CSSProperties = {
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
-  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange,
+  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange, onImageSrcChange, onImageRestore,
   frameWidth, frameHeight, subTab,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -884,6 +889,62 @@ export function HtmlContextualPanel({
     else if (key === "bottom") update(selector, "top", `${Math.round(frameHeight - h)}px`);
   };
 
+  // ── F3: Quitar fondo (remove-background, u2netp) ──
+  const [removeBgState, setRemoveBgState] = useState<"idle" | "loading" | "error">("idle");
+  const [removeBgError, setRemoveBgError] = useState("");
+
+  /** Original src saved by a previous cutout swap (data-orig-src attribute). */
+  const imageOrigSrc = useMemo(() => {
+    if (!isImage) return null;
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      return doc.querySelector(selector)?.getAttribute("data-orig-src") || null;
+    } catch { return null; }
+  }, [html, selector, isImage]);
+
+  /**
+   * Zero-LLM pipeline: the REST route queues a segment_jobs row and
+   * dispatches the image-segment-background Netlify function (local u2netp).
+   * The warm-model case (1-3s) is polled here so it feels synchronous; a
+   * cold start keeps running in background and the job row stays pollable.
+   */
+  const handleRemoveBackground = useCallback(async () => {
+    if (!element?.src || !onImageSrcChange) return;
+    setRemoveBgState("loading");
+    setRemoveBgError("");
+    try {
+      const res = await fetch("/api/segment/remove-background", {
+        method: "POST",
+        headers: { ...getApiHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ url: element.src, workspaceId }),
+      }).then(r => r.json());
+      if (!res?.success) throw new Error(res?.error || "remove-background failed");
+
+      let result = res.result || null;
+      if (res.jobId && !result) {
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const poll = await fetch(`/api/segment/jobs/${res.jobId}`, { headers: getApiHeaders() }).then(r => r.json());
+          if (poll?.success && poll.status === "done") { result = poll.result; break; }
+          if (poll?.success && poll.status === "error") throw new Error(poll.error || "Inference failed");
+        }
+      }
+      if (!result?.cutoutUrl) throw new Error("The job did not produce a cutout");
+      onImageSrcChange(element.frameId, element.layerId, result.cutoutUrl, element.src);
+      setRemoveBgState("idle");
+    } catch (err: any) {
+      console.error("[REMOVE_BG] failed:", err);
+      setRemoveBgState("error");
+      setRemoveBgError(err?.message || "remove-background failed");
+    }
+  }, [element, workspaceId, onImageSrcChange]);
+
+  const handleRestoreOriginal = useCallback(() => {
+    if (!element || !imageOrigSrc || !onImageRestore) return;
+    onImageRestore(element.frameId, element.layerId);
+  }, [element, imageOrigSrc, onImageRestore]);
+
   const stroke = readStroke(s);
   const shadows = useMemo(() => parseBoxShadows(s["box-shadow"] || ""), [s["box-shadow"]]);
   const writeShadows = (next: ShadowEffect[]) => update(selector, "box-shadow", next.length ? next.map(formatShadow).join(", ") : "none");
@@ -966,6 +1027,18 @@ export function HtmlContextualPanel({
                     <div style={{ borderRadius: 4, overflow: "hidden", border: "1px solid rgba(255,255,255,0.06)", aspectRatio: "16/9", background: "rgba(0,0,0,0.3)" }}>
                       <img src={element.src} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                     </div>
+                  )}
+                  {onImageSrcChange && element.src && (
+                    <>
+                      <button type="button" onClick={handleRemoveBackground} disabled={removeBgState === "loading"}
+                        style={{ ...smallBtn, opacity: removeBgState === "loading" ? 0.55 : 1, cursor: removeBgState === "loading" ? "wait" : "pointer" }}>
+                        {removeBgState === "loading" ? "Quitando fondo…" : removeBgState === "error" ? "Reintentar (quitar fondo)" : "Quitar fondo"}
+                      </button>
+                      {removeBgError && <div style={mutedNote}>{removeBgError}</div>}
+                    </>
+                  )}
+                  {imageOrigSrc && onImageRestore && (
+                    <button type="button" style={smallBtn} onClick={handleRestoreOriginal}>Restaurar</button>
                   )}
                   <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
                 </>

@@ -226,6 +226,35 @@ export function changeLayerTag(html: string, layerId: string, newTag: string): s
   return serializeFragment(document);
 }
 
+/**
+ * Set raw attributes on a layer (e.g. swap an <img> src to a background-
+ * removed cutout while remembering the original in data-orig-src). Returns
+ * null when the layer does not exist.
+ */
+export function setLayerAttributes(html: string, layerId: string, attributes: Record<string, string>): string | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  if (!element) return null;
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  return serializeFragment(document);
+}
+
+/** Remove one attribute from a layer (e.g. data-orig-src on restore). */
+export function removeLayerAttribute(html: string, layerId: string, name: string): string | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  if (!element) return null;
+  element.removeAttribute(name);
+  return serializeFragment(document);
+}
+
+/** Read one attribute from a layer (e.g. data-orig-src before restoring). */
+export function getLayerAttribute(html: string, layerId: string, name: string): string | null {
+  const document = parseFragment(html);
+  const element = findLayer(document, layerId);
+  return element ? element.getAttribute(name) : null;
+}
+
 export function reorderLayerInHtml(
   html: string,
   layerId: string,

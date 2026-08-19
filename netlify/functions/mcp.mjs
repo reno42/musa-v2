@@ -20,6 +20,7 @@ import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox } from "../../shared/maskBake.ts";
+import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
 
@@ -65,6 +66,35 @@ function applyMaskServer($, frame, pathLayerId, imageLayerId, mode) {
   for (const [property, value] of Object.entries(SELECTION_OUTLINE)) css = setCssDeclaration(css, `[data-layer-id="${pathLayerId}"] path`, property, value);
   frame.css = css;
   return baked;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// F3 segmentation helpers — job plumbing lives in
+// api/src/services/segmentation.ts (shared with the REST route).
+// ═══════════════════════════════════════════════════════════════
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Swap an <img> layer's src to the cutout, remembering the original in
+ * data-orig-src so the editor can offer "Restaurar". Non-destructive to
+ * the pixels: the original asset row stays untouched.
+ */
+async function applyCutoutToLayer(applyTo, cutoutUrl) {
+  const tpl = await templates.getTemplate(applyTo.templateId);
+  if (!tpl) throw { code: -32000, message: `Template not found: ${applyTo.templateId}` };
+  if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+  const frame = (tpl.frames || []).find(f => f.id === applyTo.frameId);
+  if (!frame) throw { code: -32000, message: `Frame not found: ${applyTo.frameId}` };
+  const $ = cheerio.load(frame.html || "");
+  const $img = $(`img[data-layer-id="${applyTo.layerId}"]`);
+  if (!$img.length) throw { code: -32000, message: `Image layer not found: ${applyTo.layerId}` };
+  const orig = $img.attr("src") || "";
+  if (orig && orig !== cutoutUrl) $img.attr("data-orig-src", orig);
+  $img.attr("src", cutoutUrl);
+  frame.html = $.html();
+  await templates.updateTemplate(applyTo.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+  return { templateId: applyTo.templateId, frameId: applyTo.frameId, layerId: applyTo.layerId, swapped: true, originalSrc: orig || null };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2664,6 +2694,39 @@ const MCP_TOOLS = [
         fill: { type: "string", description: "CSS colour or gradient for the fill, e.g. '#3B82F6' or 'linear-gradient(90deg, #f00, #00f)' (default #3B82F6)" },
       },
       required: ["templateId", "frameId", "imageLayerId", "fill"],
+    },
+  },
+  {
+    name: "remove_background",
+    description: "Remove the background of an image with u2netp (local ONNX, zero LLM tokens): the result is a PNG with alpha (cutoutUrl) plus a mask PNG and a traced SVG path. Give assetId (a workspace asset) or a direct url. Dispatches a background job and polls ~8s; u2netp usually finishes in 1-3s warm. If the job is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the target <img> layer's src is swapped to the cutout (original kept in data-orig-src). Idempotent per asset: re-running returns the existing cutout.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        assetId: { type: "string", description: "Workspace asset id to segment (preferred: enables idempotency)" },
+        url: { type: "string", description: "Direct image URL (http/https). Use when there is no workspace asset yet." },
+        workspaceId: { type: "string", description: "Workspace ID (optional when assetId is given — derived from the asset)" },
+        applyTo: {
+          type: "object",
+          description: "Optional: apply the cutout to an existing image layer",
+          properties: {
+            templateId: { type: "string", description: "Template ID" },
+            frameId: { type: "string", description: "Frame ID" },
+            layerId: { type: "string", description: "data-layer-id of the <img> layer to swap" },
+          },
+          required: ["templateId", "frameId", "layerId"],
+        },
+      },
+    },
+  },
+  {
+    name: "segment_status",
+    description: "Poll a segmentation job by id (remove_background / segment_click / segment_text). Done jobs carry result_json: cutoutUrl (PNG alpha), maskUrl, svgPath (boundary trace with bbox), image dims.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "Job id returned by remove_background or segment_click" },
+      },
+      required: ["jobId"],
     },
   },
   // ── Phase E: Incremental point editing ──
@@ -8347,6 +8410,84 @@ async function handleMethod(method, params, userId, auth) {
       return {
         success: true, templateId: params.templateId, frameId: params.frameId,
         imageLayerId: params.imageLayerId, pathLayerId, fillLayerId, fill,
+      };
+    }
+
+    // ── F3: remove_background (u2netp, ONNX local) ──
+    case "remove_background": {
+      let workspaceId = params.workspaceId || "";
+      let inputUrl = "";
+      let sourceAssetId = null;
+      let sourceName = "";
+
+      if (params.assetId) {
+        const sb = getSupabaseAdmin();
+        if (!sb) throw { code: -32000, message: "Supabase (service role) not configured" };
+        const { data: asset } = await sb.from("assets").select("id, name, url, workspace_id").eq("id", params.assetId).maybeSingle();
+        if (!asset) throw { code: -32000, message: `Asset not found: ${params.assetId}` };
+        const derivedWs = asset.workspace_id || "";
+        // authorizeMcpCall validated an explicit workspaceId; a derived one
+        // (asset-only calls) is validated here so tenants cannot probe assets.
+        if (!auth?.isAdmin && derivedWs && !(await canAccessWorkspace(auth, derivedWs, "editor"))) {
+          throw { code: -32003, message: "Insufficient editor access for the asset's workspace" };
+        }
+        if (!workspaceId) workspaceId = derivedWs;
+        if (derivedWs && workspaceId !== derivedWs) throw { code: -32000, message: "Asset belongs to another workspace" };
+        inputUrl = asset.url;
+        sourceAssetId = asset.id;
+        sourceName = asset.name || "";
+
+        const existing = await findExistingCutout(workspaceId, sourceAssetId);
+        if (existing) {
+          const result = { ...existing, engine: "u2netp" };
+          const applied = params.applyTo ? await applyCutoutToLayer(params.applyTo, existing.cutoutUrl) : null;
+          return { success: true, idempotent: true, result, applied };
+        }
+      } else if (params.url) {
+        inputUrl = String(params.url).trim();
+        if (!/^https?:\/\//i.test(inputUrl)) throw { code: -32000, message: "url must be http(s)" };
+      } else {
+        throw { code: -32000, message: "Provide assetId or url" };
+      }
+
+      const job = await createSegmentJob("remove_background", inputUrl, workspaceId, { sourceAssetId, sourceName });
+      const dispatch = await dispatchSegmentJob(job.id);
+
+      // Poll inside the ~9s sync budget. Warm u2netp finishes in 1-3s;
+      // a cold start downloads the model first and lands in segment_status.
+      const deadline = Date.now() + 8000;
+      let polled = null;
+      while (Date.now() < deadline) {
+        await sleep(700);
+        polled = await getSegmentJob(job.id);
+        if (polled && (polled.status === "done" || polled.status === "error")) break;
+      }
+      if (!polled || (polled.status !== "done" && polled.status !== "error")) {
+        return {
+          success: true, jobId: job.id, status: polled?.status || "queued", dispatched: dispatch.dispatched,
+          result: null,
+          hint: "El job sigue corriendo en background. Llamá segment_status(jobId) para obtener cutoutUrl, maskUrl y svgPath.",
+        };
+      }
+      if (polled.status === "error") {
+        return { success: false, jobId: job.id, status: "error", error: polled.error || "Inference failed" };
+      }
+      const result = polled.result_json || {};
+      const applied = params.applyTo ? await applyCutoutToLayer(params.applyTo, result.cutoutUrl) : null;
+      return { success: true, jobId: job.id, status: "done", result, applied };
+    }
+
+    // ── F3/F2: segment_status (poll) ──
+    case "segment_status": {
+      const job = await getSegmentJob(params.jobId);
+      if (!job) throw { code: -32000, message: `Job not found: ${params.jobId}` };
+      // Job ids are guessable; gate a non-admin poller on the job's workspace.
+      if (job.workspace_id && !auth?.isAdmin && !(await canAccessWorkspace(auth, job.workspace_id, "viewer"))) {
+        throw { code: -32003, message: "Insufficient access for the job's workspace" };
+      }
+      return {
+        success: true, jobId: job.id, kind: job.kind, status: job.status,
+        result: job.result_json, error: job.error,
       };
     }
 

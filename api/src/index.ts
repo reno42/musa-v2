@@ -26,6 +26,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { designMetaRoutes, getDesignGraph } from "./routes/designMeta.js";
 import { getBrandGraph } from "./routes/brandGraph.js";
 import { storageRoutes } from "./routes/storage.js";
+import { segmentationRoutes } from "./routes/segmentation.js";
 import { contentRoutes } from "./routes/contentCalendar.js";
 import { chatRoutes } from "./routes/chatHistory.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
@@ -146,6 +147,7 @@ app.use("/api/content", contentRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);
+app.use("/api/segment", segmentationRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse 94 popular Google Fonts by name or category

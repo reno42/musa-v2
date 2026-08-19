@@ -63,16 +63,19 @@ import {
   duplicateLayerInHtml,
   ensureLayerIds,
   extractLayerFromHtml,
+  getLayerAttribute,
   groupLayersInHtml,
   insertLayerIntoHtml,
   moveLayerToStackEdge,
   nestedGroupIds,
   pasteLayerFromHtml,
   remapLayerTreeForTarget,
+  removeLayerAttribute,
   reorderLayerInStack,
   reparentLayerInHtml,
   replaceLayerPathData,
   replaceLayerText,
+  setLayerAttributes,
   ungroupLayerInHtml,
   wrapLayersInFrame,
   type LayerDropPlacement,
@@ -2528,6 +2531,39 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
     setSelectedElement(prev => prev ? { ...prev, tag: newTag } : null);
   }, [selectedElement, selectedFrameId, frames, autoSave]);
+
+  // ── F3: remove-background — swap an <img> src to its cutout, non-destructively ──
+  const handleImageSrcChange = useCallback((frameId: string, layerId: string, newSrc: string, origSrc: string | null) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+
+    const attrs: Record<string, string> = { src: newSrc };
+    if (origSrc && origSrc !== newSrc) attrs["data-orig-src"] = origSrc;
+    const newHtml = setLayerAttributes(frame.html, layerId, attrs);
+    if (newHtml === null) return;
+
+    const updated = frames.map(f => (f.id === frameId ? { ...f, html: newHtml } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    setSelectedElement(prev => (prev && prev.frameId === frameId && prev.layerId === layerId ? { ...prev, src: newSrc } : prev));
+  }, [frames, autoSave]);
+
+  const handleImageRestore = useCallback((frameId: string, layerId: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+
+    const orig = getLayerAttribute(frame.html, layerId, "data-orig-src");
+    if (!orig) return;
+    let newHtml = setLayerAttributes(frame.html, layerId, { src: orig });
+    if (newHtml === null) return;
+    newHtml = removeLayerAttribute(newHtml, layerId, "data-orig-src");
+    if (newHtml === null) return;
+
+    const updated = frames.map(f => (f.id === frameId ? { ...f, html: newHtml } : f));
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+    setSelectedElement(prev => (prev && prev.frameId === frameId && prev.layerId === layerId ? { ...prev, src: orig } : prev));
+  }, [frames, autoSave]);
 
   // ── Convert element to SVG path ──
   const handleConvertToPath = useCallback(async (layerId: string, frameId: string) => {
@@ -6053,6 +6089,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onOffsetPath={handleOffsetPath}
               onShapeOptionsChange={handleShapeOptionsChange}
               onGroupModeChange={handleGroupModeChange}
+              onImageSrcChange={handleImageSrcChange}
+              onImageRestore={handleImageRestore}
               frameWidth={selectedFrame?.width || 0}
               frameHeight={selectedFrame?.height || 0}
               subTab={contextualSubTab}
