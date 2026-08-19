@@ -138,7 +138,7 @@ const LLM_ENDPOINTS = /api\.openai\.com|api\.anthropic\.com|generativelanguage\.
 
 test("e2e: segment-core runs pure local ONNX — no LLM endpoint anywhere", () => {
   const core = readRepo("netlify/segment/segment-core.mjs");
-  assert.match(core, /import \* as ort from "onnxruntime-node"/);
+  assert.match(core, /import \* as ort from "onnxruntime-web"/);
   assert.doesNotMatch(core, LLM_ENDPOINTS, "no LLM host is reachable from the engine");
 });
 

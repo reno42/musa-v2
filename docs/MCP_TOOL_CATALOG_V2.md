@@ -478,7 +478,7 @@ curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
 | CLIPSeg es lento | 5–15s CPU en int8 | Usar SAM por clics si hay un punto conocido; CLIPSeg solo para selección semántica |
 | `clip-path: path()` | Requiere Chrome ≥123 (Chrome-first OK) | Fallback: máscara SVG data-URI autocontenida (ya se usa con inversión/pinceles) |
 | Máscara en frame origin | El svg de máscara se pine a `left:0;top:0` del frame (1×1 overflow:visible) con `d` en coords del frame | No reposicionar el svg a mano — editar solo el `d` del path (`edit_path_points`) |
-| 0 LLM verificable | El flujo no llama ningún endpoint de LLM | Verificable en logs del job (`kind` + `input_url`) y en `segment-core.mjs` — solo `onnxruntime-node` |
+| 0 LLM verificable | El flujo no llama ningún endpoint de LLM | Verificable en logs del job (`kind` + `input_url`) y en `segment-core.mjs` — solo `onnxruntime-web` (WASM) |
 
 ---
 

@@ -8,7 +8,7 @@
 //      - MobileSAM quant    (click-to-segment encoder+decoder zip)
 //      - CLIPSeg int8       (text-prompt segmentation, ~85MB)
 //      - CLIP BPE vocab/merges (tokenizer for CLIPSeg text input)
-//   2. VERIFIES each ONNX by loading it with onnxruntime-node and
+//   2. VERIFIES each ONNX by loading it with onnxruntime-web (WASM) and
 //      printing input/output tensor names — the inference code in
 //      netlify/segment/segment-core.mjs is written against these.
 //   3. Uploads everything to the Supabase `ml-models` bucket (created by
@@ -102,7 +102,14 @@ if (!existsSync(encPath) || !existsSync(decPath)) {
   mkdirSync(samDir, { recursive: true });
   execSync(`tar -xf "${resolve(CACHE, "mobile_sam_20230629_quant.zip")}" -C "${samDir}"`);
 }
-const ort = await import("onnxruntime-node");
+const ort = await import("onnxruntime-web");
+{
+  // Mismo bootstrap WASM que netlify/segment/segment-core.mjs (Node sin DOM).
+  const wasmFile = resolve(process.cwd(), "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm");
+  if (existsSync(wasmFile)) ort.env.wasm.wasmBinary = readFileSync(wasmFile);
+  ort.env.wasm.numThreads = 1;
+  ort.env.logLevel = "warning";
+}
 async function sessionIo(path) {
   const buf = readFileSync(path);
   const sess = await ort.InferenceSession.create(buf);

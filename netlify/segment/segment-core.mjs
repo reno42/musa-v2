@@ -2,7 +2,7 @@
 // segment-core.mjs — ONNX segmentation engine (calado / máscaras)
 // ═══════════════════════════════════════════════════════════════════
 // Runs inside netlify/functions/image-segment-background.mjs (Netlify
-// BACKGROUND function: 15-min budget, native deps onnxruntime-node +
+// BACKGROUND function: 15-min budget, WASM runtime onnxruntime-web +
 // sharp). ZERO LLM tokens — every mask comes from a local ONNX model:
 //
 //   remove_background  u2netp     (rembg, 320×320, ~1s CPU)
@@ -20,7 +20,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as ort from "onnxruntime-node";
+import * as ort from "onnxruntime-web";
 import sharp from "sharp";
 import { ClipTokenizer } from "./clip-bpe.mjs";
 
@@ -31,8 +31,32 @@ async function sbService() {
   return import("../../api/src/services/supabase.js");
 }
 
-const __dirname = pathDirname(fileURLToPath(import.meta.url));
-const ROOT = pathResolve(__dirname, "../..");
+// Netlify empaqueta las funciones como CJS: ahí import.meta.url queda VACÍO
+// (fileURLToPath(undefined) trona), mientras que en `node` local (ESM) no
+// existe __dirname. El typeof cubre ambos mundos sin sombrear el global CJS.
+const __dir = typeof __dirname === "string"
+  ? __dirname
+  : pathDirname(fileURLToPath(import.meta.url));
+const ROOT = pathResolve(__dir, "../..");
+
+// ── WASM runtime bootstrap ─────────────────────────────────────────
+// onnxruntime-web queda EXTERNO al bundle (external_node_modules): dentro
+// del zip vive en <raíz>/node_modules. Cargamos el binario
+// ort-wasm-simd-threaded.wasm en memoria (env.wasm.wasmBinary) para que el
+// runtime no dependa de fetch/file:// (undici no soporta file://) y un solo
+// hilo evita SharedArrayBuffer/workers en el sandbox serverless. En Lambda
+// cwd = <raíz del zip> y el bundle CJS corre en <raíz>/netlify/functions/.
+const WASM_CANDIDATES = [
+  pathResolve(process.cwd(), "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm"),
+  pathResolve(__dir, "..", "..", "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm"),
+  pathResolve(__dir, "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm"),
+  pathResolve(__dir, "..", "node_modules", "onnxruntime-web", "dist", "ort-wasm-simd-threaded.wasm"),
+];
+const wasmFile = WASM_CANDIDATES.find(p => existsSync(p));
+if (wasmFile) ort.env.wasm.wasmBinary = readFileSync(wasmFile);
+ort.env.wasm.numThreads = 1;
+ort.env.logLevel = "warning";
+// ══════════════════════════════════════════════════════════════════
 
 // ── Model registry ────────────────────────────────────────────────
 const MODEL_FILES = {

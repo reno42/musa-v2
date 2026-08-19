@@ -3,17 +3,21 @@
   publish = "dist"
 
 [build.environment]
-  # onnxruntime-node requires Node ≥18; pin 20 so the native binaries in
-  # the segmentation background function always match.
+  # onnxruntime-web (WASM) corre en Node 18+; pin 20 para que el glue
+  # Emscripten del runtime WASM siempre coincida con el build de Netlify.
   NODE_VERSION = "20"
 
 [functions]
   node_bundler = "esbuild"
-  # Native modules for image-segment-background.mjs (ONNX inference +
-  # sharp decode/encode). External → esbuild keeps them as require() and
-  # Netlify packages the prebuilt linux binaries into the function zip.
-  [functions.external_modules]
-    external_node_modules = ["onnxruntime-node", "sharp"]
+  # onnxruntime-web DEBE quedar externo: su entry "node" resuelve el glue
+  # .mjs y el binario .wasm desde su propio directorio en disco, algo que el
+  # bundle CJS de esbuild rompe (import.meta vacío → createRequire(undefined)
+  # truena en frío). sharp es nativo y ya se marca externo solo. El prune
+  # script deja en node_modules solo los archivos que la función usa.
+  # OJO: la clave es external_node_modules (flat) — `external_modules` NO es
+  # una propiedad de config: el parser la toma como nombre de función y falla
+  # con "must be an object".
+  external_node_modules = ["onnxruntime-web", "sharp"]
 
 # Serve .well-known discovery files (mcp.json, robots.txt) as static assets
 [[redirects]]
