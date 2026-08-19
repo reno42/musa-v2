@@ -120,7 +120,7 @@ test("e2e: the capture renderer paints no background and exports PNG (alpha surv
 });
 
 test("e2e: the job cutout PNG re-joins the mask as the alpha channel (no flatten)", () => {
-  const core = readRepo("netlify/functions/segment-core.mjs");
+  const core = readRepo("netlify/segment/segment-core.mjs");
   const maskToPngs = core.match(/async function maskToPngs[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(maskToPngs, "maskToPngs exists");
   assert.match(maskToPngs, /\.joinChannel\(Buffer\.from\(mask\)/, "mask becomes the PNG alpha channel");
@@ -137,14 +137,14 @@ test("e2e: the job cutout PNG re-joins the mask as the alpha channel (no flatten
 const LLM_ENDPOINTS = /api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.groq\.com|chat\/completions|generateContent|createChatCompletion/i;
 
 test("e2e: segment-core runs pure local ONNX — no LLM endpoint anywhere", () => {
-  const core = readRepo("netlify/functions/segment-core.mjs");
+  const core = readRepo("netlify/segment/segment-core.mjs");
   assert.match(core, /import \* as ort from "onnxruntime-node"/);
   assert.doesNotMatch(core, LLM_ENDPOINTS, "no LLM host is reachable from the engine");
 });
 
 test("e2e: the background function is a thin wrapper over segment-core (no LLM side-channel)", () => {
   const bg = readRepo("netlify/functions/image-segment-background.mjs");
-  assert.match(bg, /from "\.\/segment-core\.mjs"/);
+  assert.match(bg, /from "\.\.\/segment\/segment-core\.mjs"/);
   assert.doesNotMatch(bg, LLM_ENDPOINTS);
   assert.doesNotMatch(bg, /fetch\(/, "no external fetches at all in the background wrapper");
 });

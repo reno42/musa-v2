@@ -10,7 +10,7 @@
 //      - CLIP BPE vocab/merges (tokenizer for CLIPSeg text input)
 //   2. VERIFIES each ONNX by loading it with onnxruntime-node and
 //      printing input/output tensor names — the inference code in
-//      netlify/functions/segment-core.mjs is written against these.
+//      netlify/segment/segment-core.mjs is written against these.
 //   3. Uploads everything to the Supabase `ml-models` bucket (created by
 //      supabase_migrations/musa_segment.sql) with stable names.
 //

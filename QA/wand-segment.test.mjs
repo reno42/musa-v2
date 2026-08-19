@@ -417,7 +417,7 @@ test("F2b UI: the wand flyout runs a CLIPSeg prompt over the selected image", ()
 });
 
 test("F2 engine: segment-core routes text jobs to CLIPSeg", () => {
-  const core = readRepo("netlify/functions/segment-core.mjs");
+  const core = readRepo("netlify/segment/segment-core.mjs");
   assert.match(core, /job\.kind === "segment_text"/);
   assert.match(core, /clipsegMask\(/);
   assert.match(core, /\(job\.params_json \|\| \{\}\)\.prompt/);

@@ -30,7 +30,7 @@
 //     does not burn retries on it.
 // ═══════════════════════════════════════════════════════════════════
 
-import { processJobById, sweepQueuedJobs } from "./segment-core.mjs";
+import { processJobById, sweepQueuedJobs } from "../segment/segment-core.mjs";
 
 const SEGMENT_SECRET = process.env.SEGMENT_SECRET || process.env.MUSA_BATCH_SECRET || "";
 
