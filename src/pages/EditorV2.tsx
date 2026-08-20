@@ -19,6 +19,9 @@ import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElemen
 import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
+import { AnimationPanel } from "../components/AnimationPanel";
+import type { AnimationSchema } from "../../shared/animationSchema.ts";
+import { exportFrameVideo } from "../lib/videoExport";
 import { HtmlLayersPanel } from "../components/HtmlLayersPanel";
 import { BatchAMator } from "../components/BatchAMator";
 import { SvgImportDialog, type RasterImageImport } from "../components/SvgImportDialog";
@@ -1250,6 +1253,36 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave]);
+
+  // ── F0 animation: frame.animation persists like every other frame field —
+  // whole-document replace + autosave. It rides templates.data JSONB, so no
+  // Supabase DDL migration is needed.
+  const handleFrameAnimationChange = useCallback((frameId: string, animation: AnimationSchema | null) => {
+    const updated = frames.map(f =>
+      f.id === frameId ? { ...f, animation: animation ?? undefined } : f
+    );
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+
+  // ── F1 client-side video export: the browser is the render engine (0
+  // invocations, 0 LLM tokens); the result downloads locally.
+  const [exportingFrameId, setExportingFrameId] = useState<string | null>(null);
+  const handleFrameVideoExport = useCallback(async (frame: FrameData) => {
+    if (exportingFrameId) return;
+    setExportingFrameId(frame.id);
+    try {
+      const result = await exportFrameVideo({ frame });
+      const base = (frame.name || "frame").replace(/[^\w\-]+/g, "_").slice(0, 40) || "frame";
+      downloadBlob(result.blob, `${base}_animation.${result.mimeType.includes("mp4") ? "mp4" : "webm"}`);
+      addToast(`Video exportado: ${result.frameCount} frames (${result.method === "webcodecs" ? "WebCodecs" : "MediaRecorder"})`, "success");
+    } catch (err) {
+      console.error("Video export failed:", err);
+      addToast(`Export de video falló: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setExportingFrameId(null);
+    }
+  }, [exportingFrameId, addToast]);
 
   const handleFrameDimensionChange = useCallback((field: "width" | "height", value: number) => {
     if (!selectedFrameId || !value || value < 10) return;
@@ -6231,6 +6264,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               frameWidth={selectedFrame?.width || 0}
               frameHeight={selectedFrame?.height || 0}
               subTab={contextualSubTab}
+              frameAnimation={selectedFrame?.animation ?? null}
+              onFrameAnimationChange={selectedFrame ? (next) => handleFrameAnimationChange(selectedFrame.id, next) : undefined}
             />
           )}
           {rightPanelTab === "contextual" && !selectedElement && contextualSubTab === "properties" && (
@@ -6335,9 +6370,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             </div>
           )}
           {rightPanelTab === "contextual" && !selectedElement && selectedFrame && contextualSubTab === "animation" && (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#7a7668", fontSize: 12, padding: 24, textAlign: "center", lineHeight: 1.6 }}>
-              Sin herramientas de animación todavía.
-            </div>
+            <AnimationPanel
+              frameId={selectedFrame.id}
+              frameHtml={selectedFrame.html}
+              animation={selectedFrame.animation ?? null}
+              onAnimationChange={(next) => handleFrameAnimationChange(selectedFrame.id, next)}
+              siblingFrames={frames.filter(f => f.id !== selectedFrame.id).map(f => ({ id: f.id, name: f.name }))}
+              onExportVideo={() => handleFrameVideoExport(selectedFrame)}
+              exportingVideo={exportingFrameId === selectedFrame.id}
+            />
           )}
           {/* ── Orphan (canvas-level object) properties ── */}
           {rightPanelTab === "contextual" && !selectedElement && !selectedFrame && selectedOrphanIds.size === 1 && (() => {

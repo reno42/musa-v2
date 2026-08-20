@@ -482,6 +482,24 @@ curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
 
 ---
 
+## 🎬 ANIMACIÓN & VIDEO (F0/F1) — IMPLEMENTADAS (20 Ago 2026)
+
+> Fuente de verdad: `docs/ANIMATION_VIDEO_EXPORT_SPEC.md` + `shared/animationSchema.ts`.
+> Una sola fuente: el esquema JSON `frame.animation` → compila a WAAPI (preview) y al mismo sampler (export). 0 tokens LLM, 0 binarios pesados.
+
+| Tool | Qué hace |
+|------|----------|
+| `set_animation` | Escribe/edita `frame.animation` (esquema completo, o atajo `presetIds`+`presetLayerId`, o parches `durationSec`/`loop`; `clear:true` elimina). Normaliza con `normalizeAnimation` |
+| `get_animation` | Lee el esquema + `stats` (clips por capa, timeline, transitions, hasAnimation) |
+| `list_animation_presets` | Catálogo: 10 presets (fade-in, slide-in-up, zoom-in, blur-in, rotate, pop, float, typewriter…), easings (incl. `spring(damping,stiffness)`) y props animables |
+| `apply_transition` | Transición del frame origen → siguiente (`fade\|slide\|zoom\|wipe`, 0.1–5s). Reemplaza la transición previa al mismo target |
+
+**No expuestas (postergadas):** `render_video` / `render_video_status` — F2 requiere Chromium en la función (~50–60MB > límite de 50MB del zip). El export vive 100% en el navegador (F1: WebCodecs+webmMuxer frame-perfect, fallback MediaRecorder → WebM/MP4) desde el panel Animation del editor.
+
+**Persistencia:** sin migración — `frame.animation` viaja dentro de `templates.data` (JSONB) con el upsert existente.
+
+---
+
 ## 🎯 Orden de ejecución
 
 | Orden | Fase | Tools | Depende de |

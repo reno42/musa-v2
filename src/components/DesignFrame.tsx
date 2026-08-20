@@ -27,6 +27,9 @@ import {
   type Point,
 } from "../lib/pathData";
 import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
+import type { AnimationSchema } from "../../shared/animationSchema.ts";
+import { createFrameAnimator, type FrameAnimator } from "../lib/animationEngine";
+import { stopFrame } from "../lib/animationPlayback";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -63,6 +66,9 @@ export interface FrameData {
   css: string;
   background: string;
   layoutMode?: "fixed" | "responsive";
+  /** Declarative animation (timeline + clips + transitions) — compiled to
+   *  WAAPI for preview and sampled for video export. One source of truth. */
+  animation?: AnimationSchema;
   contentHash?: string;
   lastModifiedBy?: string;
   lastModifiedAt?: string;
@@ -513,6 +519,22 @@ export function DesignFrame({
       emitElementSelection(selectedRef.current, selectedSourceRef.current || selectedRef.current);
     }
   }, [frame.css]);
+
+  // ── F0 animation preview: frame.animation → WAAPI inside __df_content ──
+  // The animator owns a manual clock (scrub-exact, export-identical) and
+  // cancels cleanly — the persisted html/css are never touched by a preview.
+  const animatorRef = useRef<FrameAnimator | null>(null);
+  useEffect(() => {
+    const content = shadowRef.current?.getElementById("__df_content") as HTMLElement | null;
+    if (!content) return;
+    if (!animatorRef.current) animatorRef.current = createFrameAnimator(frame.id, content, frame.animation);
+    else animatorRef.current.update(frame.animation);
+  }, [frame.id, frame.animation]);
+  useEffect(() => () => {
+    animatorRef.current?.destroy();
+    animatorRef.current = null;
+    stopFrame(frame.id);
+  }, [frame.id]);
 
   // ── Override content pointer-events for interactive modes ──
   // Static peStyle sets #__df_content { pointer-events: none } by default,

@@ -21,6 +21,7 @@ import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintMod
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
 import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
+import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, applyPresetToSchema, defaultAnimation, normalizeAnimation } from "../../shared/animationSchema.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
@@ -1538,6 +1539,61 @@ const MCP_TOOLS = [
         frameId: { type: "string", description: "Frame ID to delete" },
       },
       required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "set_animation",
+    description: "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+        animation: { type: "object", description: "AnimationSchema: {timeline:{durationSec,fps,width,height,loop:'once'|'loop'|'pingpong'}, clips:[{layerId,startSec,endSec,tweens:[{prop,keyframes:[{t:0..1,value}],easing}]}], transitions:[{toFrameId,type:'fade'|'slide'|'zoom'|'wipe',durationSec}]}. Keyframe t is normalized WITHIN each clip window." },
+        presetIds: { type: "array", items: { type: "string" }, description: "Shortcut: animation preset ids (see list_animation_presets) applied in order to presetLayerId, on top of the existing schema (or a fresh default one)." },
+        presetLayerId: { type: "string", description: "Layer id the presetIds apply to (must exist in the frame html as data-layer-id)" },
+        windowSec: { type: "object", description: "Optional clip window for presets: {startSec, endSec} (default: 0..min(1.2, duration))" },
+        durationSec: { type: "number", description: "Convenience timeline patcher: total duration in seconds (0.2-600)" },
+        loop: { type: "string", enum: ["once", "loop", "pingpong"], description: "Convenience timeline patcher: loop mode" },
+        clear: { type: "boolean", description: "Remove the frame's animation entirely" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "get_animation",
+    description: "Read a frame's animation schema plus a summary (stats): clips per layer, timeline, transitions. hasAnimation:false means the frame is static.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID" },
+      },
+      required: ["templateId", "frameId"],
+    },
+  },
+  {
+    name: "list_animation_presets",
+    description: "Catalog of animation presets (fade-in, slide-in, zoom-in, pop, float, typewriter, ...), easing presets (incl. spring(damping,stiffness)) and animatable props. Use before set_animation to pick preset ids, easings and prop names.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "apply_transition",
+    description: "Set how THIS frame hands over to the next frame in the exported video: fade | slide | zoom | wipe. Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "From-frame ID (where the transition lives)" },
+        toFrameId: { type: "string", description: "Next frame the transition leads to" },
+        type: { type: "string", enum: ["fade", "slide", "zoom", "wipe"], description: "Transition type (default fade)" },
+        durationSec: { type: "number", description: "0.1-5 seconds (default 0.6)" },
+      },
+      required: ["templateId", "frameId", "toFrameId"],
     },
   },
   {
@@ -5767,6 +5823,104 @@ async function handleMethod(method, params, userId, auth) {
       autoSnapshot(params.templateId, method);
       await templates.updateTemplate(params.templateId, { frames: tpl.frames });
       return { deleted: true, templateId: params.templateId, frameId: params.frameId };
+    }
+
+    // ── F0 animation tools (schema in shared/animationSchema.ts — the same
+    // module the editor preview and the F1 video export compile from) ──
+    case "set_animation": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+
+      if (params.clear) {
+        delete frame.animation;
+        frame.lastModifiedBy = params.author || "agent:set_animation";
+        frame.lastModifiedAt = new Date().toISOString();
+        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+        autoSnapshot(params.templateId, "set_animation");
+        return { frameId: frame.id, cleared: true, stats: animationStats(null) };
+      }
+
+      let schema = frame.animation ? normalizeAnimation(frame.animation) : null;
+      if (params.animation !== undefined && params.animation !== null) {
+        const norm = normalizeAnimation(params.animation);
+        if (!norm) throw { code: -32000, message: "animation must be an AnimationSchema object" };
+        schema = norm;
+      }
+      if (Array.isArray(params.presetIds) && params.presetIds.length > 0) {
+        const layerId = params.presetLayerId || params.layerId;
+        if (!layerId) throw { code: -32000, message: "presetLayerId (or layerId) is required with presetIds" };
+        for (const presetId of params.presetIds) {
+          try {
+            schema = applyPresetToSchema(schema, layerId, presetId, params.windowSec);
+          } catch (err) {
+            throw { code: -32000, message: err && err.message ? String(err.message) : "Unknown preset: " + presetId };
+          }
+        }
+      }
+      if (!schema) schema = defaultAnimation(frame.width || 1080, frame.height || 1080);
+      if (params.durationSec != null || params.loop) {
+        schema = normalizeAnimation({
+          ...schema,
+          timeline: {
+            ...schema.timeline,
+            ...(params.durationSec != null ? { durationSec: params.durationSec } : {}),
+            ...(params.loop ? { loop: params.loop } : {}),
+          },
+        });
+      }
+      frame.animation = schema;
+      frame.lastModifiedBy = params.author || "agent:set_animation";
+      frame.lastModifiedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, "set_animation");
+      return { frameId: frame.id, animation: frame.animation, stats: animationStats(frame.animation) };
+    }
+
+    case "get_animation": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      return {
+        frameId: frame.id,
+        animation: frame.animation || null,
+        stats: animationStats(frame.animation),
+      };
+    }
+
+    case "list_animation_presets": {
+      return {
+        presets: ANIMATION_PRESETS.map(p => ({ id: p.id, label: p.label, tweens: p.tweens })),
+        easings: EASING_PRESETS.map(e => ({ id: e.id, label: e.label, value: e.value })),
+        props: ANIMATION_PROPS,
+        note: "Apply presets via set_animation {presetIds:[id], presetLayerId} — values are concrete, not placeholders.",
+      };
+    }
+
+    case "apply_transition": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: "Template not found: " + params.templateId };
+      const frame = (tpl.frames || []).find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: "Frame not found: " + params.frameId };
+      if (!(tpl.frames || []).some(f => f.id === params.toFrameId)) {
+        throw { code: -32000, message: "toFrameId not found in this template: " + params.toFrameId };
+      }
+      const type = params.type === "slide" || params.type === "zoom" || params.type === "wipe" ? params.type : "fade";
+      const base = frame.animation ? normalizeAnimation(frame.animation) : defaultAnimation(frame.width || 1080, frame.height || 1080);
+      const durationSec = Math.min(5, Math.max(0.1, Number(params.durationSec) || 0.6));
+      // One transition per target frame — replace, don't stack.
+      base.transitions = [
+        ...base.transitions.filter(t => t.toFrameId !== params.toFrameId),
+        { toFrameId: params.toFrameId, type, durationSec },
+      ];
+      frame.animation = normalizeAnimation(base);
+      frame.lastModifiedBy = params.author || "agent:apply_transition";
+      frame.lastModifiedAt = new Date().toISOString();
+      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      autoSnapshot(params.templateId, "apply_transition");
+      return { frameId: frame.id, transition: { toFrameId: params.toFrameId, type, durationSec }, stats: animationStats(frame.animation) };
     }
 
     // ── render_frame ──

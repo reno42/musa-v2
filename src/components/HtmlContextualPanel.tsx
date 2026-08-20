@@ -9,6 +9,8 @@ import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../../shared/p
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
 import { toHexColor } from "../lib/colorUtils";
+import type { AnimationSchema } from "../../shared/animationSchema.ts";
+import { AnimationPanel } from "./AnimationPanel";
 
 /**
  * HtmlContextualPanel — the contextual panel's "Properties" tab (a
@@ -47,6 +49,10 @@ interface Props {
   /** F1/F2/F4 masks: strip the image's mask entirely (CSS + strokes + the
    *  mask source layer) — the one-click revert for the eraser/selection. */
   onImageMaskRemove?: (frameId: string, layerId: string) => void;
+  /** F0 animation: the selected layer's clip lives on the frame's persisted
+   *  animation schema (single source of truth). */
+  frameAnimation?: AnimationSchema | null;
+  onFrameAnimationChange?: (next: AnimationSchema | null) => void;
   /** Bounds used by the Position category's align-to-frame buttons. */
   frameWidth: number;
   frameHeight: number;
@@ -644,7 +650,7 @@ const mutedNote: React.CSSProperties = {
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
-  frameWidth, frameHeight, subTab,
+  frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     position: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
@@ -1395,6 +1401,17 @@ export function HtmlContextualPanel({
 
       {subTab === "animation" && (
         <div style={{ overflow: "auto", flex: 1 }}>
+          {/* ── F0 animation authoring for the selected layer (spec §3): the
+              JSON schema edits here and previews live via the playback store. ── */}
+          {element && onFrameAnimationChange && (
+            <AnimationPanel
+              frameId={element.frameId}
+              layerId={element.layerId}
+              animation={frameAnimation ?? null}
+              onAnimationChange={onFrameAnimationChange}
+            />
+          )}
+
           {/* ── Shape (parametric star/polygon controls) ── */}
           {element.shapeOptions && onShapeOptionsChange && (
             <>
