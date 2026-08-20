@@ -26,7 +26,7 @@ import {
   type PathPoint,
   type Point,
 } from "../lib/pathData";
-import type { BrushStroke } from "../../shared/maskBake.ts";
+import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -2389,6 +2389,33 @@ export function DesignFrame({
           }
           if (duplicatedForDrag) properties.position = "absolute";
           updatedCss = updateCssRule(updatedCss, sel, importantProperties(properties));
+
+          // A dragged image drags its mask along: the source path's d is in
+          // frame coordinates, so it shifts by the same delta or the outline
+          // (and every future bake) stays where the image USED to be. The
+          // fill layer mirrors the image box, so it moves the same way.
+          const dragLayerId = dt.getAttribute("data-layer-id");
+          if (dragLayerId && dt.tagName.toLowerCase() === "img") {
+            const parsed = parseCssTranslate(tx);
+            if (parsed.x !== 0 || parsed.y !== 0) {
+              const maskPath = content.querySelector(`path[data-mask-for="${dragLayerId}"]`);
+              if (maskPath) {
+                maskPath.setAttribute("d", transformPathData(maskPath.getAttribute("d") || "", { sx: 1, sy: 1, dx: parsed.x, dy: parsed.y }));
+                updatedHtml = content.innerHTML;
+              }
+              const fillLayer = content.querySelector(`[data-fill-for="${dragLayerId}"]`);
+              const fillId = fillLayer?.getAttribute("data-layer-id");
+              if (fillLayer && fillId) {
+                const fillSel = `[data-layer-id="${fillId}"]`;
+                const currentLeft = parseFloat(getComputedStyle(fillLayer).left) || 0;
+                const currentTop = parseFloat(getComputedStyle(fillLayer).top) || 0;
+                updatedCss = updateCssRule(updatedCss, fillSel, {
+                  left: `${Math.round(currentLeft + parsed.x)}px`,
+                  top: `${Math.round(currentTop + parsed.y)}px`,
+                });
+              }
+            }
+          }
         }
 
         if (duplicatedForDrag) updatedHtml = content.innerHTML;

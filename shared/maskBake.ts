@@ -56,6 +56,20 @@ export const SELECTION_OUTLINE: Readonly<Record<string, string>> = {
   "stroke-dasharray": "5 4",
 };
 
+/** Brush-only masks (the eraser's auto full-rect) have no subject shape to
+ * show — painting the dashed outline on them just leaves a blue rectangle
+ * floating over the image. Their source path stays in the DOM (re-bakes
+ * need its geometry) but renders nothing. */
+export const BRUSH_ONLY_OUTLINE: Readonly<Record<string, string>> = {
+  fill: "none",
+  stroke: "none",
+};
+
+/** Marks a mask source path as brush-only (`data-mask-brush-only="true"`).
+ * Set when the eraser auto-creates the full-rect mask; cleared when a real
+ * subject path (Varita/F1) takes the mask over. */
+export const BRUSH_ONLY_ATTR = "data-mask-brush-only";
+
 // ── Path data transform ──────────────────────────────────────────
 
 const COMMAND_LETTERS = "MmLlHhVvCcSsQqTtAaZz";
@@ -221,6 +235,22 @@ function pxValue(styleAttr: string | null | undefined, ruleBlock: string, proper
   return null;
 }
 
+/** `translate: 12px 3px` (or a single value), or the equivalent function
+ * inside `transform: translate(…)`, → its px pair. Moves committed by the
+ * editor land as left/top (absolute layers), the translate property
+ * (flow-preserving drags) or a transform function (panel edits) — a layer's
+ * REAL frame box only follows the move when all of them are read. */
+function readTranslate(styleAttr: string | null | undefined, ruleBlock: string): { x: number; y: number } {
+  const source = styleAttr && /translate\s*:/i.test(styleAttr) ? styleAttr : ruleBlock;
+  const text = source || "";
+  let match = /(?:^|[;\s])translate\s*:\s*(-?\d+(?:\.\d+)?)px(?:\s+(-?\d+(?:\.\d+)?)px)?/i.exec(text);
+  if (!match) match = /transform\s*:\s*[^;]*?translate\(\s*(-?\d+(?:\.\d+)?)px(?:\s*,\s*(-?\d+(?:\.\d+)?)px)?/i.exec(text);
+  if (!match) return { x: 0, y: 0 };
+  const x = parseFloat(match[1]);
+  const y = match[2] !== undefined ? parseFloat(match[2]) : x;
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+}
+
 /**
  * A layer's frame-space box from its inline style attribute and its
  * `[data-layer-id]` CSS rule (inline wins, as in the cascade). Layers in
@@ -240,7 +270,11 @@ export function readLayerBox(
   const width = pxValue(styleAttr, block, "width");
   const height = pxValue(styleAttr, block, "height");
   if (left === null || top === null || width === null || height === null) return null;
-  return { left, top, width, height };
+  // Fold a committed translate into the origin so the box is where the layer
+  // actually renders — otherwise every bake after a flow-preserving move
+  // computes its mask against the pre-move position.
+  const t = readTranslate(styleAttr, block);
+  return { left: left + t.x, top: top + t.y, width, height };
 }
 
 // ── Brush strokes (stored as data-mask-brushes on the img) ───────

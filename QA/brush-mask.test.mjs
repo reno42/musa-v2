@@ -4,10 +4,11 @@
  * Covers the Node-testable surface of the eraser pipeline:
  *  1. bakePathMask's brush painting (erase = black, restore = white, sizes)
  *     — REAL production code from shared/maskBake.ts (pure, no DOM).
- *  2. applyBrushStroke (src/lib/maskApply.ts) — the editor-side DOM surgery
- *     that appends a stroke, auto-creates the full-rect mask on a bare image,
- *     reuses an existing mask path, and re-bakes — executed as REAL
- *     production code under a minimal cheerio-backed tree DOM.
+ *  2. applyBrushStroke + removeImageMask (src/lib/maskApply.ts) — the
+ *     editor-side DOM surgery that appends a stroke, auto-creates the
+ *     full-rect mask on a bare image, reuses an existing mask path, re-bakes
+ *     and reverts — executed as REAL production code under a minimal
+ *     cheerio-backed tree DOM.
  *  3. Static wiring guards so a future edit cannot silently drop the eraser
  *     tool, the mask_brush MCP tool, or the [ ]/E keyboard shortcuts.
  *
@@ -69,6 +70,7 @@ class NodeEl {
     this.children = children || [];
   }
   getAttribute(name) { return name in this.attribs ? this.attribs[name] : null; }
+  hasAttribute(name) { return name in this.attribs; }
   setAttribute(name, value) { this.attribs[name] = String(value); }
   removeAttribute(name) { delete this.attribs[name]; }
   matches(selector) { return matchSelector(this, selector); }
@@ -92,6 +94,12 @@ class NodeEl {
     const index = this.parent.children.indexOf(this);
     if (index >= 0) this.parent.children.splice(index, 0, node);
     node.parent = this.parent;
+  }
+  remove() {
+    if (!this.parent) return;
+    const index = this.parent.children.indexOf(this);
+    if (index >= 0) this.parent.children.splice(index, 1);
+    this.parent = null;
   }
 }
 
@@ -325,6 +333,75 @@ test("F4: an image without a px box is rejected with null (no silent corruption)
   assert.equal(result, null);
 });
 
+// ── Regressions 2026-08-19 — cuadro punteado azul, revert, mover imagen ──
+
+test("F4 regression: the eraser's auto mask paints NO dashed blue outline", async () => {
+  const { applyBrushStroke } = await maskApplyP;
+  const result = applyBrushStroke(BARE_FRAME.html, BARE_FRAME.css, "img1",
+    { points: [{ x: 25, y: 30 }], size: 24, mode: "erase" });
+  assert.ok(result);
+  // Brush-only scaffolding: invisible outline, tagged as such in the DOM.
+  assert.ok(!result.css.includes("#3B82F6"), "no dashed blue rectangle floating over the image");
+  assert.match(result.css, /stroke:\s*none/);
+  assert.equal(load(result.html)("path[data-mask-brush-only]").length, 1);
+});
+
+test("F4 regression: a subject mask (F1/Varita) keeps its dashed selection outline", async () => {
+  const { applyBrushStroke } = await maskApplyP;
+  const maskedHtml = '<div>'
+    + '<svg data-layer-id="mask1" viewBox="0 0 200 150" style="position:absolute;left:50px;top:40px;width:200px;height:150px;overflow:visible;">'
+    + '<path d="M10 10 L190 10 L190 140 L10 140 Z" fill="none" data-mask-for="img1" data-mask-mode="include"/>'
+    + '</svg>'
+    + '<img data-layer-id="img1" src="https://cdn.x/a.png" style="position:absolute;left:50px;top:40px;width:200px;height:150px;">'
+    + '</div>';
+  const css = '[data-layer-id="img1"] {\n  position: absolute;\n  left: 50px;\n  top: 40px;\n  width: 200px;\n  height: 150px;\n}\n[data-layer-id="mask1"] {\n  position: absolute;\n  left: 50px;\n  top: 40px;\n  width: 200px;\n  height: 150px;\n}';
+  const result = applyBrushStroke(maskedHtml, css, "img1",
+    { points: [{ x: 30, y: 30 }], size: 20, mode: "erase" });
+  assert.ok(result);
+  assert.ok(result.css.includes("#3B82F6"), "a real selection keeps its dashed blue outline");
+  assert.match(result.css, /stroke-dasharray:\s*5 4/);
+});
+
+test("F4 regression: removeImageMask reverts everything in one call", async () => {
+  const { applyBrushStroke, removeImageMask } = await maskApplyP;
+  const painted = applyBrushStroke(BARE_FRAME.html, BARE_FRAME.css, "img1",
+    { points: [{ x: 25, y: 30 }], size: 24, mode: "erase" });
+  assert.ok(painted);
+  const removed = removeImageMask(painted.html, painted.css, "img1");
+  assert.ok(removed, "a masked image reverts");
+  const $ = load(removed.html);
+  assert.equal($("svg[data-layer-kind='mask']").length, 0, "the mask source layer is gone");
+  assert.equal($('img[data-layer-id="img1"]').attr("data-mask-brushes"), undefined, "stored strokes are gone");
+  assert.ok(!/mask-image:/.test(removed.css), "the baked mask is off the image rule");
+  assert.ok(!removed.css.includes(`[data-layer-id="${painted.pathLayerId}"]`), "the mask layer rule is gone");
+  assert.equal(removeImageMask(BARE_FRAME.html, BARE_FRAME.css, "img1"), null, "a bare image has nothing to remove");
+});
+
+test("F4 regression: readLayerBox follows committed moves (translate and transform)", () => {
+  const base = '[data-layer-id="img1"] {\n  left: 50px;\n  top: 40px;\n  width: 200px;\n  height: 150px;\n%s}';
+  const translated = maskBake.readLayerBox(null, base.replace("%s", "translate: 100px 25px;"), "img1");
+  assert.deepEqual(translated, { left: 150, top: 65, width: 200, height: 150 });
+  const transformed = maskBake.readLayerBox(null, base.replace("%s", "transform: translate(100px, 25px);"), "img1");
+  assert.deepEqual(transformed, { left: 150, top: 65, width: 200, height: 150 });
+});
+
+test("F4 regression: a stroke after the image moved re-pins the rect to the CURRENT box", async () => {
+  const { applyBrushStroke } = await maskApplyP;
+  const first = applyBrushStroke(BARE_FRAME.html, BARE_FRAME.css, "img1",
+    { points: [{ x: 25, y: 30 }], size: 24, mode: "erase" });
+  assert.ok(first);
+  assert.match(load(first.html)("path[data-mask-for]").attr("d"), /^M50 40 L250 40 L250 190 L50 190 Z/, "the auto rect starts at the image's box");
+  // The image moved (committed drag or panel edit): inline style AND rule now
+  // say left:150/top:90 — the mask svg still carries the stale rect.
+  const movedHtml = first.html.replace("left:50px;", "left:150px;").replace("top:40px;", "top:90px;");
+  const movedCss = first.css.replace("left: 50px;", "left: 150px;").replace("top: 40px;", "top: 90px;");
+  const second = applyBrushStroke(movedHtml, movedCss, "img1",
+    { points: [{ x: 10, y: 10 }], size: 12, mode: "restore" });
+  assert.ok(second);
+  const d = load(second.html)("path[data-mask-for]").attr("d");
+  assert.match(d, /^M150 90 L350 90 L350 240 L150 240 Z/, "the brush-only rect self-heals to the image's current box");
+});
+
 // ═══════════════════════════════════════════════════════════════
 // 3. Static wiring guards
 // ═══════════════════════════════════════════════════════════════
@@ -368,4 +445,23 @@ test("F4 maskApply: applyBrushStroke lives beside the F1 functions", () => {
   assert.match(maskApply, /serializeBrushesAttr/);
   assert.match(maskApply, /setAttribute\("data-layer-kind", "mask"\)/);
   assert.match(maskApply, /pointer-events:\s*none/);
+});
+
+test("F4 regression: editor drag and MCP bake keep mask parity", () => {
+  // Dragging an image must shift its mask source path (d in frame coords).
+  const frame = readRepo("src/components/DesignFrame.tsx");
+  assert.match(frame, /A dragged image drags its mask along/);
+  assert.match(frame, /path\[data-mask-for="\$\{dragLayerId\}"\]/);
+  assert.match(frame, /transformPathData\(maskPath\.getAttribute\("d"\)/);
+
+  // The MCP bake honours brush-only masks the same way the editor does.
+  const mcp = readRepo("netlify/functions/mcp.mjs");
+  assert.match(mcp, /BRUSH_ONLY_ATTR/);
+  assert.match(mcp, /BRUSH_ONLY_OUTLINE/);
+
+  // The one-click revert is reachable from the contextual panel.
+  const panel = readRepo("src/components/HtmlContextualPanel.tsx");
+  assert.match(panel, /Quitar máscara/);
+  const editor = readRepo("src/pages/EditorV2.tsx");
+  assert.match(editor, /removeImageMask/);
 });

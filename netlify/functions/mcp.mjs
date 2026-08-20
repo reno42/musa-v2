@@ -19,7 +19,7 @@ import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayer
 import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
 import { setCssDeclaration, removeCssDeclarations } from "./css-rules.mjs";
-import { MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
+import { BRUSH_ONLY_ATTR, BRUSH_ONLY_OUTLINE, MASK_CSS_PROPERTIES, SELECTION_OUTLINE, bakePathMask, parseBrushesAttr, pathDataBounds, readLayerBox, readViewBox, transformPathData } from "../../shared/maskBake.ts";
 import { normalizeSegmentBox, normalizeSegmentPoints } from "../../shared/segmentPoints.ts";
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
@@ -64,7 +64,11 @@ function applyMaskServer($, frame, pathLayerId, imageLayerId, mode) {
   for (const property of MASK_CSS_PROPERTIES) css = removeCssDeclarations(css, imgSel, property);
   css = setCssDeclaration(css, imgSel, baked.property, baked.value);
   for (const [property, value] of Object.entries(baked.companions)) css = setCssDeclaration(css, imgSel, property, value);
-  for (const [property, value] of Object.entries(SELECTION_OUTLINE)) css = setCssDeclaration(css, `[data-layer-id="${pathLayerId}"] path`, property, value);
+  // Brush-only masks (the eraser's auto full-rect) render nothing instead of
+  // the dashed outline — there is no subject shape to show, and a dashed
+  // rect floating over the image reads as a bug, not a selection.
+  const outline = $path.attr(BRUSH_ONLY_ATTR) === "true" ? BRUSH_ONLY_OUTLINE : SELECTION_OUTLINE;
+  for (const [property, value] of Object.entries(outline)) css = setCssDeclaration(css, `[data-layer-id="${pathLayerId}"] path`, property, value);
   frame.css = css;
   return baked;
 }
@@ -167,7 +171,9 @@ async function applySegmentMaskToLayer(applyTo, svgPath) {
     maskCreated = true;
   }
 
-  $($.root()).find(`path[data-mask-for="${applyTo.layerId}"]`).first().attr("d", d);
+  // A real subject path replaces the eraser's scaffolding rect: the mask
+  // stops being brush-only and its selection outline becomes visible.
+  $($.root()).find(`path[data-mask-for="${applyTo.layerId}"]`).first().attr("d", d).removeAttr(BRUSH_ONLY_ATTR);
   const baked = applyMaskServer($, frame, pathLayerId, applyTo.layerId, "include");
   frame.html = $.html();
   await templates.updateTemplate(applyTo.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
@@ -8616,10 +8622,22 @@ async function handleMethod(method, params, userId, auth) {
         // The mask svg is pinned to the FRAME ORIGIN (1×1, overflow
         // visible): its path data is in frame coordinates, so the dashed
         // selection outline overlays the image exactly.
-        const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Máscara de imagen" style="position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;"><path d="${d}" fill="none"/></svg>`;
+        const svgHtml = `<svg data-layer-id="${pathLayerId}" data-layer-kind="mask" data-layer-name="Máscara de imagen" style="position:absolute;left:0px;top:0px;width:1px;height:1px;overflow:visible;"><path d="${d}" fill="none" ${BRUSH_ONLY_ATTR}="true"/></svg>`;
         $img.before(svgHtml);
         frame.css = `${(frame.css || "").trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
         maskCreated = true;
+      } else {
+        // A brush-only rect is trivially re-derivable: re-pin it to the
+        // image's CURRENT box before baking, so strokes drawn after the
+        // image moved/resized bake against the real rect.
+        const $maskSvg = $(`svg[data-layer-id="${pathLayerId}"]`);
+        const $brushPath = $maskSvg.find("path").first();
+        if ($brushPath.length && $brushPath.attr(BRUSH_ONLY_ATTR) === "true") {
+          const imageBox = readLayerBox($img.attr("style"), frame.css, params.imageLayerId);
+          if (imageBox) {
+            $brushPath.attr("d", `M${imageBox.left} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top + imageBox.height} L${imageBox.left} ${imageBox.top + imageBox.height} Z`);
+          }
+        }
       }
 
       // Append the new trails to the stored list and re-bake.

@@ -1,6 +1,8 @@
 import { createLayerId } from "./htmlMutations";
-import { removeCssProperties, updateCssProperties } from "./cssMutations";
+import { removeCssProperties, removeLayersCss, updateCssProperties } from "./cssMutations";
 import {
+  BRUSH_ONLY_ATTR,
+  BRUSH_ONLY_OUTLINE,
   MASK_CSS_PROPERTIES,
   SELECTION_OUTLINE,
   bakePathMask,
@@ -86,7 +88,11 @@ function bakeOnDocument(
     ...baked.companions,
   });
   // The source path becomes a selection marker: dashed blue, see-through.
-  updatedCss = updateCssProperties(updatedCss, `[data-layer-id="${pathLayerId}"] path`, SELECTION_OUTLINE);
+  // Brush-only masks (the eraser's auto full-rect) render nothing instead —
+  // there is no subject shape to outline, and a dashed rect floating over
+  // the image reads as a bug, not a selection.
+  const outline = path.getAttribute(BRUSH_ONLY_ATTR) === "true" ? BRUSH_ONLY_OUTLINE : SELECTION_OUTLINE;
+  updatedCss = updateCssProperties(updatedCss, `[data-layer-id="${pathLayerId}"] path`, outline);
 
   return { css: updatedCss, imageBox, localPathData: baked.localPathData };
 }
@@ -188,6 +194,9 @@ export function applyBrushStroke(
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
+    // Brush-only: the rect is pure mask scaffolding (no subject shape), so
+    // the bake renders its outline invisible instead of dashed blue.
+    path.setAttribute(BRUSH_ONLY_ATTR, "true");
     svg.appendChild(path);
     // Behind the image = earlier sibling, so the img stays the hit-test
     // target for subsequent eraser drags. pointer-events: none on the mask
@@ -195,6 +204,18 @@ export function applyBrushStroke(
     img.before(svg);
     css = `${css.trimEnd()}\n\n[data-layer-id="${pathLayerId}"] {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 1px;\n  height: 1px;\n  overflow: visible;\n  pointer-events: none;\n}`;
     maskCreated = true;
+  } else {
+    // A brush-only rect is trivially re-derivable: re-pin it to the image's
+    // CURRENT box before baking. Otherwise a stroke drawn after the image
+    // was moved/resized bakes against a stale rect and lands offset.
+    const maskSvg = findLayer(document, pathLayerId);
+    const brushPath = maskSvg && (maskSvg.matches("path") ? maskSvg : maskSvg.querySelector("path"));
+    if (brushPath && brushPath.getAttribute(BRUSH_ONLY_ATTR) === "true") {
+      const imageBox = readLayerBox(img.getAttribute("style"), css, imageLayerId);
+      if (imageBox) {
+        brushPath.setAttribute("d", `M${imageBox.left} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top} L${imageBox.left + imageBox.width} ${imageBox.top + imageBox.height} L${imageBox.left} ${imageBox.top + imageBox.height} Z`);
+      }
+    }
   }
 
   const brushes = parseBrushesAttr(img.getAttribute("data-mask-brushes"));
@@ -205,6 +226,39 @@ export function applyBrushStroke(
   const outcome = bakeOnDocument(document, css, pathLayerId, imageLayerId, mode);
   if (!outcome) return null;
   return { html: serializeFragment(document), css: outcome.css, pathLayerId, maskCreated };
+}
+
+/**
+ * Removes an image's mask entirely — the non-destructive "undo" for the
+ * eraser/selection arcs: mask CSS off the image rule, stored brush strokes
+ * off the img, and the mask source layer (plus its CSS) out of the frame.
+ * Fill layers (data-fill-for) stay: they are a feature of their own and
+ * carry their own delete verb.
+ */
+export function removeImageMask(
+  html: string,
+  css: string,
+  imageLayerId: string,
+): { html: string; css: string } | null {
+  const document = parseFragment(html);
+  const img = findLayer(document, imageLayerId);
+  if (!img || img.tagName.toLowerCase() !== "img") return null;
+
+  const maskSvgs = [...document.body.querySelectorAll(`path[data-mask-for="${imageLayerId}"]`)]
+    .map(path => (path.matches("svg[data-layer-id]") ? path : path.closest("svg[data-layer-id]")))
+    .filter((svg): svg is Element => Boolean(svg));
+  const hasMask = maskSvgs.length > 0 || img.hasAttribute("data-mask-brushes");
+  if (!hasMask) return null;
+
+  const maskLayerIds = maskSvgs
+    .map(svg => svg.getAttribute("data-layer-id"))
+    .filter((id): id is string => Boolean(id));
+  for (const svg of maskSvgs) svg.remove();
+  img.removeAttribute("data-mask-brushes");
+
+  let updatedCss = removeCssProperties(css, `[data-layer-id="${imageLayerId}"]`, MASK_CSS_PROPERTIES);
+  if (maskLayerIds.length > 0) updatedCss = removeLayersCss(updatedCss, maskLayerIds);
+  return { html: serializeFragment(document), css: updatedCss };
 }
 
 /**
@@ -250,6 +304,10 @@ export function applySegmentMaskPath(
   if (pathLayerId) {
     const svg = findLayer(document, pathLayerId);
     if (!svg) return null;
+    const existingPath = svg.matches("path") ? svg : svg.querySelector("path");
+    // A real subject path replaces the eraser's scaffolding rect: the mask
+    // stops being brush-only and its selection outline becomes visible.
+    existingPath?.removeAttribute(BRUSH_ONLY_ATTR);
     const vb = readViewBox(svg.getAttribute("viewBox"));
     const pathBox = readLayerBox(svg.getAttribute("style"), css, pathLayerId);
     if (!pathBox) return null;

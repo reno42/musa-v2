@@ -92,7 +92,7 @@ import {
   type DesignClipboard,
 } from "../lib/designClipboard";
 import { analyzePathData } from "../lib/pathData";
-import { applyBrushStroke, applyPathMask, applySegmentMaskPath, applySelectionFill, reBakePathMask } from "../lib/maskApply";
+import { applyBrushStroke, applyPathMask, applySegmentMaskPath, applySelectionFill, reBakePathMask, removeImageMask } from "../lib/maskApply";
 import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
 import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
@@ -1828,6 +1828,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     store.replaceAllWithUndo(updated, "edit");
     autoSave(updated);
   }, [frames, autoSave, addToast]);
+
+  // ── F1/F2/F4: Quitar máscara (one-click mask revert) ──
+  // Strips the mask CSS, the stored strokes and the mask source layer in one
+  // commit — the eraser's "how do I undo this" answer beyond per-stroke Ctrl+Z.
+  const handleImageMaskRemove = useCallback((frameId: string, imageLayerId: string) => {
+    const frame = frames.find(f => f.id === frameId);
+    if (!frame) return;
+    const result = removeImageMask(frame.html, frame.css, imageLayerId);
+    commitMaskChange(
+      frameId,
+      result,
+      "Máscara quitada: la imagen vuelve a mostrarse completa.",
+      "No se pudo quitar la máscara de esta imagen.",
+    );
+  }, [frames, commitMaskChange]);
 
   // ── F2/F2b: Varita — SAM clicks or CLIPSeg text over an image layer ──
   // Shared pipeline: POST /api/segment/click, poll until done, apply the
@@ -6201,6 +6216,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               html={activeHtml}
               css={activeCss}
               onCssChange={handleContextualCssChange}
+              onImageMaskRemove={handleImageMaskRemove}
               onChangeTag={handleChangeTag}
               onCopyStyle={handleCopyStyle}
               onPasteStyle={handlePasteStyle}

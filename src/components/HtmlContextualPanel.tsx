@@ -44,6 +44,9 @@ interface Props {
   onImageSrcChange?: (frameId: string, layerId: string, newSrc: string, origSrc: string | null) => void;
   /** F3 remove-background: restore the src saved in data-orig-src. */
   onImageRestore?: (frameId: string, layerId: string) => void;
+  /** F1/F2/F4 masks: strip the image's mask entirely (CSS + strokes + the
+   *  mask source layer) — the one-click revert for the eraser/selection. */
+  onImageMaskRemove?: (frameId: string, layerId: string) => void;
   /** Bounds used by the Position category's align-to-frame buttons. */
   frameWidth: number;
   frameHeight: number;
@@ -640,7 +643,7 @@ const mutedNote: React.CSSProperties = {
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
-  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange, onImageSrcChange, onImageRestore,
+  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   frameWidth, frameHeight, subTab,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -902,6 +905,24 @@ export function HtmlContextualPanel({
     } catch { return null; }
   }, [html, selector, isImage]);
 
+  /** True when the selected image carries a mask (eraser strokes or a
+   *  selection path) — drives the "Quitar máscara" revert button. */
+  const imageHasMask = useMemo(() => {
+    if (!isImage) return false;
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const layerId = element?.layerId;
+      if (!layerId) return false;
+      const img = doc.querySelector(`img[data-layer-id="${layerId}"]`);
+      return Boolean(img?.hasAttribute("data-mask-brushes") || doc.querySelector(`path[data-mask-for="${layerId}"]`));
+    } catch { return false; }
+  }, [html, element, isImage]);
+
+  const handleMaskRemove = useCallback(() => {
+    if (!element || !onImageMaskRemove) return;
+    onImageMaskRemove(element.frameId, element.layerId);
+  }, [element, onImageMaskRemove]);
+
   /**
    * Zero-LLM pipeline: the REST route queues a segment_jobs row and
    * dispatches the image-segment-background Netlify function (local u2netp).
@@ -1039,6 +1060,12 @@ export function HtmlContextualPanel({
                   )}
                   {imageOrigSrc && onImageRestore && (
                     <button type="button" style={smallBtn} onClick={handleRestoreOriginal}>Restaurar</button>
+                  )}
+                  {imageHasMask && onImageMaskRemove && (
+                    <button type="button" style={smallBtn} onClick={handleMaskRemove}
+                      title="Quita la máscara (trazos del borrador / selección) y restaura la imagen completa. No destructivo: Ctrl+Z lo devuelve.">
+                      Quitar máscara
+                    </button>
                   )}
                   <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
                 </>
