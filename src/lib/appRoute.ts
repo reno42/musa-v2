@@ -73,7 +73,8 @@ export type AppRoute =
   | { kind: "template"; templateId: string }
   | { kind: "workspace-slug"; workspaceSlug: string; templateSlug?: string }
   | { kind: "invitation"; token: string }
-  | { kind: "password-recovery" };
+  | { kind: "password-recovery" }
+  | { kind: "comment-share"; templateId: string };
 
 type LocationSnapshot = Pick<Location, "hash" | "pathname" | "search">;
 
@@ -90,6 +91,13 @@ export function readAppRoute(location: LocationSnapshot): AppRoute {
       workspaceSlug: decodeURIComponent(slugMatch[1]),
       ...(slugMatch[2] ? { templateSlug: decodeURIComponent(slugMatch[2]) } : {}),
     };
+  }
+
+  // /c/:templateId — public share page for guest mobile comments. Deliberately
+  // NOT in routeRequiresAccount: a phone from a share link has no session.
+  const shareMatch = location.pathname.match(/^\/c\/([^/]+)\/?$/);
+  if (shareMatch) {
+    return { kind: "comment-share", templateId: decodeURIComponent(shareMatch[1]) };
   }
 
   const templateId = params.get("template");

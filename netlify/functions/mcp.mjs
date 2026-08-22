@@ -14180,6 +14180,33 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!sb) throw { code: -32000, message: "Comments require Supabase." };
       const accountId = UUID_RE.test(userId || "") ? userId : null;
 
+      // Shared tail of comment_add: optional Kanban task + response shape.
+      // Split out so the comment_type retry path reuses it unchanged.
+      const finishCommentAdd = async (comment, accountIdForTask) => {
+        let kanbanTask = null;
+        if (params.createKanbanTask !== false) {
+          const taskId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+          const { data: kt, error: ktErr } = await sb.from("design_kanban_tasks").insert({
+            id: taskId,
+            title: `Comentario: ${params.body.slice(0, 60)}${params.body.length > 60 ? "…" : ""}`,
+            workspace_id: params.workspaceId || null,
+            template_id: params.templateId,
+            frame_id: params.frameId || null,
+            brief: params.body,
+            status: "backlog",
+            type: "other",
+            created_by: params.authorName || "comment",
+            tags: ["comment", params.source || "editor_pin"],
+            account_id: accountIdForTask,
+          }).select().single();
+          if (!ktErr && kt) {
+            kanbanTask = kt;
+            await sb.from("design_comments").update({ kanban_task_id: taskId }).eq("id", comment.id);
+          }
+        }
+        return { success: true, comment: { ...comment, kanban_task_id: kanbanTask?.id || null, comment_type: commentType, isBrandManual }, kanbanTask };
+      };
+
       // Detect Brand Manual: if template is_brand_manual=true, default to documentation type
       let commentType = params.commentType || "feedback";
       let isBrandManual = false;
@@ -14207,32 +14234,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         parent_id: params.parentId || null,
       };
       const { data: comment, error } = await sb.from("design_comments").insert(newComment).select().single();
-      if (error) throw { code: -32000, message: "Comment insert failed: " + error.message };
-
-      // Optionally auto-create a Kanban task from this comment
-      let kanbanTask = null;
-      if (params.createKanbanTask !== false) {
-        const taskId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
-        const { data: kt, error: ktErr } = await sb.from("design_kanban_tasks").insert({
-          id: taskId,
-          title: `Comentario: ${params.body.slice(0, 60)}${params.body.length > 60 ? "…" : ""}`,
-          workspace_id: params.workspaceId || null,
-          template_id: params.templateId,
-          frame_id: params.frameId || null,
-          brief: params.body,
-          status: "backlog",
-          type: "other",
-          created_by: params.authorName || "comment",
-          tags: ["comment", params.source || "editor_pin"],
-          account_id: accountId,
-        }).select().single();
-        if (!ktErr && kt) {
-          kanbanTask = kt;
-          await sb.from("design_comments").update({ kanban_task_id: taskId }).eq("id", comment.id);
-        }
+      if (error && /comment_type|column .* does not exist/i.test(error.message || "")) {
+        // DBs migrated before the comment_type column — retry without it
+        // (same resilience pattern as the kanban_* patch in update_config).
+        const { comment_type: _omit, ...withoutType } = newComment;
+        const retry = await sb.from("design_comments").insert(withoutType).select().single();
+        if (retry.error) throw { code: -32000, message: "Comment insert failed: " + retry.error.message };
+        return finishCommentAdd(retry.data, accountId);
       }
-
-      return { success: true, comment: { ...comment, kanban_task_id: kanbanTask?.id || null, comment_type: commentType, isBrandManual }, kanbanTask };
+      if (error) throw { code: -32000, message: "Comment insert failed: " + error.message };
+      return finishCommentAdd(comment, accountId);
     }
 
     case "comment_list": {

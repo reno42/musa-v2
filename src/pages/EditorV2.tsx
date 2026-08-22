@@ -114,7 +114,7 @@ import {
   IconAlignLeft, IconAlignCenter, IconAlignRight,
   IconHistory, IconWand, IconGrid, IconColumns, IconRuler, IconShapes, IconEraser, IconX, IconInfo,
   IconSearch, IconLayers,
-  IconUpload, IconCode,
+  IconUpload, IconCode, IconShare,
 } from "../shared/icons";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -5452,6 +5452,37 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             selectedFrames={exportTargetFrames}
             onExport={handleUnifiedExport}
           />
+
+          {/* Share: copies the public /c/:templateId link. A guest (client,
+              teammate, phone) opens it without an account, taps the design to
+              pin comments, and can file them to the Kanban for the AI. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={() => {
+              const url = `${window.location.origin}/c/${templateId}`;
+              const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un celular para recibir feedback.", "success");
+              if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(url).then(done).catch(() => {});
+                return;
+              }
+              const ta = document.createElement("textarea");
+              ta.value = url;
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              try {
+                document.execCommand("copy");
+                done();
+              } catch { /* clipboard blocked — user can copy from the address bar */ }
+              document.body.removeChild(ta);
+            }}
+            title="Compartir enlace de comentarios móviles"
+          >
+            <IconShare size={14} />
+            <span style={{ fontSize: 11, marginLeft: 4 }}>Compartir</span>
+          </button>
         </div>
 
         <div className="editor-v2-topbar-sep" />

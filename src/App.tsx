@@ -3,6 +3,7 @@ import { Landing } from "./components/Landing";
 import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { ChatFAB } from "./components/ChatFAB";
+import { MobileComments } from "./components/MobileComments";
 import { MusaOnboarding } from "./components/MusaOnboarding";
 import { restartOnboarding } from "./components/OnboardingTour";
 import { useToast } from "./components/Toast";
@@ -242,6 +243,17 @@ function App(): JSX.Element {
   };
 
   if (authLoading) return <AppStartupScreen />;
+
+  // ── Public comment share page: /c/:templateId ──
+  // Guests land here from a share link (phone, client, teammate). No account
+  // needed — render before every auth gate, like invitation/recovery.
+  if (route.kind === "comment-share") {
+    return (
+      <ErrorBoundary>
+        <MobileComments templateId={route.templateId} />
+      </ErrorBoundary>
+    );
+  }
 
   const inviteToken = route.kind === "invitation" ? route.token : null;
   const authFlowRequiresConfiguration = Boolean(inviteToken) || passwordRecovery;

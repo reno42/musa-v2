@@ -4497,3 +4497,187 @@ html, body, #root { height: 100%; width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   .fd, .fd * { animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   /c/:templateId — página pública de comentarios móviles
+   (MobileComments.tsx). Un celular llega desde un enlace compartido,
+   toca el diseño para clavar un pin, escribe y opcionalmente lo
+   manda al Kanban. Sin cuenta, sin API key.
+   ═══════════════════════════════════════════════════════════════ */
+.mc-page {
+  min-height: 100dvh;
+  background: #0d0d1a;
+  color: #f3f0ff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 22px 14px 48px;
+}
+.mc-card {
+  width: 100%;
+  max-width: 520px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 20px 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px);
+}
+.mc-center { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 36px 20px; }
+.mc-header { text-align: center; margin-bottom: 16px; }
+.mc-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+.mc-brand-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 13px;
+}
+.mc-title { font-size: 20px; font-weight: 700; margin: 10px 0 4px; line-height: 1.3; }
+.mc-sub { font-size: 13px; color: rgba(255, 255, 255, 0.55); margin: 0; line-height: 1.55; }
+
+/* ── Preview tap-to-pin ── */
+.mc-preview {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  max-height: 56vh;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #17172b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: crosshair;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mc-preview-img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.mc-preview-fallback {
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, #17172b, #221f3f);
+}
+.mc-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  width: 24px;
+  height: 24px;
+  border-radius: 50% 50% 50% 0;
+  rotate: -45deg;
+  background: #ffb84d;
+  border: 2px solid #0d0d1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: #241a04;
+  pointer-events: none;
+}
+.mc-pin-num { rotate: 45deg; }
+.mc-pin-placing { animation: mc-pulse 1s ease-in-out infinite; background: #6c5ce7; color: #fff; }
+.mc-pin-resolved { background: #4b5563; color: #fff; }
+@keyframes mc-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.55); } 50% { box-shadow: 0 0 0 10px rgba(108, 92, 231, 0); } }
+.mc-hint { font-size: 12px; color: rgba(255, 255, 255, 0.5); text-align: center; margin: 10px 0 14px; line-height: 1.5; }
+
+/* ── Form ── */
+.mc-form { display: flex; flex-direction: column; gap: 10px; }
+.mc-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: #f3f0ff;
+  font-size: 15px;
+  font-family: inherit;
+  padding: 12px 14px;
+  outline: none;
+}
+.mc-input::placeholder { color: rgba(255, 255, 255, 0.35); }
+.mc-input:focus { border-color: #6c5ce7; box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.25); }
+.mc-textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
+.mc-kanban-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(108, 92, 231, 0.1);
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.mc-kanban-toggle input { margin-top: 3px; accent-color: #6c5ce7; width: 16px; height: 16px; }
+.mc-kanban-toggle em { display: block; font-style: normal; font-weight: 400; font-size: 12px; color: rgba(255, 255, 255, 0.55); margin-top: 2px; }
+.mc-btn {
+  border: none;
+  border-radius: 12px;
+  padding: 13px 16px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #6c5ce7, #8b7cf6);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.mc-btn:active { transform: scale(0.98); }
+.mc-btn:disabled { opacity: 0.6; cursor: default; }
+.mc-btn-secondary { background: rgba(255, 255, 255, 0.08); color: #f3f0ff; font-weight: 600; border: 1px solid rgba(255, 255, 255, 0.14); }
+.mc-status { font-size: 13px; margin: 0; line-height: 1.5; color: rgba(255, 255, 255, 0.6); }
+.mc-error { color: #ff7b8a; }
+.mc-ok { color: #54d6a0; }
+.mc-home-link { color: #a29bfe; font-size: 13px; text-decoration: none; }
+
+/* ── Comment list ── */
+.mc-list { margin-top: 22px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 16px; }
+.mc-list-title { font-size: 14px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin: 0 0 12px; }
+.mc-comment {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.mc-comment-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mc-comment-author { font-size: 13px; font-weight: 700; }
+.mc-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 100px;
+  background: rgba(84, 214, 160, 0.16);
+  color: #54d6a0;
+}
+.mc-badge-muted { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.55); }
+.mc-comment-date { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-left: auto; }
+.mc-comment-body { font-size: 14px; line-height: 1.55; margin: 8px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mc-comment-pos { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin: 0; }
+
+.mc-footer { margin-top: 18px; text-align: center; }
+.mc-footer a { color: rgba(255, 255, 255, 0.45); font-size: 12px; text-decoration: none; }

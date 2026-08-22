@@ -140,12 +140,19 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
     let startX = 0;
     let startPos = 0;
     let moved = false;
+    let cancelled = false;
+    // Hit-test anchor: pointer capture retargets every later pointer event to
+    // the stage, so `ev.target` on pointerup is the stage — never the card.
+    // The pointerdown target is the real hit element; remember it.
+    let downTarget: HTMLElement | null = null;
     let lastX = 0, lastT = 0, velocity = 0; // index units per ms
 
     const onPointerDown = (ev: PointerEvent) => {
       if (ev.button !== undefined && ev.button !== 0 && ev.pointerType === "mouse") return;
       draggingRef.current = true;
       moved = false;
+      cancelled = false;
+      downTarget = ev.target as HTMLElement | null;
       startX = ev.clientX;
       startPos = posRef.current;
       lastX = ev.clientX;
@@ -175,9 +182,10 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
       // Momentum fling → snap to the nearest resulting cover.
       const fling = clamp(velocity * 260, -4, 4);
       targetRef.current = clamp(Math.round(posRef.current + fling), 0, lenRef.current - 1);
-      if (!moved) {
-        // Tap/click any card → open editor directly (iPod-style).
-        const el = (ev.target as HTMLElement).closest("[data-flow-index]") as HTMLElement | null;
+      if (!moved && !cancelled) {
+        // Tap/click any card → open editor directly (iPod-style). Hit-test via
+        // the pointerdown target — pointer capture retargets ev.target here.
+        const el = downTarget?.closest("[data-flow-index]") as HTMLElement | null;
         if (el) {
           const idx = Number(el.dataset.flowIndex);
           const item = itemsRef.current[idx];
@@ -185,16 +193,22 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
         }
       }
     };
+    // The browser taking the gesture (e.g. vertical scroll with touch-action
+    // pan-y) must not count as a tap — it would open a cover mid-scroll.
+    const onPointerCancel = (ev: PointerEvent) => {
+      cancelled = true;
+      onPointerUp(ev);
+    };
 
     stage.addEventListener("pointerdown", onPointerDown);
     stage.addEventListener("pointermove", onPointerMove);
     stage.addEventListener("pointerup", onPointerUp);
-    stage.addEventListener("pointercancel", onPointerUp);
+    stage.addEventListener("pointercancel", onPointerCancel);
     return () => {
       stage.removeEventListener("pointerdown", onPointerDown);
       stage.removeEventListener("pointermove", onPointerMove);
       stage.removeEventListener("pointerup", onPointerUp);
-      stage.removeEventListener("pointercancel", onPointerUp);
+      stage.removeEventListener("pointercancel", onPointerCancel);
     };
   }, [hasItems]);
 
@@ -296,6 +310,7 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
               width: CARD_W, height: CARD_H,
               willChange: "transform, opacity",
               transformStyle: "preserve-3d",
+              cursor: "pointer",
             }}
           >
             {/* Cover */}

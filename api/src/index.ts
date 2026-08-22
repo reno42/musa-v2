@@ -14,6 +14,7 @@ import { specRoutes } from "./routes/specs.js";
 import { styleRoutes } from "./routes/styles.js";
 import { versionRoutes } from "./routes/versions.js";
 import { commentRoutes } from "./routes/comments.js";
+import { commentShareRoutes } from "./routes/commentShare.js";
 import { variableRoutes } from "./routes/variables.js";
 import { colorRoutes } from "./routes/colors.js";
 import { fontRoutes } from "./routes/fonts.js";
@@ -134,6 +135,10 @@ app.use("/api/templates", sectionRoutes);
 app.use("/api/metrics", metricsRoutes);
 // ── Bug Reports (public, no auth) ──
 app.use("/api/bug-reports", bugReportRoutes);
+
+// ── Guest mobile comments (public, no auth — /c/:templateId share links) ──
+// GET preview + comments, POST comment (+ optional Kanban card).
+app.use("/api/comments-share", commentShareRoutes);
 
 // ── Design Knowledge Graph ──
 // GET /api/graph?workspaceId=&brand=&tag=&format=
