@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
+import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
 
 interface LandingProps {
   onEnter: () => void;
@@ -8,9 +9,9 @@ interface LandingProps {
 
 /** Prompt que el usuario le pega a su IA (Claude, Codex, Hermes, Kimi…) para
  *  que ella misma lea el discovery de Musa y le diga cómo entrar. */
-const CONNECT_PROMPT = `Andá a https://design.futuraria.com y leé /.well-known/mcp.json
-y /SKILL.md. Decime cómo entrás a manejar el 100% del editor:
-yo creo la cuenta, te genero la llave MCP y vos empezás a diseñar.`;
+const CONNECT_PROMPT = `Ve a https://design.futuraria.com y lee /.well-known/mcp.json
+y /SKILL.md. Dime cómo puedes entrar a manejar el 100% del editor:
+yo creo la cuenta, te genero la clave MCP y tú empiezas a diseñar.`;
 
 export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -154,7 +155,7 @@ export function Landing({ onEnter }: LandingProps) {
       {/* ── Navbar with exit morph ── */}
       <nav className={`landing-nav${isExiting ? " landing-nav--exiting" : ""}`}>
         <motion.div layout className="landing-nav-inner">
-          {/* Brand — fades in during exit as the bar expands */}
+          {/* Brand — solo el wordmark, sin icono */}
           <motion.div
             className="landing-brand"
             animate={{
@@ -163,10 +164,6 @@ export function Landing({ onEnter }: LandingProps) {
             }}
             transition={{ duration: 0.4, ease: "easeOut" }}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <rect x="3" y="3" width="18" height="18" rx="4" />
-              <circle cx="12" cy="12" r="4" />
-            </svg>
             <motion.span
               animate={{ opacity: isExiting ? 1 : 1 }}
               transition={{ duration: 0.3, delay: 0.1 }}
@@ -178,8 +175,9 @@ export function Landing({ onEnter }: LandingProps) {
           {/* Desktop nav links — hidden on mobile, inline on desktop */}
           <nav className="landing-nav-links">
             <button onClick={() => scrollToSection("harness")} className="landing-nav-link">Harness</button>
-            <button onClick={() => scrollToSection("connect")} className="landing-nav-link">Conecta tu IA</button>
+            <button onClick={() => scrollToSection("para-quien")} className="landing-nav-link">Para quién</button>
             <button onClick={() => scrollToSection("features")} className="landing-nav-link">Features</button>
+            <button onClick={() => scrollToSection("connect")} className="landing-nav-link">Conecta tu IA</button>
             <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 1 }} />
             <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-nav-link">GitHub</a>
             <button onClick={() => scrollToSection("features")} className="landing-nav-link">Docs</button>
@@ -335,8 +333,9 @@ export function Landing({ onEnter }: LandingProps) {
               </div>
               <nav className="landing-menu-nav">
                 <button onClick={() => { scrollToSection("harness"); setMenuOpen(false); }} className="landing-menu-link">Harness</button>
-                <button onClick={() => { scrollToSection("connect"); setMenuOpen(false); }} className="landing-menu-link">Conecta tu IA</button>
+                <button onClick={() => { scrollToSection("para-quien"); setMenuOpen(false); }} className="landing-menu-link">Para quién</button>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Features</button>
+                <button onClick={() => { scrollToSection("connect"); setMenuOpen(false); }} className="landing-menu-link">Conecta tu IA</button>
                 <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-menu-link">GitHub</a>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Docs</button>
               </nav>
@@ -360,7 +359,7 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.9, delay: 0.3 }}
             >
-              Diseñá con <em style={{ fontWeight: 400, fontStyle: "italic" }}>intención</em>.
+              Diseña con <em style={{ fontWeight: 400, fontStyle: "italic" }}>intención</em>.
             </motion.h1>
 
             <motion.p
@@ -369,7 +368,7 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.7 }}
             >
-              Tu workspace de diseño MCP-first: vos y tu IA crean,
+              Tu workspace de diseño MCP-first: tú y tu IA crean,
               iteran y automatizan con las mismas herramientas.
             </motion.p>
 
@@ -402,110 +401,47 @@ export function Landing({ onEnter }: LandingProps) {
       </div>
       </section>
 
-      {/* ═══════════════════════════════ DESIGN HARNESS ═══════════════════════════════ */}
+      {/* ═══════════════════════════ ¿QUÉ ES MUSA? (ARNÉS) ═══════════════════════════════ */}
       <section id="harness" className="landing-section">
         <div className="landing-section-inner">
-          <div className="landing-section-badge">¿Qué es un Design Harness?</div>
+          <div className="landing-section-badge">¿Qué es Musa?</div>
           <h2 className="landing-section-title font-instrument">
             Armadura para tu IA.
           </h2>
           <p className="landing-section-text">
-            Un <strong>Design Harness</strong> no es un modelo de IA: es la armadura que envuelve a <em>cualquier</em>{" "}
-            modelo y le da capacidades de diseño de precisión. Pensalo como un caballero: la IA es el guerrero
-            y el Harness es la armadura — forjada con sistemas de layout, reglas de tipografía, tokenización
-            de color, gestión de frames y render determinístico.
+            Los laboratorios crean los modelos de IA. Musa es el <strong>arnés</strong>: lo
+            conectas a <em>cualquier</em> IA y automáticamente puede diseñar como un humano —
+            layout, tipografía, tokens y frames, sin HTML suelto.
           </p>
-          <p className="landing-section-text">
-            Sin el Harness, una IA genera HTML suelto. Con él, <strong>cada salida es un documento de diseño
-            estructurado, editable y persistente</strong> — frames, capas, variables CSS, tokens de marca y assets
-            listos para exportar. El Harness no reemplaza a tu IA: la <em>canaliza</em> para que diseñe como un profesional.
-          </p>
-          <div className="landing-compat-grid">
-            {[
-              { name: "Claude Code", desc: "La herramienta agéntica de Anthropic" },
-              { name: "Hermes", desc: "Gateway MCP open source" },
-              { name: "OpenClaw", desc: "Workspace multi-agente" },
-              { name: "Tu IDE", desc: "Cualquier editor compatible con MCP" },
-            ].map(c => (
-              <div key={c.name} className="liquid-glass" style={{ padding: "16px 20px", borderRadius: 14, textAlign: "center" }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.85)", marginBottom: 4 }}>{c.name}</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{c.desc}</div>
-              </div>
-            ))}
-          </div>
+          <HarnessShowcase />
         </div>
       </section>
 
-      {/* ═══════════════════════════════ CONECTA TU IA ═══════════════════════════════ */}
-      <section id="connect" className="landing-section landing-section--alt">
+      {/* ═══════════════════════════ PARA QUIÉN ES MUSA ═══════════════════════════════ */}
+      <section id="para-quien" className="landing-section landing-section--alt">
         <div className="landing-section-inner">
-          <div className="landing-section-badge">Get Started</div>
+          <div className="landing-section-badge">Para quién es Musa</div>
           <h2 className="landing-section-title font-instrument">
-            Tu IA lee Musa y entra sola.
+            El rol de Musa cambia según quién la usa.
           </h2>
           <p className="landing-section-text">
-            No tenés que instalar nada. Mandale este prompt a tu IA — Claude, Codex, Hermes, OpenClaw,
-            Kimi, la que uses — y <strong>ella lee la documentación de la plataforma y te dice exactamente qué
-            hacer</strong>: creás tu cuenta, generás tu llave MCP, se la pasás, y queda manejando el 100% del editor.
+            Tres perfiles, tres roles distintos — y la misma IA haciendo diseño de precisión.
           </p>
-
-          <div className="landing-steps">
-            <div className="landing-step">
-              <div className="landing-step-num">1</div>
-              <div>
-                <div className="landing-step-title">Pegale este prompt a tu IA</div>
-                <p className="landing-step-desc">Tu IA abre el discovery de Musa y te explica cómo entrar:</p>
-                <pre className="landing-code-block landing-copy-wrap">{CONNECT_PROMPT}<button type="button" onClick={handleCopyPrompt} className="landing-copy-btn">{copied ? "✓ Copiado" : "Copiar"}</button></pre>
-              </div>
-            </div>
-            <div className="landing-step">
-              <div className="landing-step-num">2</div>
-              <div>
-                <div className="landing-step-title">Creá tu cuenta y tu llave</div>
-                <p className="landing-step-desc">
-                  Entrá al workspace, andá a <strong>Configuración → API Keys</strong> y generá una llave MCP
-                  (<code>fdr_ws_…</code>). Una por IA y por persona del equipo: todos diseñan a la vez,
-                  cada uno con su propia IA.
-                </p>
-              </div>
-            </div>
-            <div className="landing-step">
-              <div className="landing-step-num">3</div>
-              <div>
-                <div className="landing-step-title">Tu IA maneja el 100%</div>
-                <p className="landing-step-desc">
-                  Con la llave, tu IA crea archivos, diseña, edita código, exporta, arma tarjetas en el
-                  Kanban y te deja todo en tu columna de review. Como cuando le mandás a tu IA a revisar
-                  un sitio y se empieza a crear todo — pero acá diseña de verdad.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="landing-connect-note liquid-glass">
-            <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
-            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>148+ tools</strong> de
-            diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
-            guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
-          </div>
-
-          <p className="landing-selfhost">
-            ¿Preferís tu propia infra? Musa sigue siendo open source: cloná el repo y conectá tu
-            Supabase desde{" "}
-            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub</a>.
-          </p>
+          <AudienceShowcase />
         </div>
       </section>
+
+      {/* (Conecta tu IA se movió debajo de Features, junto al cierre del recorrido) */}
 
       {/* ═══════════════════════════════ FEATURES ═══════════════════════════════ */}
       <section id="features" className="landing-section">
         <div className="landing-section-inner">
           <div className="landing-section-badge">Features</div>
           <h2 className="landing-section-title font-instrument">
-            Todo lo que vos y tu IA pueden hacer.
+            Y con esto puedes hacer todo esto.
           </h2>
           <p className="landing-section-text">
-            Mini-UIs en loop: el cursor se mueve, aprieta el botón y la acción pasa. Y cada feature
+            Mini-UIs en loop: el cursor se mueve, presiona el botón y la acción sucede. Y cada feature
             también es una herramienta MCP — la UI y tu IA hacen exactamente lo mismo.
           </p>
           <div className="landing-demo-grid">
@@ -520,20 +456,77 @@ export function Landing({ onEnter }: LandingProps) {
         </div>
       </section>
 
+      {/* ═══════════════════════════════ CONECTA TU IA ═══════════════════════════════ */}
+      <section id="connect" className="landing-section landing-section--alt">
+        <div className="landing-section-inner">
+          <div className="landing-section-badge">Get Started</div>
+          <h2 className="landing-section-title font-instrument">
+            Tu IA lee Musa y entra sola.
+          </h2>
+          <p className="landing-section-text">
+            No tienes que instalar nada. Envía este prompt a tu IA — Claude, Codex, Hermes, OpenClaw,
+            Kimi, la que uses — y <strong>ella lee la documentación de la plataforma y te dice exactamente qué
+            hacer</strong>: creas tu cuenta, generas tu clave MCP, se la pasas, y queda manejando el 100% del editor.
+          </p>
+
+          <div className="landing-steps">
+            <div className="landing-step">
+              <div className="landing-step-num">1</div>
+              <div>
+                <div className="landing-step-title">Pega este prompt a tu IA</div>
+                <p className="landing-step-desc">Tu IA abre el discovery de Musa y te explica cómo entrar:</p>
+                <pre className="landing-code-block landing-copy-wrap">{CONNECT_PROMPT}<button type="button" onClick={handleCopyPrompt} className="landing-copy-btn">{copied ? "✓ Copiado" : "Copiar"}</button></pre>
+              </div>
+            </div>
+            <div className="landing-step">
+              <div className="landing-step-num">2</div>
+              <div>
+                <div className="landing-step-title">Crea tu cuenta y tu clave</div>
+                <p className="landing-step-desc">
+                  Entra al workspace, ve a <strong>Configuración → API Keys</strong> y genera una clave MCP
+                  (<code>fdr_ws_…</code>). Una por IA y por persona del equipo: todos diseñan a la vez,
+                  cada uno con su propia IA.
+                </p>
+              </div>
+            </div>
+            <div className="landing-step">
+              <div className="landing-step-num">3</div>
+              <div>
+                <div className="landing-step-title">Tu IA maneja el 100%</div>
+                <p className="landing-step-desc">
+                  Con la clave, tu IA crea archivos, diseña, edita código, exporta, arma tarjetas en el
+                  Kanban y te deja todo en tu columna de review. Como cuando envías a tu IA a revisar
+                  un sitio y se empieza a crear todo — pero aquí diseña de verdad.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="landing-connect-note liquid-glass">
+            <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
+            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>148+ tools</strong> de
+            diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
+            guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
+          </div>
+
+          <p className="landing-selfhost">
+            ¿Prefieres tu propia infra? Musa sigue siendo open source: clona el repo y conecta tu
+            Supabase desde{" "}
+            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub</a>.
+          </p>
+        </div>
+      </section>
+
       {/* ═══════════════════════════════ FOOTER ═══════════════════════════════ */}
       <footer className="landing-footer-section">
         <div className="landing-section-inner" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 30 }}>
           <div className="landing-footer-grid">
             <div>
               <div className="landing-footer-brand font-instrument">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.45, alignSelf: "center" }}>
-                  <rect x="3" y="3" width="18" height="18" rx="4" />
-                  <circle cx="12" cy="12" r="4" />
-                </svg>
                 Musa <span className="landing-footer-by">by Futuraria</span>
               </div>
               <p className="landing-footer-tag">
-                Tu workspace de diseño MCP-first. Vos diseñás, tu IA diseña, o los dos a la vez —
+                Tu workspace de diseño MCP-first. Tú diseñas, tu IA diseña, o los dos a la vez —
                 con las mismas 148+ herramientas, y tu data solo en tu cuenta.
               </p>
             </div>

@@ -94,7 +94,7 @@ const MirrorDemo = () => (
   <Screen title="software espejo" cycle={MIRROR_T}>
     <div className="fd-mirror-grid">
       <div className="fd-mini-panel">
-        <div className="fd-mini-head">🧑 Vos</div>
+        <div className="fd-mini-head">🧑 Tú</div>
         <button className="fd-btn fd-btn--sm" type="button" style={at(MIRROR_T, 1.5)}>Publicar</button>
         <div className="fd-mini-card" style={at(MIRROR_T, 2.1)} />
       </div>
@@ -163,7 +163,7 @@ const KeysDemo = () => (
         <i className="fd-live" />
       </div>
     </div>
-    <button className="fd-btn fd-keys-btn" type="button" style={at(KEYS_T, 1.3)}>+ Nueva llave</button>
+    <button className="fd-btn fd-keys-btn" type="button" style={at(KEYS_T, 1.3)}>+ Nueva clave</button>
     {KEYS_ROWS.map((r, i) => (
       <div key={r.name} className="fd-prog" style={{ ...at(KEYS_T, 3.2), top: 58 + i * 22 }}>
         <i />
@@ -271,15 +271,15 @@ const ImgDemo = () => (
 const CHAT_T = 9;
 const ChatDemo = () => (
   <Screen title="chat" cycle={CHAT_T}>
-    <div className="fd-bubble fd-bubble--user" style={at(CHAT_T, 2.5)}>Hacé un post para el viernes 🌴</div>
+    <div className="fd-bubble fd-bubble--user" style={at(CHAT_T, 2.5)}>Haz un post para el viernes 🌴</div>
     <div className="fd-bubble fd-bubble--ai" style={at(CHAT_T, 3.4)}>
-      <span className="fd-bubble-thumb" /> listo ✓ editá el copy acá →
+      <span className="fd-bubble-thumb" /> listo ✓ edita el copy aquí →
     </div>
     <div className="fd-chatbar">
       <span className="fd-typing" style={at(CHAT_T, 0.7)}>
         <i /><i /><i />
       </span>
-      <span className="fd-chat-ph">Escribí con tu API…</span>
+      <span className="fd-chat-ph">Escribe con tu API…</span>
       <button className="fd-send" type="button" style={at(CHAT_T, 2.2)}>▲</button>
     </div>
     <div className="fd-badge" style={at(CHAT_T, 4.4)}>tu API dentro de Musa</div>
@@ -319,9 +319,9 @@ const CommentsDemo = () => (
       <span className="fd-pindot" style={{ ...at(COMM_T, 1.6), left: "26%", top: 18 }}>1</span>
       <span className="fd-pindot fd-pindot--2" style={{ ...at(COMM_T, 3.2), left: "62%", top: 56 }}>2</span>
       <div className="fd-phone-bubble" style={at(COMM_T, 1.9)}>más contraste 👀</div>
-      <div className="fd-phone-bubble fd-phone-bubble--2" style={at(COMM_T, 3.5)}>cambiá el CTA ↗</div>
+      <div className="fd-phone-bubble fd-phone-bubble--2" style={at(COMM_T, 3.5)}>cambia el CTA ↗</div>
     </div>
-    <div className="fd-badge" style={at(COMM_T, 4.8)}>desde el celular · sin cuenta</div>
+    <div className="fd-badge" style={at(COMM_T, 4.8)}>desde el móvil · sin cuenta</div>
     <Cur id="comments" cycle={COMM_T} press={1.5} origin={{ left: "22%", top: 30 }} />
   </Screen>
 );
@@ -332,7 +332,7 @@ const DROP_T = 9;
 const DropDemo = () => (
   <Screen title="editor" cycle={DROP_T}>
     <div className="fd-zone">
-      <span className="fd-zone-label">Soltá acá</span>
+      <span className="fd-zone-label">Suelta aquí</span>
       <div className="fd-dropped fd-dropped--1" style={at(DROP_T, 1.9)}>
         <span className="fd-card-bar" /><div className="fd-card-lines"><i /><i /></div>
       </div>
@@ -397,58 +397,58 @@ export interface LandingFeature {
 export const LANDING_FEATURES: LandingFeature[] = [
   {
     id: "batch", icon: "⚡", title: "Batchamator", Demo: BatchDemo,
-    desc: "Automatizá contenido: descargá cada diseño como CSV y producí 20, 30, 40 piezas usando tu diseño como plantilla — o pedile a tu IA que haga todo.",
+    desc: "Automatiza contenido: descarga cada diseño como CSV y produce 20, 30, 40 piezas usando tu diseño como plantilla — o pide a tu IA que haga todo.",
   },
   {
     id: "code", icon: "💻", title: "Código en tiempo real", Demo: CodeDemo,
-    desc: "Lo que ves es lo que obtenés en código. Modificás algo y no esperás ni un segundo: el sistema lo interpreta como código, sin depender de una IA.",
+    desc: "Lo que ves es lo que obtienes en código. Modificas algo y no esperas ni un segundo: el sistema lo interpreta como código, sin depender de una IA.",
   },
   {
     id: "mirror", icon: "🪞", title: "Software espejo", Demo: MirrorDemo,
-    desc: "Absolutamente todo lo que podés hacer, lo puede hacer tu IA — y viceversa. Usá la plataforma con o sin tokens.",
+    desc: "Absolutamente todo lo que puedes hacer, lo puede hacer tu IA — y viceversa. Usa la plataforma con o sin tokens.",
   },
   {
     id: "mcp", icon: "🔌", title: "MCP first", Demo: McpDemo,
-    desc: "Conectá cualquier agente de IA que uses — Codex, Claude, Hermes, OpenClaw, Kimi — y aprovechalo al 100%.",
+    desc: "Conecta cualquier agente de IA que uses — Codex, Claude, Hermes, OpenClaw, Kimi — y aprovéchalo al 100%.",
   },
   {
     id: "keys", icon: "🔑", title: "Múltiples IAs", Demo: KeysDemo,
-    desc: "Creá llaves MCP y dale acceso a todo tu equipo con sus respectivas IAs para diseñar a la vez.",
+    desc: "Crea claves MCP y da acceso a todo tu equipo con sus respectivas IAs para diseñar a la vez.",
   },
   {
     id: "data", icon: "🔐", title: "Data propietaria", Demo: DataDemo,
-    desc: "Tu data es tuya: gestionala en tablas, grafos e incluso papelera de reciclaje. Nada se pierde, todo se almacena en tu propia cuenta y nadie más tiene acceso.",
+    desc: "Tu data es tuya: gestiónala en tablas, grafos e incluso papelera de reciclaje. Nada se pierde, todo se almacena en tu propia cuenta y nadie más tiene acceso.",
   },
   {
     id: "brain", icon: "🧠", title: "Second brain", Demo: BrainDemo,
-    desc: "Encontrá patrones replicables: cuando entra una marca nueva, le indicás a tus IAs replicar el proceso completo siguiendo el estilo de la otra marca.",
+    desc: "Encuentra patrones replicables: cuando entra una marca nueva, indicas a tus IAs replicar el proceso completo siguiendo el estilo de la otra marca.",
   },
   {
     id: "img", icon: "🖼️", title: "De imagen a diseño", Demo: ImgDemo,
-    desc: "Subí una imagen con drag and drop y con un solo click convertila en un diseño editable con su código.",
+    desc: "Sube una imagen con drag and drop y con un solo clic conviértela en un diseño editable con su código.",
   },
   {
     id: "chat", icon: "💬", title: "Chat incluido", Demo: ChatDemo,
-    desc: "Conectá tu API dentro de la plataforma si no tenés agentes como Codex, Claude, Hermes, OpenClaw o Replit.",
+    desc: "Conecta tu API dentro de la plataforma si no tienes agentes como Codex, Claude, Hermes, OpenClaw o Replit.",
   },
   {
     id: "video", icon: "🎬", title: "Animaciones y video", Demo: VideoDemo,
-    desc: "Diseñá tus piezas, animalas y exportalas como reels y videos.",
+    desc: "Diseña tus piezas, anímalas y expórtalas como reels y videos.",
   },
   {
     id: "comments", icon: "📌", title: "Comentarios", Demo: CommentsDemo,
-    desc: "Compartí accesos de invitado para recibir comentarios desde el celular.",
+    desc: "Comparte accesos de invitado para recibir comentarios desde el móvil.",
   },
   {
     id: "drop", icon: "📥", title: "Drag and drop", Demo: DropDemo,
-    desc: "Soltá HTMLs, JPGs y más en el editor: el sistema los interpreta como diseño.",
+    desc: "Suelta HTMLs, JPGs y más en el editor: el sistema los interpreta como diseño.",
   },
   {
     id: "erase", icon: "🧽", title: "Borradores multi item", Demo: EraseDemo,
-    desc: "Borrá vectores y fotos como si fueran un mismo tipo de archivo. Olvidate de Photoshop.",
+    desc: "Borra vectores y fotos como si fueran un mismo tipo de archivo. Olvídate de Photoshop.",
   },
   {
     id: "kanban", icon: "📋", title: "Kanban de tareas", Demo: KanbanDemo,
-    desc: "Desglosá tareas para que tus IAs las realicen: crean sus tareas, actualizan la información y las dejan en tu columna de review.",
+    desc: "Desglosa tareas para que tus IAs las realicen: crean sus tareas, actualizan la información y las dejan en tu columna de review.",
   },
 ];

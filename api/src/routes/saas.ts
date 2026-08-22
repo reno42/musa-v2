@@ -156,7 +156,7 @@ accountRoutes.patch("/me", async (req, res) => {
         return res.status(409).json({
           success: false,
           error: "PROFILE_MIGRATION_REQUIRED",
-          detail: "Ejecutá supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
+          detail: "Ejecuta supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
         });
       }
       throw error;

@@ -452,10 +452,10 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
         ) : tab === "ai" ? (
           <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
             <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>
-              Generá SVG con IA desde texto. Requiere una key de <strong style={{ color: "#a78bfa" }}>Quiver AI</strong> configurada en AI Settings.
+              Genera SVG con IA desde texto. Requiere una key de <strong style={{ color: "#a78bfa" }}>Quiver AI</strong> configurada en AI Settings.
             </div>
             <textarea
-              placeholder="Describí el SVG que querés generar… (ej: 'unicornio minimalista, línea continua, una sola tinta')"
+              placeholder="Describe el SVG que quieres generar… (ej: 'unicornio minimalista, línea continua, una sola tinta')"
               value={aiPrompt}
               onChange={e => setAiPrompt(e.target.value)}
               rows={2}
@@ -508,7 +508,7 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
               )}
               {!aiLoading && aiResults.length === 0 && !aiDraft && (
                 <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>
-                  Escribí una descripción y presioná Generar.
+                  Escribe una descripción y presiona Generar.
                 </div>
               )}
             </div>
@@ -524,9 +524,9 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
                   Las fotos vienen de <strong style={{ color: "#c8b898" }}>Unsplash</strong>, que pide tu propia API key (gratis).
                 </p>
                 <ol style={{ margin: "0 0 10px", paddingLeft: 18 }}>
-                  <li>Entrá a unsplash.com/developers y creá una cuenta.</li>
+                  <li>Entra a unsplash.com/developers y crea una cuenta.</li>
                   <li>"New Application" → aceptá los términos.</li>
-                  <li>Copiá el <em>Access Key</em> y pegalo acá abajo.</li>
+                  <li>Copia el <em>Access Key</em> y pégalo aquí abajo.</li>
                 </ol>
               </div>
             ) : null}

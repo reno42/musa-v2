@@ -97,7 +97,7 @@ commentShareRoutes.post("/:templateId", async (req, res) => {
 
     const ip = (req.headers["x-forwarded-for"] as string) || req.socket?.remoteAddress || "unknown";
     if (!guestPostAllowed(ip)) {
-      return res.status(429).json({ success: false, error: "Demasiados comentarios seguidos — esperá un minuto." });
+      return res.status(429).json({ success: false, error: "Demasiados comentarios seguidos — espera un minuto." });
     }
 
     const text = typeof req.body?.body === "string" ? req.body.body.trim() : "";
@@ -141,7 +141,7 @@ commentShareRoutes.post("/:templateId", async (req, res) => {
         workspace_id: (tpl as any).workspace_id || null,
         template_id: tpl.id,
         frame_id: null,
-        brief: `${text}\n\n(Pin móvil en x ${Math.round(xPct)}% / y ${Math.round(yPct)}% — dejado por ${author} desde el celular)`,
+        brief: `${text}\n\n(Pin móvil en x ${Math.round(xPct)}% / y ${Math.round(yPct)}% — dejado por ${author} desde el móvil)`,
         status: "backlog",
         type: "other",
         created_by: author,

@@ -613,7 +613,7 @@ export function KanbanTab({ workspaceId }: Props) {
           </h2>
           <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 24 }}>
             La tabla <code style={{ background: "rgba(255,255,255,0.06)", padding: "1px 6px", borderRadius: 4 }}>design_kanban_tasks</code> no existe aún en Supabase.
-            Ejecutá el SQL de migración para crear las tablas del Kanban.
+            Ejecuta el SQL de migración para crear las tablas del Kanban.
           </p>
           <div style={{
             background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "16px 20px",
@@ -621,10 +621,10 @@ export function KanbanTab({ workspaceId }: Props) {
             fontFamily: "monospace", marginBottom: 20, lineHeight: 1.8,
           }}>
             <div style={{ color: "rgba(255,255,255,0.3)", marginBottom: 6 }}>SQL a ejecutar en Supabase SQL Editor:</div>
-            <div>1. Abrí <span style={{ color: "#60a5fa" }}>Supabase → SQL Editor</span></div>
-            <div>2. Pegá el contenido de:</div>
+            <div>1. Abre <span style={{ color: "#60a5fa" }}>Supabase → SQL Editor</span></div>
+            <div>2. Pega el contenido de:</div>
             <div style={{ color: "#a78bfa", margin: "4px 0" }}>   supabase_migrations/design_kanban.sql</div>
-            <div>3. Ejecutá y refrescá esta página</div>
+            <div>3. Ejecuta y refresca esta página</div>
           </div>
           <button type="button" onClick={() => fetchTasks()}
             style={{

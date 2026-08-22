@@ -36,7 +36,7 @@ export function MusaOnboarding({ onComplete }: Props) {
     {
       role: "assistant",
       content:
-        "Hola! Soy Musa, tu co-pilot de diseño. Voy a estar con vos mientras creas tus diseños. Primero, ¿cómo te llamas?",
+        "Hola! Soy Musa, tu co-pilot de diseño. Voy a estar contigo mientras creas tus diseños. Primero, ¿cómo te llamas?",
     },
   ]);
   const [input, setInput] = useState("");
@@ -88,7 +88,7 @@ export function MusaOnboarding({ onComplete }: Props) {
     setInput("");
     await saveProfile({ first_name: name, display_name: name });
     addAssistant(
-      `Encantada, ${name}! ¿Tienes una marca personal, agencia o consultora? Si no tenés una, no pasa nada — puedo usar tu nombre.`,
+      `Encantada, ${name}! ¿Tienes una marca personal, agencia o consultora? Si no tienes una, no pasa nada — puedo usar tu nombre.`,
     );
     setStep("ask-brand");
   };
@@ -108,7 +108,7 @@ export function MusaOnboarding({ onComplete }: Props) {
     addUser("(no tengo marca)");
     setInput("");
     await saveProfile({ brand_name: defaultBrand });
-    addAssistant(`Genial! Voy a usar "${defaultBrand}" como tu nombre de marca. Podés cambiarlo cuando quieras desde Configuración.`);
+    addAssistant(`Genial! Voy a usar "${defaultBrand}" como tu nombre de marca. Puedes cambiarlo cuando quieras desde Configuración.`);
     setStep("offer-tour");
   };
 

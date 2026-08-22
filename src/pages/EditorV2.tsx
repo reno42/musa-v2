@@ -1935,7 +1935,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleWandPromptRun = useCallback(async () => {
     const prompt = wandPrompt.trim();
     if (!prompt) {
-      addToast("Escribí qué segmentar (ej: la persona).", "info");
+      addToast("Escribe qué segmentar (ej: la persona).", "info");
       return;
     }
     if (!selectedElement || selectedElement.frameId !== selectedFrameId || selectedElement.tag.toLowerCase() !== "img" || !selectedElement.src) {
@@ -5461,7 +5461,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             className="editor-v2-topbar-icon-btn"
             onClick={() => {
               const url = `${window.location.origin}/c/${templateId}`;
-              const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un celular para recibir feedback.", "success");
+              const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un móvil para recibir feedback.", "success");
               if (navigator.clipboard?.writeText) {
                 navigator.clipboard.writeText(url).then(done).catch(() => {});
                 return;
@@ -6615,7 +6615,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <div>
                 <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Chat LLM (todos los proveedores)</div>
                 <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6, marginBottom: 10 }}>
-                  La key del chat se configura en el panel del chat (botón 💬). Acá solo se muestra qué modelos hay disponibles por proveedor.
+                  La key del chat se configura en el panel del chat (botón 💬). Aquí solo se muestra qué modelos hay disponibles por proveedor.
                 </p>
                 {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver").map(p => (
                   <div key={p.id} style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
@@ -6746,7 +6746,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <h3 style={{ margin: "0 0 8px", fontSize: 15, color: "#f0ebe0" }}>🪄 Convertir imagen a diseño</h3>
             <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9a9484", lineHeight: 1.6 }}>
               Esta función usa <strong style={{ color: "#c8b898" }}>Google Gemini</strong> (visión). Necesita una API key de Gemini,
-              que es <strong>distinta</strong> a la del chat — si ahí tenés DeepSeek, esa no sirve acá.
+              que es <strong>distinta</strong> a la del chat — si ahí tienes DeepSeek, esa no sirve aquí.
               Sacala gratis en <span style={{ color: "#c8b898" }}>aistudio.google.com/apikey</span>.
             </p>
             <input

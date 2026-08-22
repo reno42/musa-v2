@@ -1932,7 +1932,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
               <div className="bento-sub">
                 Musa procesa tu Kanban de diseño cada hora (batch automático) y on demand desde el tablero Kanban.
-                Usa tu API key de IA (Ajustes de IA → claves), sin guardar keys acá.
+                Usa tu API key de IA (Ajustes de IA → claves), sin guardar keys aquí.
               </div>
               <div className="bento-row" style={{ alignItems: "center" }}>
                 <span className="bento-row-label">Procesar la cola</span>
@@ -2098,7 +2098,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
                 <div className="bento-sub">
                   Switches globales (todas las cuentas). El batch horario de Musa se puede
-                  apagar acá; el env var MUSA_TICK_ENABLED=false{" "}
+                  apagar aquí; el env var MUSA_TICK_ENABLED=false{" "}
                   {platformStatus.env_musa_tick_enabled === false ? "está ACTIVO y gana sobre este switch." : "(si se activa) gana sobre este switch."}
                 </div>
                 <div className="bento-row" style={{ alignItems: "center" }}>
@@ -2130,7 +2130,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <div className="bento-title">👥 Quién tiene acceso</div>
               {members.length === 0 ? (
                 <div className="bento-sub">
-                  Solo vos. Cuando invites a alguien al espacio de trabajo, aparece acá con su rol.
+                  Solo tú. Cuando invites a alguien al espacio de trabajo, aparece aquí con su rol.
                 </div>
               ) : (
                 <div>
@@ -2158,7 +2158,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div className="bento-sub">Cargando…</div>
               ) : sessions.length === 0 ? (
                 <div className="bento-sub">
-                  Todavía no hay registro de sesiones. Aparecen acá cuando un cliente MCP o un
+                  Todavía no hay registro de sesiones. Aparecen aquí cuando un cliente MCP o un
                   navegador se conecta usando tu API key.
                 </div>
               ) : (
@@ -2182,7 +2182,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
 
           {/* ═══════════ 2 · TUS LLAVES ═══════════ */}
-          <h3 className="bento-section-title">Tus llaves</h3>
+          <h3 className="bento-section-title">Tus claves</h3>
           <div className="bento-grid">
 
             {/* API key de Futuraria */}
@@ -2194,7 +2194,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </span>
               </div>
               <div className="bento-sub">
-                Es la llave de <strong>esta</strong> app. La usan los clientes MCP (Claude Code, Hermes,
+                Es la clave de <strong>esta</strong> app. La usan los clientes MCP (Claude Code, Hermes,
                 OpenClaw) y las herramientas de diseño.
               </div>
               {showApiKeyInput || !hasApiKey() ? (
@@ -2242,7 +2242,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
               <div className="bento-sub">
                 Se usa en <strong>🪄 Convertir imagen a diseño</strong>. Cifrada en el servidor.
-                No sirve una key de DeepSeek/OpenAI acá.
+                No sirve una key de DeepSeek/OpenAI aquí.
               </div>
               {editingGemini || !geminiConfigured ? (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -2333,13 +2333,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
             </div>
 
-            {/* Dónde vive cada llave */}
+            {/* Dónde vive cada clave */}
             <div className="bento-card bento-12">
-              <div className="bento-title">🗂 Dónde vive cada llave</div>
+              <div className="bento-title">🗂 Dónde vive cada clave</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
                 <div className="bento-sub">
                   <strong style={{ color: "rgba(255,255,255,0.8)" }}>Gemini · Quiver</strong><br />
-                  Acá arriba. Cifradas en el servidor, nunca visibles en el navegador.
+                  Aquí arriba. Cifradas en el servidor, nunca visibles en el navegador.
                 </div>
                 <div className="bento-sub">
                   <strong style={{ color: "rgba(255,255,255,0.8)" }}>Proveedor del chat</strong><br />
@@ -2353,7 +2353,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <div className="bento-sub">
                   <strong style={{ color: "rgba(255,255,255,0.8)" }}>MCP</strong><br />
                   Los clientes MCP se conectan a <code style={{ fontSize: 10.5 }}>/mcp</code> con la
-                  API de Futuraria. No necesitan llave propia.
+                  API de Futuraria. No necesitan clave propia.
                 </div>
               </div>
             </div>
@@ -2480,7 +2480,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <div className="bento-title">📄 SKILL.md — onboarding para agentes</div>
                   <div className="bento-sub" style={{ marginTop: 4 }}>
                     Dáselo a cualquier agente de IA: le enseña las herramientas de Futuraria, la
-                    estructura del proyecto y las convenciones de diseño, para que diseñe junto a vos.
+                    estructura del proyecto y las convenciones de diseño, para que diseñe junto a ti.
                   </div>
                 </div>
                 <button type="button" className="bento-btn bento-btn--primary" onClick={handleDownloadSkill}>Descargar</button>

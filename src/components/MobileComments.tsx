@@ -70,7 +70,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
       setTemplate(data.template);
       setComments(data.comments || []);
     } catch {
-      setLoadError("Error de conexión. Revisá tu internet e intentá de nuevo.");
+      setLoadError("Error de conexión. Revisa tu internet e intenta de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -92,7 +92,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
     e.preventDefault();
     if (submitting) return;
     const text = body.trim();
-    if (!text) { setFormError("Escribí un comentario antes de enviar."); return; }
+    if (!text) { setFormError("Escribe un comentario antes de enviar."); return; }
     setSubmitting(true);
     setFormError(null);
     try {
@@ -123,7 +123,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
       setSentKind(kanbanTaskId ? "kanban" : "comment");
       window.setTimeout(() => setSentKind(null), 5000);
     } catch {
-      setFormError("Error de conexión. Tu comentario no se guardó — intentá de nuevo.");
+      setFormError("Error de conexión. Tu comentario no se guardó — intenta de nuevo.");
     } finally {
       setSubmitting(false);
     }
@@ -165,7 +165,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
             <span>Musa by Futuraria</span>
           </a>
           <h1 className="mc-title">{template.name}</h1>
-          <p className="mc-sub">Dejá tu comentario tocando el diseño. Sin cuenta, sin descargas.</p>
+          <p className="mc-sub">Deja tu comentario tocando el diseño. Sin cuenta, sin descargas.</p>
         </header>
 
         {/* ── Design preview: tap to pin ── */}
@@ -174,7 +174,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
           style={{ aspectRatio: `${template.width} / ${template.height}` }}
           onClick={handlePreviewTap}
           role="button"
-          aria-label="Tocá el diseño para colocar tu comentario"
+          aria-label="Toca el diseño para colocar tu comentario"
         >
           {template.thumbnail ? (
             <img className="mc-preview-img" src={template.thumbnail} alt={template.name} />
@@ -198,7 +198,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
           )}
         </div>
         <p className="mc-hint">
-          {pin ? `Pin en ${Math.round(pin.x)}% / ${Math.round(pin.y)}% — tocá otro punto para moverlo.` : "Tocá la imagen para indicar a qué parte te referís."}
+          {pin ? `Pin en ${Math.round(pin.x)}% / ${Math.round(pin.y)}% — toca otro punto para moverlo.` : "Toca la imagen para indicar a qué parte te refieres."}
         </p>
 
         {/* ── Comment form ── */}
@@ -213,7 +213,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
           />
           <textarea
             className="mc-input mc-textarea"
-            placeholder="¿Qué te gustaría cambiar o agregar?"
+            placeholder="¿Qué te gustaría cambiar o añadir?"
             value={body}
             maxLength={500}
             rows={3}
@@ -226,7 +226,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
               onChange={(e) => setSendToKanban(e.target.checked)}
             />
             <span>
-              Agregar al Kanban
+              Añadir al Kanban
               <em>Tu IA aplicará este comentario como tarea.</em>
             </span>
           </label>
@@ -235,7 +235,7 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
             {submitting ? "Enviando…" : pin ? "Enviar comentario" : "Enviar comentario"}
           </button>
           {sentKind === "kanban" && (
-            <p className="mc-status mc-ok" role="status">Comentario guardado y agregado al Kanban. ¡La IA ya puede aplicarlo!</p>
+            <p className="mc-status mc-ok" role="status">Comentario guardado y añadido al Kanban. ¡La IA ya puede aplicarlo!</p>
           )}
           {sentKind === "comment" && (
             <p className="mc-status mc-ok" role="status">Comentario guardado.</p>

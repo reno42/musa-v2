@@ -579,7 +579,7 @@ const HARNESS_TOOLS = [
   { type: "function", function: { name: "check_accessibility", description: "Audita accesibilidad del template (WCAG 2.1 AA).", parameters: { type: "object", required: ["templateId"], properties: { templateId: { type: "string" }, frameId: { type: "string" } } } } },
   { type: "function", function: { name: "get_brands", description: "Lista todas las marcas registradas.", parameters: { type: "object", properties: { workspaceId: { type: "string" } } } } },
   { type: "function", function: { name: "get_brand_graph", description: "Devuelve el árbol jerárquico de marcas para el grafo Red de Marcas (workspace → marcas → Design System / Plantillas / Assets / Archivos → items). Cada nodo tiene color, nivel, tipo, hijos, templateId y obsidianLink.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" } } } } },
-  { type: "function", function: { name: "get_brand_playbook", description: "Digest consultable de UNA marca (la contracara de datos del grafo visual): design system (colores, fuentes, styleFingerprint), inventario completo de archivos con categoría/campaña/tipo de contenido, subconjunto replicable y counts. Es LA tool para 'revisá toda la lógica que hicimos para la marca X'.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, brandName: { type: "string", description: "Nombre de la marca si no tenés el ID" } } } } },
+  { type: "function", function: { name: "get_brand_playbook", description: "Digest consultable de UNA marca (la contracara de datos del grafo visual): design system (colores, fuentes, styleFingerprint), inventario completo de archivos con categoría/campaña/tipo de contenido, subconjunto replicable y counts. Es LA tool para 'revisa toda la lógica que hicimos para la marca X'.", parameters: { type: "object", required: ["workspaceId"], properties: { workspaceId: { type: "string" }, brandId: { type: "string" }, brandName: { type: "string", description: "Nombre de la marca si no tienes el ID" } } } } },
   { type: "function", function: { name: "replicate_brand_strategy", description: "Clona la lógica de diseño de una marca A sobre una marca B: crea una tarjeta Kanban por cada archivo replicable de A (más una de extracción de Design System si B no lo tiene) para que el pipeline las procese. Idempotente: lo ya replicado se salta. dryRun:true previsualiza el plan sin crear nada.", parameters: { type: "object", required: ["workspaceId", "sourceBrandId", "targetBrandId"], properties: { workspaceId: { type: "string", description: "CRÍTICO: usa el workspaceId del contexto actual" }, sourceBrandId: { type: "string", description: "Marca origen (ID o nombre)" }, targetBrandId: { type: "string", description: "Marca destino (ID o nombre)" }, maxCards: { type: "number", description: "Máx. tarjetas (1-30, default 15)" }, dryRun: { type: "boolean" } } } } },
   { type: "function", function: { name: "apply_brand", description: "Aplica una marca a un template (colores, fuentes, logos).", parameters: { type: "object", required: ["templateId", "brandId"], properties: { templateId: { type: "string" }, brandId: { type: "string" } } } } },
   { type: "function", function: { name: "create_brand_guideline", description: "Crea una nueva marca con su archivo Design System. Para extraer estilos de un diseño usa generate_design_artifacts(action='publish'). sourceTemplateIds es opcional para crear marcas vacías.", parameters: { type: "object", required: ["workspaceId", "name"], properties: { workspaceId: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tokensJson: { type: "string" }, designMd: { type: "string" }, sharedCss: { type: "string" }, sourceHash: { type: "string" }, styleFingerprint: { type: "string" }, sourceTemplateIds: { type: "array", uniqueItems: true, items: { type: "string" }, description: "Templates fuente (opcional al crear marca)." } } } } },
@@ -2004,7 +2004,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       if (Object.keys(leftovers).length > 0) {
         const moved = await migrateLocalKeys(leftovers, forgetLocalProviderKey);
         if (!cancelled && moved.length) {
-          setKeyStatus(`${moved.length} llave${moved.length === 1 ? "" : "s"} movida${moved.length === 1 ? "" : "s"} a tu cuenta y borrada${moved.length === 1 ? "" : "s"} de este navegador.`);
+          setKeyStatus(`${moved.length} clave${moved.length === 1 ? "" : "s"} movida${moved.length === 1 ? "" : "s"} a tu cuenta y borrada${moved.length === 1 ? "" : "s"} de este navegador.`);
         }
       }
       const remote = await fetchProviderKeys();
@@ -2025,7 +2025,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
 
   const submitKey = useCallback(async (provider: string) => {
     const value = (keyDraft[provider] || "").trim();
-    if (value.length < 8) { setKeyStatus("Esa llave es demasiado corta."); return; }
+    if (value.length < 8) { setKeyStatus("Esa clave es demasiado corta."); return; }
     setKeyStatus("Guardando…");
     try {
       const last4 = await saveProviderKeyRemote(provider, value);
@@ -2037,7 +2037,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       if (decKey) memoryKeyCache[provider] = decKey;
       setKeyStatus(`Guardada en tu cuenta (····${last4}). Disponible desde cualquier dispositivo.`);
     } catch (e) {
-      setKeyStatus(e instanceof Error ? e.message : "No se pudo guardar la llave");
+      setKeyStatus(e instanceof Error ? e.message : "No se pudo guardar la clave");
     }
   }, [keyDraft]);
 
@@ -2047,7 +2047,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
       setStoredKeys(prev => prev.filter(k => k.provider !== provider));
       setProviderKeys(prev => { const next = { ...prev }; delete next[provider]; return next; });
       delete memoryKeyCache[provider];
-      setKeyStatus("Llave eliminada de tu cuenta.");
+      setKeyStatus("Clave eliminada de tu cuenta.");
     } catch (e) {
       setKeyStatus(e instanceof Error ? e.message : "No se pudo eliminar");
     }
@@ -2393,7 +2393,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               // to lock in permanently.
               conversation.push({
                 role: "user",
-                content: "⚠️ Escribiste nombres de herramientas como texto en lugar de ejecutarlas, y los resultados que inventaste no son reales. Ninguna tarjeta ni diseño fue creado. Usa function calling de verdad (tool_calls) — no escribas 'studio_create_card → {...}' ni JSON. Volvé a intentarlo ejecutando las tools.",
+                content: "⚠️ Escribiste nombres de herramientas como texto en lugar de ejecutarlas, y los resultados que inventaste no son reales. Ninguna tarjeta ni diseño fue creado. Usa function calling de verdad (tool_calls) — no escribas 'studio_create_card → {...}' ni JSON. Vuelve a intentarlo ejecutando las tools.",
               });
               continue;
             }
@@ -2402,7 +2402,7 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
             setMessages(prev => [...prev, {
               role: "assistant",
               ts: Date.now(),
-              content: "No pude ejecutar las herramientas: el modelo escribió los comandos como texto en vez de llamarlos, así que **no se creó ninguna tarjeta ni diseño**. Probá con otro modelo para el rol Leader (⚙ Configuración del chat) — necesita soportar function calling.",
+              content: "No pude ejecutar las herramientas: el modelo escribió los comandos como texto en vez de llamarlos, así que **no se creó ninguna tarjeta ni diseño**. Prueba con otro modelo para el rol Leader (⚙ Configuración del chat) — necesita soportar function calling.",
             }]);
             break;
           }

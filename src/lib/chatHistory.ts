@@ -154,7 +154,7 @@ export async function saveProviderKeyRemote(provider: string, key: string): Prom
     `/api/keys/${encodeURIComponent(provider)}`,
     { method: "PUT", body: JSON.stringify({ key }) },
   );
-  if (res?.success === false) throw new Error(res.error || "No se pudo guardar la llave");
+  if (res?.success === false) throw new Error(res.error || "No se pudo guardar la clave");
   return res?.last4 || key.slice(-4);
 }
 
