@@ -2233,6 +2233,34 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"] },
   },
   {
+    name: "get_brand_playbook",
+    description: "Queryable digest of ONE brand's design logic: design system (color/font tokens + style fingerprint), full file inventory (category, campaign, content kind) and the subset of files that are replicable for another brand. This is the tool for 'revisá toda la lógica que hicimos para la marca X' — get_brand_graph returns the visual tree instead, this returns data a model can act on.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        brandId: { type: "string", description: "Brand ID (preferred)" },
+        brandName: { type: "string", description: "Brand name — matched case-insensitive when the ID is unknown" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "replicate_brand_strategy",
+    description: "Clones brand A's design logic onto brand B: builds A's playbook (files, campaigns, design system), checks B has a design system (queues an extraction card first if not) and creates one Kanban card per A replicable file — each card tells the pipeline to rebuild that design with B's identity. Cards land in backlog tagged ['replica', 'brand:<B>', 'from:<sourceTpl>'] (idempotent: already-replicated sources are skipped) so the Musa batch or agents process them. dryRun:true previews the plan without creating anything. Recommended flow: get_brand_playbook on the source brand first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID (both brands must live here)" },
+        sourceBrandId: { type: "string", description: "Brand to replicate FROM — accepts brand ID or name" },
+        targetBrandId: { type: "string", description: "Brand to replicate ONTO — accepts brand ID or name" },
+        maxCards: { type: "number", description: "Max cards to create (default 15, cap 30) — remaining sources are reported as skippedByLimit" },
+        dryRun: { type: "boolean", description: "Preview the plan (cards + briefs) without creating anything" },
+      },
+      required: ["workspaceId", "sourceBrandId", "targetBrandId"],
+    },
+  },
+  {
     name: "apply_brand",
     description: "Apply a saved brand's colors and fonts as CSS custom properties to a template",
     inputSchema: { type: "object", properties: { templateId: { type: "string" }, brandId: { type: "string" }, workspaceId: { type: "string" } }, required: ["templateId", "brandId", "workspaceId"] },
@@ -7775,6 +7803,154 @@ async function handleMethod(method, params, userId, auth) {
       }
       var graph = await brandGraphMod.buildBrandGraph(params.workspaceId, wsName);
       return graph;
+    }
+
+    // ── v28: queryable brand digest (AI-facing, per brand) ──
+    case "get_brand_playbook": {
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const brandKey = params.brandId || params.brandName;
+      if (!brandKey) throw { code: -32602, message: "brandId or brandName is required" };
+      const pbMod = await import("../../api/src/services/brandGraph.js");
+      try {
+        return await pbMod.buildBrandPlaybook(params.workspaceId, String(brandKey));
+      } catch (e) {
+        throw { code: -32004, message: e?.message || String(e) };
+      }
+    }
+
+    // ── v28: clone brand A's design logic onto brand B via Kanban cards ──
+    case "replicate_brand_strategy": {
+      const sbRep = getSupabaseAdmin();
+      if (!sbRep) throw { code: -32000, message: "Requires Supabase (brand data + design_kanban_tasks)." };
+      if (!params.workspaceId || !params.sourceBrandId || !params.targetBrandId) {
+        throw { code: -32602, message: "workspaceId, sourceBrandId and targetBrandId are required" };
+      }
+      const pbMod = await import("../../api/src/services/brandGraph.js");
+      let source, target;
+      try {
+        source = await pbMod.buildBrandPlaybook(params.workspaceId, String(params.sourceBrandId));
+        target = await pbMod.buildBrandPlaybook(params.workspaceId, String(params.targetBrandId));
+      } catch (e) {
+        throw { code: -32004, message: e?.message || String(e) };
+      }
+      if (source.brand.id === target.brand.id) {
+        throw { code: -32602, message: "sourceBrandId and targetBrandId resolve to the same brand" };
+      }
+      if (source.replicable.length === 0) {
+        throw { code: -32000, message: `Brand "${source.brand.name}" has no replicable files yet (needs Plantillas or Archivos).` };
+      }
+
+      const dryRun = !!params.dryRun;
+      const maxCards = Math.min(30, Math.max(1, Number(params.maxCards) || 15));
+      const plan = {
+        source: { id: source.brand.id, name: source.brand.name, replicableFiles: source.replicable.length, counts: source.counts, designSystem: !!source.designSystem },
+        target: { id: target.brand.id, name: target.brand.name, counts: target.counts, designSystem: !!target.designSystem },
+        needsStyleExtraction: !target.designSystem,
+        cardCount: 0,
+      };
+
+      // Card 0 (only when B has no design system): extract it from B's own
+      // files first — every replica card depends on those tokens.
+      const cardsToCreate = [];
+      if (!target.designSystem) {
+        const sample = target.inventory.map(i => i.name).slice(0, 5).join(", ");
+        const sampleSuffix = sample ? ` (${sample}${target.inventory.length > 5 ? ", …" : ""})` : "";
+        cardsToCreate.push({
+          title: `${target.brand.name} · extraer sistema de diseño`,
+          type: "template",
+          brief: `La marca "${target.brand.name}" no tiene Design System todavía. Extraer su sistema de diseño con extract_design_system usando como fuentes sus archivos existentes${sampleSuffix}. Las tarjetas de réplica siguientes dependen de este resultado: aplicarán estos tokens.`,
+          acceptance: [
+            "Design System creado y visible en el grafo bajo la marca",
+            "Tokens de color y tipografía extraídos de archivos reales de la marca",
+            "Style fingerprint calculado (sin estilos duplicados)",
+          ],
+          fromTag: "ds-extract",
+        });
+      }
+
+      for (const it of source.replicable.slice(0, maxCards)) {
+        cardsToCreate.push({
+          title: `${target.brand.name} · replicar "${it.name}"`,
+          type: it.contentKind === "ad" ? "banner" : "post",
+          brief: [
+            `Replicar la lógica de diseño de "${it.name}" (marca ${source.brand.name}, categoría ${it.category}${it.campaign ? `, campaña "${it.campaign}"` : ""}) para la marca ${target.brand.name}.`,
+            `- Referencia fuente (abrir en el editor): /?template=${it.templateId}`,
+            `- Usar el sistema de diseño de ${target.brand.name} (colores y tipografía); si no existe todavía, completar primero la tarjeta de extracción de Design System.`,
+            `- Mantener propósito, estructura y jerarquía del diseño fuente; reemplazar toda la identidad visual por la de ${target.brand.name}.`,
+            `- Guardar como archivo nuevo archivado bajo ${target.brand.name}${it.campaign ? ` (campaña "${it.campaign}")` : ""}.`,
+          ].join("\n"),
+          acceptance: [
+            "Mismo propósito y estructura que el diseño fuente",
+            `Paleta y tipografía 100% de ${target.brand.name}`,
+            `Archivo nuevo archivado bajo ${target.brand.name} en el grafo`,
+            "Thumbnail actualizado y diseño guardado",
+          ],
+          fromTag: `from:${it.templateId}`,
+        });
+      }
+      const skippedByLimit = Math.max(0, source.replicable.length - maxCards);
+      plan.cardCount = cardsToCreate.length;
+
+      if (dryRun) {
+        return {
+          success: true, dryRun: true, plan,
+          cards: cardsToCreate.map(c => ({ title: c.title, type: c.type })),
+          skippedByLimit,
+        };
+      }
+
+      // Idempotency: a source file already replicated for this target brand
+      // (tag from:<tplId> on an existing replica card) is skipped, so calling
+      // the tool twice does not duplicate the plan.
+      const dedupTag = `brand:${target.brand.id}`;
+      const { data: existingCards } = await sbRep.from("design_kanban_tasks")
+        .select("id, tags").eq("workspace_id", params.workspaceId).eq("brand_id", target.brand.id)
+        .contains("tags", ["replica"]).contains("tags", [dedupTag]);
+      const alreadyDone = new Set((existingCards || []).flatMap(c => (c.tags || []).filter(t => String(t).startsWith("from:"))));
+
+      const created = [];
+      for (const c of cardsToCreate) {
+        if (c.fromTag !== "ds-extract" && alreadyDone.has(c.fromTag)) continue;
+        const cardId = "card_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        const { data: row, error } = await sbRep.from("design_kanban_tasks").insert({
+          id: cardId,
+          title: c.title,
+          brand_id: target.brand.id,
+          workspace_id: params.workspaceId,
+          account_id: UUID_RE.test(userId || "") ? userId : null,
+          type: c.type,
+          status: "backlog",
+          priority: 2,
+          brief: c.brief,
+          tags: ["replica", dedupTag, c.fromTag],
+          acceptance: c.acceptance,
+          created_by: "replicate_brand_strategy",
+          source: "mcp",
+          content_type: "organico",
+          enabled: true,
+        }).select().single();
+        if (error) throw { code: -32000, message: "Failed to create card: " + error.message };
+        await sbRep.from("design_kanban_activity_log").insert({
+          id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          task_id: cardId,
+          to_status: "backlog",
+          comment: `Replica plan created by replicate_brand_strategy (${source.brand.name} → ${target.brand.name})`,
+          created_by: "replicate_brand_strategy",
+        });
+        created.push({ id: cardId, title: c.title });
+      }
+
+      return {
+        success: true, dryRun: false,
+        created: created.length,
+        cards: created,
+        skippedDuplicates: cardsToCreate.filter(c => c.fromTag !== "ds-extract" && alreadyDone.has(c.fromTag)).length,
+        skippedByLimit,
+        plan,
+        nextStep: created.length > 0
+          ? "Cards created in backlog. Run musa_batch_run (or wait for the hourly batch) to process them; watch them advance in the Kanban."
+          : "Nothing to create — every source file was already replicated for this target.",
+      };
     }
 
     case "apply_brand": {
@@ -14441,12 +14617,33 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         monthly_mcp_quota: 5000,
         // Emergency env override (Netlify dashboard) — wins over the DB switch.
         env_musa_tick_enabled: process.env.MUSA_TICK_ENABLED !== "false",
+        // ── v28: limits panel (Configuración → Límites y consumo) ──
+        // Static plan reference (Netlify free tier) + real usage measured by
+        // the v27 meter across ALL workspaces of the current month.
+        plan: {
+          netlify_monthly_invocations: 125_000,
+          cron_monthly_invocations: 1_488, // 2 scheduled fns × 24/day × 31d
+          netlify_monthly_bandwidth_gb: 100,
+        },
+        platform_usage: null,
       };
       try {
         const { data: musa } = await sb.from("platform_config").select("value").eq("key", "musa").maybeSingle();
         if (musa?.value && typeof musa.value.musa_tick_enabled === "boolean") status.musa_tick_enabled = musa.value.musa_tick_enabled;
         status.monthly_mcp_quota = await getMonthlyQuota(sb);
       } catch { /* pre-v27 → defaults */ }
+      try {
+        const month = new Date().toISOString().slice(0, 7);
+        const { data: usageRows } = await sb.from("workspace_usage")
+          .select("workspace_id, mcp_calls, items_generated").eq("month", month);
+        const rows = usageRows || [];
+        status.platform_usage = {
+          month,
+          workspaces: rows.length,
+          mcp_calls: rows.reduce((n, r) => n + (Number(r.mcp_calls) || 0), 0),
+          items_generated: rows.reduce((n, r) => n + (Number(r.items_generated) || 0), 0),
+        };
+      } catch { /* pre-v27 → stays null, panel shows the migration hint */ }
       return status;
     }
 

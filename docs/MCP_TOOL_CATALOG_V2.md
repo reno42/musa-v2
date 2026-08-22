@@ -520,6 +520,33 @@ curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
 
 ---
 
+## 🕸️ GRAFOS CONSULTABLES & RÉPLICA DE MARCA (v28)
+
+### Tools nuevas
+
+| Tool | Qué hace | Params clave |
+|------|----------|--------------|
+| `get_brand_playbook` | Digest consultable de UNA marca (la contracara de datos del grafo visual `get_brand_graph`): design system (templateId, colores, fuentes, styleFingerprint), inventario completo con categoría/campaña/tipo de contenido, subconjunto `replicable` (Plantillas + Archivos) y counts. Es LA tool para «revisá toda la lógica que hicimos para la marca X». | `workspaceId`, `brandId` o `brandName` |
+| `replicate_brand_strategy` | Clona la lógica de marca A sobre marca B: construye el playbook de A, verifica el design system de B (si no tiene, encola primero una tarjeta de extracción con `extract_design_system`) y crea una tarjeta Kanban por archivo replicable (`design_kanban_tasks`, status `backlog`, tags `replica`/`brand:<B>`/`from:<tplA>`, brief con link al diseño fuente). Idempotente: archivos ya replicados se saltean. | `workspaceId`, `sourceBrandId`, `targetBrandId`, `maxCards` (1–30, default 15), `dryRun` |
+
+### Flujo recomendado (para cualquier IA: chat interno, Claude, Codex…)
+
+```
+1. get_brand_graph(workspaceId)                  → IDs de marcas
+2. get_brand_playbook(workspaceId, marcaA)       → qué existe y qué es replicable
+3. replicate_brand_strategy(…, dryRun:true)      → previsualizar el plan
+4. replicate_brand_strategy(…)                   → tarjetas en backlog
+5. musa_batch_run(workspaceId)                   → procesar ya (o esperar el cron horario)
+```
+
+Las dos tools están en el catálogo estándar (`tools/list`) y en la lista del chat interno, así que cualquier cliente MCP las descubre solo.
+
+### platform_get_status (v28)
+
+Ahora también devuelve `plan` (referencia del plan Netlify free: 125K invocaciones/mes, ~1.488 del cron fijo, 100 GB) y `platform_usage` (sumatoria real de `workspace_usage` del mes corriente, todas las cuentas) — alimenta el panel **Configuración → 📊 Límites y consumo**, con proyección a fin de mes por ritmo actual.
+
+---
+
 ## 🎯 Orden de ejecución
 
 | Orden | Fase | Tools | Depende de |

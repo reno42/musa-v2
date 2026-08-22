@@ -403,10 +403,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [kanbanSaving, setKanbanSaving] = useState(false);
   const [kanbanMsg, setKanbanMsg] = useState("");
   const [usageData, setUsageData] = useState<{ month: string; mcp_calls: number; items_generated: number; quota: number } | null>(null);
-  const [platformStatus, setPlatformStatus] = useState<{ canManage: boolean; musa_tick_enabled: boolean; monthly_mcp_quota: number; env_musa_tick_enabled?: boolean } | null>(null);
+  const [platformStatus, setPlatformStatus] = useState<{ canManage: boolean; musa_tick_enabled: boolean; monthly_mcp_quota: number; env_musa_tick_enabled?: boolean; platform_usage?: { month: string; workspaces: number; mcp_calls: number; items_generated: number } | null; plan?: { netlify_monthly_invocations: number; cron_monthly_invocations: number; netlify_monthly_bandwidth_gb: number } } | null>(null);
   const [platformQuota, setPlatformQuota] = useState(5000);
   const [platformSaving, setPlatformSaving] = useState(false);
   const [platformMsg, setPlatformMsg] = useState("");
+
+  // v28: proyección lineal a fin de mes (ritmo actual extrapolado, UTC) y
+  // porcentaje acotado — alimentan el panel «Límites y consumo».
+  const monthProjection = (month: string, used: number): number => {
+    const [y, m] = month.split("-").map(Number);
+    if (!y || !m) return used;
+    const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const day = new Date().getUTCDate();
+    return day > 0 ? Math.round((used / day) * days) : used;
+  };
+  const pct = (n: number, d: number): number => (d > 0 ? Math.min(999, Math.round((n / d) * 100)) : 0);
 
   const loadAutoConfig = useCallback(async (wsId?: string) => {
     const id = wsId ?? activeWorkspaceId;
@@ -1999,13 +2010,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Uso del mes — contador v27 (items consumidos vs cuota) */}
+            {/* Límites y consumo — contador v28 (tu espacio + plan de la plataforma) */}
             <div className="bento-card bento-6">
-              <div className="bento-title">📊 Uso del mes</div>
+              <div className="bento-title">📊 Límites y consumo</div>
               {usageData ? (
                 <>
                   <div className="bento-sub">
-                    Llamadas MCP de este workspace en {usageData.month} · cuota {usageData.quota === 0 ? "∞ (sin límite)" : usageData.quota.toLocaleString()}/mes.
+                    Tu espacio en {usageData.month} · cuota {usageData.quota === 0 ? "∞ (sin límite)" : `${usageData.quota.toLocaleString()}/mes`}
+                    {usageData.quota > 0 && ` · a este ritmo cerrás el mes en ≈ ${monthProjection(usageData.month, usageData.mcp_calls).toLocaleString()} (${pct(monthProjection(usageData.month, usageData.mcp_calls), usageData.quota)}%)`}
                   </div>
                   <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
                     <div style={{
@@ -2018,7 +2030,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     }} />
                   </div>
                   <div className="bento-row">
-                    <span className="bento-row-label">Llamadas MCP</span>
+                    <span className="bento-row-label">Llamadas MCP (tu espacio)</span>
                     <span className="bento-row-value">
                       {usageData.mcp_calls.toLocaleString()}{usageData.quota > 0 ? ` / ${usageData.quota.toLocaleString()}` : ""}
                     </span>
@@ -2027,6 +2039,43 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                     <span className="bento-row-label">Items generados</span>
                     <span className="bento-row-value">{(usageData.items_generated || 0).toLocaleString()}</span>
                   </div>
+                  {platformStatus?.canManage && (() => {
+                    const plat = platformStatus?.platform_usage;
+                    const plan = platformStatus?.plan;
+                    if (!plat || !plan) return (
+                      <div className="bento-sub" style={{ marginTop: 14 }}>
+                        Totales de plataforma no disponibles todavía (requiere la telemetría v27 midiendo uso).
+                      </div>
+                    );
+                    const platUsed = plat.mcp_calls + plan.cron_monthly_invocations;
+                    const platProj = monthProjection(plat.month, platUsed);
+                    return (
+                      <>
+                        <div className="bento-sub" style={{ marginTop: 14 }}>
+                          Plataforma · {plat.workspaces} espacio{plat.workspaces === 1 ? "" : "s"} con uso este mes · plan Netlify free (incluye ~{plan.cron_monthly_invocations.toLocaleString()} del cron fijo)
+                        </div>
+                        <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
+                          <div style={{
+                            width: `${Math.min(100, (platUsed / plan.netlify_monthly_invocations) * 100)}%`,
+                            height: "100%", borderRadius: 100,
+                            background: platProj / plan.netlify_monthly_invocations > 0.8 ? "#f87171" : "#6366f1",
+                            transition: "width 0.3s ease",
+                          }} />
+                        </div>
+                        <div className="bento-row">
+                          <span className="bento-row-label">Invocaciones del mes (todas las cuentas)</span>
+                          <span className="bento-row-value">{platUsed.toLocaleString()} / {plan.netlify_monthly_invocations.toLocaleString()}</span>
+                        </div>
+                        <div className="bento-row">
+                          <span className="bento-row-label">Proyección a fin de mes</span>
+                          <span className="bento-row-value">≈ {platProj.toLocaleString()} ({pct(platProj, plan.netlify_monthly_invocations)}%)</span>
+                        </div>
+                        <div className="bento-sub" style={{ fontSize: 10, opacity: 0.75 }}>
+                          Mide llamadas MCP (desde v27) + cron fijo. Ancho de banda y créditos, en el dashboard de Netlify.
+                        </div>
+                      </>
+                    );
+                  })()}
                 </>
               ) : (
                 <div className="bento-sub">

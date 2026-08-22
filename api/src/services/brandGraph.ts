@@ -389,3 +389,156 @@ function category(
     children,
   };
 }
+
+// ── Brand Playbook — the queryable digest of ONE brand ────────────────────
+
+export interface BrandPlaybookItem {
+  templateId: string;
+  name: string;
+  category: string;
+  campaign?: string;
+  contentKind?: string;
+  isBrandManual?: boolean;
+}
+
+export interface BrandPlaybook {
+  brand: { id: string; name: string };
+  /** The brand's Design System, from the style that shares its name. */
+  designSystem: {
+    templateId: string | null;
+    colors: string[];
+    fonts: string[];
+    styleFingerprint: string | null;
+  } | null;
+  /** Every file filed under this brand, Design System container included. */
+  inventory: BrandPlaybookItem[];
+  /** The subset an AI may replicate for another brand: Plantillas + Archivos. */
+  replicable: BrandPlaybookItem[];
+  counts: { templates: number; plantillas: number; archivos: number; campaigns: number; assets: number };
+}
+
+/**
+ * Tolerant DTCG walk: pulls a few colors and font families out of any
+ * tokens.json shape without requiring a particular token tree. Malformed
+ * tokens degrade to empty lists — the playbook still builds.
+ */
+function extractTokenDigest(tokensJson?: string | null): { colors: string[]; fonts: string[] } {
+  const colors: string[] = [];
+  const fonts: string[] = [];
+  if (!tokensJson) return { colors, fonts };
+  try {
+    const visit = (node: unknown, path: string): void => {
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      const value = record.$value;
+      if (typeof value === "string" && value) {
+        if (/^(#[0-9a-f]{3,8}|rgba?\(|hsla?\()/i.test(value) && /colou?r|palette|accent|primary|secondary|brand|background|surface/i.test(path)) {
+          if (colors.length < 12) colors.push(value);
+        } else if (/font|typograph|family|typeface/i.test(path)) {
+          if (fonts.length < 8) fonts.push(value.replace(/^["']|["']$/g, ""));
+        }
+      }
+      for (const [key, child] of Object.entries(record)) visit(child, `${path}.${key}`);
+    };
+    visit(JSON.parse(tokensJson), "");
+  } catch { /* malformed tokens — the playbook still builds without them */ }
+  return { colors: [...new Set(colors)], fonts: [...new Set(fonts)] };
+}
+
+/**
+ * Builds the AI-facing answer to "revisá toda la lógica que hicimos para la
+ * marca X": what exists (inventory), how it is organized (campaigns and
+ * categories), what its design system says (tokens + fingerprint), and which
+ * files are replicable for another brand. The visual graph (buildBrandGraph)
+ * stays optimized for drawing; this digest is optimized for being read by a
+ * model that then has to act on it.
+ */
+export async function buildBrandPlaybook(
+  workspaceId: string,
+  brandIdOrName: string,
+): Promise<BrandPlaybook> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Brand playbook requires Supabase.");
+  const needle = normalizeName(brandIdOrName);
+
+  const brandRows = await sb.from("brands").select("id, name").eq("workspace_id", workspaceId).order("name");
+  if (brandRows.error) throw new Error("Brands query failed: " + brandRows.error.message);
+  const brandList = (brandRows.data || []) as Array<{ id: string; name: string }>;
+  const brand = brandList.find(b => b.id === brandIdOrName || normalizeName(b.name) === needle);
+  if (!brand) throw new Error(`Brand not found: ${brandIdOrName}`);
+
+  const [styles, tplResult, metaResult, assetResult] = await Promise.all([
+    listBrandsByWorkspace(workspaceId).catch(() => [] as any[]),
+    sb.from("templates").select("id, name, is_brand_manual").eq("workspace_id", workspaceId).is("deleted_at", null).order("name"),
+    selectFileMeta(sb, workspaceId),
+    selectAssets(sb, workspaceId),
+  ]);
+
+  const templates = (tplResult.data || []) as any[];
+  const metaRows = (metaResult.data || []) as any[];
+  const assets = (assetResult.data || []) as any[];
+  const metaByTemplate = new Map<string, any>();
+  for (const row of metaRows) if (row.template_id) metaByTemplate.set(row.template_id, row);
+  const ownerByTemplate = resolveTemplateOwners(
+    templates.map(t => t.id), brandList, metaByTemplate,
+  );
+
+  const style = styles.find(s => normalizeName(s.name) === normalizeName(brand.name)) || null;
+  const designSystem = style ? {
+    templateId: style.designSystemTemplateId || null,
+    ...extractTokenDigest(style.tokensJson),
+    styleFingerprint: style.styleFingerprint || null,
+  } : null;
+
+  const isDsContainer = (tpl: any) => !!(style?.designSystemTemplateId && tpl.is_brand_manual && tpl.id === style.designSystemTemplateId);
+  const brandTemplates = templates.filter(t => isDsContainer(t) || ownerByTemplate.get(t.id) === brand.id);
+  const filed = bucketByCategory(brandTemplates.filter(t => !isDsContainer(t)), metaByTemplate);
+
+  const item = (tpl: any, category: string): BrandPlaybookItem => ({
+    templateId: tpl.id,
+    name: tpl.name || tpl.id,
+    category,
+    campaign: metaByTemplate.get(tpl.id)?.campaign || undefined,
+    contentKind: metaByTemplate.get(tpl.id)?.content_kind || undefined,
+    isBrandManual: !!tpl.is_brand_manual,
+  });
+
+  const inventory: BrandPlaybookItem[] = [];
+  const dsTpl = brandTemplates.find(isDsContainer);
+  if (dsTpl) inventory.push(item(dsTpl, DESIGN_SYSTEM));
+  for (const tpl of filed.get(DESIGN_SYSTEM)!) inventory.push(item(tpl, DESIGN_SYSTEM));
+  for (const tpl of filed.get(PLANTILLAS)!) inventory.push(item(tpl, PLANTILLAS));
+  for (const tpl of filed.get(ASSETS)!) inventory.push(item(tpl, ASSETS));
+  for (const tpl of filed.get(ARCHIVOS)!) inventory.push(item(tpl, ARCHIVOS));
+
+  // Replicable = finished design files (Plantillas + Archivos). Never the
+  // Design System container (that is identity, not a design to copy) nor
+  // anything filed under Assets.
+  const replicable = inventory.filter(i => i.category === PLANTILLAS || i.category === ARCHIVOS);
+
+  const campaigns = new Set<string>();
+  for (const i of inventory) if (i.category === ARCHIVOS && i.campaign) campaigns.add(i.campaign);
+
+  const targetName = normalizeName(brand.name);
+  const brandAssets = assets.filter(a => {
+    let tags: unknown[] = [];
+    try {
+      tags = typeof a.tags === "string" ? JSON.parse(a.tags || "[]") : Array.isArray(a.tags) ? a.tags : [];
+    } catch { /* unparseable tags — the asset simply doesn't match */ }
+    return tags.some(t => normalizeName(String(t)) === targetName);
+  });
+
+  return {
+    brand,
+    designSystem,
+    inventory,
+    replicable,
+    counts: {
+      templates: brandTemplates.length,
+      plantillas: filed.get(PLANTILLAS)!.length,
+      archivos: filed.get(ARCHIVOS)!.length,
+      campaigns: campaigns.size,
+      assets: brandAssets.length,
+    },
+  };
+}
