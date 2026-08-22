@@ -500,6 +500,26 @@ curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
 
 ---
 
+## 🛠️ PLATAFORMA, CUOTA & LÍMITES (v27)
+
+### Tools nuevas
+| Tool | Qué hace | Auth |
+|------|----------|------|
+| `platform_get_status` | Lee switches globales: `musa_tick_enabled` (kill switch del dispatcher horario del batch, en `platform_config`) y `monthly_mcp_quota` (cuota MCP mensual por workspace, 0 = ilimitado). Reporta también si el override de emergencia `MUSA_TICK_ENABLED=false` (env) está activo — gana sobre el switch de DB. | Admin key o dueño de workspace |
+| `platform_update_config` | Escribe esos switches. `musaTickEnabled=false` detiene el dispatch horario (el botón «Ejecutar batch» del Kanban sigue funcionando). `monthlyMcpQuota` cambia la cuota al instante (cache 5 min se invalida). Solo campos enviados cambian. | Admin key o dueño de workspace |
+
+### Telemetría de uso (fail-open)
+- Cada `tools/call` autenticado con `workspaceId` suma 1 a `workspace_usage` (mes UTC, atómico vía RPC `increment_workspace_usage`) y al superar la cuota responde error `-32000` con el contador usado (`X / quota`).
+- Sin migración v27 aplicada: no cuenta ni bloquea (la API nunca se cae por telemetría).
+
+### Cambios en tools existentes
+- `task_queue_get_config` → devuelve además `usage: { month, mcp_calls, items_generated, quota }` y las columnas `kanban_autorefresh_enabled` / `kanban_autorefresh_seconds`.
+- `task_queue_update_config` → semántica de **merge** (solo los campos enviados se escriben; antes reescribía la fila completa) y acepta `kanbanAutoRefresh` (bool) + `kanbanPollSeconds` (15/30/60/120).
+
+> Ver `docs/CAPACIDAD_FREEMIUM.md` para el análisis de cuántos usuarios aguanta el stack con estos límites.
+
+---
+
 ## 🎯 Orden de ejecución
 
 | Orden | Fase | Tools | Depende de |

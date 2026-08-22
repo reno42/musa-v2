@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "../lib/supabase";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
@@ -168,6 +168,11 @@ export function KanbanTab({ workspaceId }: Props) {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [batchDryRun, setBatchDryRun] = useState(false);
+  // v27: the auto-refresh poll is configurable from Configuración → Kanban
+  // (task_queue_get_config → kanban_autorefresh_enabled / _seconds). Defaults
+  // keep the board refreshing even when the config is unreadable (pre-v27 DB).
+  const [pollConfig, setPollConfig] = useState({ enabled: true, seconds: 30 });
+  const lastPollRef = useRef(0);
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -196,10 +201,16 @@ export function KanbanTab({ workspaceId }: Props) {
   }, [sessionEntries]);
 
   // ── Fetch via MCP ──
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    setSchemaMissing(false);
+  const fetchTasks = useCallback(async (silent = false) => {
+    // Silent (auto-poll) fetches never blank the board: no loading spinner,
+    // no error/schema resets — stale cards stay on screen until fresh data
+    // arrives. This kills the "Cargando Kanban…" flicker that fired every
+    // poll cycle (usability bug: it read as if the board had reset).
+    if (!silent) {
+      setLoading(true);
+      setError("");
+      setSchemaMissing(false);
+    }
     try {
       const json = await apiFetch<any>("/mcp", {
         method: "POST",
@@ -212,6 +223,7 @@ export function KanbanTab({ workspaceId }: Props) {
       });
       if (json?.error) {
         const msg = json.error.message || "Error desconocido";
+        if (silent) return; // poll error → keep the current board as-is
         if (msg.includes("design_kanban_tasks") && (msg.includes("does not exist") || msg.includes("42P01"))) {
           setSchemaMissing(true);
         } else {
@@ -243,6 +255,7 @@ export function KanbanTab({ workspaceId }: Props) {
       setTasks(cards);
       setColumns(normalizedColumns);
     } catch (cause: unknown) {
+      if (silent) return; // poll error → keep the current board as-is
       const msg = cause instanceof Error ? cause.message : "Error al cargar el Kanban.";
       if (msg.includes("does not exist") || msg.includes("42P01")) {
         setSchemaMissing(true);
@@ -252,17 +265,54 @@ export function KanbanTab({ workspaceId }: Props) {
         setError(msg);
       }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [workspaceId]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
-  // Auto-poll every 10s so cards created by the Leader appear without manual refresh
+  // Load the auto-refresh config saved in Configuración → Kanban.
   useEffect(() => {
-    const id = setInterval(() => fetchTasks(), 10_000);
-    return () => clearInterval(id);
-  }, [fetchTasks]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const json = await apiFetch<any>("/mcp", {
+          method: "POST",
+          body: JSON.stringify({ jsonrpc: "2.0", method: "task_queue_get_config", params: { workspaceId }, id: 1 }),
+        });
+        const text = json?.result?.content?.[0]?.text;
+        const data = text ? JSON.parse(text) : json?.result || {};
+        const c = data?.config;
+        if (!cancelled && c) {
+          setPollConfig({
+            enabled: c.kanban_autorefresh_enabled !== false,
+            seconds: [15, 30, 60, 120].includes(c.kanban_autorefresh_seconds) ? c.kanban_autorefresh_seconds : 30,
+          });
+        }
+      } catch { /* unreadable config → defaults (on, 30s) */ }
+    })();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  // Auto-poll: ONLY while the tab is visible, honoring the interval saved in
+  // Configuración (default 30s — the old blind 10s interval burned ~1,440
+  // /mcp invocations/day per parked tab). Returning to the tab refreshes
+  // immediately (rate-limited to 1 per 10s) so cards feel fresh on return.
+  useEffect(() => {
+    if (!pollConfig.enabled) return;
+    const pollIfVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastPollRef.current < 10_000) return;
+      lastPollRef.current = Date.now();
+      fetchTasks(true);
+    };
+    const id = setInterval(pollIfVisible, pollConfig.seconds * 1000);
+    document.addEventListener("visibilitychange", pollIfVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", pollIfVisible);
+    };
+  }, [fetchTasks, pollConfig]);
 
   // ── Move card to any status (drag-and-drop, both directions) ──
   const moveCardToStatus = useCallback(async (cardId: string, targetStatus: string) => {
@@ -512,7 +562,7 @@ export function KanbanTab({ workspaceId }: Props) {
         const detail = Object.entries(counts).map(([role, n]) => `${role}: ${n}`).join(" · ");
         setBatchMsg({ text: `Dry run listo — ${cards.length} tarjeta(s) en pipeline${detail ? ` (${detail})` : ""}`, ok: true });
       } else {
-        setBatchMsg({ text: "Batch iniciado — las tarjetas avanzan solas (auto-refresh 10s)", ok: true });
+        setBatchMsg({ text: "Batch iniciado — las tarjetas avanzan solas (refresco automático)", ok: true });
       }
     } catch (e: any) {
       setBatchMsg({ text: e?.message || "Error al disparar el batch", ok: false });
@@ -524,18 +574,23 @@ export function KanbanTab({ workspaceId }: Props) {
 
   const tasksByStatus = (status: string) => tasks.filter(t => t.status === status);
 
+  // Darker card fill (v27 readability fix): the old 3% white overlay floated
+  // on the mid-gray board, so card text fought the column background. A
+  // near-black fill gives text real contrast while keeping the glass borders.
   const cardBase: React.CSSProperties = {
-    background: "rgba(255,255,255,0.03)",
+    background: "rgba(9,11,17,0.82)",
     borderRadius: 12,
     userSelect: "text",
     WebkitUserSelect: "text",
     padding: "14px 16px",
-    border: "1px solid rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
     transition: "all 0.2s ease",
     marginBottom: 10,
   };
 
-  if (loading) {
+  // Full loading screen ONLY on first load — afterwards the board stays
+  // mounted and silent polls swap data in place (no flicker).
+  if (loading && tasks.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", flexDirection: "column", gap: 12 }}>
         <span style={{ fontSize: 14 }}>Cargando Kanban…</span>
@@ -571,7 +626,7 @@ export function KanbanTab({ workspaceId }: Props) {
             <div style={{ color: "#a78bfa", margin: "4px 0" }}>   supabase_migrations/design_kanban.sql</div>
             <div>3. Ejecutá y refrescá esta página</div>
           </div>
-          <button type="button" onClick={fetchTasks}
+          <button type="button" onClick={() => fetchTasks()}
             style={{
               borderRadius: 100, padding: "10px 24px", fontSize: 13, fontWeight: 500,
               cursor: "pointer", border: "1px solid rgba(255,255,255,0.1)",
@@ -588,7 +643,7 @@ export function KanbanTab({ workspaceId }: Props) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, color: "rgba(255,255,255,0.4)", padding: 40 }}>
         <span style={{ fontSize: 14, textAlign: "center", maxWidth: 480, lineHeight: 1.6 }}>{error}</span>
-        <button type="button" onClick={fetchTasks}
+        <button type="button" onClick={() => fetchTasks()}
           style={{ borderRadius: 100, padding: "8px 20px", fontSize: 13, cursor: "pointer", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)" }}>
           Reintentar
         </button>
@@ -1077,7 +1132,7 @@ export function KanbanTab({ workspaceId }: Props) {
             }}>
             + Nueva
           </button>
-          <button type="button" onClick={fetchTasks}
+          <button type="button" onClick={() => fetchTasks()}
             style={{
               borderRadius: 100, padding: "6px 16px", fontSize: 12, fontWeight: 500,
               cursor: "pointer", border: "1px solid rgba(255,255,255,0.08)",
@@ -1151,12 +1206,12 @@ export function KanbanTab({ workspaceId }: Props) {
                         }}
                         onClick={() => setDetailCardId(task.id)}
                         onMouseEnter={e => {
-                          e.currentTarget.style.background = "rgba(255,255,255,0.06)";
-                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
+                          e.currentTarget.style.background = "rgba(20,24,35,0.9)";
+                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.16)";
                         }}
                         onMouseLeave={e => {
-                          e.currentTarget.style.background = "rgba(255,255,255,0.03)";
-                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)";
+                          e.currentTarget.style.background = "rgba(9,11,17,0.82)";
+                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
                         }}
                       >
                         {/* Advance button */}

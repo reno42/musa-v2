@@ -4344,7 +4344,7 @@ const MCP_TOOLS = [
   },
   {
     name: "task_queue_update_config",
-    description: "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. No schedule field: the global daily cron processes every enabled workspace on each run.",
+    description: "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. Merge semantics (v27): only sent fields are written, the rest keep their current DB values — the Configuración panel saves the Automatización card and the Kanban card independently. No schedule field: the global daily cron processes every enabled workspace on each run.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4355,8 +4355,31 @@ const MCP_TOOLS = [
         notifyOnComplete: { type: "boolean", description: "Send Telegram notification when batch finishes" },
         notifyChatId: { type: "string", description: "Telegram chat ID for notifications" },
         batchLlmProvider: { type: "string", description: "LLM provider: deepseek, openai, anthropic (default: deepseek). The API key is resolved per-user via BYOK." },
+        kanbanAutoRefresh: { type: "boolean", description: "Enable/disable the Kanban auto-refresh poll (Configuración → Kanban). The poll only fires while the tab is visible." },
+        kanbanPollSeconds: { type: "number", description: "Kanban auto-refresh interval in seconds: 15, 30, 60 or 120 (default: 30)." },
       },
       required: ["workspaceId"],
+    },
+  },
+  {
+    name: "platform_get_status",
+    description: "PLATFORM TOOL (admin key or workspace owner only). Read platform-level switches and limits: musa_tick_enabled (hourly batch dispatcher kill switch, stored in platform_config, migration v27) and monthly_mcp_quota (per-workspace MCP calls/month, 0 = unlimited). Also reports whether the env-level MUSA_TICK_ENABLED=false emergency override is active (it wins over the DB switch).",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "platform_update_config",
+    description: "PLATFORM TOOL (admin key or workspace owner only). Update platform-level switches and limits. musaTickEnabled=false stops the hourly musa-batch-tick from dispatching the batch (the manual 'Ejecutar batch' button in the Kanban keeps working). monthlyMcpQuota sets the per-workspace monthly MCP call quota (0 = unlimited, default: 5000); it takes effect immediately. Idempotent; only provided fields change.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        musaTickEnabled: { type: "boolean", description: "Enable/disable the hourly Musa batch dispatcher (musa-batch-tick)" },
+        monthlyMcpQuota: { type: "number", description: "Per-workspace monthly MCP call quota. 0 = unlimited (default: 5000)" },
+      },
+      required: [],
     },
   },
   {
@@ -4473,6 +4496,68 @@ async function validateApiKey(apiKey) {
   } catch (err) {
     return { valid: false, reason: `exception: ${err?.message || err}` };
   }
+}
+
+// ── Usage metering + monthly quota (migration v27) ──────────────────────
+// Every authenticated tools/call that carries a workspaceId counts against
+// that workspace's monthly total (workspace_usage, atomic via RPC). The
+// quota lives in platform_config 'limits'.monthly_mcp_quota (0 = unlimited)
+// and is enforced BEFORE the tool runs. Everything here fails OPEN: a
+// missing table (pre-v27 migration) or a Supabase hiccup must never take
+// the API down — worst case we stop counting, we never block legit work.
+const __quotaCache = { value: null, fetchedAt: 0 };
+
+async function getMonthlyQuota(sb) {
+  if (__quotaCache.value !== null && Date.now() - __quotaCache.fetchedAt < 300_000) return __quotaCache.value;
+  let quota = 5000;
+  try {
+    const { data } = await sb.from("platform_config").select("value").eq("key", "limits").maybeSingle();
+    if (data?.value && typeof data.value.monthly_mcp_quota === "number") quota = data.value.monthly_mcp_quota;
+  } catch { /* default */ }
+  __quotaCache.value = quota;
+  __quotaCache.fetchedAt = Date.now();
+  return quota;
+}
+
+// Returns a JSON-RPC error RESPONSE when the workspace is over quota,
+// or null when the call may proceed.
+async function meterWorkspaceUsage(scopedParams, id, headers) {
+  try {
+    const wsId = scopedParams?.workspaceId;
+    if (!UUID_RE.test(wsId || "")) return null;
+    const sb = getSupabaseAdmin();
+    if (!sb) return null;
+    const quota = await getMonthlyQuota(sb);
+    if (quota <= 0) return null;
+    const month = new Date().toISOString().slice(0, 7);
+    const { data: count, error } = await sb.rpc("increment_workspace_usage", { p_workspace_id: wsId, p_month: month, p_calls: 1 });
+    if (error) return null; // pre-v27 or RPC missing → fail open
+    if (Number(count) > quota) {
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify(jsonRpcError(id, -32000,
+          `Monthly MCP quota exceeded for this workspace (${Math.max(0, Number(count) - 1)}/${quota} calls used in ${month}). ` +
+          "El contador se reinicia el día 1 del mes. Pedí al administrador ampliar el límite (Configuración → Plataforma).")),
+      };
+    }
+    return null;
+  } catch { return null; }
+}
+
+// Platform-management gate: admin key (MCP_ADMIN_KEY) or the owner of at
+// least one workspace (single-tenant reality: the platform owner IS a
+// workspace owner). Used by platform_get_status / platform_update_config.
+async function isPlatformManager(auth, userId) {
+  if (auth?.isAdmin) return true;
+  if (!UUID_RE.test(userId || "")) return false;
+  const sb = getSupabaseAdmin();
+  if (!sb) return false;
+  try {
+    const { data: owned } = await sb.from("workspaces").select("id").eq("owner_id", userId).limit(1);
+    if (owned && owned.length > 0) return true;
+    const { data: membership } = await sb.from("workspace_members").select("workspace_id").eq("user_id", userId).eq("role", "owner").limit(1);
+    return (membership || []).length > 0;
+  } catch { return false; }
 }
 
 /**
@@ -14261,9 +14346,24 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         .select("*").eq("workspace_id", params.workspaceId).maybeSingle();
       if (error) throw { code: -32000, message: "Config read failed: " + error.message };
 
+      // v27 usage block: current-month MCP call count vs the platform quota.
+      // Pre-migration (no workspace_usage table) → usage: null, and the
+      // Configuración UI shows the "run v27" hint instead of a meter.
+      let usage = null;
+      try {
+        const month = new Date().toISOString().slice(0, 7);
+        const [{ data: u }, quota] = await Promise.all([
+          sb.from("workspace_usage").select("mcp_calls, items_generated")
+            .eq("workspace_id", params.workspaceId).eq("month", month).maybeSingle(),
+          getMonthlyQuota(sb),
+        ]);
+        usage = { month, mcp_calls: u?.mcp_calls || 0, items_generated: u?.items_generated || 0, quota };
+      } catch { usage = null; }
+
       if (!config) {
         return {
           found: false,
+          usage,
           config: {
             workspace_id: params.workspaceId,
             auto_process_enabled: false,
@@ -14272,6 +14372,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
             notify_on_complete: false,
             notify_chat_id: null,
             batch_llm_provider: "deepseek",
+            kanban_autorefresh_enabled: true,
+            kanban_autorefresh_seconds: 30,
           },
         };
       }
@@ -14280,22 +14382,27 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // is processed on every run regardless of hour. Columns stay in the
       // DB for backward compat but are no longer read or written.
       const { auto_process_time: _t, auto_process_timezone: _tz, ...rest } = config;
-      return { found: true, config: { ...rest, batch_llm_key_encrypted: undefined } };
+      return { found: true, usage, config: { ...rest, batch_llm_key_encrypted: undefined } };
     }
 
     case "task_queue_update_config": {
       const sb = getSupabaseAdmin();
       if (!sb) throw { code: -32000, message: "Requires Supabase." };
-      const accountId = UUID_RE.test(userId || "") ? userId : null;
+
+      // Merge semantics (v27): only the fields explicitly sent are written.
+      // The Configuración panel saves the Automatización card and the Kanban
+      // card independently — a full-row write from either one would silently
+      // reset the other. Unsent fields keep their current DB values.
+      const { data: existing } = await sb.from("workspace_config").select("*").eq("workspace_id", params.workspaceId).maybeSingle();
 
       const config = {
         workspace_id: params.workspaceId,
-        auto_process_enabled: params.autoProcessEnabled ?? true,
-        auto_process_max_items: params.autoProcessMaxItems || 50,
-        auto_process_tag: params.autoProcessTag || "auto",
-        notify_on_complete: params.notifyOnComplete ?? false,
-        notify_chat_id: params.notifyChatId || null,
-        batch_llm_provider: params.batchLlmProvider || "deepseek",
+        auto_process_enabled: params.autoProcessEnabled ?? existing?.auto_process_enabled ?? true,
+        auto_process_max_items: params.autoProcessMaxItems ?? existing?.auto_process_max_items ?? 50,
+        auto_process_tag: params.autoProcessTag ?? existing?.auto_process_tag ?? "auto",
+        notify_on_complete: params.notifyOnComplete ?? existing?.notify_on_complete ?? false,
+        notify_chat_id: params.notifyChatId ?? existing?.notify_chat_id ?? null,
+        batch_llm_provider: params.batchLlmProvider ?? existing?.batch_llm_provider ?? "deepseek",
         // batch_llm_key_encrypted intentionally removed — keys are now resolved
         // per-user via BYOK (getUserKey in process_daily_batch).
         // auto_process_time / auto_process_timezone no longer written: the
@@ -14303,18 +14410,73 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         // on every run (columns kept in DB for backward compat).
       };
 
-      const { data: existing } = await sb.from("workspace_config").select("workspace_id").eq("workspace_id", params.workspaceId).maybeSingle();
-      let result;
-      if (existing) {
-        const { data, error } = await sb.from("workspace_config").update(config).eq("workspace_id", params.workspaceId).select().single();
-        if (error) throw { code: -32000, message: "Config update failed: " + error.message };
-        result = data;
-      } else {
-        const { data, error } = await sb.from("workspace_config").insert(config).select().single();
-        if (error) throw { code: -32000, message: "Config insert failed: " + error.message };
-        result = data;
+      // Kanban auto-refresh (v27 columns). Sent only when provided so the
+      // write also works unchanged on DBs that haven't run v27 yet.
+      const kanbanPatch = {};
+      if (typeof params.kanbanAutoRefresh === "boolean") kanbanPatch.kanban_autorefresh_enabled = params.kanbanAutoRefresh;
+      const pollSeconds = Number(params.kanbanPollSeconds);
+      if ([15, 30, 60, 120].includes(pollSeconds)) kanbanPatch.kanban_autorefresh_seconds = pollSeconds;
+
+      const run = (patch) => existing
+        ? sb.from("workspace_config").update({ ...config, ...patch }).eq("workspace_id", params.workspaceId).select().single()
+        : sb.from("workspace_config").insert({ ...config, ...patch }).select().single();
+
+      let { data: result, error } = await run(kanbanPatch);
+      // Pre-v27 DB: the kanban_* columns don't exist (42703) → retry without
+      // them so saving the Automatización card still works.
+      if (error && Object.keys(kanbanPatch).length > 0 && /kanban_autorefresh|42703|column .* does not exist/i.test(error.message || "")) {
+        ({ data: result, error } = await run({}));
       }
+      if (error) throw { code: -32000, message: "Config update failed: " + error.message };
       return { success: true, config: result };
+    }
+
+    // ── v27: platform-level switches & limits (Configuración → Plataforma) ──
+    case "platform_get_status": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Requires Supabase." };
+      const status = {
+        canManage: await isPlatformManager(auth, userId),
+        musa_tick_enabled: true,
+        monthly_mcp_quota: 5000,
+        // Emergency env override (Netlify dashboard) — wins over the DB switch.
+        env_musa_tick_enabled: process.env.MUSA_TICK_ENABLED !== "false",
+      };
+      try {
+        const { data: musa } = await sb.from("platform_config").select("value").eq("key", "musa").maybeSingle();
+        if (musa?.value && typeof musa.value.musa_tick_enabled === "boolean") status.musa_tick_enabled = musa.value.musa_tick_enabled;
+        status.monthly_mcp_quota = await getMonthlyQuota(sb);
+      } catch { /* pre-v27 → defaults */ }
+      return status;
+    }
+
+    case "platform_update_config": {
+      const sb = getSupabaseAdmin();
+      if (!sb) throw { code: -32000, message: "Requires Supabase." };
+      if (!(await isPlatformManager(auth, userId))) {
+        throw { code: -32000, message: "Solo el administrador de la plataforma (admin key o dueño del workspace) puede cambiar esta configuración." };
+      }
+      const touched = {};
+      if (typeof params.musaTickEnabled === "boolean") {
+        const { data: row } = await sb.from("platform_config").select("value").eq("key", "musa").maybeSingle();
+        const value = { ...(row?.value || {}), musa_tick_enabled: params.musaTickEnabled };
+        const { error } = await sb.from("platform_config").upsert({ key: "musa", value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+        if (error) throw { code: -32000, message: "platform_config write failed: " + error.message };
+        touched.musa_tick_enabled = params.musaTickEnabled;
+      }
+      if (Number.isFinite(Number(params.monthlyMcpQuota)) && Number(params.monthlyMcpQuota) >= 0) {
+        const quota = Math.min(1_000_000, Math.floor(Number(params.monthlyMcpQuota)));
+        const { data: row } = await sb.from("platform_config").select("value").eq("key", "limits").maybeSingle();
+        const value = { ...(row?.value || {}), monthly_mcp_quota: quota };
+        const { error } = await sb.from("platform_config").upsert({ key: "limits", value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+        if (error) throw { code: -32000, message: "platform_config write failed: " + error.message };
+        __quotaCache.value = null; // quota change takes effect immediately
+        touched.monthly_mcp_quota = quota;
+      }
+      if (Object.keys(touched).length === 0) {
+        throw { code: -32602, message: "Nothing to update: send musaTickEnabled (boolean) and/or monthlyMcpQuota (number >= 0)." };
+      }
+      return { success: true, ...touched };
     }
 
     // Manual trigger for testing. The real runs live in the musa-batch
@@ -14532,6 +14694,10 @@ export const handler = async (event) => {
 
       try {
         const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
+        // v27: count this call against the workspace's monthly quota
+        // (fail-open — pre-migration DBs never block on metering).
+        const quotaResponse = await meterWorkspaceUsage(scopedParams, id, headers);
+        if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {
@@ -14585,6 +14751,10 @@ export const handler = async (event) => {
 
       try {
         const scopedParams = await authorizeMcpCall(method, params || {}, auth);
+        // v27: count this call against the workspace's monthly quota
+        // (fail-open — pre-migration DBs never block on metering).
+        const quotaResponse = await meterWorkspaceUsage(scopedParams, id, headers);
+        if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {

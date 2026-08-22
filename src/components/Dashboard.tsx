@@ -397,6 +397,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   });
   const [autoConfigSaving, setAutoConfigSaving] = useState(false);
   const [autoConfigMsg, setAutoConfigMsg] = useState("");
+  // v27: every switch lives in Configuración (single place, per product rule) —
+  // Kanban auto-refresh, usage meter and platform switches join Automatización.
+  const [kanbanConfig, setKanbanConfig] = useState({ autoRefresh: true, pollSeconds: 30 });
+  const [kanbanSaving, setKanbanSaving] = useState(false);
+  const [kanbanMsg, setKanbanMsg] = useState("");
+  const [usageData, setUsageData] = useState<{ month: string; mcp_calls: number; items_generated: number; quota: number } | null>(null);
+  const [platformStatus, setPlatformStatus] = useState<{ canManage: boolean; musa_tick_enabled: boolean; monthly_mcp_quota: number; env_musa_tick_enabled?: boolean } | null>(null);
+  const [platformQuota, setPlatformQuota] = useState(5000);
+  const [platformSaving, setPlatformSaving] = useState(false);
+  const [platformMsg, setPlatformMsg] = useState("");
 
   const loadAutoConfig = useCallback(async (wsId?: string) => {
     const id = wsId ?? activeWorkspaceId;
@@ -411,12 +421,25 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           tag: c.auto_process_tag || "auto",
           provider: c.batch_llm_provider || "deepseek",
         });
+        setKanbanConfig({
+          autoRefresh: c.kanban_autorefresh_enabled !== false,
+          pollSeconds: [15, 30, 60, 120].includes(c.kanban_autorefresh_seconds) ? c.kanban_autorefresh_seconds : 30,
+        });
       }
+      setUsageData(res?.usage ?? null);
     } catch { /* config not readable — keep defaults */ }
   }, [activeWorkspaceId]);
 
   useEffect(() => {
-    if (activeTab === "configuracion") void loadAutoConfig();
+    if (activeTab !== "configuracion") return;
+    void loadAutoConfig();
+    // Platform switches: only rendered when the caller can manage them.
+    mcpCall("platform_get_status", {})
+      .then((status: any) => {
+        setPlatformStatus(status ?? null);
+        if (status && typeof status.monthly_mcp_quota === "number") setPlatformQuota(status.monthly_mcp_quota);
+      })
+      .catch(() => setPlatformStatus(null));
   }, [activeTab, loadAutoConfig]);
 
   const handleSaveAutoConfig = async () => {
@@ -438,6 +461,44 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       setAutoConfigMsg(e?.message || "No se pudo guardar");
     }
     setAutoConfigSaving(false);
+  };
+
+  const handleSaveKanbanConfig = async () => {
+    if (!activeWorkspaceId) return;
+    setKanbanSaving(true);
+    setKanbanMsg("");
+    try {
+      const res = await mcpCall("task_queue_update_config", {
+        workspaceId: activeWorkspaceId,
+        kanbanAutoRefresh: kanbanConfig.autoRefresh,
+        kanbanPollSeconds: kanbanConfig.pollSeconds,
+      });
+      if (!res?.success) throw new Error("Respuesta inesperada del servidor");
+      setKanbanMsg("✓ Guardado");
+      setTimeout(() => setKanbanMsg(""), 2500);
+    } catch (e: any) {
+      setKanbanMsg(e?.message || "No se pudo guardar");
+    }
+    setKanbanSaving(false);
+  };
+
+  const handleSavePlatform = async () => {
+    if (!platformStatus) return;
+    setPlatformSaving(true);
+    setPlatformMsg("");
+    try {
+      const res = await mcpCall("platform_update_config", {
+        musaTickEnabled: platformStatus.musa_tick_enabled,
+        monthlyMcpQuota: platformQuota,
+      });
+      if (!res?.success) throw new Error("Respuesta inesperada del servidor");
+      setPlatformMsg("✓ Guardado");
+      setPlatformStatus(s => s ? { ...s, monthly_mcp_quota: platformQuota } : s);
+      setTimeout(() => setPlatformMsg(""), 2500);
+    } catch (e: any) {
+      setPlatformMsg(e?.message || "No se pudo guardar");
+    }
+    setPlatformSaving(false);
   };
 
   // ── Server-side BYOK key management (replaces localStorage) ──
@@ -1482,6 +1543,58 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
           <div style={{ flex: 1 }} />
 
+          {/* Perennial create (v27): this button is always here. The old
+              "+ New Template" only lived inside the empty state, so once you
+              had files there was NO human way to create another one. */}
+          {creatingTpl ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                ref={newTplInputRef}
+                value={newTplName}
+                onChange={e => setNewTplName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") handleCreateWithName();
+                  if (e.key === "Escape") { setCreatingTpl(false); setNewTplName(""); }
+                }}
+                placeholder="Nombre del archivo…"
+                aria-label="Nombre del nuevo archivo"
+                autoFocus
+                style={{
+                  padding: "6px 12px", borderRadius: 8, fontSize: 12, width: 200,
+                  background: "rgba(15,18,28,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                  color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                }}
+              />
+              <button type="button" onClick={handleCreateWithName}
+                style={{
+                  padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)",
+                  color: "#fff", fontFamily: "inherit", whiteSpace: "nowrap",
+                }}>
+                Crear
+              </button>
+              <button type="button" onClick={() => { setCreatingTpl(false); setNewTplName(""); }}
+                style={{
+                  padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                  background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
+                  color: "rgba(255,255,255,0.55)", fontFamily: "inherit", whiteSpace: "nowrap",
+                }}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setCreatingTpl(true)}
+              title="Crear un nuevo archivo de diseño"
+              style={{
+                display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                background: "rgba(99,102,241,0.22)", border: "1px solid rgba(99,102,241,0.5)",
+                color: "#fff", fontFamily: "inherit",
+              }}>
+              <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>+</span> Nuevo archivo
+            </button>
+          )}
+
           {/* Zoom slider */}
           <label style={{
             display: "flex", alignItems: "center", gap: 8, fontSize: 11,
@@ -1510,7 +1623,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div>No templates yet. Create your first one!</div>
             <button
               type="button"
-              onClick={() => activeWorkspaceId && onCreateHtmlTemplate(activeWorkspaceId, "Untitled")}
+              onClick={() => {
+                // Opens the same named-create row in the filter bar above —
+                // no more instant "Untitled" files from the empty state.
+                setCreatingTpl(true);
+                setTimeout(() => newTplInputRef.current?.focus(), 50);
+              }}
               style={{ ...btnPrimary, marginTop: 16 }}
             >
               + New Template
@@ -1837,6 +1955,126 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </button>
               </div>
             </div>
+
+            {/* Kanban — auto-refresco configurable (v27) */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🎴 Kanban</div>
+                {kanbanMsg && (
+                  <span style={{ fontSize: 11, color: kanbanMsg.startsWith("✓") ? "4ade80" : "#facc15", textAlign: "right", maxWidth: 240 }}>
+                    {kanbanMsg}
+                  </span>
+                )}
+              </div>
+              <div className="bento-sub">
+                El tablero se refresca solo mientras la pestaña está visible (antes: cada 10s
+                incluso en background, quemando ~30 mil llamadas/mes por pestaña estacionada).
+                Apagado = solo refresco manual.
+              </div>
+              <div className="bento-row" style={{ alignItems: "center" }}>
+                <span className="bento-row-label">Auto-refresco</span>
+                <div className="bento-seg">
+                  <button type="button" data-active={!kanbanConfig.autoRefresh}
+                    onClick={() => setKanbanConfig(c => ({ ...c, autoRefresh: false }))}>Apagado</button>
+                  <button type="button" data-active={kanbanConfig.autoRefresh}
+                    onClick={() => setKanbanConfig(c => ({ ...c, autoRefresh: true }))}>Activado</button>
+                </div>
+              </div>
+              <div className="bento-row" style={{ alignItems: "center" }}>
+                <span className="bento-row-label">Intervalo</span>
+                <div className="bento-seg">
+                  {[15, 30, 60, 120].map(s => (
+                    <button key={s} type="button" data-active={kanbanConfig.pollSeconds === s}
+                      onClick={() => setKanbanConfig(c => ({ ...c, pollSeconds: s }))}>
+                      {s >= 60 ? `${s / 60} min` : `${s}s`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                <button type="button" className="bento-btn bento-btn--primary"
+                  onClick={handleSaveKanbanConfig} disabled={kanbanSaving}>
+                  {kanbanSaving ? "Guardando…" : "Guardar Kanban"}
+                </button>
+              </div>
+            </div>
+
+            {/* Uso del mes — contador v27 (items consumidos vs cuota) */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">📊 Uso del mes</div>
+              {usageData ? (
+                <>
+                  <div className="bento-sub">
+                    Llamadas MCP de este workspace en {usageData.month} · cuota {usageData.quota === 0 ? "∞ (sin límite)" : usageData.quota.toLocaleString()}/mes.
+                  </div>
+                  <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
+                    <div style={{
+                      width: `${usageData.quota === 0 ? 4 : Math.min(100, (usageData.mcp_calls / usageData.quota) * 100)}%`,
+                      height: "100%", borderRadius: 100,
+                      background: usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.85
+                        ? "#f87171"
+                        : usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.6 ? "#fbbf24" : "#6366f1",
+                      transition: "width 0.3s ease",
+                    }} />
+                  </div>
+                  <div className="bento-row">
+                    <span className="bento-row-label">Llamadas MCP</span>
+                    <span className="bento-row-value">
+                      {usageData.mcp_calls.toLocaleString()}{usageData.quota > 0 ? ` / ${usageData.quota.toLocaleString()}` : ""}
+                    </span>
+                  </div>
+                  <div className="bento-row">
+                    <span className="bento-row-label">Items generados</span>
+                    <span className="bento-row-value">{(usageData.items_generated || 0).toLocaleString()}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="bento-sub">
+                  Contador no disponible. Corré <code>supabase_migrations_v27.sql</code> en Supabase
+                  para activar la telemetría de uso y la cuota mensual.
+                </div>
+              )}
+            </div>
+
+            {/* Plataforma — switches globales, solo dueños (v27) */}
+            {platformStatus?.canManage && (
+              <div className="bento-card bento-6">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div className="bento-title">🛠️ Plataforma</div>
+                  {platformMsg && (
+                    <span style={{ fontSize: 11, color: platformMsg.startsWith("✓") ? "4ade80" : "#facc15", textAlign: "right", maxWidth: 240 }}>
+                      {platformMsg}
+                    </span>
+                  )}
+                </div>
+                <div className="bento-sub">
+                  Switches globales (todas las cuentas). El batch horario de Musa se puede
+                  apagar acá; el env var MUSA_TICK_ENABLED=false{" "}
+                  {platformStatus.env_musa_tick_enabled === false ? "está ACTIVO y gana sobre este switch." : "(si se activa) gana sobre este switch."}
+                </div>
+                <div className="bento-row" style={{ alignItems: "center" }}>
+                  <span className="bento-row-label">Batch horario (Musa)</span>
+                  <div className="bento-seg">
+                    <button type="button" data-active={!platformStatus.musa_tick_enabled}
+                      onClick={() => setPlatformStatus(s => s ? { ...s, musa_tick_enabled: false } : s)}>Apagado</button>
+                    <button type="button" data-active={platformStatus.musa_tick_enabled}
+                      onClick={() => setPlatformStatus(s => s ? { ...s, musa_tick_enabled: true } : s)}>Activado</button>
+                  </div>
+                </div>
+                <div className="bento-field" style={{ marginTop: 10 }}>
+                  <label htmlFor="plat-quota">Cuota mensual MCP por workspace (0 = sin límite)</label>
+                  <input id="plat-quota" type="number" min={0} max={1000000} className="bento-input"
+                    value={platformQuota}
+                    onChange={e => setPlatformQuota(Math.max(0, Number(e.target.value) || 0))} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                  <button type="button" className="bento-btn bento-btn--primary"
+                    onClick={handleSavePlatform} disabled={platformSaving}>
+                    {platformSaving ? "Guardando…" : "Guardar plataforma"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Quién tiene acceso */}
             <div className="bento-card bento-6">
