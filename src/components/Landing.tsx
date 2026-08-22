@@ -1,15 +1,23 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { LANDING_FEATURES } from "./landing/FeatureDemos";
 
 interface LandingProps {
   onEnter: () => void;
 }
+
+/** Prompt que el usuario le pega a su IA (Claude, Codex, Hermes, Kimi…) para
+ *  que ella misma lea el discovery de Musa y le diga cómo entrar. */
+const CONNECT_PROMPT = `Andá a https://design.futuraria.com y leé /.well-known/mcp.json
+y /SKILL.md. Decime cómo entrás a manejar el 100% del editor:
+yo creo la cuenta, te genero la llave MCP y vos empezás a diseñar.`;
 
 export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -22,6 +30,31 @@ export function Landing({ onEnter }: LandingProps) {
   const scrollToSection = useCallback((id: string) => {
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  // ── Copy the "connect your AI" prompt (clipboard + execCommand fallback) ──
+  const handleCopyPrompt = useCallback(() => {
+    const done = () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(CONNECT_PROMPT).then(done).catch(() => {});
+      return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = CONNECT_PROMPT;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      done();
+    } catch {
+      /* clipboard no disponible */
+    }
+    document.body.removeChild(ta);
   }, []);
 
   // ── Video fade-in/fade-out loop ──
@@ -138,14 +171,14 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: isExiting ? 1 : 1 }}
               transition={{ duration: 0.3, delay: 0.1 }}
             >
-              Futuraria
+              Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span>
             </motion.span>
           </motion.div>
 
           {/* Desktop nav links — hidden on mobile, inline on desktop */}
           <nav className="landing-nav-links">
-            <button onClick={() => scrollToSection("harness")} className="landing-nav-link">What is a Harness?</button>
-            <button onClick={() => scrollToSection("install")} className="landing-nav-link">Installation</button>
+            <button onClick={() => scrollToSection("harness")} className="landing-nav-link">Harness</button>
+            <button onClick={() => scrollToSection("connect")} className="landing-nav-link">Conecta tu IA</button>
             <button onClick={() => scrollToSection("features")} className="landing-nav-link">Features</button>
             <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 1 }} />
             <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-nav-link">GitHub</a>
@@ -208,7 +241,7 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: isExiting ? 0 : 1 }}
               transition={{ duration: 0.2 }}
             >
-              Enter Workspace
+              Entrar al workspace
             </motion.span>
 
             {/* Nav placeholder text — appears after button stretches */}
@@ -288,7 +321,7 @@ export function Landing({ onEnter }: LandingProps) {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="landing-menu-header">
-                <span className="font-instrument" style={{ fontSize: 18, color: "rgba(255,255,255,0.8)" }}>Futuraria</span>
+                <span className="font-instrument" style={{ fontSize: 18, color: "rgba(255,255,255,0.8)" }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.55 }}>by Futuraria</span></span>
                 <button
                   className="landing-menu-close"
                   onClick={() => setMenuOpen(false)}
@@ -301,8 +334,8 @@ export function Landing({ onEnter }: LandingProps) {
                 </button>
               </div>
               <nav className="landing-menu-nav">
-                <button onClick={() => { scrollToSection("harness"); setMenuOpen(false); }} className="landing-menu-link">What is a Harness?</button>
-                <button onClick={() => { scrollToSection("install"); setMenuOpen(false); }} className="landing-menu-link">Installation</button>
+                <button onClick={() => { scrollToSection("harness"); setMenuOpen(false); }} className="landing-menu-link">Harness</button>
+                <button onClick={() => { scrollToSection("connect"); setMenuOpen(false); }} className="landing-menu-link">Conecta tu IA</button>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Features</button>
                 <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="landing-menu-link">GitHub</a>
                 <button onClick={() => { scrollToSection("features"); setMenuOpen(false); }} className="landing-menu-link">Docs</button>
@@ -327,7 +360,7 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.9, delay: 0.3 }}
             >
-              Design with <em style={{ fontWeight: 400, fontStyle: "italic" }}>intention</em>.
+              Diseñá con <em style={{ fontWeight: 400, fontStyle: "italic" }}>intención</em>.
             </motion.h1>
 
             <motion.p
@@ -336,8 +369,8 @@ export function Landing({ onEnter }: LandingProps) {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.7 }}
             >
-              Your open-source design workspace.
-              Create, iterate, and automate with AI-powered tools.
+              Tu workspace de diseño MCP-first: vos y tu IA crean,
+              iteran y automatizan con las mismas herramientas.
             </motion.p>
 
             <motion.button
@@ -348,7 +381,7 @@ export function Landing({ onEnter }: LandingProps) {
               transition={{ duration: 0.6, delay: 1 }}
               disabled={isExiting}
             >
-              Start Creating
+              Empezar a crear
             </motion.button>
           </motion.div>
         )}
@@ -372,27 +405,27 @@ export function Landing({ onEnter }: LandingProps) {
       {/* ═══════════════════════════════ DESIGN HARNESS ═══════════════════════════════ */}
       <section id="harness" className="landing-section">
         <div className="landing-section-inner">
-          <div className="landing-section-badge">What is a Design Harness?</div>
+          <div className="landing-section-badge">¿Qué es un Design Harness?</div>
           <h2 className="landing-section-title font-instrument">
-            Armor for your AI.
+            Armadura para tu IA.
           </h2>
           <p className="landing-section-text">
-            A <strong>Design Harness</strong> is not an AI model — it's the armor that wraps around <em>any</em> model
-            and gives it precision design capabilities. Think of it like a knight: the AI is the warrior,
-            and the Harness is the suit of armor — forged with layout systems, typography rules, color
-            tokenization, frame management, and deterministic rendering.
+            Un <strong>Design Harness</strong> no es un modelo de IA: es la armadura que envuelve a <em>cualquier</em>{" "}
+            modelo y le da capacidades de diseño de precisión. Pensalo como un caballero: la IA es el guerrero
+            y el Harness es la armadura — forjada con sistemas de layout, reglas de tipografía, tokenización
+            de color, gestión de frames y render determinístico.
           </p>
           <p className="landing-section-text">
-            Without the Harness, an AI generates loose HTML. With it, <strong>every output is a structured,
-            editable, persistent design document</strong> — frames, layers, CSS variables, brand tokens, export-ready assets.
-            The Harness doesn't replace your AI; it <em>channels</em> it into designing like a professional.
+            Sin el Harness, una IA genera HTML suelto. Con él, <strong>cada salida es un documento de diseño
+            estructurado, editable y persistente</strong> — frames, capas, variables CSS, tokens de marca y assets
+            listos para exportar. El Harness no reemplaza a tu IA: la <em>canaliza</em> para que diseñe como un profesional.
           </p>
           <div className="landing-compat-grid">
             {[
-              { name: "Claude Code", desc: "Anthropic's agentic coding tool" },
-              { name: "Hermes", desc: "Open-source MCP gateway" },
-              { name: "OpenClaw", desc: "Multi-agent design workspace" },
-              { name: "Your IDE", desc: "Any MCP-compatible editor" },
+              { name: "Claude Code", desc: "La herramienta agéntica de Anthropic" },
+              { name: "Hermes", desc: "Gateway MCP open source" },
+              { name: "OpenClaw", desc: "Workspace multi-agente" },
+              { name: "Tu IDE", desc: "Cualquier editor compatible con MCP" },
             ].map(c => (
               <div key={c.name} className="liquid-glass" style={{ padding: "16px 20px", borderRadius: 14, textAlign: "center" }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.85)", marginBottom: 4 }}>{c.name}</div>
@@ -403,82 +436,84 @@ export function Landing({ onEnter }: LandingProps) {
         </div>
       </section>
 
-      {/* ═══════════════════════════════ INSTALLATION ═══════════════════════════════ */}
-      <section id="install" className="landing-section landing-section--alt">
+      {/* ═══════════════════════════════ CONECTA TU IA ═══════════════════════════════ */}
+      <section id="connect" className="landing-section landing-section--alt">
         <div className="landing-section-inner">
           <div className="landing-section-badge">Get Started</div>
           <h2 className="landing-section-title font-instrument">
-            Install in one command.
+            Tu IA lee Musa y entra sola.
           </h2>
           <p className="landing-section-text">
-            Tell your AI to clone the repo, install dependencies, and configure Supabase.
-            It handles the entire setup autonomously.
+            No tenés que instalar nada. Mandale este prompt a tu IA — Claude, Codex, Hermes, OpenClaw,
+            Kimi, la que uses — y <strong>ella lee la documentación de la plataforma y te dice exactamente qué
+            hacer</strong>: creás tu cuenta, generás tu llave MCP, se la pasás, y queda manejando el 100% del editor.
           </p>
 
           <div className="landing-steps">
             <div className="landing-step">
               <div className="landing-step-num">1</div>
               <div>
-                <div className="landing-step-title">Tell your AI</div>
-                <p className="landing-step-desc">Paste this prompt into Claude Code, Cursor, or any MCP-compatible agent:</p>
-                <pre className="landing-code-block">{`Clone https://github.com/reno42/design, install
-dependencies, set up Supabase, and launch the
-dev server. Follow the README for configuration.`}</pre>
+                <div className="landing-step-title">Pegale este prompt a tu IA</div>
+                <p className="landing-step-desc">Tu IA abre el discovery de Musa y te explica cómo entrar:</p>
+                <pre className="landing-code-block landing-copy-wrap">{CONNECT_PROMPT}<button type="button" onClick={handleCopyPrompt} className="landing-copy-btn">{copied ? "✓ Copiado" : "Copiar"}</button></pre>
               </div>
             </div>
             <div className="landing-step">
               <div className="landing-step-num">2</div>
               <div>
-                <div className="landing-step-title">Or do it manually</div>
-                <p className="landing-step-desc">Run these commands in your terminal:</p>
-                <pre className="landing-code-block">{`git clone https://github.com/reno42/design.git
-cd design
-npm install
-cp .env.example .env
-# Edit .env with your Supabase credentials
-npm run dev`}</pre>
+                <div className="landing-step-title">Creá tu cuenta y tu llave</div>
+                <p className="landing-step-desc">
+                  Entrá al workspace, andá a <strong>Configuración → API Keys</strong> y generá una llave MCP
+                  (<code>fdr_ws_…</code>). Una por IA y por persona del equipo: todos diseñan a la vez,
+                  cada uno con su propia IA.
+                </p>
               </div>
             </div>
             <div className="landing-step">
               <div className="landing-step-num">3</div>
               <div>
-                <div className="landing-step-title">Configure Supabase</div>
+                <div className="landing-step-title">Tu IA maneja el 100%</div>
                 <p className="landing-step-desc">
-                  Set <code>SUPABASE_URL</code>, <code>SUPABASE_SECRET_KEY</code>, and <code>SUPABASE_PUBLISHABLE_KEY</code> in your <code>.env</code> file.
-                  Optionally, add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> for build-time real-time collaboration.
-                  <br /><br />
-                  Run <code>node scripts/setup-supabase.mjs</code> to initialize your database schema using your Supabase Personal Access Token.
-                  The harness connects automatically — your AI is now ready to design.
+                  Con la llave, tu IA crea archivos, diseña, edita código, exporta, arma tarjetas en el
+                  Kanban y te deja todo en tu columna de review. Como cuando le mandás a tu IA a revisar
+                  un sitio y se empieza a crear todo — pero acá diseña de verdad.
                 </p>
               </div>
             </div>
           </div>
+
+          <div className="landing-connect-note liquid-glass">
+            <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
+            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>148+ tools</strong> de
+            diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
+            guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
+          </div>
+
+          <p className="landing-selfhost">
+            ¿Preferís tu propia infra? Musa sigue siendo open source: cloná el repo y conectá tu
+            Supabase desde{" "}
+            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub</a>.
+          </p>
         </div>
       </section>
 
       {/* ═══════════════════════════════ FEATURES ═══════════════════════════════ */}
       <section id="features" className="landing-section">
         <div className="landing-section-inner">
-          <div className="landing-section-badge">Capabilities</div>
+          <div className="landing-section-badge">Features</div>
           <h2 className="landing-section-title font-instrument">
-            Everything your AI needs to design.
+            Todo lo que vos y tu IA pueden hacer.
           </h2>
-          <div className="landing-features-grid">
-            {[
-              { icon: "🎨", title: "Frame-Based Canvas", desc: "Multi-frame HTML/CSS design surfaces with infinite zoom and pan — no Fabric.js, pure Shadow DOM rendering." },
-              { icon: "🤖", title: "MCP-First Architecture", desc: "Every tool is an MCP endpoint. Any AI agent can create, edit, and export designs via JSON-RPC — the UI is secondary." },
-              { icon: "🔄", title: "Bidirectional Sync", desc: "Edit visually or in code — the Shadow DOM and Code Panel stay in perfect sync. Drag elements or type CSS; both paths converge." },
-              { icon: "🎯", title: "Brand System Engine", desc: "Extract design tokens, generate brand manuals, build style libraries with fingerprint deduplication across templates." },
-              { icon: "📸", title: "Thumbnail Previews", desc: "Auto-capture or manually set preview images for every template — Cover Flow slider with zero-lag image rendering." },
-              { icon: "📦", title: "Batch Generation", desc: "Generate dozens of designs from CSV data. Each row becomes a complete template with consistent branding and layout." },
-              { icon: "✏️", title: "SVG Path Editing", desc: "Full vector toolchain: shape-to-path, outline stroke, offset path, pathfinder operations (union, subtract, intersect, exclude)." },
-              { icon: "💾", title: "Supabase Persistence", desc: "All designs live in your own Supabase instance. Real-time collaboration, version history, workspace isolation — you own the data." },
-              { icon: "🧩", title: "Design System Extraction", desc: "Feed any URL and the Harness extracts colors, typography, spacing, and components into a structured token system." },
-            ].map(f => (
-              <div key={f.title} className="liquid-glass landing-feature-card">
-                <div style={{ fontSize: 24, marginBottom: 8 }}>{f.icon}</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.85)", marginBottom: 4 }}>{f.title}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>{f.desc}</div>
+          <p className="landing-section-text">
+            Mini-UIs en loop: el cursor se mueve, aprieta el botón y la acción pasa. Y cada feature
+            también es una herramienta MCP — la UI y tu IA hacen exactamente lo mismo.
+          </p>
+          <div className="landing-demo-grid">
+            {LANDING_FEATURES.map(f => (
+              <div key={f.id} className="liquid-glass landing-feature-card2">
+                <f.Demo />
+                <div className="landing-feature-title"><span>{f.icon}</span>{f.title}</div>
+                <div className="landing-feature-desc">{f.desc}</div>
               </div>
             ))}
           </div>
@@ -487,25 +522,37 @@ npm run dev`}</pre>
 
       {/* ═══════════════════════════════ FOOTER ═══════════════════════════════ */}
       <footer className="landing-footer-section">
-        <div className="landing-section-inner" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.4 }}>
-              <rect x="3" y="3" width="18" height="18" rx="4" />
-              <circle cx="12" cy="12" r="4" />
-            </svg>
-            <span className="font-instrument" style={{ fontSize: 16, fontWeight: 400, color: "rgba(255,255,255,0.5)" }}>Futuraria</span>
+        <div className="landing-section-inner" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 30 }}>
+          <div className="landing-footer-grid">
+            <div>
+              <div className="landing-footer-brand font-instrument">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.45, alignSelf: "center" }}>
+                  <rect x="3" y="3" width="18" height="18" rx="4" />
+                  <circle cx="12" cy="12" r="4" />
+                </svg>
+                Musa <span className="landing-footer-by">by Futuraria</span>
+              </div>
+              <p className="landing-footer-tag">
+                Tu workspace de diseño MCP-first. Vos diseñás, tu IA diseña, o los dos a la vez —
+                con las mismas 148+ herramientas, y tu data solo en tu cuenta.
+              </p>
+            </div>
+            <div className="landing-footer-col">
+              <h5>Producto</h5>
+              <button onClick={() => scrollToSection("features")}>Features</button>
+              <button onClick={() => scrollToSection("harness")}>¿Qué es el Harness?</button>
+              <button onClick={() => scrollToSection("connect")}>Conecta tu IA</button>
+              <button onClick={handleEnter} style={{ color: "rgba(167,139,250,0.85)" }}>Entrar al workspace</button>
+            </div>
+            <div className="landing-footer-col">
+              <h5>Para tu IA</h5>
+              <a href="https://design.futuraria.com/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
+              <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
+              <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub · open source</a>
+            </div>
           </div>
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", maxWidth: 480, lineHeight: 1.7 }}>
-            Open-source design harness. Compatible with any MCP-enabled AI agent.
-            Built for designers and developers who want AI-assisted, deterministic design output.
-          </p>
-          <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12 }}>GitHub</a>
-            <button onClick={() => scrollToSection("features")} className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Docs</button>
-            <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer" className="liquid-glass landing-footer-btn" style={{ width: "auto", padding: "10px 20px", borderRadius: 100, textDecoration: "none", fontSize: 12 }}>Open Source</a>
-          </div>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 8 }}>
-            © {new Date().getFullYear()} Futuraria — MIT License
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", width: "100%", textAlign: "center" }}>
+            © {new Date().getFullYear()} Musa by Futuraria — MIT License
           </div>
         </div>
       </footer>
