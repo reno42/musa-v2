@@ -81,20 +81,41 @@ designCommentRoutes.post("/:templateId/comments", async (req, res) => {
   }
 });
 
-// PATCH /api/templates/:templateId/comments/:commentId — status change
-// (open / resolved / archived), the same lifecycle the Kanban uses.
+// PATCH /api/templates/:templateId/comments/:commentId — partial update.
+// Accepts status (open / resolved / archived), body (edit), and xPct/yPct
+// (pin dragged to a new spot). Unknown fields are ignored.
 designCommentRoutes.patch("/:templateId/comments/:commentId", async (req, res) => {
   try {
     const sb = getSupabaseAdmin();
     if (!sb) return res.status(503).json({ success: false, error: "Supabase not configured" });
 
+    const update: Record<string, unknown> = {};
+
     const status = typeof req.body?.status === "string" ? req.body.status : "";
-    if (!ALLOWED_STATUSES.includes(status)) {
-      return res.status(400).json({ success: false, error: "Estado inválido: usa open, resolved o archived." });
+    if (status) {
+      if (!ALLOWED_STATUSES.includes(status)) {
+        return res.status(400).json({ success: false, error: "Estado inválido: usa open, resolved o archived." });
+      }
+      update.status = status;
+    }
+
+    if (typeof req.body?.body === "string") {
+      const text = req.body.body.trim();
+      if (!text || text.length > 500) {
+        return res.status(400).json({ success: false, error: "El comentario debe tener entre 1 y 500 caracteres." });
+      }
+      update.body = text;
+    }
+
+    if (req.body?.xPct !== undefined) update.x_pct = clampPct(req.body.xPct, 50);
+    if (req.body?.yPct !== undefined) update.y_pct = clampPct(req.body.yPct, 50);
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ success: false, error: "Nada que actualizar." });
     }
 
     const { data: comment, error } = await sb.from("design_comments")
-      .update({ status })
+      .update(update)
       .eq("id", req.params.commentId)
       .eq("template_id", req.params.templateId)
       .select()
@@ -104,6 +125,52 @@ designCommentRoutes.patch("/:templateId/comments/:commentId", async (req, res) =
     return res.json({ success: true, data: comment });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || "Comment update failed" });
+  }
+});
+
+// POST /api/templates/:templateId/comments/:commentId/kanban — file the
+// comment as a Kanban card (backlog) so the team or an AI can act on the
+// feedback. Mirrors the guest flow in commentShare; idempotent — a comment
+// already filed returns the existing card instead of duplicating it.
+designCommentRoutes.post("/:templateId/comments/:commentId/kanban", async (req, res) => {
+  try {
+    const sb = getSupabaseAdmin();
+    if (!sb) return res.status(503).json({ success: false, error: "Supabase not configured" });
+
+    const { data: comment, error: cErr } = await sb.from("design_comments")
+      .select("id, template_id, body, author_name, x_pct, y_pct, kanban_task_id")
+      .eq("id", req.params.commentId)
+      .eq("template_id", req.params.templateId)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ success: false, error: cErr.message });
+    if (!comment) return res.status(404).json({ success: false, error: "Comentario no encontrado." });
+    if (comment.kanban_task_id) {
+      return res.json({ success: true, data: { kanbanTaskId: comment.kanban_task_id }, already: true });
+    }
+
+    const text = (comment.body || "").trim();
+    const author = comment.author_name || "Editor";
+    const taskId = randomId("card");
+    const { data: kt, error: ktErr } = await sb.from("design_kanban_tasks").insert({
+      id: taskId,
+      title: `Comentario: ${text.slice(0, 60)}${text.length > 60 ? "…" : ""}`,
+      workspace_id: req.templateWorkspaceId || null,
+      template_id: comment.template_id,
+      frame_id: null,
+      brief: `${text}\n\n(Pin en x ${Math.round(comment.x_pct ?? 0)}% / y ${Math.round(comment.y_pct ?? 0)}% — ${author})`,
+      status: "backlog",
+      type: "other",
+      created_by: author,
+      tags: ["comment", "editor_pin"],
+      account_id: null,
+    }).select().single();
+    if (ktErr) return res.status(500).json({ success: false, error: "Kanban insert failed: " + ktErr.message });
+
+    await sb.from("design_comments").update({ kanban_task_id: taskId }).eq("id", comment.id);
+
+    return res.status(201).json({ success: true, data: { kanbanTaskId: taskId, task: kt } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Kanban filing failed" });
   }
 });
 

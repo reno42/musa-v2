@@ -44,6 +44,7 @@ export interface CanvasCommentPin {
   status: string;
   source: string;
   createdAt: string;
+  kanbanTaskId?: string | null;
 }
 
 /** Where a comment was requested: design coords + raw client coords (the
@@ -154,8 +155,15 @@ interface InfiniteHtmlCanvasProps {
   commentBounds?: { x: number; y: number; width: number; height: number } | null;
   /** Double-tap (touch) / double-click (desktop, empty canvas) / comment-mode tap. */
   onCommentRequest?: (req: CanvasCommentRequest) => void;
-  /** A pin was clicked. */
+  /** A pin was tapped (after a drag it's suppressed) — canvas shows its popover. */
   onCommentPinClick?: (commentId: string) => void;
+  /** Pin dragged to a new position (pct coords over commentBounds). */
+  onCommentPinMove?: (commentId: string, xPct: number, yPct: number) => void;
+  /** Popover CRUD — the owner edits/resolves/deletes/files the comment. */
+  onCommentEdit?: (commentId: string, body: string) => void;
+  onCommentResolve?: (commentId: string, status: "open" | "resolved") => void;
+  onCommentDelete?: (commentId: string) => void;
+  onCommentToKanban?: (commentId: string) => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -179,7 +187,8 @@ export function InfiniteHtmlCanvas({
   leftInset = 0, rightInset = 0,
   onIconDrop,
   comments = [], showComments = true, commentMode = false, commentBounds = null,
-  onCommentRequest, onCommentPinClick,
+  onCommentRequest, onCommentPinClick, onCommentPinMove,
+  onCommentEdit, onCommentResolve, onCommentDelete, onCommentToKanban,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -720,6 +729,11 @@ export function InfiniteHtmlCanvas({
     if (!el) return;
 
     const onTouchStart = (e: TouchEvent) => {
+      // Pins (and their popover) own their gestures — dragging a pin with a
+      // finger or typing in the popover must not start a pan. Skipping
+      // preventDefault here keeps the compatibility click for a plain tap.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.("[data-comment-pin-id], .editor-v2-comment-popover")) return;
       e.preventDefault();
       const s = touchStateRef.current;
       if (e.touches.length >= 2) {
@@ -812,6 +826,75 @@ export function InfiniteHtmlCanvas({
       el.removeEventListener("touchend", onTouchEnd);
     };
   }, [zoom, commentMode, onCommentRequest, screenToCanvas, onZoomChange]);
+
+  // ── Comment pins: drag with a finger (or mouse) ──
+  // Pointer events unify both inputs; the delta is divided by zoom so the
+  // pin tracks the finger in design space. pointerup commits the new
+  // position via onCommentPinMove and arms a one-shot click suppression so
+  // the popover doesn't open right after a drag.
+  const pinDragRef = useRef<{ id: string; startClientX: number; startClientY: number; worldX: number; worldY: number; moved: boolean } | null>(null);
+  const [pinDragPos, setPinDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
+  const suppressPinClickRef = useRef(false);
+
+  const startPinDrag = useCallback((e: React.PointerEvent, pin: CanvasCommentPin) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!commentBounds) return;
+    pinDragRef.current = {
+      id: pin.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      worldX: commentBounds.x + (pin.xPct / 100) * commentBounds.width,
+      worldY: commentBounds.y + (pin.yPct / 100) * commentBounds.height,
+      moved: false,
+    };
+    setPinDragPos({ id: pin.id, x: pinDragRef.current.worldX, y: pinDragRef.current.worldY });
+    suppressPinClickRef.current = false;
+    setActivePinId(null); // dragging closes the popover
+  }, [commentBounds]);
+
+  useEffect(() => {
+    if (!pinDragPos) return;
+    const onMove = (e: PointerEvent) => {
+      const d = pinDragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.startClientX;
+      const dy = e.clientY - d.startClientY;
+      if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
+      setPinDragPos({ id: d.id, x: d.worldX + dx / zoom, y: d.worldY + dy / zoom });
+    };
+    const onUp = (e: PointerEvent) => {
+      const d = pinDragRef.current;
+      pinDragRef.current = null;
+      setPinDragPos(null);
+      if (!d || !commentBounds) return;
+      const dx = e.clientX - d.startClientX;
+      const dy = e.clientY - d.startClientY;
+      if (!d.moved) return; // a plain tap — let click open the popover
+      suppressPinClickRef.current = true;
+      const worldX = d.worldX + dx / zoom;
+      const worldY = d.worldY + dy / zoom;
+      const xPct = Math.max(0, Math.min(100, ((worldX - commentBounds.x) / commentBounds.width) * 100));
+      const yPct = Math.max(0, Math.min(100, ((worldY - commentBounds.y) / commentBounds.height) * 100));
+      onCommentPinMove?.(d.id, Math.round(xPct), Math.round(yPct));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [pinDragPos, zoom, commentBounds, onCommentPinMove]);
+
+  // ── Comment pin popover (tap a pin → read it, edit, resolve, delete,
+  //    file to Kanban). activePinId stores the id so the card re-reads the
+  //    live row from `comments` after every CRUD op (deleted = closes). ──
+  const [activePinId, setActivePinId] = useState<string | null>(null);
+  const [editingBody, setEditingBody] = useState<string | null>(null);
+  const activePin = activePinId ? comments.find(c => c.id === activePinId) || null : null;
+  useEffect(() => { setEditingBody(null); }, [activePinId]);
 
   // ── Orphan inline text editing ──
   // The orphan's html root becomes contenteditable in place; blur commits the
@@ -1147,17 +1230,25 @@ export function InfiniteHtmlCanvas({
 
         {/* Comment pins (design_comments) — live inside the transform layer so
             they pan/zoom with the design; inverse-scaled so they keep a
-            constant on-screen size at any zoom. */}
+            constant on-screen size at any zoom. Draggable with a finger or
+            the mouse; a tap opens the popover with the full comment + CRUD. */}
         {showComments && comments.length > 0 && commentBounds && comments.map((pin) => {
-          const x = commentBounds.x + (pin.xPct / 100) * commentBounds.width;
-          const y = commentBounds.y + (pin.yPct / 100) * commentBounds.height;
+          const dragging = pinDragPos?.id === pin.id;
+          const x = dragging ? pinDragPos!.x : commentBounds.x + (pin.xPct / 100) * commentBounds.width;
+          const y = dragging ? pinDragPos!.y : commentBounds.y + (pin.yPct / 100) * commentBounds.height;
           const resolved = pin.status !== "open";
           return (
             <div
               key={pin.id}
               data-comment-pin-id={pin.id}
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onCommentPinClick?.(pin.id); }}
+              onPointerDown={(e) => startPinDrag(e, pin)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (suppressPinClickRef.current) { suppressPinClickRef.current = false; return; }
+                onCommentPinClick?.(pin.id);
+                setActivePinId(prev => prev === pin.id ? null : pin.id);
+              }}
               title={`${pin.authorName}: ${pin.body.slice(0, 60)}`}
               style={{
                 position: "absolute",
@@ -1171,7 +1262,8 @@ export function InfiniteHtmlCanvas({
                 boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 color: "#fff", fontSize: 12, fontWeight: 700,
-                cursor: "pointer",
+                cursor: dragging ? "grabbing" : "grab",
+                touchAction: "none",
                 zIndex: 11000,
               }}
             >
@@ -1179,6 +1271,114 @@ export function InfiniteHtmlCanvas({
             </div>
           );
         })}
+
+        {/* Pin popover — anchored to the pin in design space, inverse-scaled
+            to a constant on-screen size. Reads the live row from `comments`,
+            so every CRUD action re-renders it (and deletes close it). */}
+        {activePin && commentBounds && (
+          <div
+            className="editor-v2-comment-popover"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute",
+              left: commentBounds.x + (activePin.xPct / 100) * commentBounds.width,
+              top: commentBounds.y + (activePin.yPct / 100) * commentBounds.height,
+              transform: `scale(${1 / zoom})`,
+              transformOrigin: "left top",
+              zIndex: 11001,
+            }}
+          >
+            <div
+              style={{
+                marginLeft: 22, marginTop: -10,
+                width: 230,
+                padding: 10,
+                borderRadius: 12,
+                background: "rgba(15,15,20,0.97)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                fontFamily: "Inter, system-ui, sans-serif",
+                color: "#e0e0e0",
+                fontSize: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 11 }}>{activePin.authorName || "Invitado"}</strong>
+                <span style={{ fontSize: 10, color: "#7a7668" }}>
+                  {activePin.createdAt ? new Date(activePin.createdAt).toLocaleDateString("es", { day: "numeric", month: "short" }) : ""}
+                  {activePin.source === "editor_pin" ? " · editor" : " · invitado"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActivePinId(null)}
+                  aria-label="Cerrar"
+                  style={{ marginLeft: "auto", background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 2 }}
+                >
+                  ×
+                </button>
+              </div>
+              {editingBody === null ? (
+                <p style={{ margin: "0 0 8px", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{activePin.body}</p>
+              ) : (
+                <textarea
+                  autoFocus
+                  value={editingBody}
+                  onChange={(e) => setEditingBody(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "6px 8px", marginBottom: 6,
+                    borderRadius: 8, border: "1px solid rgba(200,184,152,0.5)",
+                    background: "rgba(255,255,255,0.05)", color: "#e0e0e0",
+                    fontSize: 12, fontFamily: "inherit", lineHeight: 1.5, resize: "none", outline: "none",
+                  }}
+                />
+              )}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {editingBody === null ? (
+                  <>
+                    <button type="button" onClick={() => setEditingBody(activePin.body)}
+                      style={pinPopBtn("rgba(255,255,255,0.1)", "#c8b898")}>
+                      Editar
+                    </button>
+                    <button type="button"
+                      onClick={() => onCommentResolve?.(activePin.id, activePin.status === "open" ? "resolved" : "open")}
+                      style={pinPopBtn("rgba(255,255,255,0.1)", "#9ca3af")}>
+                      {activePin.status === "open" ? "Resolver" : "Reabrir"}
+                    </button>
+                    <button type="button"
+                      disabled={!!activePin.kanbanTaskId}
+                      onClick={() => onCommentToKanban?.(activePin.id)}
+                      title={activePin.kanbanTaskId ? "Ya está en el Kanban" : "Crea una tarea en el Kanban con este comentario"}
+                      style={pinPopBtn("rgba(59,130,246,0.4)", activePin.kanbanTaskId ? "#6b7280" : "#60a5fa")}>
+                      {activePin.kanbanTaskId ? "En Kanban" : "Al Kanban"}
+                    </button>
+                    <button type="button"
+                      onClick={() => { onCommentDelete?.(activePin.id); setActivePinId(null); }}
+                      style={pinPopBtn("rgba(239,68,68,0.3)", "#f87171")}>
+                      Eliminar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button"
+                      onClick={() => { if (editingBody.trim()) onCommentEdit?.(activePin.id, editingBody.trim()); setEditingBody(null); }}
+                      style={pinPopBtn("rgba(200,184,152,0.3)", "#c8b898")}>
+                      Guardar
+                    </button>
+                    <button type="button"
+                      onClick={() => setEditingBody(null)}
+                      style={pinPopBtn("rgba(255,255,255,0.1)", "#9ca3af")}>
+                      Cancelar
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ═══ Canvas Guides: rulers, guides, grid, smart guides ═══ */}
@@ -1222,4 +1422,17 @@ function getBounds(frames: FrameData[]) {
     }),
     { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
   );
+}
+
+/** Shared styling for the pin popover's small action buttons. */
+function pinPopBtn(border: string, color: string): React.CSSProperties {
+  return {
+    fontSize: 11,
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: `1px solid ${border}`,
+    background: "transparent",
+    color,
+    cursor: "pointer",
+  };
 }

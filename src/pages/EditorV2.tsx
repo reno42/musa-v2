@@ -826,6 +826,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           status: c.status || "open",
           source: c.source || "mobile_pin",
           createdAt: c.created_at || "",
+          kanbanTaskId: c.kanban_task_id || null,
         })));
       }
     } catch { /* offline — keep the last known pins on screen */ }
@@ -881,44 +882,46 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [commentDraft, commentComposer, commentBounds, templateId, loadComments, addToast]);
 
-  // ── Comments: one-click "add to canvas" — the pin becomes a sticky-note
-  // orphan at its position, tagged data-comment-id so it can't be added twice. ──
-  const escapeHtmlText = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-  const handleAddCommentToCanvas = useCallback((comment: CanvasCommentPin) => {
-    const marker = `data-comment-id="${comment.id}"`;
-    if (canvasObjectsRef.current.some(o => o.html.includes(marker))) {
-      addToast("Este comentario ya está en el canvas.", "info");
-      return;
-    }
-    const b = commentBounds;
-    const x = b.x + (comment.xPct / 100) * b.width;
-    const y = b.y + (comment.yPct / 100) * b.height;
-    const orphanId = createOrphanId();
-    const author = escapeHtmlText(comment.authorName || "Invitado");
-    const bodyText = escapeHtmlText(comment.body);
-    const html = `<div data-layer-id="${orphanId}" data-layer-name="Comentario" data-layer-kind="text" data-comment-id="${comment.id}" style="font-family:Inter,system-ui,sans-serif;font-size:14px;color:#1F2937;padding:12px 14px;background:#FFF7B8;border:1px solid #E5DE6B;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.12);max-width:260px;line-height:1.45;word-wrap:break-word;position:relative;"><div style="font-weight:700;margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8A7414;">${author}</div>${bodyText}</div>`;
-    const css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  max-width: 260px;\n  line-height: 1.45;\n  word-wrap: break-word;\n}`;
-    const newOrphan: HtmlCanvasObject = {
-      id: orphanId,
-      name: `Comentario de ${comment.authorName || "Invitado"}`,
-      kind: "text",
-      frameId: null,
-      html, css,
-      x: Math.round(x), y: Math.round(y),
-      width: 240, height: 90,
-      zIndex: canvasObjectsRef.current.length + frames.length,
-    };
-    commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
-    addToast("Comentario añadido al canvas.", "success");
-  }, [commentBounds, frames.length, commitCanvasObjects, addToast]);
-
-  const handleResolveComment = useCallback(async (commentId: string) => {
+  // ── Comments: pin CRUD — the popover (and the panel) drive these ──
+  const handleCommentPinMove = useCallback(async (commentId: string, xPct: number, yPct: number) => {
     try {
       await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "resolved" }),
+        body: JSON.stringify({ xPct, yPct }),
+      });
+      void loadComments();
+    } catch { /* offline — the poll will reconcile */ }
+  }, [templateId, loadComments]);
+
+  const handleCommentEdit = useCallback(async (commentId: string, body: string) => {
+    try {
+      await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body }),
+      });
+      void loadComments();
+    } catch { /* panel keeps working with the last known rows */ }
+  }, [templateId, loadComments]);
+
+  const handleCommentToKanban = useCallback(async (commentId: string) => {
+    try {
+      const json = await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}/kanban`, {
+        method: "POST",
+      });
+      if (json?.success) {
+        void loadComments();
+        addToast(json.already ? "El comentario ya estaba en el Kanban." : "Comentario añadido al Kanban como tarea.", "success");
+      }
+    } catch (err: any) {
+      addToast(err?.message || "No se pudo añadir al Kanban.", "error");
+    }
+  }, [templateId, loadComments, addToast]);
+
+  const handleResolveComment = useCallback(async (commentId: string, status: "open" | "resolved" = "resolved") => {
+    try {
+      await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
       });
       void loadComments();
     } catch { /* panel keeps working with the last known rows */ }
@@ -6432,10 +6435,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onCommentRequest={handleCommentRequest}
             onCommentPinClick={(commentId) => {
               setHighlightCommentId(commentId);
-              setRightPanelTab("comments");
-              setShowRightPanel(true);
               window.setTimeout(() => setHighlightCommentId(null), 2500);
             }}
+            onCommentPinMove={handleCommentPinMove}
+            onCommentEdit={handleCommentEdit}
+            onCommentResolve={handleResolveComment}
+            onCommentDelete={handleDeleteComment}
+            onCommentToKanban={handleCommentToKanban}
           />
         </div>
       </div>
@@ -6785,7 +6791,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   </p>
                 )}
                 {comments.map(c => {
-                  const added = canvasObjects.some(o => o.html.includes(`data-comment-id="${c.id}"`));
                   return (
                     <div
                       key={c.id}
@@ -6806,28 +6811,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <button
                           type="button"
-                          disabled={added}
-                          onClick={() => handleAddCommentToCanvas(c)}
-                          title={added ? "Ya está en el canvas" : "Añade este comentario como nota adhesiva en el canvas"}
+                          disabled={!!c.kanbanTaskId}
+                          onClick={() => handleCommentToKanban(c.id)}
+                          title={c.kanbanTaskId ? "Ya está en el Kanban" : "Crea una tarea en el Kanban con este comentario"}
                           style={{
                             fontSize: 11, padding: "4px 8px", borderRadius: 6,
                             border: "1px solid rgba(59,130,246,0.4)",
-                            background: added ? "transparent" : "rgba(59,130,246,0.12)",
-                            color: added ? "#6b7280" : "#60a5fa",
-                            cursor: added ? "default" : "pointer",
+                            background: c.kanbanTaskId ? "transparent" : "rgba(59,130,246,0.12)",
+                            color: c.kanbanTaskId ? "#6b7280" : "#60a5fa",
+                            cursor: c.kanbanTaskId ? "default" : "pointer",
                           }}
                         >
-                          {added ? "En el canvas" : "Añadir al canvas"}
+                          {c.kanbanTaskId ? "En Kanban" : "Al Kanban"}
                         </button>
-                        {c.status === "open" && (
-                          <button
-                            type="button"
-                            onClick={() => handleResolveComment(c.id)}
-                            style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#9ca3af", cursor: "pointer" }}
-                          >
-                            Resolver
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleResolveComment(c.id, c.status === "open" ? "resolved" : "open")}
+                          style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#9ca3af", cursor: "pointer" }}
+                        >
+                          {c.status === "open" ? "Resolver" : "Reabrir"}
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteComment(c.id)}
