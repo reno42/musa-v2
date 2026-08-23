@@ -5245,8 +5245,16 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // under it. Undocked/dragging panels are free-floating and don't reserve
   // space; z-index ordering (see CanvasGuides) keeps them visually on top
   // of the ruler in that case instead.
-  const canvasLeftInset = leftPanelsWidth + (toolbarDock.state.isDocked ? 56 : 0);
-  const canvasRightInset = (showRightPanel && rightDock.state.isDocked && rightDock.state.dockSide === "right") ? rightPanelWidth : 0;
+  const canvasLeftInset = isMobile
+    ? 0
+    : leftPanelsWidth + (toolbarDock.state.isDocked ? 56 : 0);
+  const canvasRightInset = isMobile
+    ? 0
+    : (showRightPanel && rightDock.state.isDocked && rightDock.state.dockSide === "right") ? rightPanelWidth : 0;
+
+  // On phones the toolbar is hidden and panels are full-screen overlays
+  // (see the responsive rules), so nothing may reserve space beside the
+  // canvas — it stretches edge to edge like an accordion.
 
   // ── Background Render Worker ──
   // Polls for pending render jobs created by MCP export_batch.
