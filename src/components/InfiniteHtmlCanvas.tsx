@@ -757,8 +757,13 @@ export function InfiniteHtmlCanvas({
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      e.preventDefault();
       const s = touchStateRef.current;
+      // A touch that started on a pin or its popover never entered pan/pinch
+      // mode — leave the gesture alone so the browser still delivers the
+      // compatibility click for a plain tap (canceling touchmove here would
+      // swallow it and the popover would never open on mobile).
+      if (s.mode === "none") return;
+      e.preventDefault();
       if (s.mode === "pinch" && e.touches.length >= 2) {
         const a = e.touches[0];
         const b = e.touches[1];
@@ -837,8 +842,11 @@ export function InfiniteHtmlCanvas({
   const suppressPinClickRef = useRef(false);
 
   const startPinDrag = useCallback((e: React.PointerEvent, pin: CanvasCommentPin) => {
+    // stopPropagation keeps the canvas pan from starting. Deliberately NO
+    // preventDefault: canceling pointerdown suppresses the compatibility
+    // click on touch, which would break tap-to-open. The pin's own
+    // touchAction:none stops the browser from scrolling the gesture away.
     e.stopPropagation();
-    e.preventDefault();
     if (!commentBounds) return;
     pinDragRef.current = {
       id: pin.id,
@@ -1264,6 +1272,7 @@ export function InfiniteHtmlCanvas({
                 color: "#fff", fontSize: 12, fontWeight: 700,
                 cursor: dragging ? "grabbing" : "grab",
                 touchAction: "none",
+                userSelect: "none",
                 zIndex: 11000,
               }}
             >
