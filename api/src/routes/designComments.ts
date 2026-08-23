@@ -62,7 +62,8 @@ designCommentRoutes.post("/:templateId/comments", async (req, res) => {
       id: randomId("comment"),
       template_id: req.params.templateId,
       frame_id: (typeof req.body?.frameId === "string" && req.body.frameId) || null,
-      workspace_id: null,
+      // requireTemplateAccess already resolved this — one less lookup.
+      workspace_id: req.templateWorkspaceId || null,
       account_id: null,
       x_pct: clampPct(req.body?.xPct, 50),
       y_pct: clampPct(req.body?.yPct, 50),
