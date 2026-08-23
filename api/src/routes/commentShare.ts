@@ -51,13 +51,24 @@ commentShareRoutes.get("/:templateId", async (req, res) => {
     const sb = getSupabaseAdmin();
     if (!sb) return res.status(503).json({ success: false, error: "Supabase not configured" });
 
+    // select("*") keeps the read fail-open: before migration v28 the
+    // is_public column doesn't exist, and `=== false` never matches on
+    // undefined — guests keep access until the owner opts out.
     const { data: tpl, error } = await sb.from("templates")
-      .select("id, name, workspace_id, is_brand_manual, width:data->width, height:data->height, thumbnail:data->>thumbnail")
+      .select("*")
       .eq("id", req.params.templateId)
       .is("deleted_at", null)
       .maybeSingle();
     if (error) return res.status(500).json({ success: false, error: error.message });
     if (!tpl) return res.status(404).json({ success: false, error: "Design not found" });
+
+    if ((tpl as any).is_public === false) {
+      return res.status(403).json({
+        success: false,
+        code: "PRIVATE",
+        error: "Este diseño es privado. Pide a su autor que lo comparta.",
+      });
+    }
 
     const { data: comments, error: cErr } = await sb.from("design_comments")
       .select("id, body, author_name, x_pct, y_pct, status, source, kanban_task_id, created_at")
@@ -108,14 +119,25 @@ commentShareRoutes.post("/:templateId", async (req, res) => {
     const xPct = clampPct(req.body?.xPct, 50);
     const yPct = clampPct(req.body?.yPct, 50);
     const createKanbanTask = req.body?.createKanbanTask === true;
+    // The editor's own composer posts through this public endpoint too
+    // (no auth on mobile), so it can tag the row as editor_pin.
+    const source = req.body?.source === "editor_pin" ? "editor_pin" : "mobile_pin";
 
     const { data: tpl, error: tplErr } = await sb.from("templates")
-      .select("id, name, workspace_id")
+      .select("*")
       .eq("id", req.params.templateId)
       .is("deleted_at", null)
       .maybeSingle();
     if (tplErr) return res.status(500).json({ success: false, error: tplErr.message });
     if (!tpl) return res.status(404).json({ success: false, error: "Design not found" });
+
+    if ((tpl as any).is_public === false) {
+      return res.status(403).json({
+        success: false,
+        code: "PRIVATE",
+        error: "Este diseño es privado. Pide a su autor que lo comparta.",
+      });
+    }
 
     const row: Record<string, unknown> = {
       id: randomId("comment"),
@@ -127,7 +149,7 @@ commentShareRoutes.post("/:templateId", async (req, res) => {
       y_pct: yPct,
       body: text,
       author_name: author,
-      source: "mobile_pin",
+      source,
     };
     const { data: comment, error } = await sb.from("design_comments").insert(row).select().single();
     if (error) return res.status(500).json({ success: false, error: "Comment insert failed: " + error.message });

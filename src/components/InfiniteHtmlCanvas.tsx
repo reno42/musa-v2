@@ -34,6 +34,25 @@ export interface WandClickPoint {
   neg: boolean;
 }
 
+/** One Supabase design_comments row, mapped for canvas rendering. */
+export interface CanvasCommentPin {
+  id: string;
+  xPct: number;
+  yPct: number;
+  body: string;
+  authorName: string;
+  status: string;
+  source: string;
+  createdAt: string;
+}
+
+/** Where a comment was requested: design coords + raw client coords (the
+ *  caller uses client coords to position its composer popover). */
+export interface CanvasCommentRequest {
+  world: { x: number; y: number };
+  screen: { x: number; y: number };
+}
+
 interface InfiniteHtmlCanvasProps {
   frames: FrameData[];
   canvasObjects: HtmlCanvasObject[];
@@ -124,6 +143,19 @@ interface InfiniteHtmlCanvasProps {
    *  frame, or world coordinates for an orphan — the caller never needs to
    *  know about pan/zoom itself. */
   onIconDrop?: (payload: { library: string; name: string; style: string; color: string; size: number }, x: number, y: number, frameId: string | null) => void;
+  // ── Comment pins (design_comments) ──
+  /** Pins rendered inside the transform layer (they pan/zoom with the design). */
+  comments?: CanvasCommentPin[];
+  /** Desktop toggle: hide the pin layer while editing. */
+  showComments?: boolean;
+  /** Mobile comment tool: a single tap opens the composer instead of panning. */
+  commentMode?: boolean;
+  /** Design-space bounds the pct pins map onto (EditorV2 computes the bbox). */
+  commentBounds?: { x: number; y: number; width: number; height: number } | null;
+  /** Double-tap (touch) / double-click (desktop, empty canvas) / comment-mode tap. */
+  onCommentRequest?: (req: CanvasCommentRequest) => void;
+  /** A pin was clicked. */
+  onCommentPinClick?: (commentId: string) => void;
 }
 
 const CANVAS_BG = "#1E1E1E";
@@ -146,6 +178,8 @@ export function InfiniteHtmlCanvas({
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
   leftInset = 0, rightInset = 0,
   onIconDrop,
+  comments = [], showComments = true, commentMode = false, commentBounds = null,
+  onCommentRequest, onCommentPinClick,
 }: InfiniteHtmlCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -665,6 +699,120 @@ export function InfiniteHtmlCanvas({
     return () => el.removeEventListener("wheel", handler);
   }, [zoom, onZoomChange]);
 
+  // ── Touch: 1 finger pans, 2 fingers pinch-zoom, double-tap comments ──
+  // Native listeners with { passive: false } — preventDefault on touchstart
+  // stops page scroll/bounce AND suppresses the synthesized mouse events, so
+  // mobile gets exactly three gestures and nothing else competes with them.
+  const touchStateRef = useRef<{
+    mode: "none" | "pan" | "pinch";
+    startX: number; startY: number;
+    lastX: number; lastY: number;
+    moved: boolean;
+    pinchDist0: number;
+    pinchMidX: number; pinchMidY: number;
+    zoom0: number;
+    pan0: { x: number; y: number };
+  }>({ mode: "none", startX: 0, startY: 0, lastX: 0, lastY: 0, moved: false, pinchDist0: 0, pinchMidX: 0, pinchMidY: 0, zoom0: 1, pan0: { x: 0, y: 0 } });
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      const s = touchStateRef.current;
+      if (e.touches.length >= 2) {
+        const a = e.touches[0];
+        const b = e.touches[1];
+        s.mode = "pinch";
+        s.pinchDist0 = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+        s.pinchMidX = (a.clientX + b.clientX) / 2;
+        s.pinchMidY = (a.clientY + b.clientY) / 2;
+        s.zoom0 = zoom;
+        s.pan0 = { ...panRef.current };
+        return;
+      }
+      const t = e.touches[0];
+      s.mode = "pan";
+      s.startX = t.clientX;
+      s.startY = t.clientY;
+      s.lastX = t.clientX;
+      s.lastY = t.clientY;
+      s.moved = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const s = touchStateRef.current;
+      if (s.mode === "pinch" && e.touches.length >= 2) {
+        const a = e.touches[0];
+        const b = e.touches[1];
+        const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+        if (s.pinchDist0 > 0 && dist > 0) {
+          const newZoom = Math.min(Math.max(s.zoom0 * (dist / s.pinchDist0), MIN_ZOOM), MAX_ZOOM);
+          const rect = el.getBoundingClientRect();
+          const cx = s.pinchMidX - rect.left;
+          const cy = s.pinchMidY - rect.top;
+          setPan({
+            x: cx - (cx - s.pan0.x) * (newZoom / s.zoom0),
+            y: cy - (cy - s.pan0.y) * (newZoom / s.zoom0),
+          });
+          onZoomChange(Math.round(newZoom * 1000) / 1000);
+        }
+        return;
+      }
+      if (s.mode === "pan" && e.touches.length === 1) {
+        const t = e.touches[0];
+        const dx = t.clientX - s.lastX;
+        const dy = t.clientY - s.lastY;
+        s.lastX = t.clientX;
+        s.lastY = t.clientY;
+        if (Math.abs(t.clientX - s.startX) + Math.abs(t.clientY - s.startY) > 8) s.moved = true;
+        setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      const s = touchStateRef.current;
+      // Pinch collapsed back to one finger → restart pan from its position
+      // (no jump: panning is delta-based, the stored point only matters for
+      // tap detection).
+      if (s.mode === "pinch" && e.touches.length === 1) {
+        const t = e.touches[0];
+        s.mode = "pan";
+        s.startX = t.clientX;
+        s.startY = t.clientY;
+        s.lastX = t.clientX;
+        s.lastY = t.clientY;
+        s.moved = false;
+        return;
+      }
+      if (e.touches.length > 0) return;
+      const wasPan = s.mode === "pan";
+      s.mode = "none";
+      if (!wasPan || s.moved || !onCommentRequest) return;
+      // Tap: double-tap (same point, ≤300ms) or single tap in comment mode.
+      const now = Date.now();
+      const prev = lastTapRef.current;
+      lastTapRef.current = { time: now, x: s.startX, y: s.startY };
+      const isDoubleTap = !!prev && now - prev.time <= 300 && Math.hypot(s.startX - prev.x, s.startY - prev.y) <= 30;
+      if (isDoubleTap || commentMode) {
+        const pt = screenToCanvas(s.startX, s.startY);
+        onCommentRequest({ world: pt, screen: { x: s.startX, y: s.startY } });
+      }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [zoom, commentMode, onCommentRequest, screenToCanvas, onZoomChange]);
+
   // ── Orphan inline text editing ──
   // The orphan's html root becomes contenteditable in place; blur commits the
   // new markup back through onOrphanHtmlChange. Escape cancels, Enter+blur save.
@@ -847,6 +995,7 @@ export function InfiniteHtmlCanvas({
         background: CANVAS_BG,
         cursor,
         transition: "margin-left 0.15s ease, width 0.15s ease",
+        touchAction: "none",
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -854,6 +1003,13 @@ export function InfiniteHtmlCanvas({
       onMouseLeave={handleMouseUp}
       onDragOver={handleIconDragOver}
       onDrop={handleIconDrop}
+      onDoubleClick={(e) => {
+        // Desktop mirror of the mobile double-tap: double-click the empty
+        // canvas (not a frame, not an orphan) to leave a comment there.
+        if (e.target !== viewportRef.current || !onCommentRequest) return;
+        const pt = screenToCanvas(e.clientX, e.clientY);
+        onCommentRequest({ world: pt, screen: { x: e.clientX, y: e.clientY } });
+      }}
     >
       {/* Transform layer */}
       <div style={{
@@ -988,6 +1144,41 @@ export function InfiniteHtmlCanvas({
             zIndex: 10000,
           }} />
         )}
+
+        {/* Comment pins (design_comments) — live inside the transform layer so
+            they pan/zoom with the design; inverse-scaled so they keep a
+            constant on-screen size at any zoom. */}
+        {showComments && comments.length > 0 && commentBounds && comments.map((pin) => {
+          const x = commentBounds.x + (pin.xPct / 100) * commentBounds.width;
+          const y = commentBounds.y + (pin.yPct / 100) * commentBounds.height;
+          const resolved = pin.status !== "open";
+          return (
+            <div
+              key={pin.id}
+              data-comment-pin-id={pin.id}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onCommentPinClick?.(pin.id); }}
+              title={`${pin.authorName}: ${pin.body.slice(0, 60)}`}
+              style={{
+                position: "absolute",
+                left: x, top: y,
+                transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+                transformOrigin: "center",
+                width: 24, height: 24,
+                borderRadius: "50%",
+                background: resolved ? "#9CA3AF" : pin.source === "editor_pin" ? "#3B82F6" : "#F59E0B",
+                border: "2px solid #fff",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 12, fontWeight: 700,
+                cursor: "pointer",
+                zIndex: 11000,
+              }}
+            >
+              •
+            </div>
+          );
+        })}
       </div>
 
       {/* ═══ Canvas Guides: rulers, guides, grid, smart guides ═══ */}

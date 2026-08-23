@@ -12,7 +12,7 @@ import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { DesignImportModal } from "../components/DesignImportModal";
 import { ImportRouterModal, type ImportRoute, detectRoute as detectImportRoute } from "../components/ImportRouterModal";
 import type { ImportResult } from "../lib/designImport";
-import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint } from "../components/InfiniteHtmlCanvas";
+import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint, type CanvasCommentPin } from "../components/InfiniteHtmlCanvas";
 import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
@@ -502,6 +502,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   canvasObjectsRef.current = canvasObjects;
   const [showSvgImport, setShowSvgImport] = useState(false);
 
+  // ── Comments (Supabase design_comments) + public/private share toggle ──
+  const [comments, setComments] = useState<CanvasCommentPin[]>([]);
+  const [showComments, setShowComments] = useState(true); // desktop: pins on/off
+  const [commentMode, setCommentMode] = useState(false); // mobile: single tap = comment
+  const [isPublic, setIsPublic] = useState(true); // fail-open default
+  const [publicBusy, setPublicBusy] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [commentComposer, setCommentComposer] = useState<{ world: { x: number; y: number }; screen: { x: number; y: number } } | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
+
   // ── Figma-style selection state ──
   const [selectedFrameIds, setSelectedFrameIds] = useState<Set<string>>(new Set());
   const [contentFrameId, setContentFrameId] = useState<string | null>(null);
@@ -768,6 +780,178 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setCanvasObjects(next);
     autoSave(updatedFrames);
   }, [autoSave]);
+
+  // ── Comments: mobile detection (two-button bar) ──
+  // Coarse primary pointer OR a narrow viewport: the phone experience.
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsMobile(mq.matches || window.innerWidth < 768);
+    update();
+    mq.addEventListener("change", update);
+    window.addEventListener("resize", update);
+    return () => {
+      mq.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  // ── Comments: the design-space bounds pct coords map onto ──
+  // Same idea as the mobile share preview (which uses template width/height):
+  // a pin at 50%/50% lands on the center of the union bbox of frames+orphans.
+  const commentBounds = useMemo(() => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const f of frames) {
+      minX = Math.min(minX, f.x); minY = Math.min(minY, f.y);
+      maxX = Math.max(maxX, f.x + f.width); maxY = Math.max(maxY, f.y + f.height);
+    }
+    for (const o of canvasObjects) {
+      minX = Math.min(minX, o.x); minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + o.width); maxY = Math.max(maxY, o.y + o.height);
+    }
+    if (!Number.isFinite(minX)) return { x: 0, y: 0, width: 1080, height: 1080 };
+    return { x: minX, y: minY, width: Math.max(maxX - minX, 1), height: Math.max(maxY - minY, 1) };
+  }, [frames, canvasObjects]);
+
+  // ── Comments: load from Supabase (design_comments) + 30s poll ──
+  const loadComments = useCallback(async () => {
+    try {
+      const json = await apiFetch<any>(`/api/templates/${templateId}/comments`);
+      if (json?.success && Array.isArray(json.data)) {
+        setComments(json.data.map((c: any): CanvasCommentPin => ({
+          id: c.id,
+          xPct: Number(c.x_pct) || 0,
+          yPct: Number(c.y_pct) || 0,
+          body: c.body || "",
+          authorName: c.author_name || "",
+          status: c.status || "open",
+          source: c.source || "mobile_pin",
+          createdAt: c.created_at || "",
+        })));
+      }
+    } catch { /* offline — keep the last known pins on screen */ }
+  }, [templateId]);
+
+  useEffect(() => {
+    void loadComments();
+    const t = setInterval(() => void loadComments(), 30_000);
+    return () => clearInterval(t);
+  }, [loadComments]);
+
+  // ── Comments: load the public/private flag (fail-open until v28) ──
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const json = await apiFetch<any>(`/api/templates/${templateId}/public`);
+        if (!cancelled && json?.success && typeof json.data?.isPublic === "boolean") {
+          setIsPublic(json.data.isPublic);
+        }
+      } catch { /* pre-migration or offline — stay fail-open */ }
+    })();
+    return () => { cancelled = true; };
+  }, [templateId]);
+
+  // ── Comments: double-tap / double-click / comment-mode tap → composer ──
+  const handleCommentRequest = useCallback((req: { world: { x: number; y: number }; screen: { x: number; y: number } }) => {
+    setCommentComposer({ world: req.world, screen: req.screen });
+    setCommentDraft("");
+    setCommentMode(false);
+  }, []);
+
+  const handleCommentSave = useCallback(async () => {
+    const text = commentDraft.trim();
+    if (!text || !commentComposer) return;
+    setCommentSaving(true);
+    try {
+      const b = commentBounds;
+      const xPct = Math.max(0, Math.min(100, ((commentComposer.world.x - b.x) / b.width) * 100));
+      const yPct = Math.max(0, Math.min(100, ((commentComposer.world.y - b.y) / b.height) * 100));
+      await apiFetch<any>(`/api/templates/${templateId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: text, xPct, yPct }),
+      });
+      setCommentComposer(null);
+      setCommentDraft("");
+      void loadComments();
+      addToast("Comentario guardado.", "success");
+    } catch (err: any) {
+      addToast(err?.message || "No se pudo guardar el comentario.", "error");
+    } finally {
+      setCommentSaving(false);
+    }
+  }, [commentDraft, commentComposer, commentBounds, templateId, loadComments, addToast]);
+
+  // ── Comments: one-click "add to canvas" — the pin becomes a sticky-note
+  // orphan at its position, tagged data-comment-id so it can't be added twice. ──
+  const escapeHtmlText = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  const handleAddCommentToCanvas = useCallback((comment: CanvasCommentPin) => {
+    const marker = `data-comment-id="${comment.id}"`;
+    if (canvasObjectsRef.current.some(o => o.html.includes(marker))) {
+      addToast("Este comentario ya está en el canvas.", "info");
+      return;
+    }
+    const b = commentBounds;
+    const x = b.x + (comment.xPct / 100) * b.width;
+    const y = b.y + (comment.yPct / 100) * b.height;
+    const orphanId = createOrphanId();
+    const author = escapeHtmlText(comment.authorName || "Invitado");
+    const bodyText = escapeHtmlText(comment.body);
+    const html = `<div data-layer-id="${orphanId}" data-layer-name="Comentario" data-layer-kind="text" data-comment-id="${comment.id}" style="font-family:Inter,system-ui,sans-serif;font-size:14px;color:#1F2937;padding:12px 14px;background:#FFF7B8;border:1px solid #E5DE6B;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.12);max-width:260px;line-height:1.45;word-wrap:break-word;position:relative;"><div style="font-weight:700;margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#8A7414;">${author}</div>${bodyText}</div>`;
+    const css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  max-width: 260px;\n  line-height: 1.45;\n  word-wrap: break-word;\n}`;
+    const newOrphan: HtmlCanvasObject = {
+      id: orphanId,
+      name: `Comentario de ${comment.authorName || "Invitado"}`,
+      kind: "text",
+      frameId: null,
+      html, css,
+      x: Math.round(x), y: Math.round(y),
+      width: 240, height: 90,
+      zIndex: canvasObjectsRef.current.length + frames.length,
+    };
+    commitCanvasObjects([...canvasObjectsRef.current, newOrphan]);
+    addToast("Comentario añadido al canvas.", "success");
+  }, [commentBounds, frames.length, commitCanvasObjects, addToast]);
+
+  const handleResolveComment = useCallback(async (commentId: string) => {
+    try {
+      await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "resolved" }),
+      });
+      void loadComments();
+    } catch { /* panel keeps working with the last known rows */ }
+  }, [templateId, loadComments]);
+
+  const handleDeleteComment = useCallback(async (commentId: string) => {
+    try {
+      await apiFetch<any>(`/api/templates/${templateId}/comments/${commentId}`, { method: "DELETE" });
+      void loadComments();
+    } catch { /* 404 = already gone; the poll will catch up */ }
+  }, [templateId, loadComments]);
+
+  // ── Comments: public/private share toggle (PATCH /public) ──
+  const handleTogglePublic = useCallback(async () => {
+    if (publicBusy) return;
+    setPublicBusy(true);
+    const next = !isPublic;
+    try {
+      const json = await apiFetch<any>(`/api/templates/${templateId}/public`, {
+        method: "PATCH",
+        body: JSON.stringify({ isPublic: next }),
+      });
+      if (json?.success) setIsPublic(json.data?.isPublic === true);
+      addToast(next
+        ? "Tu diseño ahora es público: cualquiera con el enlace puede dejar comentarios."
+        : "Tu diseño ahora es privado: el enlace deja de funcionar para los invitados.",
+        "success");
+    } catch (err: any) {
+      addToast(err?.message || "No se pudo cambiar la visibilidad.", "error");
+    } finally {
+      setPublicBusy(false);
+    }
+  }, [isPublic, publicBusy, templateId, addToast]);
 
   // ── Flush pending save on tab close / navigation ──
   useEffect(() => {
@@ -5453,6 +5637,47 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onExport={handleUnifiedExport}
           />
 
+          {/* Comments: pins on the canvas + the panel (add to canvas,
+              resolve, delete). The badge counts open pins — the ones still
+              competing for attention. */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "comments" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "comments") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("comments");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Comentarios"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+            </svg>
+            <span style={{ fontSize: 11, marginLeft: 4 }}>Comentarios</span>
+            {comments.filter(c => c.status === "open").length > 0 && (
+              <span style={{ marginLeft: 4, background: "rgba(245,158,11,0.85)", color: "#111", borderRadius: 8, padding: "0 6px", fontSize: 10, fontWeight: 700 }}>
+                {comments.filter(c => c.status === "open").length}
+              </span>
+            )}
+          </button>
+
+          {/* Public/private: flips the share link on/off. The Comentar button
+              stays useful either way — it's the guest link that respects it. */}
+          <button
+            type="button"
+            className="editor-v2-topbar-icon-btn"
+            onClick={handleTogglePublic}
+            disabled={publicBusy}
+            title={isPublic ? "Público — toca para hacerlo privado" : "Privado — toca para hacerlo público"}
+            style={{ color: isPublic ? "#34d399" : "#f87171" }}
+          >
+            <span style={{ fontSize: 13, lineHeight: 1 }}>{isPublic ? "◉" : "○"}</span>
+            <span style={{ fontSize: 11, marginLeft: 4 }}>{publicBusy ? "…" : isPublic ? "Público" : "Privado"}</span>
+          </button>
+
           {/* Share: copies the public /c/:templateId link. A guest (client,
               teammate, phone) opens it without an account, taps the design to
               pin comments, and can file them to the Kanban for the AI. */}
@@ -6192,6 +6417,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             columnConfig={columnConfig}
             smartGuides={[]}
             onEyedropperPick={handleEyedropperPick}
+            comments={comments}
+            showComments={showComments}
+            commentMode={commentMode}
+            commentBounds={commentBounds}
+            onCommentRequest={handleCommentRequest}
+            onCommentPinClick={(commentId) => {
+              setHighlightCommentId(commentId);
+              setRightPanelTab("comments");
+              setShowRightPanel(true);
+              window.setTimeout(() => setHighlightCommentId(null), 2500);
+            }}
           />
         </div>
       </div>
@@ -6496,6 +6732,107 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               workspaceId={templateWorkspaceId}
               templateId={templateId}
             />
+          )}
+          {rightPanelTab === "comments" && (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", fontSize: 12, color: "#d6d0c0" }}>
+              {/* Header: pins visibility (desktop toggle) + public state */}
+              <div style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: "#7a7668" }}>Comentarios</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowComments(v => !v)}
+                    title={showComments ? "Ocultar pines del canvas" : "Mostrar pines del canvas"}
+                    style={{
+                      fontSize: 11, padding: "4px 8px", borderRadius: 6, cursor: "pointer",
+                      border: "1px solid rgba(59,130,246,0.4)",
+                      background: showComments ? "rgba(59,130,246,0.15)" : "transparent",
+                      color: showComments ? "#60a5fa" : "#9ca3af",
+                    }}
+                  >
+                    {showComments ? "Pines visibles" : "Pines ocultos"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTogglePublic}
+                    disabled={publicBusy}
+                    title={isPublic ? "Toca para hacerlo privado" : "Toca para hacerlo público"}
+                    style={{
+                      fontSize: 11, padding: "4px 8px", borderRadius: 6, cursor: "pointer",
+                      border: "1px solid rgba(255,255,255,0.12)", background: "transparent",
+                      color: isPublic ? "#34d399" : "#f87171",
+                    }}
+                  >
+                    {publicBusy ? "…" : isPublic ? "Público" : "Privado"}
+                  </button>
+                </div>
+              </div>
+
+              {/* List */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                {comments.length === 0 && (
+                  <p style={{ textAlign: "center", color: "#7a7668", padding: 24, lineHeight: 1.6, margin: 0 }}>
+                    Todavía no hay comentarios.<br />
+                    Comparte el enlace para que otros dejen feedback, o haz doble clic en el canvas para dejar un pin tú mismo.
+                  </p>
+                )}
+                {comments.map(c => {
+                  const added = canvasObjects.some(o => o.html.includes(`data-comment-id="${c.id}"`));
+                  return (
+                    <div
+                      key={c.id}
+                      className={highlightCommentId === c.id ? "editor-v2-comment-row-highlight" : ""}
+                      style={{ padding: 8, borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: 11 }}>{c.authorName}</strong>
+                        <span style={{ fontSize: 10, color: "#7a7668" }}>
+                          {new Date(c.createdAt).toLocaleDateString("es", { day: "numeric", month: "short" })}
+                          {c.source === "editor_pin" ? " · editor" : " · invitado"}
+                        </span>
+                        {c.status !== "open" && (
+                          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: "rgba(156,163,175,0.2)", color: "#9CA3AF" }}>Resuelto</span>
+                        )}
+                      </div>
+                      <p style={{ margin: "0 0 8px", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</p>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          disabled={added}
+                          onClick={() => handleAddCommentToCanvas(c)}
+                          title={added ? "Ya está en el canvas" : "Añade este comentario como nota adhesiva en el canvas"}
+                          style={{
+                            fontSize: 11, padding: "4px 8px", borderRadius: 6,
+                            border: "1px solid rgba(59,130,246,0.4)",
+                            background: added ? "transparent" : "rgba(59,130,246,0.12)",
+                            color: added ? "#6b7280" : "#60a5fa",
+                            cursor: added ? "default" : "pointer",
+                          }}
+                        >
+                          {added ? "En el canvas" : "Añadir al canvas"}
+                        </button>
+                        {c.status === "open" && (
+                          <button
+                            type="button"
+                            onClick={() => handleResolveComment(c.id)}
+                            style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#9ca3af", cursor: "pointer" }}
+                          >
+                            Resolver
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteComment(c.id)}
+                          style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(239,68,68,0.3)", background: "transparent", color: "#f87171", cursor: "pointer" }}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
           {rightPanelTab === "ai" && (
             <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -6879,6 +7216,63 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           backdropFilter: "blur(8px)",
         }}>
           {mcpMsg}
+        </div>
+      )}
+
+
+      {/* ═══ Mobile bottom bar: exactly two tools — Mover (one finger pans,
+          pinch zooms) and Comentar (single tap opens the composer; without
+          it, double-tap does). The desktop floating toolbar is hidden on
+          coarse pointers via CSS. ═══ */}
+      {isMobile && (
+        <div className="editor-v2-mobile-bar">
+          <button
+            type="button"
+            className={`editor-v2-mobile-bar-btn ${!commentMode ? "active" : ""}`}
+            onClick={() => setCommentMode(false)}
+          >
+            <IconHand size={16} />
+            <span>Mover</span>
+          </button>
+          <button
+            type="button"
+            className={`editor-v2-mobile-bar-btn ${commentMode ? "active" : ""}`}
+            onClick={() => setCommentMode(true)}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+            </svg>
+            <span>Comentar</span>
+          </button>
+        </div>
+      )}
+
+      {/* ═══ Comment composer (double-tap / double-click / comment tool) ═══ */}
+      {commentComposer && (
+        <div
+          className="editor-v2-comment-composer"
+          style={{
+            left: Math.min(Math.max(commentComposer.screen.x - 130, 8), Math.max(window.innerWidth - 290, 8)),
+            top: Math.min(Math.max(commentComposer.screen.y + 16, 8), window.innerHeight - 190),
+          }}
+        >
+          <textarea
+            autoFocus
+            value={commentDraft}
+            onChange={(e) => setCommentDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setCommentComposer(null); setCommentDraft(""); }
+            }}
+            placeholder="Escribe tu comentario…"
+            maxLength={500}
+            rows={3}
+          />
+          <div className="editor-v2-comment-composer-actions">
+            <button type="button" className="editor-v2-comment-composer-cancel" onClick={() => { setCommentComposer(null); setCommentDraft(""); }}>Cancelar</button>
+            <button type="button" className="editor-v2-comment-composer-save" onClick={handleCommentSave} disabled={commentSaving || !commentDraft.trim()}>
+              {commentSaving ? "Guardando…" : "Guardar"}
+            </button>
+          </div>
         </div>
       )}
 

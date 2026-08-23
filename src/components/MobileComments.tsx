@@ -63,7 +63,12 @@ export function MobileComments({ templateId }: { templateId: string }): JSX.Elem
       const res = await fetch(`/api/comments-share/${encodeURIComponent(templateId)}`);
       const payload = await res.json();
       if (!res.ok || !payload.success || !payload.data) {
-        setLoadError(res.status === 404 ? "Este diseño no existe o ya no está compartido." : (payload.error || "No se pudo cargar el diseño."));
+        // The owner flipped the design to private (templates.is_public, v28).
+        if (payload?.code === "PRIVATE") {
+          setLoadError("Este diseño es privado. Pide a su autor que lo comparta para poder comentarlo.");
+        } else {
+          setLoadError(res.status === 404 ? "Este diseño no existe o ya no está compartido." : (payload.error || "No se pudo cargar el diseño."));
+        }
         return;
       }
       const data = payload.data as ShareData;

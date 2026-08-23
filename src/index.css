@@ -5024,3 +5024,123 @@ html, body, #root { height: 100%; width: 100%; }
   100% { opacity: 1; transform: none; }
 }
 @keyframes mh-grow { 0% { transform: scaleX(0); } 30% { transform: scaleX(1); } 100% { transform: scaleX(1); } }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE EDITOR — two-button bar (Mover / Comentar) + comments UI
+   ═══════════════════════════════════════════════════════════════ */
+
+/* On phones the editor only offers two tools: pan with a finger and
+   leave comments. The desktop drawing toolbar (which the tablet media
+   query re-docks as a bottom bar) disappears entirely. */
+@media (pointer: coarse), (max-width: 767px) {
+  .editor-v2-floating-toolbar {
+    display: none !important;
+  }
+}
+
+/* Mobile bottom bar — rendered by EditorV2 only when isMobile is true. */
+.editor-v2-mobile-bar {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  z-index: 60;
+  border-radius: 16px;
+  background: rgba(12,12,36,0.9);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+.editor-v2-mobile-bar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(255,255,255,0.65);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.editor-v2-mobile-bar-btn.active {
+  background: rgba(200,184,152,0.18);
+  color: #c8b898;
+}
+
+/* Composer popover — opened by double-tap / double-click / Comentar. */
+.editor-v2-comment-composer {
+  position: fixed;
+  z-index: 70;
+  width: 280px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(15,15,20,0.97);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.editor-v2-comment-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+.editor-v2-comment-composer textarea:focus {
+  border-color: rgba(200,184,152,0.5);
+}
+.editor-v2-comment-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.editor-v2-comment-composer-cancel,
+.editor-v2-comment-composer-save {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.editor-v2-comment-composer-cancel {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: #999;
+}
+.editor-v2-comment-composer-save {
+  border: none;
+  background: #c8b898;
+  color: #1a1a1a;
+}
+.editor-v2-comment-composer-save:disabled {
+  background: rgba(200,184,152,0.25);
+  color: #777;
+  cursor: not-allowed;
+}
+
+/* Row flash when a canvas pin is clicked (panel scrolls to it). */
+.editor-v2-comment-row-highlight {
+  animation: editor-comment-flash 1.2s ease-out;
+}
+@keyframes editor-comment-flash {
+  0%, 40% { background: rgba(245,158,11,0.22); border-color: rgba(245,158,11,0.5); }
+  100% { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
+}
