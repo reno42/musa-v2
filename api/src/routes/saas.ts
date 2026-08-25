@@ -91,10 +91,10 @@ accountRoutes.post("/bootstrap", async (req, res) => {
 });
 
 /** Columns added by supabase_migrations_v16.sql (+ onboarding_completed from the
- *  same family). Selected separately from the base ones so an un-migrated
- *  database still returns a usable profile instead of failing the whole
- *  request on an unknown column. */
-const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed";
+ *  same family) and v30 (NDA gate + locked access plan). Selected separately
+ *  from the base ones so an un-migrated database still returns a usable
+ *  profile instead of failing the whole request on an unknown column. */
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, nda_accepted_at, access_plan";
 const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
 
 /** True when the Supabase error indicates a missing column (migration not run).
@@ -134,6 +134,9 @@ accountRoutes.get("/me", async (req, res) => {
 accountRoutes.patch("/me", async (req, res) => {
   try {
     const sb = dbOrThrow();
+    // NDA fields (nda_accepted_at, access_plan) are deliberately NOT in this
+    // list: the plan is assigned once on the NDA wall and locked afterwards.
+    // They only change through POST /account/nda-acceptance.
     const allowed = ["display_name", "first_name", "last_name", "phone", "website", "brand_name"] as const;
     const patch: Record<string, string | null | boolean> = {};
     for (const field of allowed) {
@@ -195,6 +198,87 @@ accountRoutes.patch("/me", async (req, res) => {
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/** Version of the Alfa Access Agreement the API stamps on every acceptance.
+ *  Must match NDA_VERSION in src/lib/ndaContent.ts — bump both on a re-accept
+ *  cycle (v30 schema keeps one row per user via upsert). */
+const NDA_VERSION = "1.0";
+
+const ndaPlanSchema = z.enum(["friends_family", "corporate"]);
+
+/** Accept the Alfa Access Agreement (NDA wall): records the consent row and
+ *  unlocks the app for this account. Idempotent — once nda_accepted_at is set
+ *  a second call is a no-op that never rewrites the original acceptance. */
+accountRoutes.post("/nda-acceptance", async (req, res) => {
+  try {
+    const plan = ndaPlanSchema.parse(req.body?.plan);
+    const sb = dbOrThrow();
+    const { data: userResult, error: userError } = await sb.auth.admin.getUserById(req.auth!.userId);
+    if (userError || !userResult.user) return res.status(401).json({ success: false, error: "User session not found" });
+    const user = userResult.user;
+
+    const { data: profile, error: profileError } = await sb.from("user_profiles")
+      .select("nda_accepted_at")
+      .eq("id", req.auth!.userId)
+      .maybeSingle();
+    if (profileError && isMissingColumnError(profileError)) {
+      return res.status(409).json({
+        success: false,
+        error: "NDA_MIGRATION_REQUIRED",
+        detail: "Ejecuta supabase_migrations_v30.sql en el SQL editor de Supabase para habilitar el acuerdo de acceso.",
+      });
+    }
+    if (profileError) throw profileError;
+    if (profile?.nda_accepted_at) {
+      return res.json({ success: true, data: { alreadyAccepted: true } });
+    }
+
+    // Real connection data beats the client's guess: Netlify exposes the
+    // client IP in x-nf-client-connection-ip, proxies chain x-forwarded-for.
+    const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    const ip = (req.headers["x-nf-client-connection-ip"] as string) || forwardedFor || null;
+    const userAgent = (req.headers["user-agent"] as string) || null;
+
+    const { error: acceptanceError } = await sb.from("nda_acceptances").upsert({
+      user_id: req.auth!.userId,
+      full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "Sin nombre",
+      email: user.email?.toLowerCase() || null,
+      plan,
+      ip_address: ip,
+      user_agent: userAgent,
+      version: NDA_VERSION,
+    }, { onConflict: "user_id" });
+    if (acceptanceError) {
+      if (isMissingColumnError(acceptanceError)) {
+        return res.status(409).json({
+          success: false,
+          error: "NDA_MIGRATION_REQUIRED",
+          detail: "Ejecuta supabase_migrations_v30.sql en el SQL editor de Supabase para habilitar el acuerdo de acceso.",
+        });
+      }
+      throw acceptanceError;
+    }
+
+    const { error: updateError } = await sb.from("user_profiles")
+      .update({ nda_accepted_at: new Date().toISOString(), access_plan: plan })
+      .eq("id", req.auth!.userId);
+    if (updateError) {
+      if (isMissingColumnError(updateError)) {
+        return res.status(409).json({
+          success: false,
+          error: "NDA_MIGRATION_REQUIRED",
+          detail: "Ejecuta supabase_migrations_v30.sql en el SQL editor de Supabase para habilitar el acuerdo de acceso.",
+        });
+      }
+      throw updateError;
+    }
+
+    res.json({ success: true, data: { plan, acceptedAt: new Date().toISOString() } });
+  } catch (error: any) {
+    const status = error instanceof z.ZodError ? 400 : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 

@@ -26,6 +26,7 @@ import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap
 import { WorkspaceConsole } from "./WorkspaceConsole";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
+import { planOptions, type PlanId } from "../lib/ndaContent";
 
 interface Template {
   id: string;
@@ -336,6 +337,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [profileSaved, setProfileSaved] = useState<ProfileForm>(EMPTY_PROFILE);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
+  // Read-only NDA/plan state — assigned on the wall, never editable here.
+  const [accessPlan, setAccessPlan] = useState<PlanId>("friends_family");
+  const [ndaAcceptedAt, setNdaAcceptedAt] = useState<string | null>(null);
   const [members, setMembers] = useState<Array<{ id: string; email?: string; display_name?: string; role?: string; joinedAt?: string }>>([]);
   const profileDirty = JSON.stringify(profile) !== JSON.stringify(profileSaved);
 
@@ -350,6 +354,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       };
       setProfile(form);
       setProfileSaved(form);
+      setAccessPlan(d.access_plan === "corporate" ? "corporate" : "friends_family");
+      setNdaAcceptedAt(typeof d.nda_accepted_at === "string" ? d.nda_accepted_at : null);
     } catch { /* signed out or server without Supabase — card just stays empty */ }
   }, []);
 
@@ -1917,6 +1923,27 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   <span className="bento-row-label">Tokens (est.)</span>
                   <span className="bento-row-value">~{estimatedTokens.toLocaleString()}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Plan de acceso — asignado al aceptar el Acuerdo Alfa, no editable */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">🎟 Plan de acceso</div>
+              <div className="bento-row" style={{ alignItems: "center" }}>
+                <span className="bento-row-label">Plan</span>
+                <span className="bento-pill bento-pill--ok">
+                  {planOptions.find(o => o.value === accessPlan)?.label}
+                </span>
+              </div>
+              <div className="bento-sub">{planOptions.find(o => o.value === accessPlan)?.detail}</div>
+              <div className="bento-row">
+                <span className="bento-row-label">Acuerdo Alfa</span>
+                <span className="bento-row-value">
+                  {ndaAcceptedAt ? `Aceptado · ${new Date(ndaAcceptedAt).toLocaleDateString()}` : "Pendiente"}
+                </span>
+              </div>
+              <div className="bento-sub" style={{ fontSize: 10.5, opacity: 0.75 }}>
+                Se asignó al aceptar el Acuerdo de Acceso Alfa. Solo Futuraria puede cambiarlo.
               </div>
             </div>
 

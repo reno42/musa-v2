@@ -4,6 +4,7 @@ import { Dashboard } from "./components/Dashboard";
 import { EditorV2 } from "./pages/EditorV2";
 import { ChatFAB } from "./components/ChatFAB";
 import { MobileComments } from "./components/MobileComments";
+import { NdaAcceptance } from "./components/NdaAcceptance";
 import { MusaOnboarding } from "./components/MusaOnboarding";
 import { restartOnboarding } from "./components/OnboardingTour";
 import { useToast } from "./components/Toast";
@@ -100,6 +101,7 @@ function App(): JSX.Element {
     passwordRecovery,
     needsPasswordSetup,
     completePasswordRecovery,
+    signOut,
   } = useAuth();
   const [route, setRoute] = useState<AppRoute>(() => readAppRoute(window.location));
   const [state, dispatch] = useReducer(appReducer, route, stateForRoute);
@@ -107,20 +109,30 @@ function App(): JSX.Element {
   const { view, templateId } = state;
   // null = not yet checked, true = needs onboarding, false = already done
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
+  // null = not yet checked, true = NDA wall pending, false = accepted
+  const [ndaRequired, setNdaRequired] = useState<boolean | null>(null);
 
   // ── Check if this is a first-time user who needs Musa onboarding ──
+  // The same /account/me call resolves the NDA wall: an account without
+  // nda_accepted_at must accept the Alfa Access Agreement before any
+  // workspace/editor view renders.
   const checkOnboarding = useCallback(async () => {
-    if (!user) { setOnboardingNeeded(null); return; }
+    if (!user) { setOnboardingNeeded(null); setNdaRequired(null); return; }
     try {
       const res = await apiFetch<any>("/account/me");
       const d = res?.data;
+      // Wall only when the profile columns exist (v30 applied). Without
+      // the migration the gate stays open — no lockouts on stale DBs.
+      const ndaColumnsMissing = res?.profileFieldsAvailable === false;
+      setNdaRequired(Boolean(d) && !ndaColumnsMissing && d.nda_accepted_at == null);
       if (d && d.onboarding_completed === false) {
         setOnboardingNeeded(true);
       } else {
         setOnboardingNeeded(false);
       }
     } catch {
-      // Server error or not configured — skip onboarding silently
+      // Server error or not configured — skip both gates silently
+      setNdaRequired(false);
       setOnboardingNeeded(false);
     }
   }, [user]);
@@ -134,10 +146,22 @@ function App(): JSX.Element {
     }
   }, []);
 
+  const handleNdaAccepted = useCallback(() => {
+    // Acceptance is already persisted server-side; just drop the wall.
+    // Route state survives, so the user lands where they were going.
+    setNdaRequired(false);
+  }, []);
+
   const showLanding = () => {
     window.history.replaceState(null, "", "/");
     setRoute({ kind: "root" });
     dispatch({ type: "SET_VIEW", view: "landing" });
+  };
+
+  // Only way out of the NDA wall without accepting.
+  const handleNdaSignOut = async () => {
+    await signOut();
+    showLanding();
   };
 
   const enterWorkspace = () => {
@@ -316,6 +340,26 @@ function App(): JSX.Element {
         dispatch({ type: "ENTER_WORKSPACE" });
       }
     }} />;
+  }
+
+  // ── NDA wall: accounts without a recorded acceptance must accept the
+  //    Alfa Access Agreement before any workspace/editor view renders.
+  //    While the check is in flight keep the startup screen up so the
+  //    dashboard never flashes behind the wall.
+  if (authConfigured && user) {
+    if (ndaRequired === null) return <AppStartupScreen />;
+    if (ndaRequired) {
+      return (
+        <ErrorBoundary>
+          <NdaAcceptance
+            fullName={user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || ""}
+            email={user.email || ""}
+            onAccepted={handleNdaAccepted}
+            onSignOut={handleNdaSignOut}
+          />
+        </ErrorBoundary>
+      );
+    }
   }
 
   if (view === "booting") return <AppStartupScreen />;
