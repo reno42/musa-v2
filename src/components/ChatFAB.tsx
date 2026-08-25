@@ -109,17 +109,33 @@ const DEFAULT_ROLE_CONFIG: RoleConfigMap = {
   reviewer:     { provider: "deepseek", model: "deepseek-v4-pro" },
 };
 
+/** Fase 5 (model routing): leader y reviewer hacen trabajo liviano (delegar,
+ * verificar) — un modelo flash lo resuelve en una fracción del tiempo y costo
+ * del modelo que genera el diseño. Solo aplica cuando el usuario NO guardó
+ * configuración explícita del rol: una elección explícita siempre gana. */
+function computeDefaultRoleConfig(): RoleConfigMap {
+  const base = { ...DEFAULT_ROLE_CONFIG };
+  try {
+    if (localStorage.getItem(LS_PROVIDER_KEYS_PREFIX + "google")) {
+      base.leader = { provider: "google", model: "gemini-3.7-flash" };
+      base.reviewer = { provider: "google", model: "gemini-3.7-flash" };
+    }
+  } catch { /* localStorage unavailable — plain defaults */ }
+  return base;
+}
+
 /** Load role config from localStorage, migrating from old single-model keys. */
 function loadRoleConfig(): RoleConfigMap {
+  const adaptive = computeDefaultRoleConfig();
   try {
     const raw = localStorage.getItem(LS_ROLE_CONFIG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       // Ensure all three roles exist (forward-compat if we add roles later)
       return {
-        leader:      parsed.leader      || DEFAULT_ROLE_CONFIG.leader,
-        implementer: parsed.implementer || DEFAULT_ROLE_CONFIG.implementer,
-        reviewer:    parsed.reviewer    || DEFAULT_ROLE_CONFIG.reviewer,
+        leader:      parsed.leader      || adaptive.leader,
+        implementer: parsed.implementer || adaptive.implementer,
+        reviewer:    parsed.reviewer    || adaptive.reviewer,
       };
     }
     // ── Migration from old global keys ──
@@ -135,7 +151,7 @@ function loadRoleConfig(): RoleConfigMap {
       return migrated;
     }
   } catch { /* fall through to default */ }
-  return { ...DEFAULT_ROLE_CONFIG };
+  return adaptive;
 }
 
 /** Persist role config. */
@@ -298,6 +314,16 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
    - No puede editar. Solo verifica.
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
 7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
+
+FLUJO TURBO (creaciones simples — omite el reviewer LLM):
+- Aplica SOLO si TODAS: es UN diseño nuevo (sin templateId), la especificación está completa
+  (dimensiones, textos, estilo o free-style) y no hay nada que preguntarle al humano.
+- Tras el paso 3: si el resultado del implementer trae "verifiedTemplateIds" NO vacío y SIN
+  "verification_failed", la verificación determinista del sistema YA validó la entrega contra el
+  contrato (artefacto real con contenido). En ese caso NO delegues al reviewer: mueve la tarjeta
+  a "done" directamente y entrega el link. Esto ahorra una sesión LLM completa por diseño simple.
+- El reviewer LLM sigue SIENDO OBLIGATORIO para: ediciones de trabajo existente, multi-artifact
+  (2+ templates), tareas con estilo por nombre, o cualquier verificación fallida.
 
 REGLA ANTI-DUPLICACIÓN (CRÍTICA — el humano ya vio trabajo duplicado por esto):
 - NUNCA delegues el mismo taskId al implementer dos veces. Una vez que el implementer devuelve "done" (sin verification_failed), AVANZAS al paso 5 (reviewer). No re-delegas al implementer.
@@ -1076,6 +1102,17 @@ const CREATE_MODE_DROP_TOOLS = new Set([
   "list_frames", "get_frame_changes", "find_templates",
 ]);
 
+// Fase 3: resultados de solo-lectura que viajan en TODAS las rondas siguientes
+// del subagente. El tope genérico (32k chars ≈ 8k tokens) es presupuesto muerto
+// cuando el modelo solo necesita ids, nombres y estructura — 12k chars los
+// preserva completos y evita pagar el mismo bulto en cada ronda.
+const READ_ONLY_RESULT_TOOLS = new Set([
+  "get_template", "get_template_structure", "get_frame", "get_html_frames",
+  "list_frames", "list_templates", "find_templates",
+  "list_brand_guidelines", "get_brand_guideline", "get_brands", "get_active_styles",
+  "list_assets", "list_fonts", "list_all_texts",
+]);
+
 /** Convert OpenAI tool schema to Anthropic format */
 const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
   name: t.function.name,
@@ -1472,14 +1509,16 @@ async function spawnSubagent(params: {
 
     // Tool schemas and the system prompt are most of this request. Compact only
     // when the complete provider body approaches the model context budget.
-    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+    // Fase 3: 30k (antes 70k) — compactar tarde significa pagar varias rondas
+    // gigantes antes de recortar; el manifest preserva el estado del trabajo.
+    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000) {
       const beforeLen = subConv.length;
       let compacted = compactConversationAtomic(subConv, {
         maxMessages: 40,
         preserveFirstMessages: 1,
         manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
       }).messages;
-      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
+      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000) {
         compacted = compactConversationAtomic(compacted, {
           maxMessages: 24,
           preserveFirstMessages: 1,
@@ -1501,7 +1540,7 @@ async function spawnSubagent(params: {
               before: beforeLen,
               after: subConv.length,
               dropped,
-              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000 ? "still_over_budget" : "ok",
+              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000 ? "still_over_budget" : "ok",
             }),
           });
         } catch { /* best-effort */ }
@@ -1710,7 +1749,10 @@ async function spawnSubagent(params: {
         : payloadValidation && !payloadValidation.ok
           ? serializeValidJson({ error: payloadValidation.error, code: "invalid_design_payload", executed: false })
         : await executeToolCall(tc.name, tc.args, runSignal);
-      const resultStr = normalizeAgentToolResult(rawResult);
+      // Fase 3: tope reducido para herramientas de solo-lectura (ver
+      // READ_ONLY_RESULT_TOOLS) — serializeValidJson degrada strings largos
+      // (HTML/CSS) sin romper la estructura ni perder ids.
+      const resultStr = normalizeAgentToolResult(rawResult, READ_ONLY_RESULT_TOOLS.has(tc.name) ? 12_000 : 32_000);
       const toolFailed = tc.argsError || (payloadValidation !== null && !payloadValidation.ok) || resultStr.includes('"error"') || resultStr.includes('"code":-');
       if (!toolFailed) {
         if (["get_active_styles", "list_brand_guidelines", "get_brand_guideline", "get_brands"].includes(tc.name)) {

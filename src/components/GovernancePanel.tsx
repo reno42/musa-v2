@@ -225,6 +225,9 @@ export function GovernancePanel({ sessions, workspaceId, onClose }: {
           {mergedSessions.map((s) => {
             const sd = dataMap[s.sessionId];
             const isExpanded = expandedSession === s.sessionId;
+            // Fase 6: token totals for the session summary pills below.
+            const traceSumIn = sd?.traces.reduce((acc, t) => acc + (t.tokens?.input || 0), 0) ?? 0;
+            const traceSumOut = sd?.traces.reduce((acc, t) => acc + (t.tokens?.output || 0), 0) ?? 0;
             return (
               <div key={s.sessionId} style={{ marginBottom: 8, borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
                 {/* Session header */}
@@ -335,6 +338,15 @@ export function GovernancePanel({ sessions, workspaceId, onClose }: {
                         </>
                       )}
                     </div>
+
+                    {/* Fase 6: resumen de tokens de toda la sesión */}
+                    {sd && sd.traces.length > 0 && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                        <span style={{ ...pill, background: "rgba(52,211,153,0.1)", color: "#34d399" }}>Σ {fmtTokens(traceSumIn + traceSumOut)} tokens</span>
+                        <span style={{ ...pill, background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>{sd.traces.length} ronda{sd.traces.length !== 1 ? "s" : ""}</span>
+                        <span style={{ ...pill, background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>{fmtTokens(traceSumIn)} in / {fmtTokens(traceSumOut)} out</span>
+                      </div>
+                    )}
 
                     {/* Diagnostics first (if any) */}
                     {sd?.diagnostics.map((d, di) => (
