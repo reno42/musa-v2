@@ -22,12 +22,7 @@ export async function apiFetch<T = any>(url: string, options?: RequestInit): Pro
  * just read. The status stays on the front as a prefix; the reason follows.
  */
 async function failureMessage(res: Response): Promise<string> {
-  // Gateway failures (Netlify 502/503/504) answer with an HTML page and no
-  // JSON detail — the old bare "API error: 502" was impossible to trace
-  // after the fact. The x-nf-request-id header is the only key that finds
-  // the exact invocation in the Netlify Functions log, so keep it visible.
-  const nfId = res.headers?.get?.("x-nf-request-id");
-  const status = `API error: ${res.status}${nfId ? ` (nf:${nfId})` : ""}`;
+  const status = `API error: ${res.status}`;
   try {
     const text = await res.text();
     if (!text) return status;

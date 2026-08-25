@@ -109,34 +109,17 @@ const DEFAULT_ROLE_CONFIG: RoleConfigMap = {
   reviewer:     { provider: "deepseek", model: "deepseek-v4-pro" },
 };
 
-/** Fase 5 (model routing): el leader solo delega y coordina — un modelo
- * flash lo hace igual de bien en una fracción del tiempo/costo. El
- * implementer genera el diseño y el reviewer JUZGA estética con render:
- * ambos siguen en el modelo pesado por defecto (bajarlos a flash dejó pasar
- * diseños genéricos). Solo aplica cuando el usuario NO guardó configuración
- * explícita del rol: una elección explícita siempre gana. */
-function computeDefaultRoleConfig(): RoleConfigMap {
-  const base = { ...DEFAULT_ROLE_CONFIG };
-  try {
-    if (localStorage.getItem(LS_PROVIDER_KEYS_PREFIX + "google")) {
-      base.leader = { provider: "google", model: "gemini-3.7-flash" };
-    }
-  } catch { /* localStorage unavailable — plain defaults */ }
-  return base;
-}
-
 /** Load role config from localStorage, migrating from old single-model keys. */
 function loadRoleConfig(): RoleConfigMap {
-  const adaptive = computeDefaultRoleConfig();
   try {
     const raw = localStorage.getItem(LS_ROLE_CONFIG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       // Ensure all three roles exist (forward-compat if we add roles later)
       return {
-        leader:      parsed.leader      || adaptive.leader,
-        implementer: parsed.implementer || adaptive.implementer,
-        reviewer:    parsed.reviewer    || adaptive.reviewer,
+        leader:      parsed.leader      || DEFAULT_ROLE_CONFIG.leader,
+        implementer: parsed.implementer || DEFAULT_ROLE_CONFIG.implementer,
+        reviewer:    parsed.reviewer    || DEFAULT_ROLE_CONFIG.reviewer,
       };
     }
     // ── Migration from old global keys ──
@@ -152,7 +135,7 @@ function loadRoleConfig(): RoleConfigMap {
       return migrated;
     }
   } catch { /* fall through to default */ }
-  return adaptive;
+  return { ...DEFAULT_ROLE_CONFIG };
 }
 
 /** Persist role config. */
@@ -834,9 +817,7 @@ MODO A — Crear diseño nuevo (si el contexto dice "No se pasó templateId: est
     mencionar el ID real de cada uno de los templates que creaste (todos, no solo el primero).
 
 MODO B — Trabajar sobre un template existente (si el contexto incluye "templateId=..."):
-  PASO 1: Si el contexto trae un DOSSIER, el estado del template YA está inspeccionado — NO llames
-    get_template ni list_frames; usa el DOSSIER y pasa directo al PASO 2. Solo si NO hay DOSSIER,
-    llama get_template y list_frames para ver el estado actual.
+  PASO 1: Llama get_template con el templateId para ver el estado actual, y list_frames para ver qué frames ya existen.
   PASO 2: ¿La instrucción nombra un frame específico a editar (por nombre o descripción inequívoca)?
     SÍ → Llama set_html y/o set_css SOLO sobre ese frame.
       ⚠️ CRÍTICO: No borres contenido existente vigente. Solo aplica los cambios pedidos.
@@ -984,7 +965,9 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "transform_element", "group_elements", "align_elements",
   // ── Shapes & Paths ──
   "draw_shape", "draw_path", "draw_bezier",
+  "edit_path_points", "edit_path_point", "shape_to_path", "pathfinder",
   "set_stroke_style", "set_gradient", "set_blend_mode",
+  "outline_stroke", "offset_path",
   // ── Text ──
   "edit_text_content", "list_all_texts", "copy_style", "paste_style", "set_pseudo_state",
   // ── AI Generation ──
@@ -1010,21 +993,25 @@ const IMPLEMENTER_TOOL_NAMES = new Set([
   "vectorize_image", "generate_svg",
   // ── Format Adaptation ──
   "adapt_format", "adapt_all_formats",
-  // ── Fase 2 (optimización de tokens) ──
-  // Fuera del implementer (siguen en el catálogo MCP y en otros roles):
-  // export/render (9) — el reviewer verifica visualmente con render_*;
-  // import (4) + CSV/thumbnail (2) — flujos del editor UI y del batch Musa;
-  // recipes (4) — feature de usuario, no de subagente;
-  // versioning (2) — el reviewer audita con list_versions/diff_versions;
-  // edición avanzada de paths (6) — draw_* cubre la creación decorativa.
-  // Cada schema ausente son ~150 tokens menos que se re-envían en CADA
-  // ronda del loop del implementer (antes: 29 schemas muertas).
+  // ── Export / Render ──
+  "export_template", "export_frame", "export_batch", "export_pdf",
+  "copy_as", "render_batch", "render_html_template", "render_to_formats", "batch_render_html",
+  // ── Import ──
+  "import_template", "import_design", "import_svg", "assemble_template",
+  // ── Batch / CSV ──
+  "apply_csv_to_frames", "update_thumbnail",
+  // ── Recipes ──
+  "save_recipe", "list_recipes", "get_recipe", "create_from_recipe",
+  // ── Versioning ──
+  "save_version", "restore_version",
   // ── Inspection (for Mode B: modify existing) ──
   "get_template", "get_template_structure", "find_templates", "get_frame_changes",
   // ── Design Tokens ──
   "export_design_tokens",
   // ── Harness ──
   "harness_submit_for_review", "harness_log_entry", "harness_dump_context", "harness_report_error",
+  // ── Collaboration ──
+  "claim_section", "release_section",
   // ── Utilities ──
   "color_picker", "skill_clone", "get_file_meta", "set_file_meta",
   "get_playbook", "get_agent_guide",
@@ -1083,28 +1070,6 @@ const REVIEWER_TOOL_NAMES = new Set([
 const LEADER_TOOLS = HARNESS_TOOLS.filter(t => LEADER_TOOL_NAMES.has(t.function.name));
 const IMPLEMENTER_TOOLS = HARNESS_TOOLS.filter(t => IMPLEMENTER_TOOL_NAMES.has(t.function.name));
 const REVIEWER_TOOLS = HARNESS_TOOLS.filter(t => REVIEWER_TOOL_NAMES.has(t.function.name));
-
-// Fase 2: en creación pura (Modo A — sin templateId) la inspección es trabajo
-// del Leader (bootstrap + verificación post-delegación), así que estas schemas
-// no viajan en cada ronda del implementer. get_template queda disponible para
-// la cascada de estilos del PASO 0 (extraer estilo de un template homónimo).
-const CREATE_MODE_DROP_TOOLS = new Set([
-  "get_template_structure", "get_frame", "get_html_frames",
-  "list_frames", "get_frame_changes", "find_templates",
-]);
-
-// Fase 3: SOLO listados de orientación — el modelo necesita ids, nombres y
-// estructura, no payloads completos, y esos listados viajan en TODAS las
-// rondas siguientes del subagente (ahí está el ahorro). Las tools que
-// devuelven HTML/CSS real usado para crear (get_template, get_frame,
-// get_html_frames y get_brand_guideline con su sharedCss/tokensJson) quedan
-// FUERA: degradarlas a 12k dejó al implementer diseñando con tokens
-// truncados (bug del diseño blanco/genérico) — conservan el tope de 32k.
-const READ_ONLY_RESULT_TOOLS = new Set([
-  "get_template_structure", "list_frames", "list_templates", "find_templates",
-  "list_brand_guidelines", "get_brands", "get_active_styles",
-  "list_assets", "list_fonts", "list_all_texts",
-]);
 
 /** Convert OpenAI tool schema to Anthropic format */
 const toolsForAnthropic = (tools = HARNESS_TOOLS) => tools.map(t => ({
@@ -1229,27 +1194,6 @@ async function spawnSubagent(params: {
   // and it wasn't undoable (MCP edits don't go through the editor's local
   // undo stack). templateId only travels here when the Leader explicitly
   // decided to pass it — that's its one signal for "yes, edit THIS".
-  // ── Fase 1 (optimización de tokens): dossier determinista ──
-  // En Modo B el PASO 1 hacía gastar al implementer 2-4 rondas completas de
-  // LLM en get_template + list_frames para redescubrir lo que el Leader ya
-  // sabía. Dos lecturas MCP baratas (<2s, cero tokens de LLM) inyectan ese
-  // estado como DOSSIER y el prompt del Modo B salta directo al PASO 2.
-  let dossier = "";
-  if (params.role === "implementer" && params.templateId) {
-    const [framesRes, cssVarsRes] = await Promise.all([
-      mcpCall("list_frames", { templateId: params.templateId }).catch(() => null),
-      mcpCall("get_css_variables", { templateId: params.templateId }).catch(() => null),
-    ]);
-    if (framesRes && Array.isArray(framesRes.frames)) {
-      const lines: string[] = [`frames existentes: ${framesRes.frames.length}`];
-      for (const f of framesRes.frames.slice(0, 40)) {
-        lines.push(`  - ${f?.id} "${f?.name ?? "sin nombre"}" ${f?.width ?? "?"}x${f?.height ?? "?"}${f?.visible === false ? " [oculto]" : ""}`);
-      }
-      const vars: any[] = Array.isArray(cssVarsRes?.variables) ? cssVarsRes.variables : [];
-      if (vars.length > 0) lines.push(`variables CSS: ${vars.slice(0, 25).map(v => `${v.name}=${v.value}`).join(", ")}`);
-      dossier = `[DOSSIER — el sistema YA inspeccionó el template ${params.templateId}; NO llames get_template ni list_frames de nuevo, usa estos datos y continúa en el PASO 2:\n${lines.join("\n").slice(0, 2500)}]`;
-    }
-  }
   const contextNote = [
     currentContext.workspaceId ? `[Contexto: workspaceId=${currentContext.workspaceId}]` : "",
     params.templateId
@@ -1257,7 +1201,6 @@ async function spawnSubagent(params: {
       : `[No se pasó templateId: esto es un diseño NUEVO. Crea un template nuevo — nunca reutilices ni modifiques uno existente.]`,
     params.templateIds?.length ? `[Artifacts a verificar: ${params.templateIds.join(", ")}]` : "",
     params.contract ? `[Contrato verificable: ${serializeValidJson(params.contract, 4000)}]` : "",
-    dossier,
   ].filter(Boolean).join("\n");
   const instruction = `${params.instruction}\n\n${contextNote}`;
 
@@ -1296,12 +1239,7 @@ async function spawnSubagent(params: {
     systemPrompt = IMPLEMENTER_PROMPT
       .replace("{SESSION_ID}", sessionId)
       .replace("{TASK_CONTEXT}", taskContext);
-    // Fase 2: en creación pura (Modo A — sin templateId) la inspección es
-    // trabajo del Leader (bootstrap + verificación post-delegación), así que
-    // esas schemas no viajan en cada ronda.
-    tools = params.templateId
-      ? IMPLEMENTER_TOOLS
-      : IMPLEMENTER_TOOLS.filter(t => !CREATE_MODE_DROP_TOOLS.has(t.function.name));
+    tools = IMPLEMENTER_TOOLS;
   } else {
     systemPrompt = REVIEWER_PROMPT.replace("{TASK_CONTEXT}", taskContext);
     tools = REVIEWER_TOOLS;
@@ -1502,16 +1440,14 @@ async function spawnSubagent(params: {
 
     // Tool schemas and the system prompt are most of this request. Compact only
     // when the complete provider body approaches the model context budget.
-    // Fase 3: 30k (antes 70k) — compactar tarde significa pagar varias rondas
-    // gigantes antes de recortar; el manifest preserva el estado del trabajo.
-    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000) {
+    if (estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
       const beforeLen = subConv.length;
       let compacted = compactConversationAtomic(subConv, {
         maxMessages: 40,
         preserveFirstMessages: 1,
         manifest: buildWorkManifest(params.contract || {}, capturedTemplateIds, createdFrameCount(), styleEvidence),
       }).messages;
-      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000) {
+      if (estimateFullRequestTokens(systemPrompt, compacted, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000) {
         compacted = compactConversationAtomic(compacted, {
           maxMessages: 24,
           preserveFirstMessages: 1,
@@ -1533,7 +1469,7 @@ async function spawnSubagent(params: {
               before: beforeLen,
               after: subConv.length,
               dropped,
-              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 30_000 ? "still_over_budget" : "ok",
+              reason: estimateFullRequestTokens(systemPrompt, subConv, isAnthropic ? toolsForAnthropic(tools) : tools) > 70_000 ? "still_over_budget" : "ok",
             }),
           });
         } catch { /* best-effort */ }
@@ -1742,10 +1678,7 @@ async function spawnSubagent(params: {
         : payloadValidation && !payloadValidation.ok
           ? serializeValidJson({ error: payloadValidation.error, code: "invalid_design_payload", executed: false })
         : await executeToolCall(tc.name, tc.args, runSignal);
-      // Fase 3: tope reducido para herramientas de solo-lectura (ver
-      // READ_ONLY_RESULT_TOOLS) — serializeValidJson degrada strings largos
-      // (HTML/CSS) sin romper la estructura ni perder ids.
-      const resultStr = normalizeAgentToolResult(rawResult, READ_ONLY_RESULT_TOOLS.has(tc.name) ? 12_000 : 32_000);
+      const resultStr = normalizeAgentToolResult(rawResult);
       const toolFailed = tc.argsError || (payloadValidation !== null && !payloadValidation.ok) || resultStr.includes('"error"') || resultStr.includes('"code":-');
       if (!toolFailed) {
         if (["get_active_styles", "list_brand_guidelines", "get_brand_guideline", "get_brands"].includes(tc.name)) {
