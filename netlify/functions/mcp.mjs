@@ -2506,7 +2506,7 @@ const MCP_TOOLS = [
         width: { type: "number", description: "Target width in px (default: image aspect ratio, fallback 1080)" },
         height: { type: "number", description: "Target height in px (default: image aspect ratio, fallback 1080)" },
         geminiApiKey: { type: "string", description: "Optional GOOGLE GEMINI API key to use for this call (takes precedence over the server's). This is NOT the chat's LLM key — a DeepSeek/OpenAI key will not work against Gemini's endpoint." },
-        geminiModel: { type: "string", description: "Optional Gemini model ID (default: gemini-2.5-flash). The old gemini-2.0-flash is deprecated — pass a current model like gemini-2.5-flash or gemini-2.5-pro." },
+        geminiModel: { type: "string", description: "Optional Gemini model ID (default: gemini-3.7-flash). Vision-capable text models only — image-generation models (Nano Banana) cannot write code." },
       },
       required: ["templateId", "imageBase64"],
     },
@@ -8201,7 +8201,7 @@ async function handleMethod(method, params, userId, auth) {
       if (aiKey) {
         try {
           const isGemini = !!process.env.GEMINI_API_KEY;
-          const geminiModel = params.model || "gemini-2.5-flash";
+          const geminiModel = params.model || "gemini-3.7-flash";
           const endpoint = isGemini
             ? `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${aiKey}`
             : "https://api.openai.com/v1/chat/completions";
@@ -8284,9 +8284,10 @@ async function handleMethod(method, params, userId, auth) {
       const targetW = params.width || 1080;
       const targetH = params.height || 1080;
 
-      // Call Gemini Vision API — model is configurable (default: gemini-2.5-flash).
-      // The old gemini-2.0-flash is deprecated and returns 404.
-      const geminiModel = params.geminiModel || "gemini-2.5-flash";
+      // Call Gemini Vision API — model is configurable (default: gemini-3.7-flash).
+      // Vision text models reproduce the design as HTML/CSS; image-generation
+      // models (Nano Banana family) can't do this job.
+      const geminiModel = params.geminiModel || "gemini-3.7-flash";
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
       const systemPrompt = `You are a design-to-code converter. Analyze this image carefully and reproduce it as a self-contained HTML document with embedded CSS inside a <style> tag. Rules:
 - Match colors, typography, layout, spacing, and visual hierarchy exactly.

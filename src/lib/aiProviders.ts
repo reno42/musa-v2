@@ -31,10 +31,16 @@ export const AI_PROVIDERS: AIProvider[] = [
     modelSlot: "futuraria-gemini-model",
     vision: true,
     models: [
-      "gemini-2.5-flash",
+      "gemini-3.7-flash",
+      "gemini-3.1-pro-preview",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-3-flash-preview",
       "gemini-2.5-pro",
+      "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
-      "gemini-2.0-flash",
     ],
   },
   {
@@ -129,6 +135,15 @@ export interface ChatProviderCompat {
 }
 
 export const CHAT_PROVIDERS: ChatProviderCompat[] = [
+  {
+    id: "google",
+    label: "Google Gemini",
+    // Google exposes an OpenAI-compatible surface, so the chat's generic
+    // Bearer + messages/tools path works unchanged. Native-only models
+    // (image/audio generation, embeddings, robotics) are not listed — the
+    // chat needs text/vision models that answer with code and text.
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  },
   { id: "openai", label: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions" },
   { id: "anthropic", label: "Anthropic", endpoint: "https://api.anthropic.com/v1/messages" },
   { id: "deepseek", label: "DeepSeek", endpoint: "https://api.deepseek.com/v1/chat/completions" },
