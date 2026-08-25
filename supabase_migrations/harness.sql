@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS harness_entries (
   agent_name      TEXT NOT NULL,
   role            TEXT NOT NULL,
   entry_type      TEXT NOT NULL CHECK (entry_type IN
-                    ('plan','progress','blocker','review','verdict','summary','exploration','context_dump')),
+                    ('plan','progress','blocker','review','verdict','summary','exploration','context_dump','diagnostic','subagent_trace')),
   content         TEXT NOT NULL,
   files_touched   TEXT[] DEFAULT '{}',
   verdict         TEXT,
