@@ -109,16 +109,17 @@ const DEFAULT_ROLE_CONFIG: RoleConfigMap = {
   reviewer:     { provider: "deepseek", model: "deepseek-v4-pro" },
 };
 
-/** Fase 5 (model routing): leader y reviewer hacen trabajo liviano (delegar,
- * verificar) — un modelo flash lo resuelve en una fracción del tiempo y costo
- * del modelo que genera el diseño. Solo aplica cuando el usuario NO guardó
- * configuración explícita del rol: una elección explícita siempre gana. */
+/** Fase 5 (model routing): el leader solo delega y coordina — un modelo
+ * flash lo hace igual de bien en una fracción del tiempo/costo. El
+ * implementer genera el diseño y el reviewer JUZGA estética con render:
+ * ambos siguen en el modelo pesado por defecto (bajarlos a flash dejó pasar
+ * diseños genéricos). Solo aplica cuando el usuario NO guardó configuración
+ * explícita del rol: una elección explícita siempre gana. */
 function computeDefaultRoleConfig(): RoleConfigMap {
   const base = { ...DEFAULT_ROLE_CONFIG };
   try {
     if (localStorage.getItem(LS_PROVIDER_KEYS_PREFIX + "google")) {
       base.leader = { provider: "google", model: "gemini-3.7-flash" };
-      base.reviewer = { provider: "google", model: "gemini-3.7-flash" };
     }
   } catch { /* localStorage unavailable — plain defaults */ }
   return base;
@@ -314,16 +315,6 @@ FLUJO OBLIGATORIO (NO TE LO SALTES):
    - No puede editar. Solo verifica.
 6. Si el reviewer devuelve "APPROVED" → harness_complete_feature → studio_move_card → "done" → comparte link
 7. Si el reviewer devuelve "CHANGES_REQUESTED" → studio_move_card → "feedback" → re-delega al implementer con las notas
-
-FLUJO TURBO (creaciones simples — omite el reviewer LLM):
-- Aplica SOLO si TODAS: es UN diseño nuevo (sin templateId), la especificación está completa
-  (dimensiones, textos, estilo o free-style) y no hay nada que preguntarle al humano.
-- Tras el paso 3: si el resultado del implementer trae "verifiedTemplateIds" NO vacío y SIN
-  "verification_failed", la verificación determinista del sistema YA validó la entrega contra el
-  contrato (artefacto real con contenido). En ese caso NO delegues al reviewer: mueve la tarjeta
-  a "done" directamente y entrega el link. Esto ahorra una sesión LLM completa por diseño simple.
-- El reviewer LLM sigue SIENDO OBLIGATORIO para: ediciones de trabajo existente, multi-artifact
-  (2+ templates), tareas con estilo por nombre, o cualquier verificación fallida.
 
 REGLA ANTI-DUPLICACIÓN (CRÍTICA — el humano ya vio trabajo duplicado por esto):
 - NUNCA delegues el mismo taskId al implementer dos veces. Una vez que el implementer devuelve "done" (sin verification_failed), AVANZAS al paso 5 (reviewer). No re-delegas al implementer.
@@ -1102,14 +1093,16 @@ const CREATE_MODE_DROP_TOOLS = new Set([
   "list_frames", "get_frame_changes", "find_templates",
 ]);
 
-// Fase 3: resultados de solo-lectura que viajan en TODAS las rondas siguientes
-// del subagente. El tope genérico (32k chars ≈ 8k tokens) es presupuesto muerto
-// cuando el modelo solo necesita ids, nombres y estructura — 12k chars los
-// preserva completos y evita pagar el mismo bulto en cada ronda.
+// Fase 3: SOLO listados de orientación — el modelo necesita ids, nombres y
+// estructura, no payloads completos, y esos listados viajan en TODAS las
+// rondas siguientes del subagente (ahí está el ahorro). Las tools que
+// devuelven HTML/CSS real usado para crear (get_template, get_frame,
+// get_html_frames y get_brand_guideline con su sharedCss/tokensJson) quedan
+// FUERA: degradarlas a 12k dejó al implementer diseñando con tokens
+// truncados (bug del diseño blanco/genérico) — conservan el tope de 32k.
 const READ_ONLY_RESULT_TOOLS = new Set([
-  "get_template", "get_template_structure", "get_frame", "get_html_frames",
-  "list_frames", "list_templates", "find_templates",
-  "list_brand_guidelines", "get_brand_guideline", "get_brands", "get_active_styles",
+  "get_template_structure", "list_frames", "list_templates", "find_templates",
+  "list_brand_guidelines", "get_brands", "get_active_styles",
   "list_assets", "list_fonts", "list_all_texts",
 ]);
 
