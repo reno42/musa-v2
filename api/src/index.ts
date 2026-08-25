@@ -52,13 +52,24 @@ app.use("/api/recipes/:resourceId", requireResourceAccess("recipes"));
 app.use("/api/meta/:templateId", requireTemplateAccess);
 
 // Local development bridge for the same MCP handler used by Netlify.
+// mcpHandler is untyped .mjs — this mirrors the Netlify lambda event fields
+// it reads: headers + queryStringParameters (REQ-011 key fallback).
+type McpBridgeEvent = {
+  httpMethod: string;
+  headers: Record<string, string>;
+  queryStringParameters?: Record<string, string>;
+  body: string;
+};
 app.post("/mcp", async (req, res) => {
   try {
     const result = await mcpHandler({
       httpMethod: "POST",
       headers: Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(",") : value || ""])),
+      // REQ-011: sin esto la key por query string solo funciona en Netlify —
+      // el bridge Express local la descartaba.
+      queryStringParameters: req.query as Record<string, string>,
       body: JSON.stringify(req.body),
-    });
+    } as McpBridgeEvent);
     for (const [name, value] of Object.entries(result.headers || {})) res.setHeader(name, String(value));
     res.status(result.statusCode || 200).send(result.body || "");
   } catch (error: any) {

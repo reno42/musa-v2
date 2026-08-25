@@ -3807,7 +3807,7 @@ const MCP_TOOLS = [
   },
   {
     name: "verify_api_key",
-    description: "PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header.",
+    description: "PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header. Clients that cannot send headers (e.g. Claude Connectors) can append ?key=YOUR_KEY to the MCP URL instead — the server reads both.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4436,9 +4436,23 @@ const MCP_TOOLS = [
   },
 ];
 
+// REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
+// puede mandar headers arbitrarios, así que la key también se acepta por query
+// string como FALLBACK. El header x-api-key mantiene prioridad.
+// NOTA: '?key=' NO es parte del estándar MCP — la spec define OAuth 2.1
+// (opcional) como único mecanismo. Esto es un workaround pragmático, no la
+// solución definitiva; si el cliente real descarta el query string entre
+// llamadas, el plan B es key por ruta (/mcp/<key> vía redirect) o OAuth.
+function getApiKey(event) {
+  const headers = event.headers || {};
+  if (headers["x-api-key"]) return headers["x-api-key"];
+  const qs = event.queryStringParameters || {};
+  return qs["x-api-key"] || qs.key || qs.api_key || qs.token || "";
+}
+
 function getUserId(event) {
   const headers = event.headers || {};
-  const apiKey = headers["x-api-key"];
+  const apiKey = getApiKey(event);
   const bearer = (headers["authorization"] || "").replace("Bearer ", "");
 
   // If Supabase is configured and token looks like a JWT, try to verify it
@@ -4597,7 +4611,7 @@ async function isPlatformManager(auth, userId) {
 async function checkAuth(event) {
   const adminKey = process.env.MCP_ADMIN_KEY;
   const headers = event.headers || {};
-  const apiKey = headers["x-api-key"] || "";
+  const apiKey = getApiKey(event);
   const bearer = (headers.authorization || "").replace(/^Bearer\s+/i, "");
   const sb = getSupabaseAdmin();
 
@@ -14844,11 +14858,11 @@ export const handler = async (event) => {
         _agentGuide: {
           message: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools. Before you start, follow the 3-step onboarding below.",
           auth: {
-            required: "tools/call requires x-api-key header on every POST request. initialize + tools/list are public (no auth).",
-            how_to_send: "Include header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If using an MCP client (Cursor, Claude, etc.), configure it in the MCP server settings under 'headers': { 'x-api-key': 'YOUR_KEY' }.",
+            required: "tools/call requires the API key on every POST request — via x-api-key header OR ?key=YOUR_KEY in the URL. initialize + tools/list are public (no auth).",
+            how_to_send: "Preferred: header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If your client cannot send custom headers (Claude web/desktop 'Conectores', some mobile clients), connect with the URL form instead: https://design.futuraria.com/mcp?key=YOUR_KEY — the server also accepts ?api_key=, ?token= and ?x-api-key=. NOTE: query-string auth is a pragmatic extension, not part of the MCP spec (the standard path is OAuth 2.1, optional).",
             create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
             key_persistence: "API keys are PERMANENT — they never expire. Once you have a key, save it in your config permanently. Do NOT create a new key each session.",
-            troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json.",
+            troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. (3) For clients without header support (Claude Connectors): connect with URL /mcp?key=YOUR_KEY — WARNING: if that client drops the query string between calls, auth fails with 401 even with a valid key; verify_api_key still confirms whether the key itself is fine.",
             public_tools_no_auth: "get_agent_guide, get_playbook, and verify_api_key are public (no auth required).",
           },
           step1_discover: "Call tools/list to see all available tools.",
