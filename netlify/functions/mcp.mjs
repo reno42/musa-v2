@@ -13657,39 +13657,20 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       }
 
       const entryId = "he_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-      // The DB CHECK (pre-v29) only admits the 8 base entry types. The chat
-      // runtime also emits "diagnostic" and "subagent_trace" telemetry —
-      // migration v29 widens the constraint. Until it lands (and forever, as
-      // a guard against future stray types), fall back to the closest base
-      // type so harness_log_entry NEVER fails — it once spammed the browser
-      // console and the governance panel silently lost those rows.
-      const BASE_ENTRY_TYPES = new Set(["plan", "progress", "blocker", "review", "verdict", "summary", "exploration", "context_dump"]);
-      const EXT_ENTRY_TYPES = new Set(["diagnostic", "subagent_trace"]);
-      let entryType = typeof params.entryType === "string" ? params.entryType : "progress";
-      if (!BASE_ENTRY_TYPES.has(entryType) && !EXT_ENTRY_TYPES.has(entryType)) entryType = "progress";
       const newEntry = {
         id: entryId,
         account_id: sess.account_id || accountId,
         session_id: params.sessionId,
         agent_name: sess.agent_name || "unknown",
         role: sess.role,
-        entry_type: entryType,
+        entry_type: params.entryType,
         content: params.content,
         files_touched: params.filesTouched || [],
         verdict: params.verdict || null,
         prompt_used: params.promptUsed || null,
         prompt_outcome: params.promptOutcome || null,
       };
-      let { data: entry, error } = await sb.from("harness_entries").insert(newEntry).select().single();
-      if (error && /entry_type_check/.test(error.message || "") && EXT_ENTRY_TYPES.has(entryType)) {
-        // DB predates v29: retry under the legacy type, tagging the original
-        // so the governance panel still shows what kind of entry it was.
-        ({ data: entry, error } = await sb.from("harness_entries").insert({
-          ...newEntry,
-          entry_type: "progress",
-          content: "[" + entryType + "] " + (typeof params.content === "string" ? params.content : JSON.stringify(params.content)),
-        }).select().single());
-      }
+      const { data: entry, error } = await sb.from("harness_entries").insert(newEntry).select().single();
       if (error) throw { code: -32000, message: "Log entry failed: " + error.message };
       return { success: true, entry, entryId };
     }

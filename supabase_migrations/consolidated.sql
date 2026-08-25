@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS harness_entries (
   session_id      TEXT REFERENCES harness_sessions(id) ON DELETE CASCADE,
   agent_name      TEXT NOT NULL,
   role            TEXT NOT NULL,
-  entry_type      TEXT NOT NULL CHECK (entry_type IN ('plan','progress','blocker','review','verdict','summary','exploration','context_dump','diagnostic','subagent_trace')),
+  entry_type      TEXT NOT NULL CHECK (entry_type IN ('plan','progress','blocker','review','verdict','summary','exploration','context_dump')),
   content         TEXT NOT NULL,
   files_touched   TEXT[] DEFAULT '{}',
   verdict         TEXT,
