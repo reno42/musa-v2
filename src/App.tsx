@@ -118,23 +118,32 @@ function App(): JSX.Element {
   // workspace/editor view renders.
   const checkOnboarding = useCallback(async () => {
     if (!user) { setOnboardingNeeded(null); setNdaRequired(null); return; }
-    try {
-      const res = await apiFetch<any>("/account/me");
-      const d = res?.data;
-      // Wall only when the profile columns exist (v30 applied). Without
-      // the migration the gate stays open — no lockouts on stale DBs.
-      const ndaColumnsMissing = res?.profileFieldsAvailable === false;
-      setNdaRequired(Boolean(d) && !ndaColumnsMissing && d.nda_accepted_at == null);
-      if (d && d.onboarding_completed === false) {
-        setOnboardingNeeded(true);
-      } else {
-        setOnboardingNeeded(false);
+    // The shared apiFetch (lib/supabase) has an EMPTY base — unlike
+    // Dashboard's local helper, the /api prefix must be part of the path.
+    // A brand-new signup can also race /account/bootstrap (profile row not
+    // created yet → data: null), so retry briefly before deciding.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await apiFetch<any>("/api/account/me");
+        const d = res?.data;
+        if (d) {
+          // Wall only when the profile columns exist (v30 applied). Without
+          // the migration the gate stays open — no lockouts on stale DBs.
+          const ndaColumnsMissing = res?.profileFieldsAvailable === false;
+          setNdaRequired(!ndaColumnsMissing && d.nda_accepted_at == null);
+          setOnboardingNeeded(d.onboarding_completed === false);
+          return;
+        }
+      } catch {
+        // Network/server error — retry, then fall through to the default below.
       }
-    } catch {
-      // Server error or not configured — skip both gates silently
-      setNdaRequired(false);
-      setOnboardingNeeded(false);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
     }
+    // Account state unverifiable: keep the protective wall up ("no
+    // acceptance → no platform") and skip the onboarding modal so a broken
+    // check never stacks two blockers. The wall surfaces API errors itself.
+    setNdaRequired(true);
+    setOnboardingNeeded(false);
   }, [user]);
 
   useEffect(() => { void checkOnboarding(); }, [checkOnboarding]);

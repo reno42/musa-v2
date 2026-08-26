@@ -64,7 +64,7 @@ export function MusaOnboarding({ onComplete }: Props) {
   const saveProfile = useCallback(async (patch: Record<string, unknown>) => {
     setSaving(true);
     try {
-      await apiFetch("/account/me", {
+      await apiFetch("/api/account/me", {
         method: "PATCH",
         body: JSON.stringify(patch),
       });

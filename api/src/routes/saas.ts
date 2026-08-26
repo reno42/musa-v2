@@ -261,9 +261,11 @@ accountRoutes.post("/nda-acceptance", async (req, res) => {
       throw acceptanceError;
     }
 
+    // Upsert (not update): a signup that accepts the wall before
+    // /account/bootstrap lands would otherwise update zero rows and the
+    // wall would reappear on the next reload.
     const { error: updateError } = await sb.from("user_profiles")
-      .update({ nda_accepted_at: new Date().toISOString(), access_plan: plan })
-      .eq("id", req.auth!.userId);
+      .upsert({ id: req.auth!.userId, nda_accepted_at: new Date().toISOString(), access_plan: plan });
     if (updateError) {
       if (isMissingColumnError(updateError)) {
         return res.status(409).json({

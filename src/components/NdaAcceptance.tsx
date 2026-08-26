@@ -86,7 +86,7 @@ export function NdaAcceptance({ fullName, email, onAccepted, onSignOut }: NdaAcc
     setStatus("loading");
     setError("");
     try {
-      const result = await apiFetch<{ data?: { acceptedAt?: string } }>("/account/nda-acceptance", {
+      const result = await apiFetch<{ data?: { acceptedAt?: string } }>("/api/account/nda-acceptance", {
         method: "POST",
         body: JSON.stringify({ plan }),
       });
