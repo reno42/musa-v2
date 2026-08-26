@@ -426,6 +426,64 @@ function hslToRgb(h, s, l) {
   return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
 }
 
+// ═══════════════════════════════════════════════════════════
+// CSS CUSTOM PROPERTY RESOLUTION (REQ-013)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Collect custom property definitions (--name: value) from parsed rules.
+ * Pure: same rules in → same map out. Last definition wins, matching the
+ * cascade for equal-specificity declarations in a flat per-frame sheet.
+ * NOTE: parseCss lowercases property names; lookupProp compensates with a
+ * deterministic case-insensitive fallback so --DS-Color still resolves.
+ */
+function buildCustomProps(rules) {
+  var map = {};
+  rules.forEach(function (r) {
+    if (r.property && r.property.indexOf("--") === 0) {
+      map[r.property] = r.value;
+    }
+  });
+  return map;
+}
+
+function lookupProp(map, name) {
+  if (Object.prototype.hasOwnProperty.call(map, name)) return map[name];
+  var lower = name.toLowerCase();
+  for (var k in map) {
+    if (Object.prototype.hasOwnProperty.call(map, k) && k.toLowerCase() === lower) return map[k];
+  }
+  return undefined;
+}
+
+var VAR_RE = /var\(\s*(--[\w-]+)\s*(?:,\s*([^)]*?))?\s*\)/g;
+
+/**
+ * Resolve var(--x) / var(--x, fallback) references against a custom-props map.
+ * Iterative with guards (10 passes) so reference chains and cycles terminate
+ * deterministically. Unknown vars keep the fallback when present, otherwise
+ * the literal var() text — nothing silently disappears.
+ * Known limit (REQ-013): a fallback containing nested var() stops at the
+ * first closing paren.
+ */
+function resolveVarValue(value, map) {
+  if (!value || value.indexOf("var(") === -1) return value;
+  var out = value;
+  var guard = 0;
+  while (guard < 10) {
+    var changed = false;
+    out = out.replace(VAR_RE, function (match, name, fallback) {
+      var resolved = lookupProp(map, name);
+      if (resolved === undefined) resolved = (fallback !== undefined && fallback !== "") ? fallback : match;
+      if (resolved !== match) changed = true;
+      return resolved;
+    });
+    if (!changed) break;
+    guard++;
+  }
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN EXTRACTION FUNCTION
 // ═══════════════════════════════════════════════════════════════
@@ -446,10 +504,20 @@ export function extractDesignSystem(frames) {
   for (var i = 0; i < frames.length; i++) {
     var f = frames[i];
     var parsed = parseCss(f.css || "");
-    allRules.push.apply(allRules, parsed.rules);
+    // REQ-013 — resolve var() references BEFORE extraction, scoped per frame
+    // (each frame is an independent document; a global map could cross-wire
+    // same-named custom properties between frames). No var() present → the
+    // map pass is skipped and rules flow through untouched (fingerprint stable).
+    var customProps = buildCustomProps(parsed.rules);
+    var frameRules = Object.keys(customProps).length
+      ? parsed.rules.map(function (r) {
+          return { selector: r.selector, property: r.property, value: resolveVarValue(r.value, customProps) };
+        })
+      : parsed.rules;
+    allRules.push.apply(allRules, frameRules);
     allAtRules.push.apply(allAtRules, parsed.atRules);
     allImports.push.apply(allImports, parsed.imports);
-    frameCssMap[f.id || i] = parsed.rules;
+    frameCssMap[f.id || i] = frameRules;
   }
 
   // ── Step 2: Color Extraction ──
