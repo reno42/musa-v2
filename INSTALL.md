@@ -225,7 +225,13 @@ All tests must PASS. If any fail, the deploy is incomplete — debug before conn
 
 ### Phase 4 — Connect AI Agent to MCP
 
-**About the API key:** The MCP endpoint uses the `x-api-key` header for authentication. Default valid key is `dev-key` (defined by the `API_KEY` environment variable on Netlify). For production, set `API_KEY` to a random secret in Netlify env vars and share it only with trusted agents. **Without `x-api-key`, requests are rejected.** The examples below use `dev-key` — replace with your actual key if you changed it.
+**About authentication — three methods, all equivalent:**
+
+1. **`x-api-key` header** (default for Claude Desktop, Cursor, OpenClaw/Qoder, custom agents). Default valid key is `dev-key` (defined by the `API_KEY` environment variable on Netlify). For production, set `API_KEY` to a random secret in Netlify env vars and share it only with trusted agents.
+2. **Key in the URL** (clients with no header support): `https://YOUR-SITE.netlify.app/mcp?key=YOUR_KEY` — `?api_key=`, `?token=` and `?x-api-key=` are also accepted. The header always wins when both are present.
+3. **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): the server is a full OAuth authorization server per the MCP Authorization spec (2025-06-18) — discovery at `/.well-known/oauth-protected-resource` (RFC9728) and `/.well-known/oauth-authorization-server` (RFC8414), dynamic client registration at `/oauth/register` (RFC7591), authorization code + PKCE S256 via `/oauth/authorize` (login + consent page) and `/oauth/token`. Just paste the plain `/mcp` URL in the client and it discovers the rest. Tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`; each connector gets its own session (revocable from the Supabase dashboard). Requires the `oauth_clients` / `oauth_codes` tables (migration `supabase_migrations_v31.sql`).
+
+**Without any of the three, `tools/call` is rejected (401).** `initialize`, `tools/list` and the public tools (`get_agent_guide`, `get_playbook`, `verify_api_key`) need no auth. The examples below use `dev-key` — replace with your actual key if you changed it.
 
 **Claude Desktop / Claude Code:**
 

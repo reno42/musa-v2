@@ -10505,7 +10505,15 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           endpoint: `${siteUrl}/mcp`,
           protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
           auth: {
-            method: "Pass x-api-key header on every POST request.",
+            method: "Pass x-api-key header on every POST request. Clients that cannot send headers may append ?key=YOUR_KEY to the URL instead. Clients that support OAuth 2.1 (ChatGPT, Claude web connectors) can authenticate natively — see the oauth field.",
+            query_string: "URL form https://design.futuraria.com/mcp?key=YOUR_KEY also works (?api_key=, ?token=, ?x-api-key= accepted).",
+            oauth: {
+              available: true,
+              standard: "OAuth 2.1 per the MCP Authorization spec (2025-06-18)",
+              protected_resource_metadata: `${siteUrl}/.well-known/oauth-protected-resource`,
+              authorization_server_metadata: `${siteUrl}/.well-known/oauth-authorization-server`,
+              flow: "Authorization Code + PKCE S256. Clients register dynamically at /oauth/register (RFC7591), then /oauth/authorize → login+consent → /oauth/token. Issued tokens are USER tokens (Supabase sessions) valid as Bearer on /mcp.",
+            },
             create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
             persistence: "CRITICAL: API keys are PERMANENT (no expiry). Once you have a key, SAVE IT in your MCP client config file permanently. NEVER create a new key if you already have one. If auth fails, call verify_api_key first to diagnose before creating a new key.",
             diagnose: "If you get 401, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why the key failed (not_found, revoked, expired, database_error).",
@@ -14861,6 +14869,7 @@ export const handler = async (event) => {
           auth: {
             required: "tools/call requires the API key on every POST request — via x-api-key header OR ?key=YOUR_KEY in the URL. initialize + tools/list are public (no auth).",
             how_to_send: "Preferred: header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If your client cannot send custom headers (Claude web/desktop 'Conectores', some mobile clients), connect with the URL form instead: https://design.futuraria.com/mcp?key=YOUR_KEY — the server also accepts ?api_key=, ?token= and ?x-api-key=. NOTE: query-string auth is a pragmatic extension, not part of the MCP spec (the standard path is OAuth 2.1, optional).",
+            oauth: "OAuth 2.1 is available natively (MCP Authorization spec 2025-06-18): discovery at /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server, dynamic client registration at /oauth/register (RFC7591), authorization code + PKCE S256 via /oauth/authorize → /oauth/token. ChatGPT and Claude web connectors should use this — just paste the URL and the client discovers the rest. Issued tokens are USER tokens (Supabase sessions) valid as Authorization: Bearer on /mcp.",
             create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
             key_persistence: "API keys are PERMANENT — they never expire. Once you have a key, save it in your config permanently. Do NOT create a new key each session.",
             troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. (3) For clients without header support (Claude Connectors): connect with URL /mcp?key=YOUR_KEY — WARNING: if that client drops the query string between calls, auth fails with 401 even with a valid key; verify_api_key still confirms whether the key itself is fine.",

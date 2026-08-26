@@ -12,7 +12,10 @@ If someone gave you a URL like `design.futuraria.com` and you need to figure out
 2. **Read this skill file:** `GET https://design.futuraria.com/SKILL.md` — the complete manual you're reading now.
 3. **Initialize the MCP:** `POST https://design.futuraria.com/mcp` with JSON-RPC method `initialize` (no auth needed). The response includes `_agentGuide` with playbooks.
 4. **Get the onboarding guide:** Call the public tool `get_agent_guide` (no auth needed).
-5. **Ask the user for their API key** — they create it at the website under Settings -> API Keys. The key starts with `fdr_ws_` and is permanent.
+5. **Authenticate — pick ONE of three methods** (all three hit the same tools):
+   - **API key header** (default for Claude Desktop, Cursor, Hermes, custom agents): ask the user for their key — created at the website under Settings -> API Keys, starts with `fdr_ws_`, permanent. Send `x-api-key: <key>` on every POST.
+   - **API key in the URL** (clients with no header support): connect to `https://design.futuraria.com/mcp?key=YOUR_KEY` instead (`?api_key=`, `?token=`, `?x-api-key=` also accepted).
+   - **OAuth 2.1** (ChatGPT connectors, Claude web/desktop "Conectores"): paste the plain URL and the client discovers the flow automatically — `/.well-known/oauth-protected-resource` (RFC9728) → dynamic registration `/oauth/register` (RFC7591) → `/oauth/authorize` (login + consent, PKCE S256) → `/oauth/token`. The user logs in with their Futuraria account; tokens are user-scoped Supabase sessions sent as `Authorization: Bearer`.
 
 **What is Futuraria?** It's an AI-native design platform. You create professional designs (social media posts, stories, landing pages, brand materials) by sending HTML+CSS through 213 MCP tools. The platform renders, stores, and exports them.
 
@@ -276,7 +279,7 @@ Agent (Claude / Cursor / Custom)
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
-**Auth:** Pass `x-api-key: your-key` or `Authorization: Bearer your-token` header on POST requests. Supabase Auth JWTs are also supported for team features.
+**Auth (3 methods, all equivalent):** (1) `x-api-key: your-key` header on POST requests; (2) key in the URL — `https://design.futuraria.com/mcp?key=your-key` (`?api_key=`/`?token=`/`?x-api-key=` also accepted); (3) OAuth 2.1 — `Authorization: Bearer <token>` from the `/oauth/authorize` → `/oauth/token` flow (MCP Authorization spec 2025-06-18; discovery at `/.well-known/oauth-protected-resource`). `initialize`, `tools/list` and the public tools need no auth. Supabase Auth JWTs are also supported for team features.
 
 ### Key MCP Tool Categories
 
@@ -1467,7 +1470,7 @@ Agent (Claude / Cursor / Custom)
   └─ POST /mcp  { method: "tools/call" } → invoke any tool
 ```
 
-**Auth:** Pass `x-api-key: your-key` or `Authorization: Bearer your-token` header on POST requests. Falls back to `dev_user_default`.
+**Auth (3 methods, all equivalent):** (1) `x-api-key: your-key` header on POST requests; (2) key in the URL — `https://design.futuraria.com/mcp?key=your-key`; (3) OAuth 2.1 — `Authorization: Bearer <token>` issued by `/oauth/token` after login+consent (ChatGPT and Claude web connectors discover this automatically via `/.well-known/oauth-protected-resource`). Falls back to `dev_user_default` only in dev.
 
 #### Connecting from AI Agents
 
@@ -1492,6 +1495,25 @@ Agent (Claude / Cursor / Custom)
       "transport": "sse",
       "url": "https://design.futuraria.com/mcp",
       "headers": { "x-api-key": "your-api-key" }
+    }
+  }
+}
+```
+
+**ChatGPT / Claude web ("Conectores" / custom connectors):** paste the plain URL and pick OAuth when the client offers it (it discovers the flow from the 401 `WWW-Authenticate` header):
+- URL: `https://design.futuraria.com/mcp`
+- Auth: OAuth (the client registers itself, opens the login/consent page, and stores the token)
+
+If the client has NO OAuth and NO header support, use the key-in-URL form:
+- URL: `https://design.futuraria.com/mcp?key=fdr_ws_YOUR_KEY`
+
+**Claude Desktop with query-string key** (older UIs without a headers field):
+```json
+{
+  "mcpServers": {
+    "futuraria": {
+      "type": "sse",
+      "url": "https://design.futuraria.com/mcp?key=fdr_ws_YOUR_KEY"
     }
   }
 }
