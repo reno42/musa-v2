@@ -167,7 +167,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 213 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 236 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -278,7 +278,7 @@ Each frame renders inside a sandboxed iframe with:
 
 ## MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **213 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **236 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification.
 
 ### Protocol Flow
 
@@ -400,7 +400,7 @@ _Curated highlights — the complete auto-synced catalog (all 236 tools) is in t
 - `export_frame` — Export a frame as SVG (native, importable into Figma/Illustrator) or PDF. For PNG, use render_html_template.
 - `export_pdf` — Export the entire template or specific frames as a PDF document via the render pipeline.
 - `export_template` — Export a template as .futuraria JSON for backup/migration
-- `extract_design_system` — Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time.
+- `extract_design_system` — Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time. Frame selection: NO frameIds → style of ALL frames merged (use when the user only names the file); frameIds → style of ONLY those frames (use when the user names file + frame).
 - `extract_variables` — Extract replaceable content (texts, images, colors, fixed sections) from template
 - `fill_mask` — Fill the masked subject of an image with a colour: the image gets an exclude mask (the subject becomes a hole) and a div clipped to the subject shape is placed behind it, painted with the fill colour or gradient. Delete that div layer to remove the fill.
 - `find_duplicate_styles` — Scan brand guidelines in a workspace and group them by style fingerprint. Returns groups of visually identical styles that can be merged. Use this to detect when multiple brand guidelines share the same design tokens.
@@ -854,14 +854,22 @@ and `apply_csv_to_frames`. Without it the history just says "agent" and nobody
 Retention: the last 10 automatic saves rotate; versions created with
 `save_version` (and the human's Ctrl/⌘+S) are permanent.
 
-**Pattern 8: Batch content generation — CSV-driven frame automation**
+**Pattern 8: Batch content generation — CSV-driven frame automation ("batchamator")**
 ```
-// Step 1: Profile template pool to detect slots
-tools/call: profile_template_pool({ templateIds: ["tpl_abc", "tpl_def"] })
-  → { profiles: [...], csvColumns: [...], totalSlots: 12, _deterministic: true }
+// CONTRACT — enforced by the system, not by you:
+//  • The exact frame is REQUIRED. One frame in the template → auto-used (reported
+//    in resolvedFrames.autoResolved). Multiple frames and none specified → the
+//    call FAILS listing every frame; ask the user, don't guess.
+//  • The system generates the CSV skeleton (never invent columns yourself).
+//  • Images: user said news/photos → search_stock_image → URLs in image columns.
+//    User didn't mention photos → leave image cells EMPTY (original kept, literal).
 
-// Step 2: Generate CSV template for the human
-tools/call: generate_csv_template({ templateIds: ["tpl_abc", "tpl_def"], rowCount: 30 })
+// Step 1: Profile template pool to detect slots (frameId/frameName = exact frame)
+tools/call: profile_template_pool({ templateIds: ["tpl_abc"], frameName: "Post Principal" })
+  → { profiles: [...], csvColumns: [...], resolvedFrames: { tpl_abc: { frameId, frameName, autoResolved } }, _deterministic: true }
+
+// Step 2: Generate CSV template for the human (same frame params!)
+tools/call: generate_csv_template({ templateIds: ["tpl_abc"], frameName: "Post Principal", rowCount: 30 })
   → { csv: "# Template Pool CSV\n...", columns: [...], delimiter: ",", _deterministic: true }
 
 // — Human fills CSV in Excel/Sheets, choosing template per row via _template column —
@@ -875,13 +883,19 @@ tools/call: apply_csv_to_frames({
   workspaceId: "ws_123",
   csvData: "<human-filled CSV content>",
   templateIds: ["tpl_abc", "tpl_def"],
+  frameName: "Post Principal",
   outputName: "News Batch — 30 Posts",
   naming: "Post {index} — {title}",
   onMissingTemplate: "skip",
   onOverflow: "truncate"
 })
-  → { outputTemplateId: "tpl_new", generatedFrames: 28, skippedRows: 2, report: [...] }
+  → { outputTemplateId: "tpl_new", resolvedFrames: {...}, generatedFrames: 28, skippedRows: 2, report: [...] }
 ```
+
+**Style extraction is a DIFFERENT flow** (`extract_design_system`): user names
+only the file → NO `frameIds` (all frames merged); user names file + frame →
+`frameIds: ["<frame id or name>"]` for that frame's style only. Extraction
+READS style; the batchamator WRITES variants. Don't mix them.
 
 **Pattern 9: Create and manage reusable brand guidelines**
 ```
@@ -1547,7 +1561,7 @@ npm run preview
 # Futuraria Design Editor — AI Agent Skill
 
 **Skill Name:** `futuraria-editor`
-**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (213 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
+**Description:** React + Shadow DOM HTML rendering engine for the Futuraria Design platform. Full WYSIWYG design tool with frame management, layers panel, properties inspector, batch generation from CSV (3 modes), HTML/CSS code editing, MCP tool integration (236 tools), undo/redo history, auto-save with localStorage resilience, and keyboard shortcuts. Deployed on Netlify with Supabase persistence (freemium model).
 **Triggers:** Any task involving the Futuraria editor UI, canvas manipulation, component changes, bug fixes, a11y improvements, API integration, MCP tools, or React best-practice refactors.
 
 ---
@@ -1617,7 +1631,7 @@ design-main/
 ├── netlify/
 │   └── functions/
 │       ├── api.mjs               — Express → Netlify Function bridge
-│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 213 tools)
+│       └── mcp.mjs               — MCP server (JSON-RPC + SSE, 236 tools)
 ├── netlify.toml                  — Netlify build + redirects
 ├── package.json                  — Root: Vite + React deps
 ├── vite.config.ts
@@ -1714,7 +1728,7 @@ Image imports:
 
 ### MCP (Model Context Protocol) — AI Agent Connection Guide
 
-AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **213 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
+AI agents connect to the MCP server at `https://design.futuraria.com/mcp` to discover and invoke **236 tools** for workspace, template, frame, HTML/CSS, font, brand, batch, collaborative design, design system extraction, frame content editing, template profiling, CSV-to-frames batch generation, SVG import, bezier curves, pathfinder operations, stroke styling, gradient fills, blend modes, path outline/offset, authentication, team management, brand manual generation, and design system verification. The MCP server implements the **Model Context Protocol 2024-11-05** specification via **SSE transport + JSON-RPC 2.0**.
 
 #### Protocol Flow
 
@@ -2395,5 +2409,5 @@ npm run preview
 | `api/src/routes/assets.ts` | 114 | Image upload to Supabase Storage |
 | `api/src/routes/templates.ts` | ~400 | Template CRUD + base64 guard |
 | `netlify/functions/api.mjs` | 96 | Express → Netlify bridge |
-| `netlify/functions/mcp.mjs` | ~13800 | MCP server (213 tools) |
+| `netlify/functions/mcp.mjs` | ~13800 | MCP server (236 tools) |
 | `netlify.toml` | 22 | Build config + redirects |

@@ -2361,11 +2361,12 @@ const MCP_TOOLS = [
   },
   {
     name: "extract_design_system",
-    description: "Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time.",
+    description: "Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time. Frame selection: NO frameIds → style of ALL frames merged (use when the user only names the file); frameIds → style of ONLY those frames (use when the user names file + frame).",
     inputSchema: {
       type: "object",
       properties: {
         templateIds: { type: "array", items: { type: "string" }, description: "Template IDs to analyze. Multiple templates = merged unified design system." },
+        frameIds: { type: "array", items: { type: "string" }, description: "Optional: extract ONLY these frames (frame id or frame name, case-insensitive). Omit to merge the style of ALL frames." },
         workspaceId: { type: "string", description: "Workspace ID for template lookup" },
         name: { type: "string", description: "Name for the extracted design system (defaults to first template name)" },
       },
@@ -3142,6 +3143,8 @@ const MCP_TOOLS = [
           items: { type: "string" },
           description: "Template IDs to profile. Uses the first frame of each template as the source.",
         },
+        frameId: { type: "string", description: "Exact frame to profile (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one." },
+        frameName: { type: "string", description: "Alias of frameId — the human frame name." },
       },
       required: ["templateIds"],
     },
@@ -3161,6 +3164,8 @@ const MCP_TOOLS = [
           type: "number",
           description: "Number of empty data rows to generate (default 1)",
         },
+        frameId: { type: "string", description: "Exact frame to build the CSV from (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one." },
+        frameName: { type: "string", description: "Alias of frameId — the human frame name." },
         delimiter: {
           type: "string",
           description: "CSV delimiter (default comma)",
@@ -3210,6 +3215,8 @@ const MCP_TOOLS = [
           enum: ["truncate", "skip_row", "continue_warn"],
           description: "What to do if text exceeds slot maxChars (default 'truncate')",
         },
+        frameId: { type: "string", description: "Exact frame to apply CSV rows onto (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one." },
+        frameName: { type: "string", description: "Alias of frameId — the human frame name." },
       },
       required: ["workspaceId", "csvData", "templateIds"],
     },
@@ -5071,6 +5078,62 @@ async function handleMethod(method, params, userId, auth) {
       return { x: 0, y: lastFrame.y + tallestInRow + GAP };
     }
     return { x: rowRightEdge + GAP, y: lastFrame.y };
+  };
+
+  // ═══ FRAME SELECTION & BATCH FRAME-EXACT RULE ═══
+  // Shared by extract_design_system (optional frame filter) and the CSV batch
+  // tools (profile_template_pool / generate_csv_template / apply_csv_to_frames).
+  // Frame references accept the frame ID or its human name, case-insensitive.
+
+  const frameRefMatches = (frame, ref) => {
+    const r = String(ref || "").trim().toLowerCase();
+    if (!r) return false;
+    return (frame.id && String(frame.id).toLowerCase() === r) ||
+      (frame.name && String(frame.name).trim().toLowerCase() === r);
+  };
+
+  const listFrameOptions = (frames) =>
+    (frames || []).map((f) => `${f.name || "(unnamed)"} [${f.id}]`).join(" | ");
+
+  // Collect optional frame refs from params: frameIds array, or frameId / frameName.
+  const collectFrameRefs = (params) => {
+    if (Array.isArray(params.frameIds) && params.frameIds.length) return params.frameIds;
+    if (params.frameId) return [params.frameId];
+    if (params.frameName) return [params.frameName];
+    return [];
+  };
+
+  // Filter frames by refs; throws listing every available frame when a ref
+  // matches nothing (no dead ends — the caller can self-correct).
+  const filterFramesByRefs = (frames, refs) => {
+    const matched = (frames || []).filter((f) => refs.some((ref) => frameRefMatches(f, ref)));
+    const missing = refs.filter((ref) => !(frames || []).some((f) => frameRefMatches(f, ref)));
+    if (missing.length) {
+      throw { code: -32602, message: `Frame(s) not found: ${missing.join(", ")}. Available frames: ${listFrameOptions(frames)}` };
+    }
+    return matched;
+  };
+
+  // CSV batch rule (user-facing contract): the exact frame is REQUIRED.
+  // One frame in the template → auto-use it (reported via autoResolved, never
+  // silent). Multiple frames → hard error listing options: the AI must ask
+  // the user which frame to use. This flow never guesses.
+  const resolveBatchFrame = (tpl, params) => {
+    const frames = tpl.frames || [];
+    const refs = collectFrameRefs(params);
+    if (refs.length) {
+      const found = frames.filter((f) => refs.some((ref) => frameRefMatches(f, ref)));
+      if (!found.length) {
+        throw { code: -32602, message: `Frame '${refs[0]}' not found in template '${tpl.name || tpl.id}'. Available frames: ${listFrameOptions(frames)}` };
+      }
+      return { frame: found[0], autoResolved: false };
+    }
+    if (!frames.length) throw { code: -32000, message: `Template '${tpl.name || tpl.id}' has no frames.` };
+    if (frames.length === 1) return { frame: frames[0], autoResolved: true };
+    throw {
+      code: -32602,
+      message: `Template '${tpl.name || tpl.id}' has ${frames.length} frames — specify the exact one (frameId or frameName). This flow never guesses. Available frames: ${listFrameOptions(frames)}`,
+    };
   };
 
   switch (method) {
@@ -10008,6 +10071,10 @@ async function handleMethod(method, params, userId, auth) {
       var templateIds = params.templateIds || (params.templateId ? [params.templateId] : []);
       if (!templateIds.length) throw { code: -32602, message: "Use 'templateIds' (array) to specify one or more template IDs. Example: { templateIds: ['tpl_abc123'] }. 'templateId' (singular) works as shorthand for a single template." };
 
+      // Frame selection: user gives file only → ALL frames (merged);
+      // user gives file + frame(s) → only those frames (id or name).
+      var frameRefs = collectFrameRefs(params);
+
       // Collect frames from all templates
       var allExtractions = [];
       var allFrames = [];
@@ -10026,7 +10093,11 @@ async function handleMethod(method, params, userId, auth) {
             height: f.height,
             layoutMode: f.layoutMode,
           };
-        }).filter(function (f) {
+        });
+        // Frame refs applied BEFORE the css/html filter so error listings
+        // always show every frame in the template.
+        if (frameRefs.length) extFrames = filterFramesByRefs(extFrames, frameRefs);
+        extFrames = extFrames.filter(function (f) {
           // Always keep frames with CSS — they contain design.
           if (f.css) return true;
           // For Brand Manual templates: frames without CSS are documentation/notes, not design.
@@ -10105,6 +10176,8 @@ async function handleMethod(method, params, userId, auth) {
         templateIds: templateIds,
         templatesAnalyzed: allExtractions.length,
         totalFrames: allFrames.length,
+        frameSelection: frameRefs.length ? "selected" : "all",
+        framesUsed: allFrames.map(function (f) { return f.name || f.id; }),
         extraction: merged,
         artifacts: artifacts,
         manualUrl: manualTpl ? ("https://design.futuraria.com/?template=" + manualTpl.id + "&v=2") : null,
@@ -11011,12 +11084,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       if (!templateIds || !templateIds.length) throw { code: -32602, message: "templateIds array is required" };
 
       var profiles = [];
+      var resolvedFrames = {};
       for (var i = 0; i < templateIds.length; i++) {
         var tid = templateIds[i];
         var tpl = await templates.getTemplate(tid);
         if (!tpl) throw { code: -32000, message: "Template not found: " + tid };
         if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
-        var frame = tpl.frames[0];
+        // Batch frame-exact rule: auto-resolve only with exactly one frame.
+        var resolved = resolveBatchFrame(tpl, params);
+        resolvedFrames[tid] = { frameId: resolved.frame.id, frameName: resolved.frame.name, autoResolved: resolved.autoResolved };
+        var frame = resolved.frame;
         var profile = profileFrame(frame.html || "", frame.css || "", {
           id: frame.id,
           name: frame.name || tpl.name,
@@ -11032,6 +11109,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         csvColumns: poolResult.csvColumns,
         templateCount: profiles.length,
         totalSlots: profiles.reduce(function (s, p) { return s + p.slots.length; }, 0),
+        resolvedFrames: resolvedFrames,
         _deterministic: true,
       };
     }
@@ -11046,12 +11124,16 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // Profile the pool
       var profiles = [];
       var templateNames = {};
+      var resolvedFrames = {};
       for (var i = 0; i < templateIds.length; i++) {
         var tid = templateIds[i];
         var tpl = await templates.getTemplate(tid);
         if (!tpl) throw { code: -32000, message: "Template not found: " + tid };
         if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
-        var frame = tpl.frames[0];
+        // Batch frame-exact rule: auto-resolve only with exactly one frame.
+        var resolved = resolveBatchFrame(tpl, params);
+        resolvedFrames[tid] = { frameId: resolved.frame.id, frameName: resolved.frame.name, autoResolved: resolved.autoResolved };
+        var frame = resolved.frame;
         var profile = profileFrame(frame.html || "", frame.css || "", {
           id: frame.id, name: frame.name || tpl.name,
           width: frame.width || tpl.width || 1080, height: frame.height || tpl.height || 1080,
@@ -11155,6 +11237,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         columnDetails: columns,
         templateIds: templateIds,
         templateNames: templateNames,
+        resolvedFrames: resolvedFrames,
         rowCount: rowCount,
         delimiter: delimiter,
         profiles: profiles,
@@ -11258,6 +11341,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       // ── Pre-load templates and profile each ──
       var templateCache = {};
       var slotMapByTemplate = {}; // templateId → slotsByName: { slotName: slot }
+      var frameByTemplate = {};   // templateId → resolved source frame (batch frame-exact rule)
+      var resolvedFrames = {};    // echo for the response
 
       for (var ti = 0; ti < templateIds.length; ti++) {
         var tid = templateIds[ti];
@@ -11266,7 +11351,13 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         if (!tpl.frames || !tpl.frames.length) throw { code: -32000, message: "Template has no frames: " + tid };
         templateCache[tid] = tpl;
 
-        var frame = tpl.frames[0];
+        // Batch frame-exact rule: auto-resolve only with exactly one frame;
+        // multiple frames → error listing options (the AI must ask the user).
+        var resolved = resolveBatchFrame(tpl, params);
+        frameByTemplate[tid] = resolved.frame;
+        resolvedFrames[tid] = { frameId: resolved.frame.id, frameName: resolved.frame.name, autoResolved: resolved.autoResolved };
+
+        var frame = resolved.frame;
         var prof = profileFrame(frame.html || "", frame.css || "", {
           id: frame.id, name: frame.name || tpl.name,
           width: frame.width || tpl.width || 1080, height: frame.height || tpl.height || 1080,
@@ -11334,7 +11425,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         }
 
         var srcTpl = templateCache[resolvedTid];
-        var srcFrame = srcTpl.frames[0];
+        var srcFrame = frameByTemplate[resolvedTid]; // resolved via frameId/frameName — never frames[0] guessing
         var slotsByName = slotMapByTemplate[resolvedTid];
 
         // Deep-clone the source frame
@@ -11486,6 +11577,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         outputTemplateName: outputName,
         workspaceId: workspaceId,
         totalRows: dataRows.length,
+        resolvedFrames: resolvedFrames,
         generatedFrames: report.filter(function (r) { return r.status === "ok"; }).length,
         skippedRows: report.filter(function (r) { return r.status === "skipped"; }).length,
         report: report,

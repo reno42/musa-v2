@@ -6,6 +6,40 @@
 
 ---
 
+## User Contract ("batchamator" flow) — read this FIRST
+
+When the user says **"usa el batchamator"** (or asks for CSV-batch variants),
+the flow below is MANDATORY and the SYSTEM enforces it — not the AI:
+
+1. **Exact frame required, never guessed.** The batch tools
+   (`profile_template_pool`, `generate_csv_template`, `apply_csv_to_frames`)
+   accept `frameId` or `frameName` (id or human name, case-insensitive).
+   - Template has **exactly one frame** → the system auto-uses it and reports
+     it (`resolvedFrames[tid].autoResolved: true`). Tell the user which frame
+     was used.
+   - Template has **multiple frames** and no frame was specified → the system
+     REJECTS the call with an error listing every frame. Your job: ask the
+     user which frame, then retry with `frameId`/`frameName`.
+2. **The system generates the CSV — not you.** Use `generate_csv_template` to
+   produce the empty CSV skeleton (slots → columns, `_template` column
+   pre-filled). You then fill it with content and hand it back via
+   `apply_csv_to_frames`.
+3. **Images — user intent decides, and you take it LITERALLY:**
+   - User says the content is **news / articles** (or explicitly asks for
+     photos) → fetch images with `search_stock_image` (Unsplash/Pexels) or from
+     the source the user indicates, and put the URLs in the image columns.
+   - User does **not** mention photos → leave image columns EMPTY. Empty
+     cells are skipped by the system, so the original template image is kept.
+     Do NOT swap, "improve", or add photos the user didn't ask for.
+
+Related-but-different flow — **style extraction** (`extract_design_system`):
+the user naming only the file → extract with NO `frameIds` (all frames,
+merged); the user naming file + frame → pass `frameIds: ["<frame>"]` to
+extract that frame's style only. Don't confuse the two: extraction READS
+style, the batchamator WRITES variants.
+
+---
+
 ## Schema
 
 ### Entity Types
