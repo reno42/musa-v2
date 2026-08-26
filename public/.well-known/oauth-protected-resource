@@ -1,0 +1,7 @@
+{
+  "resource": "https://design.futuraria.com/mcp",
+  "authorization_servers": ["https://design.futuraria.com"],
+  "scopes_supported": ["design.read", "design.write"],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://design.futuraria.com/SKILL.md"
+}

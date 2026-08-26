@@ -14788,6 +14788,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
 
 export const handler = async (event) => {
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": JSON_UTF8_CONTENT_TYPE };
+  // REQ-012: base URL for the OAuth discovery links served on 401 responses.
+  const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
 
   try {
 
@@ -14847,7 +14849,6 @@ export const handler = async (event) => {
 
   // MCP lifecycle methods
   if (method === "initialize") {
-    const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
     return {
       statusCode: 200, headers,
       body: JSON.stringify(jsonRpcResult(id, {
@@ -14903,13 +14904,18 @@ export const handler = async (event) => {
       const auth = await checkAuth(event);
       if (!auth.valid) {
         const reason = auth.reason || "unknown";
+        // RFC9728 §5.1: point spec-compliant clients (ChatGPT, Claude
+        // web) at the OAuth discovery metadata — x-api-key remains the
+        // non-OAuth path (REQ-011 header/query fallback).
         return {
-          statusCode: 401, headers,
+          statusCode: 401,
+          headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
           body: JSON.stringify(jsonRpcError(id, -32001,
             `Authentication failed (reason: ${reason}). ` +
             "The key you provided was rejected by the database. " +
             "Call the public tool 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API Keys."
+            "Create or manage keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
           )),
         };
       }
@@ -14961,12 +14967,15 @@ export const handler = async (event) => {
       const auth = await checkAuth(event);
       if (!auth.valid) {
         const reason = auth.reason || "unknown";
+        // RFC9728 §5.1 — same OAuth discovery signal as tools/call above.
         return {
-          statusCode: 401, headers,
+          statusCode: 401,
+          headers: { ...headers, "WWW-Authenticate": `Bearer resource_metadata="${siteUrl}/.well-known/oauth-protected-resource"` },
           body: JSON.stringify(jsonRpcError(id, -32001,
             `Authentication failed (reason: ${reason}). ` +
             "Call 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API Keys."
+            "Create or manage keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
           )),
         };
       }

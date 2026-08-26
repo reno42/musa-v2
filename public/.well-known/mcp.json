@@ -25,6 +25,17 @@
       "step_6": "Paste it into your MCP client config as a header: x-api-key: fdr_ws_..."
     },
     "key_diagnostic": "If auth fails, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why (not_found, revoked, expired, database_error).",
+    "oauth": {
+      "available": true,
+      "standard": "OAuth 2.1 per the MCP Authorization spec (2025-06-18): RFC9728 protected-resource metadata + RFC8414 authorization-server metadata + RFC7591 dynamic client registration + PKCE S256",
+      "protected_resource_metadata": "https://design.futuraria.com/.well-known/oauth-protected-resource",
+      "authorization_servers": ["https://design.futuraria.com"],
+      "authorization_endpoint": "https://design.futuraria.com/oauth/authorize",
+      "token_endpoint": "https://design.futuraria.com/oauth/token",
+      "registration_endpoint": "https://design.futuraria.com/oauth/register",
+      "scopes": ["design.read", "design.write"],
+      "note_for_clients": "OAuth issues USER tokens (Supabase sessions) scoped to the logged-in user's workspaces — for clients like ChatGPT or Claude web that cannot send custom headers. The x-api-key header (or ?key= in the URL, REQ-011) remains fully supported; use whichever your client allows."
+    },
     "config_examples": {
       "cursor": {
         "file": ".cursor/mcp.json",
