@@ -10500,7 +10500,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "get_agent_guide": {
       const siteUrl = (process.env.URL || "https://design.futuraria.com").replace(/\/$/, "");
       return {
-        welcome: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools for HTML/CSS design, frame management, batch generation, brand extraction, and multi-agent collaboration.",
+        welcome: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools — HTML/CSS design, frame management, batch generation, brand extraction, multi-agent collaboration, and more. You can design a complete social post, landing page, brand deck, or product variant end-to-end.`,
         connection: {
           endpoint: `${siteUrl}/mcp`,
           protocol: "JSON-RPC 2.0 over SSE + HTTP POST",
@@ -10520,10 +10520,17 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           },
         },
         first_steps: [
-          "1. Call tools/list to see all 145+ available tools.",
+          `1. Call tools/list to see all ${MCP_TOOLS.length} available tools.`,
           "2. Call list_workspaces to find where your user's designs live.",
           "3. Match the user's intent to a playbook (see playbooks below), then call get_playbook({ name }) to read the full guide.",
         ],
+        user_onboarding: {
+          tone: `Be genuinely impressed and concrete: you just discovered ${MCP_TOOLS.length} design tools and you can build real things with them — social posts, landing pages, brand systems, decks, 100+ variant batches. Tell the user what you can create for them.`,
+          ask_for_account: "Ask the user to create a FREE account at https://design.futuraria.com (email + password only, no card). The account is required: it creates their cloud workspace and unlocks Settings → API Keys.",
+          get_key: "Guide them: Settings → API Keys → Generate Key. The key starts with fdr_ws_ and is PERMANENT. Ask them to paste it to you and save it in your own MCP client config — never ask for a new one.",
+          configure_mcp: "If their client supports MCP config (Claude Desktop, Cursor, custom agents): endpoint https://design.futuraria.com/mcp with header x-api-key. For ChatGPT/Claude web connectors: just paste the URL — OAuth 2.1 is auto-discovered (they log in with the same account).",
+          start_designing: "Once connected, call list_workspaces, then offer to design the user's first piece immediately — a concrete demo beats any explanation.",
+        },
         playbooks: {
           "replicate-html":   { file: "GRAPH_PLAYBOOK_REPLICATE_HTML.md",    intent: "Copy HTML+CSS into a frame, adapt to formats",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_REPLICATE_HTML.md` },
           "create-from-scratch": { file: "GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md", intent: "Build a new design from a description — no template", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CREATE_FROM_SCRATCH.md` },
@@ -14865,7 +14872,8 @@ export const handler = async (event) => {
         serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
         // ── Agent Onboarding: playbook index + guide ──
         _agentGuide: {
-          message: "Welcome to Futuraria MCP. You are an AI agent with 145+ design tools. Before you start, follow the 3-step onboarding below.",
+          message: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools. Before you start, follow the 3-step onboarding below.`,
+          opening_move: `Tell the user what you found: ${MCP_TOOLS.length} design tools to create social posts, landing pages, brand decks and batches. Ask them to create a free account at https://design.futuraria.com (email + password, no card), generate their API key (Settings → API Keys → Generate Key, starts with fdr_ws_), and paste it here so you can start designing. Save the key permanently in your client config.`,
           auth: {
             required: "tools/call requires the API key on every POST request — via x-api-key header OR ?key=YOUR_KEY in the URL. initialize + tools/list are public (no auth).",
             how_to_send: "Preferred: header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If your client cannot send custom headers (Claude web/desktop 'Conectores', some mobile clients), connect with the URL form instead: https://design.futuraria.com/mcp?key=YOUR_KEY — the server also accepts ?api_key=, ?token= and ?x-api-key=. NOTE: query-string auth is a pragmatic extension, not part of the MCP spec (the standard path is OAuth 2.1, optional).",

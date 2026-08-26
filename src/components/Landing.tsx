@@ -10,8 +10,9 @@ interface LandingProps {
 /** Prompt que el usuario le pega a su IA (Claude, Codex, Hermes, Kimi…) para
  *  que ella misma lea el discovery de Musa y le diga cómo entrar. */
 const CONNECT_PROMPT = `Ve a https://design.futuraria.com y lee /.well-known/mcp.json
-y /SKILL.md. Dime cómo puedes entrar a manejar el 100% del editor:
-yo creo la cuenta, te genero la clave MCP y tú empiezas a diseñar.`;
+y /SKILL.md. Dime todo lo que puedes diseñar con las herramientas MCP que
+descubras y cómo entrar: yo creo la cuenta, te genero la clave MCP y tú
+empiezas a diseñar.`;
 
 export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -504,9 +505,29 @@ export function Landing({ onEnter }: LandingProps) {
 
           <div className="landing-connect-note liquid-glass">
             <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
-            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>148+ tools</strong> de
+            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>236 tools</strong> de
             diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
             guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
+          </div>
+
+          <div className="landing-download-row">
+            <a
+              className="liquid-glass landing-download-btn"
+              href="https://design.futuraria.com/SKILL.md"
+              download
+            >
+              ⬇ Descargar instrucciones (SKILL.md — guía completa)
+            </a>
+            <a
+              className="landing-download-btn--ghost"
+              href="https://design.futuraria.com/.well-known/mcp.json"
+              download
+            >
+              mcp.json · discovery
+            </a>
+            <span className="landing-download-hint">
+              Lée la guía cuando quieras y pásasela a cualquiera de tus IAs.
+            </span>
           </div>
 
           <p className="landing-selfhost">
@@ -527,7 +548,7 @@ export function Landing({ onEnter }: LandingProps) {
               </div>
               <p className="landing-footer-tag">
                 Tu workspace de diseño MCP-first. Tú diseñas, tu IA diseña, o los dos a la vez —
-                con las mismas 148+ herramientas, y tu data solo en tu cuenta.
+                con las mismas 236 herramientas, y tu data solo en tu cuenta.
               </p>
             </div>
             <div className="landing-footer-col">
@@ -541,6 +562,7 @@ export function Landing({ onEnter }: LandingProps) {
               <h5>Para tu IA</h5>
               <a href="https://design.futuraria.com/.well-known/mcp.json" target="_blank" rel="noopener noreferrer">mcp.json · discovery</a>
               <a href="https://design.futuraria.com/SKILL.md" target="_blank" rel="noopener noreferrer">SKILL.md · catálogo</a>
+              <a href="https://design.futuraria.com/SKILL.md" download>Descargar instrucciones</a>
               <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub · open source</a>
             </div>
           </div>

@@ -31,7 +31,7 @@ Vite Dev Server (:5173)        API Server (:3001)
                                 └── In-memory fallback
 ```
 
-- **MCP-first**: 100+ tools via JSON-RPC — any AI agent can create, edit, render, and batch designs
+- **MCP-first**: 236 tools via JSON-RPC — any AI agent can create, edit, render, and batch designs
 - **Dual-write persistence**: Supabase when configured, in-memory fallback when not
 - **Frame-based canvas**: Multi-frame HTML/CSS surfaces with Shadow DOM rendering
 - **Netlify auto-deploy**: Push to `main` → `design.futuraria.com`
