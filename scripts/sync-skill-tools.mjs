@@ -161,9 +161,13 @@ function patchSkill(skill, tools, section) {
     );
   }
 
-  // 3c. Standing counts (idempotent regexes).
-  out = out.replace(/through \d+\+? MCP tools/i, `through ${count} MCP tools`);
-  out = out.replace(/Tengo acceso a \d+ herramientas/i, `Tengo acceso a ${count} herramientas`);
+  // 3c. Standing counts (idempotent regexes, global — the same wording can
+  // appear in several sections of SKILL.md).
+  out = out.replace(/through \d+\+? MCP tools/gi, `through ${count} MCP tools`);
+  out = out.replace(/Tengo acceso a \d+ herramientas/gi, `Tengo acceso a ${count} herramientas`);
+  out = out.replace(/invoke \*\*\d+ tools\*\*/gi, `invoke **${count} tools**`);
+  out = out.replace(/\(\d+ tools\)/g, `(${count} tools)`);
+  out = out.replace(/, \d+ tools\)/g, `, ${count} tools)`);
   out = out.replace(
     /(_Curated highlights[^\n]*?all )\d+( tools[^\n]*?_\n?)/,
     `$1${count}$2`
