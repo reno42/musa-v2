@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
 import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
@@ -7,19 +7,67 @@ interface LandingProps {
   onEnter: () => void;
 }
 
-/** Prompt que el usuario le pega a su IA (Claude, Codex, Hermes, Kimi…) para
- *  que ella misma lea el discovery de Musa y le diga cómo entrar. */
-const CONNECT_PROMPT = `Ve a https://design.futuraria.com y lee /.well-known/mcp.json
+/** Prompts listos para pegarle a cada IA — ella misma lee el discovery de Musa
+ *  (/.well-known/mcp.json + /SKILL.md), le dice al usuario qué puede diseñar y
+ *  lo guía: cuenta gratis → clave MCP → primer diseño. */
+interface AiPrompt {
+  id: string;
+  name: string;
+  badge: string;
+  how: string;
+  prompt: string;
+}
+
+const AI_PROMPTS: AiPrompt[] = [
+  {
+    id: "chatgpt",
+    name: "ChatGPT",
+    badge: "Conector MCP · OAuth",
+    how: "Pega la URL en Conectores → Agregar conector; ChatGPT descubre el login (OAuth 2.1) solo.",
+    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
+Dime todo lo que puedes diseñar con las herramientas MCP que descubras (posts, landing pages, decks, variantes en batch, export…).
+Yo creo mi cuenta gratis y me autorizo cuando me pidas el login.
+Conéctate al conector MCP (https://design.futuraria.com) y empecemos a diseñar mi primera pieza.`,
+  },
+  {
+    id: "claude",
+    name: "Claude",
+    badge: "Desktop + conector web",
+    how: "Claude Desktop: agrega el servidor MCP con tu clave fdr_ws_. Conector web: pega la URL y entra con tu cuenta.",
+    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
+Dime todo lo que puedes diseñar con las herramientas MCP que descubras.
+Yo creo mi cuenta gratis y genero mi clave MCP (Configuración → API Keys, empieza con fdr_ws_).
+Guíame paso a paso para conectar tu MCP: en Claude Desktop agrega el servidor https://design.futuraria.com/mcp con el header x-api-key; en el conector web basta la URL y entro con mi cuenta (OAuth).
+Cuando estés conectado, empieza a diseñar.`,
+  },
+  {
+    id: "hermes",
+    name: "Hermes",
+    badge: "Agente propio · x-api-key",
+    how: "Endpoint https://design.futuraria.com/mcp con header x-api-key (o ?key= en la URL si no soporta headers).",
+    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
+Dime todo lo que puedes diseñar con las herramientas MCP que descubras y cómo las vas a llamar.
+Yo creo mi cuenta gratis en design.futuraria.com y genero mi clave MCP en Configuración → API Keys (empieza con fdr_ws_).
+Conéctate al endpoint https://design.futuraria.com/mcp usando el header x-api-key (o ?key=CLAVE en la URL si no soportas headers) y empieza a diseñar mi primera pieza.`,
+  },
+  {
+    id: "otra",
+    name: "Otra IA",
+    badge: "Codex, Kimi, OpenClaw…",
+    how: "Si tu IA soporta MCP, dale la URL o el endpoint; si no, pásale la guía descargable (SKILL.md).",
+    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json
 y /SKILL.md. Dime todo lo que puedes diseñar con las herramientas MCP que
 descubras y cómo entrar: yo creo la cuenta, te genero la clave MCP y tú
-empiezas a diseñar.`;
+empiezas a diseñar.`,
+  },
+];
 
 export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -34,18 +82,19 @@ export function Landing({ onEnter }: LandingProps) {
     if (el) el.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  // ── Copy the "connect your AI" prompt (clipboard + execCommand fallback) ──
-  const handleCopyPrompt = useCallback(() => {
+  // ── Copy one AI prompt (clipboard + execCommand fallback) ──
+  const handleCopyPrompt = useCallback((id: string) => {
+    const text = AI_PROMPTS.find(p => p.id === id)?.prompt ?? "";
     const done = () => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1600);
     };
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(CONNECT_PROMPT).then(done).catch(() => {});
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
       return;
     }
     const ta = document.createElement("textarea");
-    ta.value = CONNECT_PROMPT;
+    ta.value = text;
     ta.style.position = "fixed";
     ta.style.opacity = "0";
     document.body.appendChild(ta);
@@ -57,6 +106,17 @@ export function Landing({ onEnter }: LandingProps) {
       /* clipboard no disponible */
     }
     document.body.removeChild(ta);
+  }, []);
+
+  // ── One click on a prompt selects the whole text (easy copy-paste) ──
+  const handleSelectPrompt = useCallback((e: ReactMouseEvent<HTMLPreElement>) => {
+    const range = document.createRange();
+    range.selectNodeContents(e.currentTarget);
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   }, []);
 
   // ── Video fade-in/fade-out loop ──
@@ -474,9 +534,36 @@ export function Landing({ onEnter }: LandingProps) {
             <div className="landing-step">
               <div className="landing-step-num">1</div>
               <div>
-                <div className="landing-step-title">Pega este prompt a tu IA</div>
-                <p className="landing-step-desc">Tu IA abre el discovery de Musa y te explica cómo entrar:</p>
-                <pre className="landing-code-block landing-copy-wrap">{CONNECT_PROMPT}<button type="button" onClick={handleCopyPrompt} className="landing-copy-btn">{copied ? "✓ Copiado" : "Copiar"}</button></pre>
+                <div className="landing-step-title">Pega el prompt de tu IA</div>
+                <p className="landing-step-desc">
+                  Elige tu IA y cópiale su prompt (un clic sobre el texto lo selecciona todo). Ella abre
+                  el discovery de Musa y te dice qué puede diseñar y cómo entrar:
+                </p>
+                <div className="landing-ai-prompts">
+                  {AI_PROMPTS.map(ai => (
+                    <div key={ai.id} className="landing-ai-prompt-box">
+                      <div className="landing-ai-prompt-head">
+                        <span className="landing-ai-prompt-name">{ai.name}</span>
+                        <span className="landing-ai-badge">{ai.badge}</span>
+                      </div>
+                      <p className="landing-ai-how">{ai.how}</p>
+                      <pre
+                        className="landing-code-block landing-copy-wrap landing-ai-pre"
+                        onClick={handleSelectPrompt}
+                        title="Clic para seleccionar todo el prompt"
+                      >
+                        {ai.prompt}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleCopyPrompt(ai.id); }}
+                          className="landing-copy-btn"
+                        >
+                          {copiedId === ai.id ? "✓ Copiado" : "Copiar"}
+                        </button>
+                      </pre>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="landing-step">

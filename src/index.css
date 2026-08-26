@@ -4426,6 +4426,27 @@ html, body, #root { height: 100%; width: 100%; }
   font-family: inherit;
 }
 .landing-copy-btn:hover { background: rgba(124, 108, 239, 0.5); }
+.landing-ai-prompts { display: flex; flex-direction: column; gap: 12px; }
+.landing-ai-prompt-box {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 12px 14px 14px;
+}
+.landing-ai-prompt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.landing-ai-prompt-name { font-size: 13px; font-weight: 700; color: #fff; }
+.landing-ai-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(165, 243, 252, 0.85);
+  background: rgba(165, 243, 252, 0.08);
+  border: 1px solid rgba(165, 243, 252, 0.2);
+  padding: 2px 8px;
+  border-radius: 100px;
+  white-space: nowrap;
+}
+.landing-ai-how { font-size: 11px; color: rgba(255, 255, 255, 0.45); line-height: 1.5; margin: 0 0 8px 0; }
+.landing-ai-pre { cursor: text; }
 .landing-connect-note {
   margin-top: 18px;
   padding: 16px 20px;
