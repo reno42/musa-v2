@@ -4447,6 +4447,32 @@ html, body, #root { height: 100%; width: 100%; }
 }
 .landing-ai-how { font-size: 11px; color: rgba(255, 255, 255, 0.45); line-height: 1.5; margin: 0 0 8px 0; }
 .landing-ai-pre { cursor: text; }
+.landing-key-box {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.landing-key-label { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.8); }
+.landing-key-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  color: #c4b5fd;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+}
+.landing-key-input:focus { border-color: rgba(167, 139, 250, 0.7); }
+.landing-key-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+.landing-key-hint { font-size: 11px; color: rgba(255, 255, 255, 0.4); line-height: 1.5; }
 .landing-connect-note {
   margin-top: 18px;
   padding: 16px 20px;

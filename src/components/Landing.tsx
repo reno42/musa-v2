@@ -7,9 +7,10 @@ interface LandingProps {
   onEnter: () => void;
 }
 
-/** Prompts listos para pegarle a cada IA — ella misma lee el discovery de Musa
- *  (/.well-known/mcp.json + /SKILL.md), le dice al usuario qué puede diseñar y
- *  lo guía: cuenta gratis → clave MCP → primer diseño. */
+/** Prompts listos para pegarle a cada IA (harnesses de escritorio con acceso a
+ *  sus propios archivos de config). El usuario pega su clave una vez y cada
+ *  prompt se arma con ella: la IA configura su MCP, guarda la clave permanente,
+ *  confirma con tools/list y empieza a diseñar. TU_CLAVE_AQUI es el placeholder. */
 interface AiPrompt {
   id: string;
   name: string;
@@ -18,47 +19,71 @@ interface AiPrompt {
   prompt: string;
 }
 
+const renderPrompt = (prompt: string, apiKey: string) =>
+  prompt.split("TU_CLAVE_AQUI").join(apiKey || "TU_CLAVE_AQUI");
+
 const AI_PROMPTS: AiPrompt[] = [
-  {
-    id: "chatgpt",
-    name: "ChatGPT",
-    badge: "Conector MCP · OAuth",
-    how: "Pega la URL en Conectores → Agregar conector; ChatGPT descubre el login (OAuth 2.1) solo.",
-    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
-Dime todo lo que puedes diseñar con las herramientas MCP que descubras (posts, landing pages, decks, variantes en batch, export…).
-Yo creo mi cuenta gratis y me autorizo cuando me pidas el login.
-Conéctate al conector MCP (https://design.futuraria.com) y empecemos a diseñar mi primera pieza.`,
-  },
-  {
-    id: "claude",
-    name: "Claude",
-    badge: "Desktop + conector web",
-    how: "Claude Desktop: agrega el servidor MCP con tu clave fdr_ws_. Conector web: pega la URL y entra con tu cuenta.",
-    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
-Dime todo lo que puedes diseñar con las herramientas MCP que descubras.
-Yo creo mi cuenta gratis y genero mi clave MCP (Configuración → API Keys, empieza con fdr_ws_).
-Guíame paso a paso para conectar tu MCP: en Claude Desktop agrega el servidor https://design.futuraria.com/mcp con el header x-api-key; en el conector web basta la URL y entro con mi cuenta (OAuth).
-Cuando estés conectado, empieza a diseñar.`,
-  },
   {
     id: "hermes",
     name: "Hermes",
-    badge: "Agente propio · x-api-key",
-    how: "Endpoint https://design.futuraria.com/mcp con header x-api-key (o ?key= en la URL si no soporta headers).",
-    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json y /SKILL.md.
-Dime todo lo que puedes diseñar con las herramientas MCP que descubras y cómo las vas a llamar.
-Yo creo mi cuenta gratis en design.futuraria.com y genero mi clave MCP en Configuración → API Keys (empieza con fdr_ws_).
-Conéctate al endpoint https://design.futuraria.com/mcp usando el header x-api-key (o ?key=CLAVE en la URL si no soportas headers) y empieza a diseñar mi primera pieza.`,
+    badge: "HTTP directo",
+    how: "Agente propio con HTTP: endpoint + clave, sin archivos que tocar.",
+    prompt: `Tengo cuenta en Futuraria (design.futuraria.com) y esta clave MCP: TU_CLAVE_AQUI.
+Conéctate al endpoint https://design.futuraria.com/mcp con el header x-api-key: TU_CLAVE_AQUI (si no puedes mandar headers usa https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI).
+Guárdala permanente en tu configuración, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué piezas empezamos a diseñar.`,
+  },
+  {
+    id: "claude-code",
+    name: "Claude Code",
+    badge: "CLI · mcp.json",
+    how: "CLI: ejecuta claude mcp add … o agrega el servidor a tu .mcp.json; reinicia la sesión.",
+    prompt: `Tengo cuenta en Futuraria y esta clave MCP: TU_CLAVE_AQUI.
+Ejecuta: claude mcp add futuraria --url https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI"
+(o agrégala a tu .mcp.json con headers: {"x-api-key": "TU_CLAVE_AQUI"}).
+Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+  },
+  {
+    id: "claude-cowork",
+    name: "Claude Cowork",
+    badge: "Desktop · mcp.json",
+    how: "Desktop: agrega el servidor a tu mcp.json de Cowork y reinicia la app.",
+    prompt: `Tengo cuenta en Futuraria y esta clave MCP: TU_CLAVE_AQUI.
+Agrega el servidor a tu config de Cowork (mcp.json):
+{"mcpServers": {"futuraria": {"url": "https://design.futuraria.com/mcp", "headers": {"x-api-key": "TU_CLAVE_AQUI"}}}}
+Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    badge: "CLI · config.toml",
+    how: "CLI: agrega el bloque [mcp_servers.futuraria] a ~/.codex/config.toml y reinicia la sesión.",
+    prompt: `Tengo cuenta en Futuraria y esta clave MCP: TU_CLAVE_AQUI.
+Agrega a ~/.codex/config.toml:
+[mcp_servers.futuraria]
+url = "https://design.futuraria.com/mcp"
+http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
+Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+  },
+  {
+    id: "chatgpt-cowork",
+    name: "ChatGPT Cowork",
+    badge: "Desktop · config.toml",
+    how: "Desktop: agrega el servidor MCP de Futuraria a tu config de Cowork y reinicia la app.",
+    prompt: `Tengo cuenta en Futuraria y esta clave MCP: TU_CLAVE_AQUI.
+Agrega el servidor MCP de Futuraria a tu config de Cowork (config.toml):
+[mcp_servers.futuraria]
+url = "https://design.futuraria.com/mcp"
+http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
+Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "otra",
     name: "Otra IA",
-    badge: "Codex, Kimi, OpenClaw…",
-    how: "Si tu IA soporta MCP, dale la URL o el endpoint; si no, pásale la guía descargable (SKILL.md).",
-    prompt: `Ve a https://design.futuraria.com y lee /.well-known/mcp.json
-y /SKILL.md. Dime todo lo que puedes diseñar con las herramientas MCP que
-descubras y cómo entrar: yo creo la cuenta, te genero la clave MCP y tú
-empiezas a diseñar.`,
+    badge: "Endpoint + clave",
+    how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía descargable (SKILL.md).",
+    prompt: `Tengo cuenta en Futuraria y esta clave MCP: TU_CLAVE_AQUI.
+Conecta https://design.futuraria.com/mcp con el header x-api-key: TU_CLAVE_AQUI (o ?key= en la URL si no soportas headers).
+Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
 ];
 
@@ -68,6 +93,7 @@ export function Landing({ onEnter }: LandingProps) {
   const [isExiting, setIsExiting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState("");
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -84,7 +110,7 @@ export function Landing({ onEnter }: LandingProps) {
 
   // ── Copy one AI prompt (clipboard + execCommand fallback) ──
   const handleCopyPrompt = useCallback((id: string) => {
-    const text = AI_PROMPTS.find(p => p.id === id)?.prompt ?? "";
+    const text = renderPrompt(AI_PROMPTS.find(p => p.id === id)?.prompt ?? "", apiKey);
     const done = () => {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1600);
@@ -106,7 +132,7 @@ export function Landing({ onEnter }: LandingProps) {
       /* clipboard no disponible */
     }
     document.body.removeChild(ta);
-  }, []);
+  }, [apiKey]);
 
   // ── One click on a prompt selects the whole text (easy copy-paste) ──
   const handleSelectPrompt = useCallback((e: ReactMouseEvent<HTMLPreElement>) => {
@@ -536,9 +562,27 @@ export function Landing({ onEnter }: LandingProps) {
               <div>
                 <div className="landing-step-title">Pega el prompt de tu IA</div>
                 <p className="landing-step-desc">
-                  Elige tu IA y cópiale su prompt (un clic sobre el texto lo selecciona todo). Ella abre
-                  el discovery de Musa y te dice qué puede diseñar y cómo entrar:
+                  ¿Ya tienes cuenta y clave? Pégala abajo y cada prompt se arma con ella — un solo
+                  mensaje y tu IA queda conectada:
                 </p>
+                <div className="landing-key-box">
+                  <label className="landing-key-label" htmlFor="landing-key-input">Tu clave MCP (opcional)</label>
+                  <input
+                    id="landing-key-input"
+                    className="landing-key-input"
+                    type="text"
+                    placeholder="fdr_ws_…"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value.trim())}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="landing-key-hint">
+                    {apiKey
+                      ? "Los prompts de abajo ya incluyen tu clave — copia el de tu IA y pégalo."
+                      : "Sin clave aún: deja el campo vacío, cópiale el prompt a tu IA y ella te guiará para crearla."}
+                  </span>
+                </div>
                 <div className="landing-ai-prompts">
                   {AI_PROMPTS.map(ai => (
                     <div key={ai.id} className="landing-ai-prompt-box">
@@ -552,7 +596,7 @@ export function Landing({ onEnter }: LandingProps) {
                         onClick={handleSelectPrompt}
                         title="Clic para seleccionar todo el prompt"
                       >
-                        {ai.prompt}
+                        {renderPrompt(ai.prompt, apiKey)}
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); handleCopyPrompt(ai.id); }}
