@@ -1,6 +1,6 @@
 # REQ-013 — Extractor de design system no resuelve CSS custom properties (`var()`)
 
-Status: Backlog
+Status: Done (2026-08-26)
 Priority: Alta (producto vendido a usuarios externos; la extracción devuelve tokens erróneos para diseños que usan `var()`)
 Files:
 - netlify/functions/design-extractor.mjs (fix principal — `extractDesignSystem()` + `parseCss()`)
@@ -136,3 +136,34 @@ extracción individuales.
 La extracción de estilo devuelve la paleta/tipografía REAL de diseños que usan
 custom properties, lo que habilita correctamente el flujo "extraer estilo →
 crear nueva pieza siguiendo los tokens" para los usuarios del producto.
+
+## Cierre (Done, 2026-08-26)
+
+Implementado en `netlify/functions/design-extractor.mjs` (commit `c7a89c7`).
+
+**Mejora sobre la propuesta original:** la resolución es **por frame**, no con
+un map global. Cada frame es un documento Shadow DOM independiente, así que un
+map global podría cruzar variables con el mismo nombre entre frames (p. ej.
+`--bg` = azul en el frame 1 y verde en el frame 2). `buildCustomProps()` se
+corre por frame dentro del bucle de `extractDesignSystem()`. `lookupProp()`
+añade además un fallback case-insensitive porque `parseCss()` minúscula los
+nombres de propiedad (`--DS-Color` → `--ds-color`).
+
+Verificación completa:
+
+1. **Test de regresión** `QA/design-extractor-var-resolution.test.mjs`: 11/11
+   checks en verde (fixtures: Sweet Bread Card, hex literales, `var(--x,
+fallback)`, scoping por frame).
+2. **Determinismo probado**: diseño con hex literales mantiene su
+   `styleFingerprint` byte-estable (`fa112940647ae8d3`) antes y después del fix.
+3. **Verificación en producción** (2026-08-26, tras deploy):
+   `extract_design_system({ templateIds:["tpl_7bc52f38-e77"] })` devuelve
+   `#faf7ef` (canvas) y `#3252cb` (accent), `Helvetica Neue` en
+   typography.families, y la constraint "Palette is monochrome" desapareció.
+4. `api/src/routes/designSystem.ts` importa `design-extractor.mjs` (mismo
+   archivo, línea 22) → el fix cubre ambos consumers sin cambios extra.
+   `template-profiler.mjs` solo usa `parseCss()`, que no cambió.
+
+Límite conocido (documentado en el REQ original): `var()` anidado dentro del
+fallback se resuelve hasta el primer paréntesis de cierre; caso raro, cubierto
+por la guarda de 10 pasadas.
