@@ -1519,6 +1519,13 @@ If the client has NO OAuth and NO header support, use the key-in-URL form:
 }
 ```
 
+**Verifying auth WITHOUT any paid AI client** (regression after deploys):
+```powershell
+node QA/oauth-qa-user-setup.mjs   # once: registers the QA user + accepts the NDA
+node QA/oauth-flow-test.mjs       # 21 checks: discovery -> register -> authorize -> token -> Bearer on /mcp -> refresh -> replay rejection
+```
+This is a headless client performing the exact HTTP sequence ChatGPT/Claude web would. Full report and findings: `QA/OAUTH-FLOW-TEST-2026-08-25.md`.
+
 **Custom HTTP Client** (any language):
 ```bash
 # 1. Initialize

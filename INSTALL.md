@@ -233,6 +233,13 @@ All tests must PASS. If any fail, the deploy is incomplete — debug before conn
 
 **Without any of the three, `tools/call` is rejected (401).** `initialize`, `tools/list` and the public tools (`get_agent_guide`, `get_playbook`, `verify_api_key`) need no auth. The examples below use `dev-key` — replace with your actual key if you changed it.
 
+**Verify the full OAuth flow without any paid AI client:**
+```powershell
+node QA/oauth-qa-user-setup.mjs   # once: registers the QA user via public signup + accepts the NDA
+node QA/oauth-flow-test.mjs       # 21 checks: discovery -> register -> authorize -> token -> Bearer on /mcp -> refresh -> replay rejection
+```
+The test is a headless client performing the exact HTTP sequence a real connector performs. Report: `QA/OAUTH-FLOW-TEST-2026-08-25.md`.
+
 **Claude Desktop / Claude Code:**
 
 Config file: macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`.
