@@ -6662,6 +6662,8 @@ async function handleMethod(method, params, userId, auth) {
       // already sitting on Runway's side. Any hiccup here silently falls
       // back to the direct URL — exactly the previous behavior.
       let usedEphemeral = false;
+      let ephemeralError = null;
+      const inputInfo = { bytes: null, contentType: null, width: null, height: null, normalized: false };
       try {
         const abort = new AbortController();
         // Whole ephemeral attempt capped at 8s so the submit below still fits
@@ -6670,14 +6672,47 @@ async function handleMethod(method, params, userId, auth) {
         try {
           const imgResp = await fetch(imageUrl, { signal: abort.signal });
           if (!imgResp.ok) throw new Error(`image download ${imgResp.status}`);
-          const contentType = String(imgResp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-          const ext = contentType === "image/jpeg" ? "jpg"
+          let contentType = String(imgResp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+          let buf = Buffer.from(await imgResp.arrayBuffer());
+          let ext = contentType === "image/jpeg" ? "jpg"
             : contentType === "image/png" ? "png"
             : contentType === "image/webp" ? "webp" : null;
-          if (!ext) throw new Error(`unsupported content-type "${contentType || "unknown"}" (jpg/png/webp only)`);
-          const buf = Buffer.from(await imgResp.arrayBuffer());
           if (buf.length < 512) throw new Error(`image too small (${buf.length}B, Runway min 512)`);
-          if (buf.length > 16 * 1024 * 1024) throw new Error(`image too large (${(buf.length / 1048576).toFixed(1)}MB)`);
+          if (buf.length > 64 * 1024 * 1024) throw new Error(`image too large (${(buf.length / 1048576).toFixed(1)}MB)`);
+
+          // Normalize with sharp when available: decode anything libvips
+          // reads (avif/gif/tiff/exotic encodings), bake EXIF rotation, cap
+          // at Runway's 8000px input limit and re-encode as plain JPEG —
+          // one step removes every input-side failure mode (bad content-
+          // type, extreme dimensions, exotic encoding). Degrades to the raw
+          // bytes + header content-type when sharp is unavailable.
+          try {
+            const sharpModule = await import("sharp");
+            const sharp = sharpModule.default || sharpModule;
+            const meta = await sharp(buf, { failOn: "none" }).metadata();
+            let pipeline = sharp(buf, { failOn: "none" }).rotate();
+            if (meta.width && meta.height && (meta.width > 7900 || meta.height > 7900)) {
+              pipeline = pipeline.resize({
+                width: meta.width >= meta.height ? 7900 : null,
+                height: meta.height > meta.width ? 7900 : null,
+                fit: "inside",
+                withoutEnlargement: true,
+              });
+            }
+            const encoded = await pipeline.jpeg({ quality: 90 }).toBuffer({ resolveWithObject: true });
+            buf = encoded.data;
+            inputInfo.width = encoded.info.width || null;
+            inputInfo.height = encoded.info.height || null;
+            contentType = "image/jpeg";
+            ext = "jpg";
+            inputInfo.normalized = true;
+          } catch (sharpErr) {
+            if (!ext) throw new Error(`unsupported content-type "${contentType || "unknown"}" and sharp unavailable (${String(sharpErr?.message || sharpErr)})`);
+            console.error(`[runway] sharp normalization skipped: ${String(sharpErr?.message || sharpErr)}`);
+          }
+          if (buf.length > 16 * 1024 * 1024) throw new Error(`image too large after normalize (${(buf.length / 1048576).toFixed(1)}MB, Runway max 16)`);
+          inputInfo.bytes = buf.length;
+          inputInfo.contentType = contentType;
 
           const slotResp = await fetch("https://api.dev.runwayml.com/v1/uploads", {
             method: "POST",
@@ -6708,7 +6743,8 @@ async function handleMethod(method, params, userId, auth) {
           clearTimeout(budget);
         }
       } catch (ephErr) {
-        console.error(`[runway] ephemeral upload failed → direct URL fallback: ${String(ephErr?.message || ephErr)}`);
+        ephemeralError = String(ephErr?.message || ephErr);
+        console.error(`[runway] ephemeral upload failed → direct URL fallback: ${ephemeralError}`);
       }
 
       const submit = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
@@ -6726,7 +6762,15 @@ async function handleMethod(method, params, userId, auth) {
       }
       const task = await submit.json();
       if (!task?.id) throw { code: -32000, message: "Runway returned no task id" };
-      return { taskId: task.id, status: task.status || "PENDING", ephemeral: usedEphemeral, note: "Poll with generate_image_video_check — median 1-3 min, free status checks" };
+      return {
+        taskId: task.id,
+        status: task.status || "PENDING",
+        ephemeral: usedEphemeral,
+        ...(ephemeralError ? { ephemeralError } : {}),
+        ...(inputInfo.bytes ? { input: inputInfo } : {}),
+        promptImage: String(body.promptImage).slice(0, 120),
+        note: "Poll with generate_image_video_check — median 1-3 min, free status checks",
+      };
     }
 
     case "generate_image_video_check": {
@@ -6779,8 +6823,11 @@ async function handleMethod(method, params, userId, auth) {
         const status = task?.status || "PENDING";
 
         if (status === "FAILED" || status === "CANCELLED") {
-          const why = task?.failure || task?.error || JSON.stringify(task).substring(0, 300);
-          throw { code: -32000, message: `Runway video generation ${status}: ${why}` };
+          // Full task JSON appended: the generic "unexpected error" carries
+          // no cause, but sibling fields (progress, failure codes, metrics)
+          // often do — surface everything Runway gives us.
+          const why = task?.failure || task?.error || "no failure field";
+          throw { code: -32000, message: `Runway video generation ${status}: ${why} — task: ${JSON.stringify(task).substring(0, 400)}` };
         }
         if (status !== "SUCCEEDED") {
           // PENDING / THROTTLED / RUNNING — caller keeps polling.

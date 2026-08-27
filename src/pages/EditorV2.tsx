@@ -3971,7 +3971,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const refreshKeyStatuses = useCallback(async () => {
     try {
       setKeyStatuses(await fetchKeyStatuses());
-    } catch { /* not signed in or server not configured */ }
+    } catch (err: any) {
+      // 401 (not signed in yet) is expected on first paint; anything else
+      // (500s from /api/keys, network failures) must be visible in console.
+      if (!String(err?.message || "").includes("(401)")) {
+        console.error("[keys] status fetch failed:", err?.message || err);
+      }
+    }
   }, []);
   useEffect(() => { void refreshKeyStatuses(); }, [refreshKeyStatuses]);
   // Auth token is set asynchronously by AuthProvider — re-fetch key statuses
@@ -5045,6 +5051,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (!alive()) return;
       let taskId = submitted?.taskId;
       if (!taskId) throw new Error("El servidor no devolvió el id de la tarea");
+      // Submit visibility: what Runway actually received (transport + input
+      // shape), so any later failure can be correlated in console.
+      console.error("[videoGen] submit:", {
+        taskId, ephemeral: submitted?.ephemeral, ephemeralError: submitted?.ephemeralError,
+        input: submitted?.input, promptImage: submitted?.promptImage,
+      });
 
       // The GPUs at Runway do the waiting — we never hold a server
       // connection open. Countdown ticks every second; real status checks
@@ -5103,7 +5115,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   if (!alive()) return;
                   const newTaskId = resubmitted?.taskId;
                   if (!newTaskId) throw new Error("resubmit sin taskId");
-                  console.error(`[videoGen] FAILED genérico — reintento como tarea ${newTaskId}`);
+                  console.error(`[videoGen] FAILED genérico — reintento como tarea ${newTaskId}`, {
+                    ephemeral: resubmitted?.ephemeral, ephemeralError: resubmitted?.ephemeralError, input: resubmitted?.input,
+                  });
                   taskId = newTaskId;
                   strikes = 0;
                   startedAt = Date.now();
