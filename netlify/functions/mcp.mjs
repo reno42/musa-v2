@@ -1742,11 +1742,13 @@ const MCP_TOOLS = [
   },
   {
     name: "generate_image_video_check",
-    description: "Poll a generate_image_video task. Returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING') or { status: 'completed', videoUrl } when done — videoUrl is persistent (the mp4 is re-uploaded to the design-assets bucket; Runway's own output URLs expire), except when persistence fails, in which case persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
+    description: "Poll a generate_image_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string", description: "The task id returned by generate_image_video" },
+        persist: { type: "boolean", description: "true = download the finished mp4 into the workspace bucket (heavy; call once after SUCCEEDED)" },
+        tempUrl: { type: "string", description: "Optional SUCCEEDED tempUrl from a previous check — skips the status GET in persist mode" },
         workspaceId: { type: "string", description: "Workspace to file the video asset under (bucket path prefix)" },
         runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
       },
@@ -6670,12 +6672,17 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "generate_image_video_check": {
-      // POLL half of the async flow. Each invocation is a single fast GET —
-      // never waits on the GPUs — so it stays far below function timeouts
-      // and (by design) is exempt from workspace quota metering. On
-      // SUCCEEDED the mp4 is downloaded once and re-uploaded to our
-      // design-assets bucket: Runway's output URLs are temporary, so a
-      // saved design must never depend on them.
+      // POLL half of the async flow. Two modes:
+      //   without persist → a single fast GET; never waits on the GPUs and
+      //     never touches the mp4, so it stays far below function timeouts
+      //     and (by design) is exempt from workspace quota metering.
+      //   with persist:true → called ONCE after SUCCEEDED; downloads the mp4
+      //     and re-uploads it to the design-assets bucket (Runway's output
+      //     URLs are temporary, so a saved design must never depend on
+      //     them). The download runs under a hard 5s budget so the function
+      //     answers well before the platform's 10s limit — on overrun it
+      //     degrades to the temporary URL instead of a platform 502 that
+      //     would discard an already-paid generation.
       let rwKey = params.runwayApiKey;
       if (!rwKey && auth?.userId) {
         const userKey = await getUserKey(auth.userId, "runway");
@@ -6692,37 +6699,60 @@ async function handleMethod(method, params, userId, auth) {
       const taskId = String(params.taskId || "").trim();
       if (!taskId) throw { code: -32000, message: "taskId is required" };
 
-      const res = await fetch(`https://api.dev.runwayml.com/v1/tasks/${encodeURIComponent(taskId)}`, {
-        headers: { "Authorization": `Bearer ${rwKey}`, "X-Runway-Version": "2024-11-06" },
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw { code: -32000, message: `Runway poll error ${res.status}: ${errText.substring(0, 300)}` };
-      }
-      const task = await res.json();
-      const status = task?.status || "PENDING";
+      // In persist mode the client already holds the SUCCEEDED tempUrl —
+      // skip the status GET entirely and spend the budget on the download.
+      let tempUrl = typeof params.tempUrl === "string" && /^https?:\/\//.test(params.tempUrl) ? params.tempUrl : null;
+      if (!tempUrl) {
+        const res = await fetch(`https://api.dev.runwayml.com/v1/tasks/${encodeURIComponent(taskId)}`, {
+          headers: { "Authorization": `Bearer ${rwKey}`, "X-Runway-Version": "2024-11-06" },
+        });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          console.error(`[runway] poll ${taskId.slice(0, 8)} → ${res.status}: ${errText.substring(0, 300)}`);
+          // 401/403 = bad key — terminal, same fix path as NO_RUNWAY_KEY.
+          if (res.status === 401 || res.status === 403) {
+            throw { code: -32000, message: `NO_RUNWAY_KEY: Runway rechazó la API key (${res.status}). Verificá tu key en dev.runwayml.com.` };
+          }
+          // Transient (429 rate limit, 5xx, propagation lag): the client
+          // retries — a hiccup must not kill the whole wait loop.
+          return { status: "POLL_ERROR", message: `Runway poll ${res.status}: ${errText.substring(0, 200)}` };
+        }
+        const task = await res.json();
+        const status = task?.status || "PENDING";
 
-      if (status === "FAILED" || status === "CANCELLED") {
-        const why = task?.failure || task?.error || JSON.stringify(task).substring(0, 300);
-        throw { code: -32000, message: `Runway video generation ${status}: ${why}` };
-      }
-      if (status !== "SUCCEEDED") {
-        // PENDING / THROTTLED / RUNNING — caller keeps polling.
-        return { status };
+        if (status === "FAILED" || status === "CANCELLED") {
+          const why = task?.failure || task?.error || JSON.stringify(task).substring(0, 300);
+          throw { code: -32000, message: `Runway video generation ${status}: ${why}` };
+        }
+        if (status !== "SUCCEEDED") {
+          // PENDING / THROTTLED / RUNNING — caller keeps polling.
+          return { status };
+        }
+        tempUrl = Array.isArray(task?.output) && typeof task.output[0] === "string" ? task.output[0] : null;
+        if (!tempUrl) throw { code: -32000, message: "Runway task SUCCEEDED but returned no video URL" };
       }
 
-      const tempUrl = Array.isArray(task?.output) && typeof task.output[0] === "string" ? task.output[0] : null;
-      if (!tempUrl) throw { code: -32000, message: "Runway task SUCCEEDED but returned no video URL" };
+      // Pure status mode: hand back the temporary URL; the client comes
+      // back once with persist:true for the heavy part.
+      if (!params.persist) {
+        return { status: "SUCCEEDED", tempUrl, note: "Call again with persist:true to save the mp4 to the design-assets bucket" };
+      }
 
-      // Persist the mp4. If this fails (oversized file, network), fall
-      // back to the temporary URL with an explicit flag — the client can
-      // still download it right away instead of losing the generation.
+      // Persist mode. On any failure fall back to the temporary URL with an
+      // explicit flag — the generation is already paid for.
       try {
         const sb = getSupabase();
         if (!sb) throw new Error("Supabase not configured");
-        const videoResp = await fetch(tempUrl);
-        if (!videoResp.ok) throw new Error(`mp4 download failed: ${videoResp.status}`);
-        const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+        const abort = new AbortController();
+        const budget = setTimeout(() => abort.abort(), 5000);
+        let videoBuffer;
+        try {
+          const videoResp = await fetch(tempUrl, { signal: abort.signal });
+          if (!videoResp.ok) throw new Error(`mp4 download failed: ${videoResp.status}`);
+          videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+        } finally {
+          clearTimeout(budget);
+        }
         if (videoBuffer.length > 100 * 1024 * 1024) {
           throw new Error(`mp4 too large to re-upload (${(videoBuffer.length / 1048576).toFixed(1)} MB)`);
         }
@@ -6749,6 +6779,7 @@ async function handleMethod(method, params, userId, auth) {
         });
         return { status: "completed", videoUrl, bytes: videoBuffer.length, persistent: true };
       } catch (persistErr) {
+        console.error(`[runway] persist ${taskId.slice(0, 8)} failed:`, persistErr?.message || persistErr);
         return {
           status: "completed",
           videoUrl: tempUrl,

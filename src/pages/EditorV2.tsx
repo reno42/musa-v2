@@ -5048,14 +5048,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
       // The GPUs at Runway do the waiting — we never hold a server
       // connection open. Countdown ticks every second; real status checks
-      // are spaced out (first at 20s, then every ~10s, both free).
+      // are spaced out (first at 20s, then every ~10s, both free). A
+      // transient check failure (429/5xx blip, platform 502) counts as a
+      // strike — up to 5 in a row — instead of killing the whole wait:
+      // the task keeps running on Runway either way.
       setVideoStatus("processing");
       const startedAt = Date.now();
       const deadline = startedAt + VIDEO_GEN_MAX_MS;
       let nextCheckAt = startedAt + VIDEO_GEN_FIRST_CHECK_MS;
       let videoUrl: string | null = null;
       let persistent = true;
-      while (alive()) {
+      let tempUrl: string | null = null;
+      const MAX_POLL_STRIKES = 5;
+      let strikes = 0;
+      let warnedUnstable = false;
+      while (alive() && !tempUrl) {
         await new Promise(r => setTimeout(r, 1000));
         if (!alive()) return;
         const elapsed = Date.now() - startedAt;
@@ -5064,14 +5071,58 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         if (Date.now() >= deadline) throw new Error("La generación tardó demasiado (más de 10 min) — la tarea sigue en Runway, pero dejamos de esperar.");
         if (Date.now() >= nextCheckAt) {
           nextCheckAt = Date.now() + VIDEO_GEN_CHECK_EVERY_MS;
-          const check = await callVideo("generate_image_video_check", { taskId, workspaceId: templateWorkspaceId });
+          let check: any = null;
+          let pollFailed: unknown = null;
+          try {
+            check = await callVideo("generate_image_video_check", { taskId, workspaceId: templateWorkspaceId });
+          } catch (err) {
+            pollFailed = err;
+          }
           if (!alive()) return;
-          if (check?.status === "completed" && check.videoUrl) {
-            videoUrl = check.videoUrl;
-            persistent = check.persistent !== false;
-            break;
+          if (pollFailed) {
+            const msg = String((pollFailed as any)?.message || pollFailed);
+            // Terminal causes abort immediately; anything else is a strike.
+            if (msg.includes("NO_RUNWAY_KEY") || msg.includes("generation FAILED") || msg.includes("generation CANCELLED")) throw pollFailed;
+            strikes++;
+            console.error(`[videoGen] status check ${strikes}/${MAX_POLL_STRIKES} failed:`, msg);
+            if (strikes >= 3 && !warnedUnstable) { warnedUnstable = true; addToast("Conexión inestable con Runway — seguimos reintentando…", "info"); }
+            if (strikes >= MAX_POLL_STRIKES) throw new Error(`Se perdieron ${MAX_POLL_STRIKES} chequeos seguidos — la tarea sigue en Runway (id ${taskId}), pero dejamos de esperar. (${msg})`);
+          } else if (check?.status === "POLL_ERROR") {
+            strikes++;
+            console.error(`[videoGen] transient poll ${strikes}/${MAX_POLL_STRIKES}:`, check.message);
+            if (strikes >= 3 && !warnedUnstable) { warnedUnstable = true; addToast("Conexión inestable con Runway — seguimos reintentando…", "info"); }
+            if (strikes >= MAX_POLL_STRIKES) throw new Error(`Se perdieron ${MAX_POLL_STRIKES} chequeos seguidos — la tarea sigue en Runway (id ${taskId}), pero dejamos de esperar.`);
+          } else {
+            strikes = 0;
+            if (check?.status === "SUCCEEDED" && check.tempUrl) {
+              tempUrl = check.tempUrl;
+            }
           }
         }
+      }
+      if (!alive()) return;
+
+      // Persist phase: re-upload the finished mp4 in its own bounded server
+      // call, with one retry. A persistence hiccup must never discard an
+      // already-paid generation — fall back to the temporary URL.
+      if (tempUrl && !videoUrl) {
+        setVideoStatus("saving");
+        for (let attempt = 1; attempt <= 2 && alive(); attempt++) {
+          try {
+            const saved = await callVideo("generate_image_video_check", { taskId, persist: true, tempUrl, workspaceId: templateWorkspaceId });
+            if (!alive()) return;
+            if (saved?.videoUrl) {
+              videoUrl = saved.videoUrl;
+              persistent = saved.persistent !== false;
+              break;
+            }
+          } catch (err) {
+            if (!alive()) return;
+            console.error(`[videoGen] persist attempt ${attempt}/2 failed:`, err);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 2500));
+          }
+        }
+        if (!videoUrl) { videoUrl = tempUrl; persistent = false; }
       }
       if (!alive()) return;
       if (!videoUrl) throw new Error("Runway no devolvió el video");
@@ -5128,6 +5179,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ? "✓ Video generado junto a la imagen — reproducilo o descargalo como mp4."
         : "✓ Video generado (URL temporaria — descargalo pronto, no se pudo guardar en tu biblioteca).", persistent ? "success" : "info");
     } catch (err: any) {
+      console.error("[videoGen] generation failed:", err);
       const msg = String(err?.message || "error desconocido");
       if (msg.includes("NO_RUNWAY_KEY")) {
         addToast("Falta tu API key de RunwayML — guardala en el panel.", "info");
