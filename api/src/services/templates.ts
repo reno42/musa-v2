@@ -151,6 +151,9 @@ async function getFromSupabase(id: string): Promise<DesignTemplate | null> {
     if (tpl.versions && tpl.versions.length > 10) {
       tpl.versions = tpl.versions.slice(-10);
     }
+    // REQ-014: legacy embedded snapshots are dead weight nobody consumes —
+    // strip them so editor GETs stop hauling up to 10 full design copies.
+    if ((tpl as any)._snapshots) delete (tpl as any)._snapshots;
     return tpl;
   } catch {
     return null;
@@ -161,12 +164,20 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
   const sb = getSupabase();
   if (!sb) return false;
   try {
+    // REQ-014: never persist embedded `_snapshots` — each entry is a FULL
+    // copy of the design, so 10 of them made the data column weigh tens of
+    // MB and the upsert blow past its 8s timeout (the enabler of the
+    // lost-update race). Durable history lives in template_versions +
+    // design-versions. Shallow copy — the in-memory store object is not
+    // mutated.
+    const data: Record<string, any> = { ...tpl };
+    delete data._snapshots;
     const row: Record<string, any> = {
       id: tpl.id,
       name: tpl.name,
       slug: tpl.slug || slugify(tpl.name),
       workspace_id: tpl.workspaceId || null,
-      data: tpl,
+      data,
       updated_at: new Date().toISOString(),
     };
     // Only include user_id if it's a valid UUID (column type is uuid with FK to auth.users)

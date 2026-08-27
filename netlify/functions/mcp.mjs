@@ -5030,36 +5030,19 @@ function sanitizeRuntimeMetadata(metadata) {
 }
 
 async function handleMethod(method, params, userId, auth) {
-  // Helper: auto-snapshot before IA mutations (capture pre-state for diff)
+  // Helper: auto-snapshot before IA mutations (capture pre-state for diff).
+  // In-memory ONLY by design (REQ-014): the old Supabase persistence did a
+  // read-modify-write of the whole templates.data column and could land
+  // AFTER a concurrent updateTemplate upsert, overwriting real changes with
+  // a stale copy (classic lost update — it erased frame.animation). Snapshots
+  // are accessory: durable version history lives in template_versions + the
+  // design-versions bucket (versionHistory), never inside templates.data.
   const autoSnapshot = (templateId, trigger, tplData) => {
     try {
       if (tplData) {
         store.snapshot(templateId, JSON.parse(JSON.stringify(tplData)));
       } else {
         store.snapshotAuto(templateId, "ia", trigger);
-      }
-      // Persist snapshot to Supabase for cross-invocation survival
-      const sb = getSupabase();
-      if (sb) {
-        const snap = store.getSnapshot(templateId);
-        if (snap && snap.data) {
-          const snapData = snap.data;
-          sb.from("templates").select("data").eq("id", templateId).maybeSingle().then(({ data: row }) => {
-            if (row?.data) {
-              const existing = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
-              const snapshots = existing._snapshots || [];
-              snapshots.push({
-                id: snap.id,
-                trigger,
-                timestamp: new Date().toISOString(),
-                data: snapData,
-              });
-              if (snapshots.length > 10) snapshots.shift();
-              existing._snapshots = snapshots;
-              sb.from("templates").update({ data: existing }).eq("id", templateId).catch(() => {});
-            }
-          }).catch(() => {});
-        }
       }
     } catch { /* non-blocking */ }
   };
@@ -6085,7 +6068,12 @@ async function handleMethod(method, params, userId, auth) {
         delete frame.animation;
         frame.lastModifiedBy = params.author || "agent:set_animation";
         frame.lastModifiedAt = new Date().toISOString();
-        await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+        // REQ-014: a null return means the Supabase upsert failed/timed out —
+        // reporting success would advertise a clear that never landed.
+        const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+        if (!saved) {
+          throw { code: -32000, message: "ANIMATION_SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_animation" };
+        }
         autoSnapshot(params.templateId, "set_animation");
         return { frameId: frame.id, cleared: true, stats: animationStats(null) };
       }
@@ -6121,7 +6109,13 @@ async function handleMethod(method, params, userId, auth) {
       frame.animation = schema;
       frame.lastModifiedBy = params.author || "agent:set_animation";
       frame.lastModifiedAt = new Date().toISOString();
-      await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      // REQ-014: a null return means the Supabase upsert failed/timed out —
+      // answering success here made the tool advertise an animation that a
+      // racing autoSnapshot then erased (or that never persisted at all).
+      const saved = await templates.updateTemplate(params.templateId, { frames: tpl.frames });
+      if (!saved) {
+        throw { code: -32000, message: "ANIMATION_SAVE_FAILED: la escritura en Supabase falló o agotó el timeout — reintentá set_animation" };
+      }
       autoSnapshot(params.templateId, "set_animation");
       return { frameId: frame.id, animation: frame.animation, stats: animationStats(frame.animation) };
     }
