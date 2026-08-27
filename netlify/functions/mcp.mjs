@@ -1724,6 +1724,36 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "generate_image_video",
+    description: "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 5s or 10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageUrl: { type: "string", description: "Public PNG/JPEG URL of the image to animate" },
+        prompt: { type: "string", description: "Optional motion description (what moves, camera move, style). Empty = model's best guess" },
+        model: { type: "string", description: "Runway model id: gen4_turbo (default, ~$0.25/5s) or gen4.5 (max quality, ~$0.50/5s)" },
+        duration: { type: "number", description: "Clip length in seconds: 5 (default) or 10" },
+        ratio: { type: "string", description: "Output aspect ratio: 1280:720 (default), 720:1280, 960:960, 1104:832, 832:1104, 1584:672, 672:1584" },
+        seed: { type: "number", description: "Optional seed for reproducible generations" },
+        runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
+      },
+      required: ["imageUrl"],
+    },
+  },
+  {
+    name: "generate_image_video_check",
+    description: "Poll a generate_image_video task. Returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING') or { status: 'completed', videoUrl } when done — videoUrl is persistent (the mp4 is re-uploaded to the design-assets bucket; Runway's own output URLs expire), except when persistence fails, in which case persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "The task id returned by generate_image_video" },
+        workspaceId: { type: "string", description: "Workspace to file the video asset under (bucket path prefix)" },
+        runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
     name: "create_variable",
     description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     inputSchema: {
@@ -6583,6 +6613,149 @@ async function handleMethod(method, params, userId, auth) {
       }
       // created / processing / anything transient — caller keeps polling.
       return { status };
+    }
+
+    case "generate_image_video": {
+      // RunwayML Gen-4 image-to-video. Same BYOK resolution chain as the
+      // WaveSpeed tools, provider 'runway'. SUBMIT half of the async flow:
+      // Runway tasks run 1-3 min on their GPUs, far beyond any function
+      // timeout, so this returns the taskId immediately and the client
+      // polls with generate_image_video_check (status polls are free).
+      let rwKey = params.runwayApiKey;
+      if (!rwKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "runway");
+        if (userKey.key) rwKey = userKey.key;
+      }
+      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) {
+        throw {
+          code: -32000,
+          message: "NO_RUNWAY_KEY: Falta una API key de RunwayML. Pasala en runwayApiKey, configurá tu key BYOK (provider 'runway'), o definí RUNWAY_API_KEY en el servidor.",
+        };
+      }
+
+      const imageUrl = String(params.imageUrl || "").trim();
+      if (!/^https?:\/\//.test(imageUrl)) {
+        throw { code: -32000, message: "imageUrl must be a public http(s) URL of a PNG/JPEG image" };
+      }
+
+      const RW_MODELS = new Set(["gen4_turbo", "gen4.5"]);
+      const RW_RATIOS = new Set(["1280:720", "720:1280", "960:960", "1104:832", "832:1104", "1584:672", "672:1584"]);
+      const body = {
+        model: RW_MODELS.has(params.model) ? params.model : "gen4_turbo",
+        promptImage: imageUrl,
+        duration: Number(params.duration) === 10 ? 10 : 5,
+        ratio: RW_RATIOS.has(params.ratio) ? params.ratio : "1280:720",
+      };
+      if (params.prompt) body.promptText = String(params.prompt).slice(0, 2000);
+      const seedNum = Number(params.seed);
+      if (Number.isFinite(seedNum)) body.seed = seedNum;
+
+      const submit = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${rwKey}`,
+          "Content-Type": "application/json",
+          "X-Runway-Version": "2024-11-06",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!submit.ok) {
+        const errText = await submit.text().catch(() => "");
+        throw { code: -32000, message: `Runway submit error ${submit.status}: ${errText.substring(0, 300)}` };
+      }
+      const task = await submit.json();
+      if (!task?.id) throw { code: -32000, message: "Runway returned no task id" };
+      return { taskId: task.id, status: task.status || "PENDING", note: "Poll with generate_image_video_check — median 1-3 min, free status checks" };
+    }
+
+    case "generate_image_video_check": {
+      // POLL half of the async flow. Each invocation is a single fast GET —
+      // never waits on the GPUs — so it stays far below function timeouts
+      // and (by design) is exempt from workspace quota metering. On
+      // SUCCEEDED the mp4 is downloaded once and re-uploaded to our
+      // design-assets bucket: Runway's output URLs are temporary, so a
+      // saved design must never depend on them.
+      let rwKey = params.runwayApiKey;
+      if (!rwKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "runway");
+        if (userKey.key) rwKey = userKey.key;
+      }
+      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) {
+        throw {
+          code: -32000,
+          message: "NO_RUNWAY_KEY: Falta una API key de RunwayML (la misma usada para enviar la tarea).",
+        };
+      }
+
+      const taskId = String(params.taskId || "").trim();
+      if (!taskId) throw { code: -32000, message: "taskId is required" };
+
+      const res = await fetch(`https://api.dev.runwayml.com/v1/tasks/${encodeURIComponent(taskId)}`, {
+        headers: { "Authorization": `Bearer ${rwKey}`, "X-Runway-Version": "2024-11-06" },
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw { code: -32000, message: `Runway poll error ${res.status}: ${errText.substring(0, 300)}` };
+      }
+      const task = await res.json();
+      const status = task?.status || "PENDING";
+
+      if (status === "FAILED" || status === "CANCELLED") {
+        const why = task?.failure || task?.error || JSON.stringify(task).substring(0, 300);
+        throw { code: -32000, message: `Runway video generation ${status}: ${why}` };
+      }
+      if (status !== "SUCCEEDED") {
+        // PENDING / THROTTLED / RUNNING — caller keeps polling.
+        return { status };
+      }
+
+      const tempUrl = Array.isArray(task?.output) && typeof task.output[0] === "string" ? task.output[0] : null;
+      if (!tempUrl) throw { code: -32000, message: "Runway task SUCCEEDED but returned no video URL" };
+
+      // Persist the mp4. If this fails (oversized file, network), fall
+      // back to the temporary URL with an explicit flag — the client can
+      // still download it right away instead of losing the generation.
+      try {
+        const sb = getSupabase();
+        if (!sb) throw new Error("Supabase not configured");
+        const videoResp = await fetch(tempUrl);
+        if (!videoResp.ok) throw new Error(`mp4 download failed: ${videoResp.status}`);
+        const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+        if (videoBuffer.length > 100 * 1024 * 1024) {
+          throw new Error(`mp4 too large to re-upload (${(videoBuffer.length / 1048576).toFixed(1)} MB)`);
+        }
+        const assetId = `asset_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const filePath = `${params.workspaceId || "default"}/${assetId}.mp4`;
+        const { error: uploadErr } = await sb.storage.from("design-assets").upload(filePath, videoBuffer, {
+          contentType: "video/mp4",
+          upsert: true,
+        });
+        if (uploadErr) throw new Error(uploadErr.message);
+        const { data: signed } = await sb.storage.from("design-assets").createSignedUrl(filePath, 31536000);
+        const videoUrl = signed?.signedUrl || "";
+        if (!videoUrl) throw new Error("no signed url returned");
+        await sb.from("assets").upsert({
+          id: assetId,
+          name: `video-gen-${assetId}.mp4`,
+          filename: `${assetId}.mp4`,
+          mime_type: "video/mp4",
+          size_bytes: videoBuffer.length,
+          url: videoUrl,
+          tags: ["runway", "video"],
+          workspace_id: params.workspaceId || null,
+          created_by: userId || auth?.userId || null,
+        });
+        return { status: "completed", videoUrl, bytes: videoBuffer.length, persistent: true };
+      } catch (persistErr) {
+        return {
+          status: "completed",
+          videoUrl: tempUrl,
+          persistent: false,
+          warning: `El mp4 no se pudo guardar en tu biblioteca (${persistErr?.message || persistErr}) — descargalo pronto, la URL de Runway es temporaria.`,
+        };
+      }
     }
 
     case "ai_translate": {
@@ -15226,7 +15399,7 @@ export const handler = async (event) => {
         // (fail-open — pre-migration DBs never block on metering).
         // Free-status tools are exempt: they proxy a free GET, so metering
         // them would punish async flows (one billed submit + N free polls).
-        const UNMETERED_TOOLS = new Set(["separate_image_layers_check"]);
+        const UNMETERED_TOOLS = new Set(["separate_image_layers_check", "generate_image_video_check"]);
         const quotaResponse = UNMETERED_TOOLS.has(params.name)
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);
@@ -15290,7 +15463,7 @@ export const handler = async (event) => {
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
         // Free-status tools are exempt here too (same rule as tools/call).
-        const UNMETERED_TOOLS = new Set(["separate_image_layers_check"]);
+        const UNMETERED_TOOLS = new Set(["separate_image_layers_check", "generate_image_video_check"]);
         const quotaResponse = UNMETERED_TOOLS.has(method)
           ? null
           : await meterWorkspaceUsage(scopedParams, id, headers);

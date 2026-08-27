@@ -320,6 +320,28 @@ const LAYER_SPLIT_FIRST_CHECK_MS = 30_000; // first status check
 const LAYER_SPLIT_CHECK_EVERY_MS = 12_000; // then every ~12s (free checks)
 const LAYER_SPLIT_MAX_MS = 8 * 60_000;     // hard stop for the wait loop
 
+/**
+ * Image → video (RunwayML Gen-4, topbar 🎬). Same async pattern as layer
+ * separation: submit + browser-side polling with free status checks. The
+ * generated mp4 is re-uploaded to our bucket (Runway output URLs are
+ * temporary) and placed in a frame NEXT TO the source image.
+ */
+const VIDEO_GEN_MODELS = [
+  { id: "gen4_turbo", label: "Gen-4 Turbo — rápido (~$0.25 los 5s)" },
+  { id: "gen4.5", label: "Gen-4.5 — máxima calidad (~$0.50 los 5s)" },
+];
+const VIDEO_GEN_RATIOS = [
+  { id: "1280:720", label: "1280:720 — horizontal" },
+  { id: "720:1280", label: "720:1280 — vertical" },
+  { id: "960:960", label: "960:960 — cuadrado" },
+];
+const VIDEO_GEN_MODEL_SLOT = "futuraria-videogen-model";
+const VIDEO_GEN_RATIO_SLOT = "futuraria-videogen-ratio";
+const VIDEO_GEN_ETA_MS = 90_000;         // median-based ETA for the countdown
+const VIDEO_GEN_FIRST_CHECK_MS = 20_000; // first status check
+const VIDEO_GEN_CHECK_EVERY_MS = 10_000; // then every ~10s (free checks)
+const VIDEO_GEN_MAX_MS = 10 * 60_000;    // hard stop for the wait loop
+
 /** Aspect ratio (w/h) of an image blob — used to size loose-asset frames. */
 async function blobAspect(blob: Blob): Promise<number> {
   const bmp = await createImageBitmap(blob);
@@ -3928,11 +3950,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const geminiProvider = getProvider("google")!;
   const quiverProvider = getProvider("quiver")!;
   const wavespeedProvider = getProvider("wavespeed")!;
+  const runwayProvider = getProvider("runway")!;
   const [keyStatuses, setKeyStatuses] = useState<KeyStatusMap>({});
   const [showGeminiKeyPrompt, setShowGeminiKeyPrompt] = useState(false);
   const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
   const [quiverKeyDraft, setQuiverKeyDraft] = useState("");
   const [wavespeedKeyDraft, setWavespeedKeyDraft] = useState("");
+  const [runwayKeyDraft, setRunwayKeyDraft] = useState("");
   const [keySaving, setKeySaving] = useState(false);
 
   const geminiConfigured = !!keyStatuses["google"]?.configured;
@@ -3941,6 +3965,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const quiverModel = keyStatuses["quiver"]?.model || quiverProvider.models[0];
   const wavespeedConfigured = !!keyStatuses["wavespeed"]?.configured;
   const wavespeedModel = keyStatuses["wavespeed"]?.model || wavespeedProvider.models[0];
+  const runwayConfigured = !!keyStatuses["runway"]?.configured;
+  const runwayModel = keyStatuses["runway"]?.model || runwayProvider.models[0];
 
   const refreshKeyStatuses = useCallback(async () => {
     try {
@@ -4006,6 +4032,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     setKeySaving(false);
   }, [wavespeedModel, refreshKeyStatuses, addToast]);
+
+  const handleSaveRunwayKey = useCallback(async (value: string) => {
+    const v = value.trim();
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("runway", v, runwayModel);
+      } else {
+        await deleteProviderKey("runway");
+      }
+      await refreshKeyStatuses();
+      addToast(v ? "✓ Runway key guardada (servidor)" : "Runway key eliminada", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Error: ${err.message}`, "error");
+    }
+    setKeySaving(false);
+  }, [runwayModel, refreshKeyStatuses, addToast]);
 
   /** Opens the AI config panel in the right sidebar — the user never has to
    *  leave the editor to set their key/model. Returns from any caller. */
@@ -4952,6 +4995,169 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     if (alive()) setSplitStatus("idle");
   }, [splitPrompt, splitResolution, splitSpeed, wavespeedConfigured, resolveSelectedImage, frames, templateName, templateWorkspaceId, autoSave, addToast]);
+
+  // ── Image → video (RunwayML Gen-4, topbar 🎬) ──
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoModel, setVideoModel] = useState<string>(
+    () => localStorage.getItem(VIDEO_GEN_MODEL_SLOT) || VIDEO_GEN_MODELS[0].id,
+  );
+  const [videoRatio, setVideoRatio] = useState<string>(() => {
+    const saved = localStorage.getItem(VIDEO_GEN_RATIO_SLOT);
+    return VIDEO_GEN_RATIOS.some(r => r.id === saved) ? saved! : VIDEO_GEN_RATIOS[0].id;
+  });
+  const [videoDuration, setVideoDuration] = useState<5 | 10>(5);
+  const [videoStatus, setVideoStatus] = useState<"idle" | "submitting" | "processing" | "saving">("idle");
+  const [videoEtaLeft, setVideoEtaLeft] = useState(0);     // seconds to ETA (0 = overtime)
+  const [videoNextCheck, setVideoNextCheck] = useState(0); // seconds to next status check
+  const [videoResult, setVideoResult] = useState<{ url: string; name: string } | null>(null);
+  const videoRunIdRef = useRef(0);
+  // Leaving the editor kills any in-flight wait loop (the Runway task
+  // itself keeps running server-side; we just stop watching it).
+  useEffect(() => () => { videoRunIdRef.current++; }, []);
+
+  const handleGenerateVideo = useCallback(async () => {
+    const src = resolveSelectedImage();
+    if (!src) { addToast("Seleccioná una imagen en el editor primero.", "error"); return; }
+    if (!runwayConfigured) { addToast("Guardá tu API key de RunwayML en el panel.", "info"); return; }
+
+    const runId = ++videoRunIdRef.current;
+    const alive = () => videoRunIdRef.current === runId;
+    const callVideo = (method: string, videoParams: Record<string, unknown>) =>
+      apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method, params: videoParams, id: 0 }),
+      }).then(res => {
+        if (res.error) throw new Error(res.error.message || `${method} falló`);
+        return JSON.parse(res.result?.content?.[0]?.text || "{}");
+      });
+
+    setVideoStatus("submitting");
+    setVideoResult(null);
+    try {
+      addToast("🎬 Enviando imagen a Runway...", "info");
+      const submitted = await callVideo("generate_image_video", {
+        imageUrl: src.url,
+        ...(videoPrompt.trim() ? { prompt: videoPrompt.trim() } : {}),
+        model: videoModel,
+        duration: videoDuration,
+        ratio: videoRatio,
+      });
+      if (!alive()) return;
+      const taskId = submitted?.taskId;
+      if (!taskId) throw new Error("El servidor no devolvió el id de la tarea");
+
+      // The GPUs at Runway do the waiting — we never hold a server
+      // connection open. Countdown ticks every second; real status checks
+      // are spaced out (first at 20s, then every ~10s, both free).
+      setVideoStatus("processing");
+      const startedAt = Date.now();
+      const deadline = startedAt + VIDEO_GEN_MAX_MS;
+      let nextCheckAt = startedAt + VIDEO_GEN_FIRST_CHECK_MS;
+      let videoUrl: string | null = null;
+      let persistent = true;
+      while (alive()) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (!alive()) return;
+        const elapsed = Date.now() - startedAt;
+        setVideoEtaLeft(Math.max(0, Math.ceil((VIDEO_GEN_ETA_MS - elapsed) / 1000)));
+        setVideoNextCheck(Math.max(0, Math.ceil((nextCheckAt - Date.now()) / 1000)));
+        if (Date.now() >= deadline) throw new Error("La generación tardó demasiado (más de 10 min) — la tarea sigue en Runway, pero dejamos de esperar.");
+        if (Date.now() >= nextCheckAt) {
+          nextCheckAt = Date.now() + VIDEO_GEN_CHECK_EVERY_MS;
+          const check = await callVideo("generate_image_video_check", { taskId, workspaceId: templateWorkspaceId });
+          if (!alive()) return;
+          if (check?.status === "completed" && check.videoUrl) {
+            videoUrl = check.videoUrl;
+            persistent = check.persistent !== false;
+            break;
+          }
+        }
+      }
+      if (!alive()) return;
+      if (!videoUrl) throw new Error("Runway no devolvió el video");
+
+      // Video frame NEXT TO the source image (never on top). The <video>
+      // layer carries the source image as poster so thumbnails/exports
+      // (which can't capture playback) still show a meaningful frame.
+      setVideoStatus("saving");
+      const [rw, rh] = videoRatio.split(":").map(Number);
+      const frameW = rw || 1280;
+      const frameH = rh || 720;
+      const layerId = createLayerId();
+      const videoName = `Video ${nextFrameNumber(frames)}`;
+      const videoElement = document.createElement("video");
+      videoElement.setAttribute("data-layer-id", layerId);
+      videoElement.setAttribute("data-layer-name", videoName);
+      videoElement.setAttribute("data-layer-kind", "video");
+      videoElement.setAttribute("src", videoUrl);
+      videoElement.setAttribute("poster", src.url);
+      videoElement.setAttribute("controls", "");
+      videoElement.setAttribute("muted", "");
+      videoElement.setAttribute("loop", "");
+      videoElement.setAttribute("playsinline", "");
+      videoElement.setAttribute("preload", "metadata");
+      videoElement.setAttribute("draggable", "false");
+      const html = videoElement.outerHTML;
+      const css = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${frameW}px;
+  height: ${frameH}px;
+  display: block;
+  object-fit: contain;
+}`;
+      const newFrame: FrameData = {
+        id: createFrameId(),
+        name: videoName,
+        x: Math.round(src.x + src.width + FRAME_GAP),
+        y: Math.round(src.y),
+        width: frameW,
+        height: frameH,
+        html,
+        css,
+        background: "transparent",
+      };
+      const updated = [...frames, newFrame];
+      store.replaceAllWithUndo(updated, "edit");
+      setSelectedFrameId(newFrame.id);
+      setSelectedFrameIds(new Set([newFrame.id]));
+      autoSave(updated);
+      setVideoResult({ url: videoUrl, name: `runway-${Date.now().toString(36)}.mp4` });
+      addToast(persistent
+        ? "✓ Video generado junto a la imagen — reproducilo o descargalo como mp4."
+        : "✓ Video generado (URL temporaria — descargalo pronto, no se pudo guardar en tu biblioteca).", persistent ? "success" : "info");
+    } catch (err: any) {
+      const msg = String(err?.message || "error desconocido");
+      if (msg.includes("NO_RUNWAY_KEY")) {
+        addToast("Falta tu API key de RunwayML — guardala en el panel.", "info");
+      } else {
+        addToast(`No se pudo generar el video: ${msg}`, "error");
+      }
+    }
+    if (alive()) setVideoStatus("idle");
+  }, [videoPrompt, videoModel, videoRatio, videoDuration, runwayConfigured, resolveSelectedImage, frames, templateWorkspaceId, autoSave, addToast]);
+
+  /** Cross-origin-safe mp4 download — the bucket/Runway URL never honors
+   *  the download attribute from another origin, so we ferry it through a
+   *  Blob and trigger the save locally. */
+  const handleDownloadVideo = useCallback(async (url: string, name: string) => {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const blob = await resp.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+    } catch (err: any) {
+      addToast(`No se pudo descargar el mp4: ${err?.message || err}`, "error");
+    }
+  }, [addToast]);
 
   /** Vectorize the selected image to SVG via Quiver AI with live streaming.
    *  Shows a floating preview panel with the SVG building in real-time from
@@ -6365,6 +6571,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <span style={{ fontSize: 14 }}>{splitStatus !== "idle" ? "⏳" : "🧅"}</span>
           </button>
 
+          {/* Image → video — RunwayML Gen-4. Opens the videoGen panel; the
+              key check happens on Generar (the panel hosts the key input). */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "videoGen" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "videoGen") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("videoGen");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Generar video desde la imagen (RunwayML Gen-4)"
+            style={{ background: "linear-gradient(135deg, rgba(236,72,153,0.15), rgba(168,85,247,0.15))" }}
+          >
+            <span style={{ fontSize: 14 }}>{videoStatus !== "idle" ? "⏳" : "🎬"}</span>
+          </button>
+
           {/* AI Settings — provider/model/key config without leaving editor */}
           <button
             type="button"
@@ -7628,7 +7853,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6, marginBottom: 10 }}>
                   La key del chat se configura en el panel del chat (botón 💬). Aquí solo se muestra qué modelos hay disponibles por proveedor.
                 </p>
-                {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver" && p.id !== "wavespeed").map(p => (
+                {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver" && p.id !== "wavespeed" && p.id !== "runway").map(p => (
                   <div key={p.id} style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
                     <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>{p.label}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -7896,6 +8121,176 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(99,102,241,0.3)", borderRadius: 6, cursor: src && !busy && wavespeedConfigured ? "pointer" : "not-allowed", background: src && !busy && wavespeedConfigured ? "linear-gradient(135deg, rgba(99,102,241,0.25), rgba(79,70,229,0.25))" : "rgba(255,255,255,0.03)", color: src && !busy && wavespeedConfigured ? "#a5b4fc" : "#555", fontFamily: "inherit" }}
                 >
                   {busy ? "Separando…" : "🧅 Separar en capas"}
+                </button>
+              </div>
+            );
+          })()}
+
+          {rightPanelTab === "videoGen" && (() => {
+            const src = resolveSelectedImage();
+            const busy = videoStatus !== "idle";
+            const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+            return (
+              <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14, fontSize: 12, color: "#d6d0c0" }}>
+                {/* Mode: an image selection is required — video animates it */}
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: src ? "rgba(236,72,153,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${src ? "rgba(236,72,153,0.35)" : "rgba(255,255,255,0.08)"}`, display: "flex", alignItems: "center", gap: 8 }}>
+                  {src ? (
+                    <>
+                      <img src={src.url} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(236,72,153,0.4)" }} />
+                      <div>
+                        <div style={{ color: "#f9a8d4", fontWeight: 600 }}>🎬 Animar imagen seleccionada</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Runway genera un video de la imagen, en un frame al lado. Se reproduce y se descarga como mp4.</div>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ color: "#c8b898", fontWeight: 600 }}>Seleccioná una imagen</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Elegí una imagen del editor para convertirla en video con IA.</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Motion prompt */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Prompt de movimiento (opcional)</label>
+                  <textarea
+                    value={videoPrompt}
+                    onChange={e => setVideoPrompt(e.target.value)}
+                    placeholder="Vacío = la IA decide. Ej: la cámara acercándose lentamente, el humo en movimiento, luz de atardecer"
+                    rows={3}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "inherit", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", resize: "vertical" }}
+                  />
+                </div>
+
+                {/* Model / ratio / duration */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo (RunwayML)</label>
+                  <select
+                    value={videoModel}
+                    onChange={e => {
+                      setVideoModel(e.target.value);
+                      localStorage.setItem(VIDEO_GEN_MODEL_SLOT, e.target.value);
+                      if (runwayConfigured) {
+                        saveProviderKey("runway", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                      }
+                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                  >
+                    {VIDEO_GEN_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Formato</label>
+                    <select
+                      value={videoRatio}
+                      onChange={e => {
+                        setVideoRatio(e.target.value);
+                        localStorage.setItem(VIDEO_GEN_RATIO_SLOT, e.target.value);
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {VIDEO_GEN_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Duración</label>
+                    <select
+                      value={String(videoDuration)}
+                      onChange={e => setVideoDuration(e.target.value === "10" ? 10 : 5)}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      <option value="5">5s — más barato</option>
+                      <option value="10">10s</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: "#7a7668", lineHeight: 1.5 }}>
+                  Gen-4 Turbo cuesta ~$0.25 los 5s y ~$0.50 los 10s; Gen-4.5 el doble (créditos de tu cuenta Runway, ~$0.01 c/u). Tarda 1-3 min y el mp4 queda guardado en tu biblioteca.
+                </div>
+
+                {/* Runway API key — same BYOK store as the AI Settings tab */}
+                <div>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (RunwayML)</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="password"
+                      value={runwayKeyDraft}
+                      onChange={e => setRunwayKeyDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && runwayKeyDraft.trim()) handleSaveRunwayKey(runwayKeyDraft.trim());
+                        if (e.key === "Escape") setRunwayKeyDraft("");
+                      }}
+                      placeholder="API key de dev.runwayml.com"
+                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                    />
+                    <button
+                      type="button"
+                      disabled={!runwayKeyDraft.trim() || keySaving}
+                      onClick={() => handleSaveRunwayKey(runwayKeyDraft.trim())}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: runwayKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: runwayKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: runwayKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                  {runwayConfigured ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · solo para video</span>
+                      <button type="button" onClick={() => handleSaveRunwayKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                    </div>
+                  ) : (
+                    <a href="https://dev.runwayml.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#f9a8d4", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                      Obtener key ↗
+                    </a>
+                  )}
+                </div>
+
+                {/* Live progress: countdown to the median ETA + spaced real
+                    checks (the ones that actually decide completion) */}
+                {busy && (
+                  <div style={{ padding: 12, borderRadius: 8, background: "rgba(236,72,153,0.08)", border: "1px solid rgba(236,72,153,0.3)", textAlign: "center" }}>
+                    {videoStatus === "submitting" && (
+                      <div style={{ color: "#f9a8d4" }}>🎬 Enviando imagen…</div>
+                    )}
+                    {videoStatus === "processing" && (<>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: "#f9a8d4", fontFamily: "SF Mono, monospace" }}>
+                        {videoEtaLeft > 0 ? `~${fmt(videoEtaLeft)}` : "⏳"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                        {videoEtaLeft > 0 ? "tiempo estimado restante" : "está tardando más de lo usual — sigue trabajando"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>Rechequeo automático en {fmt(Math.max(0, videoNextCheck))}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Podés seguir editando mientras.</div>
+                    </>)}
+                    {videoStatus === "saving" && (
+                      <div style={{ color: "#f9a8d4" }}>📥 Guardando el mp4 en tu biblioteca…</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Result: the video plays in the frame next to the image;
+                    the mp4 download is cross-origin-safe via Blob */}
+                {videoResult && !busy && (
+                  <div style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(236,72,153,0.06)", border: "1px solid rgba(236,72,153,0.25)" }}>
+                    <div style={{ color: "#f9a8d4", fontWeight: 600, marginBottom: 6 }}>✓ Video listo — junto a la imagen</div>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadVideo(videoResult.url, videoResult.name)}
+                      style={{ width: "100%", padding: "7px 10px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(236,72,153,0.4)", borderRadius: 6, cursor: "pointer", background: "linear-gradient(135deg, rgba(236,72,153,0.2), rgba(168,85,247,0.2))", color: "#f9a8d4", fontFamily: "inherit" }}
+                    >
+                      ⬇ Descargar mp4
+                    </button>
+                  </div>
+                )}
+
+                {/* Generate */}
+                <button
+                  type="button"
+                  disabled={!src || busy || !runwayConfigured}
+                  onClick={handleGenerateVideo}
+                  style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(236,72,153,0.3)", borderRadius: 6, cursor: src && !busy && runwayConfigured ? "pointer" : "not-allowed", background: src && !busy && runwayConfigured ? "linear-gradient(135deg, rgba(236,72,153,0.25), rgba(168,85,247,0.25))" : "rgba(255,255,255,0.03)", color: src && !busy && runwayConfigured ? "#f9a8d4" : "#555", fontFamily: "inherit" }}
+                >
+                  {busy ? "Generando…" : "🎬 Generar video"}
                 </button>
               </div>
             );

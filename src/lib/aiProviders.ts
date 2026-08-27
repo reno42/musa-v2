@@ -69,6 +69,21 @@ export const AI_PROVIDERS: AIProvider[] = [
     ],
   },
   {
+    // Not a chat provider — powers the editor's 🎬 image-to-video
+    // (RunwayML Gen-4). Registered here so the BYOK key and model
+    // selection flow through the same server-side store as
+    // google/quiver/wavespeed (see userKeys.ts / keys.mjs).
+    id: "runway",
+    label: "RunwayML",
+    keyPrefix: "key_",
+    keySlot: "futuraria-runway-key",
+    modelSlot: "futuraria-runway-model",
+    models: [
+      "gen4_turbo",
+      "gen4.5",
+    ],
+  },
+  {
     id: "openai",
     label: "OpenAI",
     keyPrefix: "sk-",
