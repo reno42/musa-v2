@@ -1444,6 +1444,17 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "list_snapshots",
+    description: "List in-memory auto-snapshots of a template (newest first): id, type (ia|human|system), trigger, timestamp, frameCount. Pass an id to restore_version's versionId to roll back. Warm-invocation only — durable history is list_versions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+      },
+      required: ["templateId"],
+    },
+  },
+  {
     name: "save_version",
     description: "Save the design's current state as a permanent version in the history. Call this BEFORE making a batch of edits so the previous state can be restored and diffed.",
     inputSchema: {
@@ -5806,6 +5817,30 @@ async function handleMethod(method, params, userId, auth) {
         versionId: params.versionId,
         template: restored,
         source: "legacy",
+      };
+    }
+
+    case "list_snapshots": {
+      const tplId = params.id || params.templateId;
+      if (!tplId) throw { code: -32602, message: "id or templateId required" };
+      const tpl = await templates.getTemplate(tplId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${tplId}` };
+      // REQ-015: post-REQ-014 snapshots live in the in-memory store only.
+      // The `data` field (a FULL design copy per entry) is deliberately
+      // omitted — restore_version materializes it when given the id.
+      const entries = store.listSnapshots(tplId);
+      return {
+        templateId: tplId,
+        snapshots: entries.map(e => ({
+          id: e.id,
+          type: e.type,
+          trigger: e.trigger,
+          timestamp: e.timestamp,
+          frameCount: e.frameCount,
+          objectCount: e.objectCount,
+        })),
+        total: entries.length,
+        note: "In-memory snapshots (per warm invocation). Pass an id to restore_version (versionId) to roll back. Durable history: list_versions.",
       };
     }
 
