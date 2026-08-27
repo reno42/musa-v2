@@ -64,6 +64,8 @@
 | `ai_palette` | Sugiere paleta de colores |
 | `ai_suggest_layout` | Sugiere layout |
 | `ai_translate` | Traduce contenido |
+| `separate_image_layers` | Separa imagen en capas (Seedream 5.0 Pro, async) |
+| `separate_image_layers_check` | Consulta estado de separación (gratis) |
 
 ### Brand (existentes, adaptables)
 | Tool | Qué hace | Necesita |

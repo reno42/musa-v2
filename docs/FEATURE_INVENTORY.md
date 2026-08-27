@@ -199,6 +199,7 @@
 | Generate from prompt | Create template from text description | ✅ `generate_from_prompt` | ❌ MCP-only | MCP-only |
 | AI generate text | Generate copy/headlines | ✅ `ai_generate_text` | ❌ MCP-only | MCP-only |
 | AI generate image | Generate/edit image via Nano Banana | ✅ `ai_generate_image` | ✅ Editor 🍌 button | Nano Banana (Gemini) |
+| Layer separation | Split image into editable layers | ✅ `separate_image_layers` | ✅ Editor 🧅 button | Seedream 5.0 Pro (WaveSpeedAI) |
 | AI palette | Suggest color palette via AI | ✅ `ai_palette` | ❌ MCP-only | MCP-only |
 | AI suggest layout | Suggest layout improvements | ✅ `ai_suggest_layout` | ❌ MCP-only | MCP-only |
 | AI translate | Translate text in template | ✅ `ai_translate` | ❌ MCP-only | MCP-only |

@@ -1697,6 +1697,33 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "separate_image_layers",
+    description: "Submit a Seedream 5.0 Pro (WaveSpeedAI) layer-decomposition task: splits ONE image into a base image + up to 16 transparent layers (median ~77s). ASYNC — returns a predictionId immediately; poll it with separate_image_layers_check until status 'completed'. Key resolution: wavespeedApiKey param → user's BYOK key (provider 'wavespeed') → WAVESPEED_API_KEY env.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageUrl: { type: "string", description: "Public PNG/JPEG URL of the image to decompose" },
+        prompt: { type: "string", description: "Optional: describe the desired layers/targets/grouping. Empty = automatic element detection" },
+        resolution: { type: "string", description: "Output resolution tier: 1k (default), 1.5k, or 2k" },
+        promptOptimizationMode: { type: "string", description: "Prompt optimization: fast (default) or standard" },
+        wavespeedApiKey: { type: "string", description: "Optional caller-supplied WaveSpeedAI API key (used for this request only, never stored)" },
+      },
+      required: ["imageUrl"],
+    },
+  },
+  {
+    name: "separate_image_layers_check",
+    description: "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs] } when done — first output is the base/background image, the rest are transparent overlay layers in stacking order. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        predictionId: { type: "string", description: "The prediction/task id returned by separate_image_layers" },
+        wavespeedApiKey: { type: "string", description: "Optional caller-supplied WaveSpeedAI API key (used for this request only, never stored)" },
+      },
+      required: ["predictionId"],
+    },
+  },
+  {
     name: "create_variable",
     description: "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     inputSchema: {
@@ -6435,6 +6462,101 @@ async function handleMethod(method, params, userId, auth) {
         analysis = { score: 0, issues: [], summary: "Failed to parse AI response" };
       }
       return { templateId: params.templateId, aspect, ...analysis, model: data.model };
+    }
+
+    case "separate_image_layers": {
+      // Seedream 5.0 Pro layer decomposition via WaveSpeedAI. Same BYOK
+      // resolution chain as the Gemini tools, provider 'wavespeed'. This is
+      // the SUBMIT half of the async flow: WaveSpeed's median run is ~77s,
+      // far beyond any function timeout, so the function returns the
+      // predictionId immediately and the client polls with
+      // separate_image_layers_check (status polls are free).
+      let wsKey = params.wavespeedApiKey;
+      if (!wsKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "wavespeed");
+        if (userKey.key) wsKey = userKey.key;
+      }
+      if (!wsKey) wsKey = process.env.WAVESPEED_API_KEY;
+      if (!wsKey) {
+        throw {
+          code: -32000,
+          message: "NO_WAVESPEED_KEY: Falta una API key de WaveSpeedAI. Pasala en wavespeedApiKey, configurá tu key BYOK (provider 'wavespeed'), o definí WAVESPEED_API_KEY en el servidor.",
+        };
+      }
+
+      const imageUrl = String(params.imageUrl || "").trim();
+      if (!/^https?:\/\//.test(imageUrl)) {
+        throw { code: -32000, message: "imageUrl must be a public http(s) URL of a PNG/JPEG image" };
+      }
+
+      const RESOLUTIONS = new Set(["1k", "1.5k", "2k"]);
+      const body = {
+        image: imageUrl,
+        // PNG keeps the transparency that makes layers compositable —
+        // JPEG would flatten the alpha channel and kill the whole point.
+        output_format: "png",
+        resolution: RESOLUTIONS.has(params.resolution) ? params.resolution : "1k",
+        prompt_optimization_mode: params.promptOptimizationMode === "standard" ? "standard" : "fast",
+      };
+      if (params.prompt) body.prompt = String(params.prompt).slice(0, 2000);
+
+      const submit = await fetch("https://api.wavespeed.ai/api/v3/bytedance/seedream-v5.0-pro/layer-decomposition", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${wsKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!submit.ok) {
+        const errText = await submit.text().catch(() => "");
+        throw { code: -32000, message: `WaveSpeed submit error ${submit.status}: ${errText.substring(0, 300)}` };
+      }
+      const submitJson = await submit.json();
+      const task = submitJson?.data || submitJson;
+      if (!task?.id) throw { code: -32000, message: "WaveSpeed returned no prediction id" };
+      return { predictionId: task.id, status: task.status || "created", note: "Poll with separate_image_layers_check — median ~77s, free status checks" };
+    }
+
+    case "separate_image_layers_check": {
+      // POLL half of the async flow. Each invocation is a single fast GET —
+      // never waits on the GPU work — so it stays far below function
+      // timeouts and (by design) is exempt from workspace quota metering.
+      let wsKey = params.wavespeedApiKey;
+      if (!wsKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "wavespeed");
+        if (userKey.key) wsKey = userKey.key;
+      }
+      if (!wsKey) wsKey = process.env.WAVESPEED_API_KEY;
+      if (!wsKey) {
+        throw {
+          code: -32000,
+          message: "NO_WAVESPEED_KEY: Falta una API key de WaveSpeedAI (la misma usada para enviar la tarea).",
+        };
+      }
+
+      const predictionId = String(params.predictionId || "").trim();
+      if (!predictionId) throw { code: -32000, message: "predictionId is required" };
+
+      const res = await fetch(`https://api.wavespeed.ai/api/v3/predictions/${encodeURIComponent(predictionId)}/result`, {
+        headers: { "Authorization": `Bearer ${wsKey}` },
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw { code: -32000, message: `WaveSpeed poll error ${res.status}: ${errText.substring(0, 300)}` };
+      }
+      const json = await res.json();
+      const result = json?.data || json;
+      const status = result?.status || "unknown";
+
+      if (["failed", "cancelled", "timeout", "deleted"].includes(status)) {
+        const why = result?.error || result?.note || JSON.stringify(result).substring(0, 300);
+        throw { code: -32000, message: `Layer separation ${status}: ${why}` };
+      }
+      if (status === "completed") {
+        const outputs = Array.isArray(result?.outputs) ? result.outputs.filter(u => typeof u === "string" && /^https?:\/\//.test(u)) : [];
+        if (outputs.length === 0) throw { code: -32000, message: "Layer separation completed but returned no image URLs" };
+        return { status: "completed", outputs };
+      }
+      // created / processing / anything transient — caller keeps polling.
+      return { status };
     }
 
     case "ai_translate": {
@@ -15076,7 +15198,12 @@ export const handler = async (event) => {
         const scopedParams = await authorizeMcpCall(params.name, params.arguments || {}, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
-        const quotaResponse = await meterWorkspaceUsage(scopedParams, id, headers);
+        // Free-status tools are exempt: they proxy a free GET, so metering
+        // them would punish async flows (one billed submit + N free polls).
+        const UNMETERED_TOOLS = new Set(["separate_image_layers_check"]);
+        const quotaResponse = UNMETERED_TOOLS.has(params.name)
+          ? null
+          : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
@@ -15136,7 +15263,11 @@ export const handler = async (event) => {
         const scopedParams = await authorizeMcpCall(method, params || {}, auth);
         // v27: count this call against the workspace's monthly quota
         // (fail-open — pre-migration DBs never block on metering).
-        const quotaResponse = await meterWorkspaceUsage(scopedParams, id, headers);
+        // Free-status tools are exempt here too (same rule as tools/call).
+        const UNMETERED_TOOLS = new Set(["separate_image_layers_check"]);
+        const quotaResponse = UNMETERED_TOOLS.has(method)
+          ? null
+          : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);

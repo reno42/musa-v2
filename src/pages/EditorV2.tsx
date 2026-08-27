@@ -299,6 +299,28 @@ const NANO_BANANA_MODELS = [
 const NANO_BANANA_MODEL_SLOT = "futuraria-nanobanana-model";
 
 /**
+ * Layer separation (Seedream 5.0 Pro via WaveSpeedAI). The async job runs on
+ * WaveSpeed's GPUs (median ~77s), so the flow is submit + browser-side
+ * polling: each status check is a sub-second server call and the ETA below
+ * is a median-based estimate shown as a countdown.
+ */
+const LAYER_SPLIT_MODELS = [
+  { id: "seedream-v5.0-pro/layer-decomposition", label: "Seedream 5.0 Pro — separación en capas" },
+];
+const LAYER_SPLIT_RESOLUTIONS = [
+  { id: "1k", label: "1k — estándar (~$0.77)" },
+  { id: "1.5k", label: "1.5k — estándar (~$0.77)" },
+  { id: "2k", label: "2k — alta resolución (~$1.53)" },
+];
+const LAYER_SPLIT_MODEL_SLOT = "futuraria-layersplit-model";
+const LAYER_SPLIT_RES_SLOT = "futuraria-layersplit-resolution";
+const LAYER_SPLIT_SPEED_SLOT = "futuraria-layersplit-speed";
+const LAYER_SPLIT_ETA_MS = 80_000;        // median-based ETA for the countdown
+const LAYER_SPLIT_FIRST_CHECK_MS = 30_000; // first status check
+const LAYER_SPLIT_CHECK_EVERY_MS = 12_000; // then every ~12s (free checks)
+const LAYER_SPLIT_MAX_MS = 8 * 60_000;     // hard stop for the wait loop
+
+/**
  * Where the account menu can take you. Ids must match WORKSPACE_TABS — the
  * dashboard reads the one left in sessionStorage on mount and switches to it.
  */
@@ -3786,16 +3808,20 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // is configured and which model is selected — never the actual value.
   const geminiProvider = getProvider("google")!;
   const quiverProvider = getProvider("quiver")!;
+  const wavespeedProvider = getProvider("wavespeed")!;
   const [keyStatuses, setKeyStatuses] = useState<KeyStatusMap>({});
   const [showGeminiKeyPrompt, setShowGeminiKeyPrompt] = useState(false);
   const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
   const [quiverKeyDraft, setQuiverKeyDraft] = useState("");
+  const [wavespeedKeyDraft, setWavespeedKeyDraft] = useState("");
   const [keySaving, setKeySaving] = useState(false);
 
   const geminiConfigured = !!keyStatuses["google"]?.configured;
   const geminiModel = keyStatuses["google"]?.model || geminiProvider.models[0];
   const quiverConfigured = !!keyStatuses["quiver"]?.configured;
   const quiverModel = keyStatuses["quiver"]?.model || quiverProvider.models[0];
+  const wavespeedConfigured = !!keyStatuses["wavespeed"]?.configured;
+  const wavespeedModel = keyStatuses["wavespeed"]?.model || wavespeedProvider.models[0];
 
   const refreshKeyStatuses = useCallback(async () => {
     try {
@@ -3844,6 +3870,23 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     setKeySaving(false);
   }, [quiverModel, refreshKeyStatuses, addToast]);
+
+  const handleSaveWavespeedKey = useCallback(async (value: string) => {
+    const v = value.trim();
+    setKeySaving(true);
+    try {
+      if (v) {
+        await saveProviderKey("wavespeed", v, wavespeedModel);
+      } else {
+        await deleteProviderKey("wavespeed");
+      }
+      await refreshKeyStatuses();
+      addToast(v ? "✓ WaveSpeed key guardada (servidor)" : "WaveSpeed key eliminada", v ? "success" : "info");
+    } catch (err: any) {
+      addToast(`Error: ${err.message}`, "error");
+    }
+    setKeySaving(false);
+  }, [wavespeedModel, refreshKeyStatuses, addToast]);
 
   /** Opens the AI config panel in the right sidebar — the user never has to
    *  leave the editor to set their key/model. Returns from any caller. */
@@ -4530,6 +4573,163 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     setMcpLoading(null);
   }, [nbPrompt, nbModel, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
+
+  // ── Layer separation (Seedream 5.0 Pro via WaveSpeedAI, topbar 🧅) ──
+  const [splitPrompt, setSplitPrompt] = useState("");
+  const [splitModel, setSplitModel] = useState<string>(
+    () => localStorage.getItem(LAYER_SPLIT_MODEL_SLOT) || LAYER_SPLIT_MODELS[0].id,
+  );
+  const [splitResolution, setSplitResolution] = useState<string>(() => {
+    const saved = localStorage.getItem(LAYER_SPLIT_RES_SLOT);
+    return ["1k", "1.5k", "2k"].includes(saved || "") ? saved! : "1k";
+  });
+  const [splitSpeed, setSplitSpeed] = useState<"fast" | "standard">(
+    () => (localStorage.getItem(LAYER_SPLIT_SPEED_SLOT) === "standard" ? "standard" : "fast"),
+  );
+  const [splitStatus, setSplitStatus] = useState<"idle" | "submitting" | "processing" | "uploading">("idle");
+  const [splitEtaLeft, setSplitEtaLeft] = useState(0);     // seconds to ETA (0 = overtime)
+  const [splitNextCheck, setSplitNextCheck] = useState(0); // seconds to next status check
+  const splitRunIdRef = useRef(0);
+  // Leaving the editor kills any in-flight wait loop (the WaveSpeed task
+  // itself keeps running server-side; we just stop watching it).
+  useEffect(() => () => { splitRunIdRef.current++; }, []);
+
+  const handleSeparateLayers = useCallback(async () => {
+    const src = resolveSelectedImage();
+    if (!src) { addToast("Seleccioná una imagen en el editor primero.", "error"); return; }
+    if (!wavespeedConfigured) { addToast("Guardá tu API key de WaveSpeedAI en el panel.", "info"); return; }
+
+    const runId = ++splitRunIdRef.current;
+    const alive = () => splitRunIdRef.current === runId;
+    const callSplit = (method: string, splitParams: Record<string, unknown>) =>
+      apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", method, params: splitParams, id: 0 }),
+      }).then(res => {
+        if (res.error) throw new Error(res.error.message || `${method} falló`);
+        return JSON.parse(res.result?.content?.[0]?.text || "{}");
+      });
+
+    setSplitStatus("submitting");
+    try {
+      addToast("🧅 Enviando imagen a Seedream...", "info");
+      const submitted = await callSplit("separate_image_layers", {
+        imageUrl: src.url,
+        ...(splitPrompt.trim() ? { prompt: splitPrompt.trim() } : {}),
+        resolution: splitResolution,
+        promptOptimizationMode: splitSpeed,
+      });
+      if (!alive()) return;
+      const predictionId = submitted?.predictionId;
+      if (!predictionId) throw new Error("El servidor no devolvió el id de la tarea");
+
+      // The GPUs at WaveSpeed do the waiting — we never hold a server
+      // connection open. Countdown ticks every second; real status checks
+      // are spaced out (first at 30s, then every ~12s, both free).
+      setSplitStatus("processing");
+      const startedAt = Date.now();
+      const deadline = startedAt + LAYER_SPLIT_MAX_MS;
+      let nextCheckAt = startedAt + LAYER_SPLIT_FIRST_CHECK_MS;
+      let outputs: string[] | null = null;
+      while (alive()) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (!alive()) return;
+        const elapsed = Date.now() - startedAt;
+        setSplitEtaLeft(Math.max(0, Math.ceil((LAYER_SPLIT_ETA_MS - elapsed) / 1000)));
+        setSplitNextCheck(Math.max(0, Math.ceil((nextCheckAt - Date.now()) / 1000)));
+        if (Date.now() >= deadline) throw new Error("La separación tardó demasiado (más de 8 min) — la tarea sigue en WaveSpeed, pero dejamos de esperar.");
+        if (Date.now() >= nextCheckAt) {
+          nextCheckAt = Date.now() + LAYER_SPLIT_CHECK_EVERY_MS;
+          const check = await callSplit("separate_image_layers_check", { predictionId });
+          if (!alive()) return;
+          if (check?.status === "completed" && Array.isArray(check.outputs)) {
+            outputs = check.outputs;
+            break;
+          }
+        }
+      }
+      if (!alive()) return;
+      if (!outputs || outputs.length === 0) throw new Error("Seedream no devolvió capas");
+
+      // Pull every layer into our own bucket — WaveSpeed's URLs are not
+      // permanent storage, and a saved design must never depend on them.
+      setSplitStatus("uploading");
+      const uploaded: string[] = [];
+      for (let i = 0; i < outputs.length; i++) {
+        const resp = await fetch(outputs[i]);
+        if (!resp.ok) throw new Error(`No se pudo descargar la capa ${i + 1} (${resp.status})`);
+        const blob = await resp.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("No se pudo leer la capa"));
+          reader.readAsDataURL(blob);
+        });
+        const up = await apiFetch<{ url: string }>("/api/assets/upload", {
+          method: "POST",
+          body: JSON.stringify({
+            name: i === 0 ? `Seedream base — ${templateName}` : `Seedream capa ${i} — ${templateName}`,
+            data: dataUrl,
+            workspaceId: templateWorkspaceId,
+          }),
+        });
+        uploaded.push(up.url);
+      }
+      if (!alive()) return;
+
+      // Layered frame NEXT TO the source image (never on top). Every layer
+      // is a full-canvas plate — base first, transparent overlays stacked
+      // above — so each goes to 0,0 at frame size and composites perfectly
+      // while staying individually selectable/editable in the frame.
+      const frameW = Math.max(1, Math.round(src.width)) || 1080;
+      const frameH = Math.max(1, Math.round(src.height)) || 1080;
+      const layerIds = uploaded.map(() => createLayerId());
+      const html = uploaded.map((url, i) => {
+        const el = document.createElement("img");
+        el.setAttribute("data-layer-id", layerIds[i]);
+        el.setAttribute("data-layer-name", i === 0 ? "Capa base (fondo)" : `Capa ${i}`);
+        el.setAttribute("data-layer-kind", "image");
+        el.setAttribute("src", url);
+        el.setAttribute("alt", i === 0 ? "Capa base" : `Capa ${i}`);
+        el.setAttribute("draggable", "false");
+        return el.outerHTML;
+      }).join("\n");
+      const css = layerIds.map(id => `[data-layer-id="${id}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${frameW}px;
+  height: ${frameH}px;
+  display: block;
+  object-fit: contain;
+}`).join("\n\n");
+      const newFrame: FrameData = {
+        id: createFrameId(),
+        name: `Capas ${nextFrameNumber(frames)}`,
+        x: Math.round(src.x + src.width + FRAME_GAP),
+        y: Math.round(src.y),
+        width: frameW,
+        height: frameH,
+        html,
+        css,
+        background: "transparent",
+      };
+      const updated = [...frames, newFrame];
+      store.replaceAllWithUndo(updated, "edit");
+      setSelectedFrameId(newFrame.id);
+      setSelectedFrameIds(new Set([newFrame.id]));
+      autoSave(updated);
+      addToast(`✓ ${uploaded.length} capas listas en un frame editable al lado de la original.`, "success");
+    } catch (err: any) {
+      const msg = String(err?.message || "error desconocido");
+      if (msg.includes("NO_WAVESPEED_KEY")) {
+        addToast("Falta tu API key de WaveSpeedAI — guardala en el panel.", "info");
+      } else {
+        addToast(`No se pudo separar en capas: ${msg}`, "error");
+      }
+    }
+    if (alive()) setSplitStatus("idle");
+  }, [splitPrompt, splitResolution, splitSpeed, wavespeedConfigured, resolveSelectedImage, frames, templateName, templateWorkspaceId, autoSave, addToast]);
 
   /** Vectorize the selected image to SVG via Quiver AI with live streaming.
    *  Shows a floating preview panel with the SVG building in real-time from
@@ -5505,6 +5705,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     batch: "Batchamator",
     ai: "AI Settings",
     genImage: "Generar Imagen",
+    layerSplit: "Separar en Capas",
   };
 
   return (
@@ -5920,6 +6121,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             style={{ background: "linear-gradient(135deg, rgba(251,191,36,0.15), rgba(245,158,11,0.15))" }}
           >
             <span style={{ fontSize: 14 }}>{mcpLoading === "genImage" ? "⏳" : "🍌"}</span>
+          </button>
+
+          {/* Layer separation — Seedream 5.0 Pro via WaveSpeedAI. Splits the
+              selected image into editable layers; opens the layerSplit panel
+              (its key check happens on Separar). */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "layerSplit" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "layerSplit") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("layerSplit");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Separar imagen en capas (Seedream 5.0 Pro)"
+            style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(79,70,229,0.15))" }}
+          >
+            <span style={{ fontSize: 14 }}>{splitStatus !== "idle" ? "⏳" : "🧅"}</span>
           </button>
 
           {/* AI Settings — provider/model/key config without leaving editor */}
@@ -7122,6 +7343,61 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 </div>
               </div>
 
+              {/* ── WaveSpeedAI (Seedream layer separation) ── */}
+              <div>
+                <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Separar en Capas (WaveSpeedAI · Seedream)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo</label>
+                    <select
+                      value={wavespeedModel}
+                      onChange={e => {
+                        if (wavespeedConfigured) {
+                          saveProviderKey("wavespeed", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                        }
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {wavespeedProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>API Key</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        type="password"
+                        value={wavespeedKeyDraft}
+                        onChange={e => setWavespeedKeyDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && wavespeedKeyDraft.trim()) handleSaveWavespeedKey(wavespeedKeyDraft.trim());
+                          if (e.key === "Escape") setWavespeedKeyDraft("");
+                        }}
+                        placeholder="API key de wavespeed.ai/accesskey"
+                        style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!wavespeedKeyDraft.trim() || keySaving}
+                        onClick={() => handleSaveWavespeedKey(wavespeedKeyDraft.trim())}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: wavespeedKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: wavespeedKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: wavespeedKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                    {wavespeedConfigured ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · compartida con 🧅 Separar en Capas</span>
+                        <button type="button" onClick={() => handleSaveWavespeedKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                      </div>
+                    ) : (
+                      <a href="https://wavespeed.ai/accesskey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                        Obtener key ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)" }} />
 
               {/* ── Chat LLM (all providers) ── */}
@@ -7130,7 +7406,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6, marginBottom: 10 }}>
                   La key del chat se configura en el panel del chat (botón 💬). Aquí solo se muestra qué modelos hay disponibles por proveedor.
                 </p>
-                {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver").map(p => (
+                {AI_PROVIDERS.filter(p => p.id !== "google" && p.id !== "quiver" && p.id !== "wavespeed").map(p => (
                   <div key={p.id} style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.04)" }}>
                     <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>{p.label}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -7239,6 +7515,165 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, cursor: nbPrompt.trim() && mcpLoading !== "genImage" ? "pointer" : "not-allowed", background: nbPrompt.trim() && mcpLoading !== "genImage" ? "linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.25))" : "rgba(255,255,255,0.03)", color: nbPrompt.trim() && mcpLoading !== "genImage" ? "#fbbf24" : "#555", fontFamily: "inherit" }}
                 >
                   {mcpLoading === "genImage" ? "Generando…" : src ? "🍌 Generar edición" : "🍌 Generar imagen"}
+                </button>
+              </div>
+            );
+          })()}
+          {rightPanelTab === "layerSplit" && (() => {
+            const src = resolveSelectedImage();
+            const busy = splitStatus !== "idle";
+            const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+            return (
+              <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14, fontSize: 12, color: "#d6d0c0" }}>
+                {/* Mode: an image selection is required — there is no
+                    from-scratch mode for layer separation */}
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: src ? "rgba(99,102,241,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${src ? "rgba(99,102,241,0.35)" : "rgba(255,255,255,0.08)"}`, display: "flex", alignItems: "center", gap: 8 }}>
+                  {src ? (
+                    <>
+                      <img src={src.url} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(99,102,241,0.4)" }} />
+                      <div>
+                        <div style={{ color: "#a5b4fc", fontWeight: 600 }}>🧅 Separar imagen seleccionada</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Seedream la descompone en fondo + capas transparentes, en un frame al lado de la original.</div>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ color: "#c8b898", fontWeight: 600 }}>Seleccioná una imagen</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Elegí una imagen del editor para separarla en capas editables (fuentes, fotos, elementos).</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional layer-guide prompt */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Prompt (opcional)</label>
+                  <textarea
+                    value={splitPrompt}
+                    onChange={e => setSplitPrompt(e.target.value)}
+                    placeholder="Vacío = detección automática. Ej: separá el titular, el logo y el producto del fondo"
+                    rows={3}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "inherit", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", resize: "vertical" }}
+                  />
+                </div>
+
+                {/* Model / resolution / speed */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo (WaveSpeedAI)</label>
+                  <select
+                    value={splitModel}
+                    onChange={e => {
+                      setSplitModel(e.target.value);
+                      localStorage.setItem(LAYER_SPLIT_MODEL_SLOT, e.target.value);
+                      if (wavespeedConfigured) {
+                        saveProviderKey("wavespeed", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                      }
+                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                  >
+                    {LAYER_SPLIT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Resolución</label>
+                    <select
+                      value={splitResolution}
+                      onChange={e => {
+                        setSplitResolution(e.target.value);
+                        localStorage.setItem(LAYER_SPLIT_RES_SLOT, e.target.value);
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {LAYER_SPLIT_RESOLUTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Velocidad</label>
+                    <select
+                      value={splitSpeed}
+                      onChange={e => {
+                        const v = e.target.value === "standard" ? "standard" : "fast";
+                        setSplitSpeed(v);
+                        localStorage.setItem(LAYER_SPLIT_SPEED_SLOT, v);
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      <option value="fast">Fast — más rápido</option>
+                      <option value="standard">Standard — más preciso</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: "#7a7668", lineHeight: 1.5 }}>
+                  Cada separación consume créditos de tu cuenta WaveSpeed (~$0.77 en 1k/1.5k, ~$1.53 en 2k) y tarda 1-2 min. Las capas quedan como imágenes propias en tu biblioteca.
+                </div>
+
+                {/* WaveSpeed API key — same BYOK store as the AI Settings tab */}
+                <div>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (WaveSpeedAI)</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="password"
+                      value={wavespeedKeyDraft}
+                      onChange={e => setWavespeedKeyDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && wavespeedKeyDraft.trim()) handleSaveWavespeedKey(wavespeedKeyDraft.trim());
+                        if (e.key === "Escape") setWavespeedKeyDraft("");
+                      }}
+                      placeholder="API key de wavespeed.ai/accesskey"
+                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                    />
+                    <button
+                      type="button"
+                      disabled={!wavespeedKeyDraft.trim() || keySaving}
+                      onClick={() => handleSaveWavespeedKey(wavespeedKeyDraft.trim())}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: wavespeedKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: wavespeedKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: wavespeedKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                  {wavespeedConfigured ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · distinta a la de Gemini</span>
+                      <button type="button" onClick={() => handleSaveWavespeedKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                    </div>
+                  ) : (
+                    <a href="https://wavespeed.ai/accesskey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                      Obtener key ↗
+                    </a>
+                  )}
+                </div>
+
+                {/* Live progress: countdown to the median ETA + spaced real
+                    checks (the ones that actually decide completion) */}
+                {busy && (
+                  <div style={{ padding: 12, borderRadius: 8, background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)", textAlign: "center" }}>
+                    {splitStatus === "submitting" && (
+                      <div style={{ color: "#a5b4fc" }}>🧅 Enviando imagen…</div>
+                    )}
+                    {splitStatus === "processing" && (<>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: "#a5b4fc", fontFamily: "SF Mono, monospace" }}>
+                        {splitEtaLeft > 0 ? `~${fmt(splitEtaLeft)}` : "⏳"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                        {splitEtaLeft > 0 ? "tiempo estimado restante" : "está tardando más de lo usual — sigue trabajando"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>Rechequeo automático en {fmt(Math.max(0, splitNextCheck))}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Podés seguir editando mientras.</div>
+                    </>)}
+                    {splitStatus === "uploading" && (
+                      <div style={{ color: "#a5b4fc" }}>📥 Guardando capas en tu biblioteca…</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Generate */}
+                <button
+                  type="button"
+                  disabled={!src || busy || !wavespeedConfigured}
+                  onClick={handleSeparateLayers}
+                  style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(99,102,241,0.3)", borderRadius: 6, cursor: src && !busy && wavespeedConfigured ? "pointer" : "not-allowed", background: src && !busy && wavespeedConfigured ? "linear-gradient(135deg, rgba(99,102,241,0.25), rgba(79,70,229,0.25))" : "rgba(255,255,255,0.03)", color: src && !busy && wavespeedConfigured ? "#a5b4fc" : "#555", fontFamily: "inherit" }}
+                >
+                  {busy ? "Separando…" : "🧅 Separar en capas"}
                 </button>
               </div>
             );

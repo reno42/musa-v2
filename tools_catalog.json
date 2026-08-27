@@ -850,6 +850,58 @@
     }
   },
   {
+    "name": "separate_image_layers",
+    "description": "Submit a Seedream 5.0 Pro (WaveSpeedAI) layer-decomposition task: splits ONE image into a base image + up to 16 transparent layers (median ~77s). ASYNC — returns a predictionId immediately; poll it with separate_image_layers_check until status 'completed'. Key resolution: wavespeedApiKey param → user's BYOK key (provider 'wavespeed') → WAVESPEED_API_KEY env.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "imageUrl": {
+          "type": "string",
+          "description": "Public PNG/JPEG URL of the image to decompose"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional: describe the desired layers/targets/grouping. Empty = automatic element detection"
+        },
+        "resolution": {
+          "type": "string",
+          "description": "Output resolution tier: 1k (default), 1.5k, or 2k"
+        },
+        "promptOptimizationMode": {
+          "type": "string",
+          "description": "Prompt optimization: fast (default) or standard"
+        },
+        "wavespeedApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied WaveSpeedAI API key (used for this request only, never stored)"
+        }
+      },
+      "required": [
+        "imageUrl"
+      ]
+    }
+  },
+  {
+    "name": "separate_image_layers_check",
+    "description": "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs] } when done — first output is the base/background image, the rest are transparent overlay layers in stacking order. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "predictionId": {
+          "type": "string",
+          "description": "The prediction/task id returned by separate_image_layers"
+        },
+        "wavespeedApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied WaveSpeedAI API key (used for this request only, never stored)"
+        }
+      },
+      "required": [
+        "predictionId"
+      ]
+    }
+  },
+  {
     "name": "create_variable",
     "description": "Create a design token variable (color, number, string) that can be bound to layer properties and reused across templates.",
     "inputSchema": {

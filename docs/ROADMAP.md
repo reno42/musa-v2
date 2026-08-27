@@ -157,6 +157,7 @@ El diferencial: canvas inteligente + documentos + colaboración IA.
 | 63 | AI layout suggestion | `ai_suggest_layout` | Alta | ✅ |
 | 64 | AI color palette | `ai_palette` | Media | ✅ |
 | 65 | Auto-translate content | `ai_translate` | Media | ✅ |
+| 66 | Layer separation | `separate_image_layers` | Alta | ✅ Seedream 5.0 Pro (WaveSpeedAI BYOK) |
 
 **Fase 3 Total: 24 features. ~3 ya hechas, ~21 pendientes.**
 

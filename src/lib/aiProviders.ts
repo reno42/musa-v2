@@ -55,6 +55,20 @@ export const AI_PROVIDERS: AIProvider[] = [
     ],
   },
   {
+    // Not a chat provider — powers the editor's 🧅 layer separation
+    // (Seedream 5.0 Pro via WaveSpeedAI). Registered here so the BYOK key
+    // and model selection flow through the same server-side store as
+    // google/quiver (see userKeys.ts / keys.mjs).
+    id: "wavespeed",
+    label: "WaveSpeedAI",
+    keyPrefix: "",
+    keySlot: "futuraria-wavespeed-key",
+    modelSlot: "futuraria-wavespeed-model",
+    models: [
+      "seedream-v5.0-pro/layer-decomposition",
+    ],
+  },
+  {
     id: "openai",
     label: "OpenAI",
     keyPrefix: "sk-",
