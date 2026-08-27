@@ -60,7 +60,7 @@
 | Tool | Qué hace |
 |------|----------|
 | `ai_generate_text` | Genera copy |
-| `ai_generate_image` | Genera imagen |
+| `ai_generate_image` | Genera o edita imagen (Nano Banana, Gemini) |
 | `ai_palette` | Sugiere paleta de colores |
 | `ai_suggest_layout` | Sugiere layout |
 | `ai_translate` | Traduce contenido |

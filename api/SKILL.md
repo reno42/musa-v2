@@ -489,7 +489,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | # | Tool | Required | Optional | Persistence |
 |---|------|----------|----------|-------------|
 | 41 | `ai_generate_text` | `templateId`, `prompt` | `style`, `tone`, `maxLength` | Read-only |
-| 42 | `ai_generate_image` | `templateId`, `prompt` | `style`, `size` | Read-only |
+| 42 | `ai_generate_image` | `prompt` | `imageBase64`, `model`, `aspectRatio`, `geminiApiKey` | Read-only (returns data URI) |
 | 43 | `ai_palette` | `templateId`, `prompt` | `count` | Read-only |
 | 44 | `ai_suggest_layout` | `templateId`, `prompt` | `format` | Read-only |
 

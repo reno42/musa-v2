@@ -285,6 +285,20 @@ p {
 }`;
 
 /**
+ * Nano Banana (Gemini image generation) models offered in the generate-image
+ * panel. All consume the SAME Google API key as image_to_design — the model
+ * preference is stored separately (localStorage) so it never fights with the
+ * vision model used by Image to Design.
+ */
+const NANO_BANANA_MODELS = [
+  { id: "gemini-3.1-flash-image", label: "Nano Banana 2 — rápido y equilibrado" },
+  { id: "gemini-3.1-flash-lite-image", label: "Nano Banana 2 Lite — ultra rápido" },
+  { id: "gemini-3-pro-image", label: "Nano Banana Pro — máxima calidad" },
+  { id: "gemini-2.5-flash-image", label: "Nano Banana (2.5) — generación previa" },
+];
+const NANO_BANANA_MODEL_SLOT = "futuraria-nanobanana-model";
+
+/**
  * Where the account menu can take you. Ids must match WORKSPACE_TABS — the
  * dashboard reads the one left in sessionStorage on mount and switches to it.
  */
@@ -4284,37 +4298,42 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateWorkspaceId, handleAssetUploaded, addToast]);
 
-  // Convert the currently-selected image (frame-based <img> layer or an
-  // orphan canvas image object) into an AI-replicated editable design.
-  // Works the same whether the image lives on our own Supabase bucket or is
-  // a remote/hyperlinked URL — either way it's just a fetchable src. The
-  // result lands in a brand-new frame placed to the right of the source
-  // image, so selecting-and-clicking feels like "make this editable" rather
-  // than "upload something".
-  const handleConvertSelectedImageToDesign = useCallback(async () => {
-    let srcUrl: string | null = null;
-    let srcX = 0, srcY = 0, srcW = 1080, srcH = 1080;
-
+  // Resolves the currently-selected image (a frame-based <img> layer or an
+  // orphan canvas image object) into its URL plus canvas-space geometry.
+  // Shared by convert-to-design and Nano Banana generation so both read the
+  // exact same selection and can place their output relative to it.
+  const resolveSelectedImage = useCallback((): {
+    url: string; x: number; y: number; width: number; height: number;
+  } | null => {
     if (selectedElement?.src) {
       const frame = frames.find(f => f.id === selectedElement.frameId);
-      if (!frame) { addToast("Selecciona una imagen primero.", "error"); return; }
-      srcUrl = selectedElement.src;
+      if (!frame) return null;
       const left = parseFloat(selectedElement.computedStyles.left) || 0;
       const top = parseFloat(selectedElement.computedStyles.top) || 0;
-      srcW = parseFloat(selectedElement.computedStyles.width) || srcW;
-      srcH = parseFloat(selectedElement.computedStyles.height) || srcH;
-      srcX = frame.x + left;
-      srcY = frame.y + top;
-    } else if (selectedOrphanIds.size === 1) {
-      const obj = canvasObjects.find(o => selectedOrphanIds.has(o.id));
-      if (!obj || obj.kind !== "image") { addToast("Selecciona una imagen primero.", "error"); return; }
-      srcUrl = obj.html.match(/src="([^"]+)"/)?.[1] || null;
-      srcX = obj.x; srcY = obj.y; srcW = obj.width || srcW; srcH = obj.height || srcH;
-    } else {
-      addToast("Selecciona una imagen en el editor primero.", "error");
-      return;
+      const width = parseFloat(selectedElement.computedStyles.width) || 1080;
+      const height = parseFloat(selectedElement.computedStyles.height) || 1080;
+      return { url: selectedElement.src, x: frame.x + left, y: frame.y + top, width, height };
     }
-    if (!srcUrl) { addToast("La imagen seleccionada no tiene una fuente válida.", "error"); return; }
+    if (selectedOrphanIds.size === 1) {
+      const obj = canvasObjects.find(o => selectedOrphanIds.has(o.id));
+      if (!obj || obj.kind !== "image") return null;
+      const url = obj.html.match(/src="([^"]+)"/)?.[1] || null;
+      if (!url) return null;
+      return { url, x: obj.x, y: obj.y, width: obj.width || 1080, height: obj.height || 1080 };
+    }
+    return null;
+  }, [selectedElement, selectedOrphanIds, frames, canvasObjects]);
+
+  // Convert the currently-selected image into an AI-replicated editable
+  // design. Works the same whether the image lives on our own Supabase
+  // bucket or is a remote/hyperlinked URL — either way it's just a fetchable
+  // src. The result lands in a brand-new frame placed to the right of the
+  // source image, so selecting-and-clicking feels like "make this editable"
+  // rather than "upload something".
+  const handleConvertSelectedImageToDesign = useCallback(async () => {
+    const src = resolveSelectedImage();
+    if (!src) { addToast("Selecciona una imagen en el editor primero.", "error"); return; }
+    const { url: srcUrl, x: srcX, y: srcY, width: srcW, height: srcH } = src;
 
     setMcpLoading("imageToDesign");
     try {
@@ -4385,7 +4404,132 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       addToast(`No se pudo convertir la imagen: ${err?.message || "error desconocido"}`, "error");
     }
     setMcpLoading(null);
-  }, [selectedElement, selectedOrphanIds, canvasObjects, frames, templateId, templateName, reloadFromServer, addToast, geminiModel, openAiConfigPanel]);
+  }, [resolveSelectedImage, templateId, templateName, reloadFromServer, addToast, geminiModel, openAiConfigPanel]);
+
+  // ── Nano Banana image generation (topbar 🍌) ──
+  const [nbPrompt, setNbPrompt] = useState("");
+  const [nbModel, setNbModel] = useState<string>(
+    () => localStorage.getItem(NANO_BANANA_MODEL_SLOT) || NANO_BANANA_MODELS[0].id,
+  );
+
+  // With an image selected it uses that image as the editing reference plus
+  // the prompt as instructions; with nothing selected it generates from
+  // scratch. The result is uploaded as a real owned asset and placed NEXT TO
+  // the source image (never on top of it) — same placement rule as
+  // convert-to-design.
+  const handleGenerateNanoBanana = useCallback(async () => {
+    const prompt = nbPrompt.trim();
+    if (!prompt) { addToast("Escribí primero qué querés generar.", "error"); return; }
+    if (!geminiConfigured) { addToast("Guardá tu API key de Gemini en el panel para generar.", "info"); return; }
+    setMcpLoading("genImage");
+    try {
+      const src = resolveSelectedImage();
+      let imageBase64: string | undefined;
+      if (src) {
+        const resp = await fetch(src.url);
+        if (!resp.ok) throw new Error(`No se pudo descargar la imagen seleccionada (${resp.status})`);
+        const blob = await resp.blob();
+        imageBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("No se pudo leer la imagen"));
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      addToast(imageBase64 ? "🍌 Editando la imagen con Nano Banana..." : "🍌 Generando imagen con Nano Banana...", "info");
+      const res = await apiFetch<any>("/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "ai_generate_image",
+          params: { prompt, model: nbModel, ...(imageBase64 ? { imageBase64 } : {}) },
+          id: 0,
+        }),
+      });
+      if (res.error) throw new Error(res.error.message || "ai_generate_image falló");
+      // JSON-RPC wrap: result.content[0].text carries the tool result JSON.
+      const text = res.result?.content?.[0]?.text;
+      const data = text ? JSON.parse(text) : res.result;
+      if (!data?.imageBase64) throw new Error("La IA no devolvió ninguna imagen");
+
+      // Real owned asset in our bucket (same pipeline as Unsplash photos) —
+      // the canvas must never depend on a volatile data URI.
+      const uploaded = await apiFetch<{ url: string }>("/api/assets/upload", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `Nano Banana — ${prompt.slice(0, 40)}`,
+          data: data.imageBase64,
+          workspaceId: templateWorkspaceId,
+        }),
+      });
+
+      // Display size: next to a reference image it matches the source so the
+      // pair reads side by side; from scratch it uses the natural size capped
+      // at 800px like any other upload.
+      let width = src ? Math.max(1, Math.round(src.width)) : 512;
+      let height = src ? Math.max(1, Math.round(src.height)) : 512;
+      if (!src) {
+        const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+          const probe = new Image();
+          probe.onload = () => resolve({ w: probe.naturalWidth || 512, h: probe.naturalHeight || 512 });
+          probe.onerror = () => resolve({ w: 512, h: 512 });
+          probe.src = uploaded.url;
+        });
+        const scale = Math.min(1, 800 / dims.w, 800 / dims.h);
+        width = Math.max(1, Math.round(dims.w * scale));
+        height = Math.max(1, Math.round(dims.h * scale));
+      }
+
+      // Place NEXT TO the reference image when there is one — never on top;
+      // otherwise the standard auto-position for new canvas objects.
+      const position = src
+        ? { x: Math.round(src.x + src.width + FRAME_GAP), y: Math.round(src.y) }
+        : findCanvasObjectPosition(frames, canvasObjectsRef.current);
+
+      const layerId = createLayerId();
+      const imageElement = document.createElement("img");
+      imageElement.setAttribute("data-layer-id", layerId);
+      imageElement.setAttribute("data-layer-name", "Nano Banana");
+      imageElement.setAttribute("data-layer-kind", "image");
+      imageElement.setAttribute("src", uploaded.url);
+      imageElement.setAttribute("alt", `Nano Banana — ${prompt.slice(0, 60)}`);
+      imageElement.setAttribute("draggable", "false");
+      const html = imageElement.outerHTML;
+      const css = `[data-layer-id="${layerId}"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: ${width}px;
+  height: ${height}px;
+  display: block;
+  object-fit: contain;
+}`;
+      const object: HtmlCanvasObject = {
+        id: layerId,
+        name: `Nano Banana — ${prompt.slice(0, 24)}`,
+        kind: "image",
+        frameId: null,
+        html,
+        css,
+        ...position,
+        width,
+        height,
+        zIndex: frames.length + canvasObjectsRef.current.length,
+      };
+      commitCanvasObjects([...canvasObjectsRef.current, object]);
+      handleSelectOrphan(object.id);
+      addToast(src ? "✓ Imagen generada junto a la original." : "✓ Imagen generada.", "success");
+    } catch (err: any) {
+      const msg = String(err?.message || "error desconocido");
+      if (msg.includes("NO_GEMINI_KEY")) {
+        addToast("Falta tu API key de Gemini — guardala en el panel.", "info");
+      } else {
+        addToast(`No se pudo generar la imagen: ${msg}`, "error");
+      }
+    }
+    setMcpLoading(null);
+  }, [nbPrompt, nbModel, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
 
   /** Vectorize the selected image to SVG via Quiver AI with live streaming.
    *  Shows a floating preview panel with the SVG building in real-time from
@@ -5360,6 +5504,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     styleLibrary: "Biblioteca",
     batch: "Batchamator",
     ai: "AI Settings",
+    genImage: "Generar Imagen",
   };
 
   return (
@@ -5755,6 +5900,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))" }}
           >
             <span style={{ fontSize: 14 }}>{vectorizeLoading ? "⏳" : "✦"}</span>
+          </button>
+
+          {/* Nano Banana — AI image generation/editing. Opens the genImage
+              panel; the Gemini key check happens on Generate (the panel
+              itself hosts the key input, shared with Image to Design). */}
+          <button
+            type="button"
+            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "genImage" ? "active" : ""}`}
+            onClick={() => {
+              if (showRightPanel && rightPanelTab === "genImage") {
+                setShowRightPanel(false);
+              } else {
+                setRightPanelTab("genImage");
+                setShowRightPanel(true);
+              }
+            }}
+            title="Generar imagen con Nano Banana (Gemini)"
+            style={{ background: "linear-gradient(135deg, rgba(251,191,36,0.15), rgba(245,158,11,0.15))" }}
+          >
+            <span style={{ fontSize: 14 }}>{mcpLoading === "genImage" ? "⏳" : "🍌"}</span>
           </button>
 
           {/* AI Settings — provider/model/key config without leaving editor */}
@@ -6978,6 +7143,106 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               </div>
             </div>
           )}
+          {rightPanelTab === "genImage" && (() => {
+            const src = resolveSelectedImage();
+            return (
+              <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14, fontSize: 12, color: "#d6d0c0" }}>
+                {/* Mode: live indicator of what the next generation will do */}
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: src ? "rgba(245,158,11,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${src ? "rgba(245,158,11,0.35)" : "rgba(255,255,255,0.08)"}`, display: "flex", alignItems: "center", gap: 8 }}>
+                  {src ? (
+                    <>
+                      <img src={src.url} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(245,158,11,0.4)" }} />
+                      <div>
+                        <div style={{ color: "#fbbf24", fontWeight: 600 }}>🎨 Editar imagen seleccionada</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>La imagen actúa de referencia y tu prompt indica el cambio. El resultado aparece al lado, nunca encima.</div>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ color: "#c8b898", fontWeight: 600 }}>✨ Crear imagen desde cero</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Seleccioná una imagen en el editor si querés editarla; sin selección se genera una nueva.</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Prompt */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Prompt</label>
+                  <textarea
+                    value={nbPrompt}
+                    onChange={e => setNbPrompt(e.target.value)}
+                    placeholder={src ? "Ej: cambiá el fondo a un atardecer y mantené el producto" : "Ej: poster minimalista de café sobre fondo beige, luz suave, estilo editorial"}
+                    rows={4}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "inherit", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", resize: "vertical" }}
+                  />
+                </div>
+
+                {/* Nano Banana version */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Versión de Nano Banana</label>
+                  <select
+                    value={nbModel}
+                    onChange={e => {
+                      setNbModel(e.target.value);
+                      localStorage.setItem(NANO_BANANA_MODEL_SLOT, e.target.value);
+                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                  >
+                    {NANO_BANANA_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>
+                    Usa la misma API key de Gemini que Image to Design.
+                  </div>
+                </div>
+
+                {/* API key — same BYOK store as the AI Settings tab */}
+                <div>
+                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (Google Gemini)</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="password"
+                      value={geminiKeyDraft}
+                      onChange={e => setGeminiKeyDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && geminiKeyDraft.trim()) handleSaveGeminiKey(geminiKeyDraft.trim());
+                        if (e.key === "Escape") setGeminiKeyDraft("");
+                      }}
+                      placeholder="AIza... (Google Gemini API key)"
+                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                    />
+                    <button
+                      type="button"
+                      disabled={!geminiKeyDraft.trim() || keySaving}
+                      onClick={() => handleSaveGeminiKey(geminiKeyDraft.trim())}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: geminiKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: geminiKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: geminiKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                  {geminiConfigured ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · compartida con Image to Design</span>
+                      <button type="button" onClick={() => handleSaveGeminiKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                    </div>
+                  ) : (
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                      Obtener key gratis ↗
+                    </a>
+                  )}
+                </div>
+
+                {/* Generate */}
+                <button
+                  type="button"
+                  disabled={!nbPrompt.trim() || mcpLoading === "genImage"}
+                  onClick={handleGenerateNanoBanana}
+                  style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, cursor: nbPrompt.trim() && mcpLoading !== "genImage" ? "pointer" : "not-allowed", background: nbPrompt.trim() && mcpLoading !== "genImage" ? "linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.25))" : "rgba(255,255,255,0.03)", color: nbPrompt.trim() && mcpLoading !== "genImage" ? "#fbbf24" : "#555", fontFamily: "inherit" }}
+                >
+                  {mcpLoading === "genImage" ? "Generando…" : src ? "🍌 Generar edición" : "🍌 Generar imagen"}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
 

@@ -336,7 +336,7 @@ _Curated highlights — the complete auto-synced catalog (all 236 tools) is in t
 - `add_font_to_template` — Add a Google Font to template CSS with @import and suggested snippet
 - `add_frame_to_brand` — Duplicate a frame from a source template into a brand's Design System template. The source template and frame are NOT modified — a copy is inserted into the DS file. This is the 'click plin' operation: add a design to the Brand Library without altering the original.
 - `add_primitive` — Add a visual primitive (rectangle, circle, or text block) to a specific frame in an HTML template. Creates the element with a data-layer-id and matching CSS rule using attribute selectors, following the visual-first design model.
-- `ai_generate_image` — Generate an AI image via OpenRouter (model-agnostic) and optionally add it to the canvas. Requires OPENROUTER_API_KEY.
+- `ai_generate_image` — Generate or edit an image with Google's Nano Banana models (Gemini native image generation). Prompt-only creates a new image from scratch; pass imageBase64 to EDIT that image guided by the prompt. Needs a Google Gemini API key — the SAME key as image_to_design: passed as geminiApiKey, the user's BYOK key, or GEMINI_API_KEY on the server.
 - `ai_generate_text` — Generate AI text content using OpenRouter (GPT-4o-mini). Requires OPENROUTER_API_KEY env var. Optionally adds generated text to canvas.
 - `ai_palette` — Generate a color palette (5-7 colors) based on a theme, mood, or description using AI. Requires OPENROUTER_API_KEY.
 - `ai_suggest_layout` — Analyze the current template canvas and suggest layout improvements (alignment, spacing, hierarchy). Requires OPENROUTER_API_KEY.

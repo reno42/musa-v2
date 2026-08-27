@@ -153,7 +153,7 @@ El diferencial: canvas inteligente + documentos + colaboración IA.
 | # | Feature | MCP Tool | Complejidad | Free Tier |
 |---|---------|----------|:---:|:---:|
 | 61 | AI text generation | `ai_generate_text` | Baja | ✅ OpenRouter |
-| 62 | AI image generation | `ai_generate_image` | Baja | ✅ OpenRouter |
+| 62 | AI image generation | `ai_generate_image` | Baja | ✅ Nano Banana (Gemini BYOK) |
 | 63 | AI layout suggestion | `ai_suggest_layout` | Alta | ✅ |
 | 64 | AI color palette | `ai_palette` | Media | ✅ |
 | 65 | Auto-translate content | `ai_translate` | Media | ✅ |

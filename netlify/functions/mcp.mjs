@@ -1644,16 +1644,15 @@ const MCP_TOOLS = [
   },
   {
     name: "ai_generate_image",
-    description: "Generate an AI image via OpenRouter (model-agnostic) and optionally add it to the canvas. Requires OPENROUTER_API_KEY.",
+    description: "Generate or edit an image with Google's Nano Banana models (Gemini native image generation). Prompt-only creates a new image from scratch; pass imageBase64 to EDIT that image guided by the prompt. Needs a Google Gemini API key — the SAME key as image_to_design: passed as geminiApiKey, the user's BYOK key, or GEMINI_API_KEY on the server.",
     inputSchema: {
       type: "object",
       properties: {
-        prompt: { type: "string", description: "Image generation prompt" },
-        templateId: { type: "string", description: "Optional template ID to add generated image to" },
-        x: { type: "number", description: "X position (default 0)" },
-        y: { type: "number", description: "Y position (default 0)" },
-        width: { type: "number", description: "Image width in px (default 512)" },
-        height: { type: "number", description: "Image height in px (default 512)" },
+        prompt: { type: "string", description: "What to generate, or how to edit the reference image" },
+        imageBase64: { type: "string", description: "Optional reference image (data URI or raw base64). With it the model edits that image; without it a new image is generated from scratch" },
+        model: { type: "string", description: "Nano Banana model: gemini-3.1-flash-image (default), gemini-3.1-flash-lite-image, gemini-3-pro-image, gemini-2.5-flash-image" },
+        aspectRatio: { type: "string", description: "Optional output aspect ratio like 1:1, 4:3, 9:16, 16:9 (from-scratch generations; default is the model's own)" },
+        geminiApiKey: { type: "string", description: "Optional caller-supplied Google Gemini API key (used for this request only, never stored)" },
       },
       required: ["prompt"],
     },
@@ -6308,34 +6307,77 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "ai_generate_image": {
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      if (!apiKey) throw { code: -32000, message: "OPENROUTER_API_KEY not configured." };
-      const prompt = params.prompt || "";
-      let imageUrl = null;
-      // Try text-to-image via a capable model; fall back to placeholder description
-      try {
-        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "openai/gpt-4o-mini",
-            messages: [{ role: "user", content: `Describe this image in 20 words for an alt-text (do not generate the image itself, just describe what it would look like): ${prompt}` }],
-            max_tokens: 120,
-          }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const description = data.choices?.[0]?.message?.content || prompt;
-          // Placeholder: generate a colored rect with the description as text
-          if (params.templateId) {
-            imageUrl = `ai://generated/${Date.now()}`;
-            return { generated: true, description, prompt, imageUrl, note: "Image generation placeholder. For actual image output, configure a dedicated image model via OpenRouter." };
-          }
-        }
-      } catch (e) {
-        throw { code: -32000, message: `Image generation failed: ${e.message}` };
+      // Google Nano Banana (Gemini native image generation). Same Google
+      // Gemini key as image_to_design — resolution chain: caller-supplied →
+      // user's BYOK key (DB, encrypted) → deployment env.
+      let apiKey = params.geminiApiKey;
+      if (!apiKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "google");
+        if (userKey.key) apiKey = userKey.key;
       }
-      return { generated: false, message: "No image URL returned" };
+      if (!apiKey) apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw {
+          code: -32000,
+          message: "NO_GEMINI_KEY: Falta una API key de Google Gemini (la misma que image_to_design). Pasala en geminiApiKey, configurá tu key BYOK, o definí GEMINI_API_KEY en el servidor.",
+        };
+      }
+
+      const prompt = (params.prompt || "").trim();
+      if (!prompt) throw { code: -32000, message: "prompt is required" };
+
+      // Allowlist — the model id goes straight into the endpoint URL.
+      const NANO_BANANA_MODELS = new Set([
+        "gemini-3.1-flash-image",      // Nano Banana 2 (default)
+        "gemini-3.1-flash-lite-image", // Nano Banana 2 Lite
+        "gemini-3-pro-image",          // Nano Banana Pro
+        "gemini-2.5-flash-image",      // Nano Banana (2.5, previous gen)
+      ]);
+      const model = NANO_BANANA_MODELS.has(params.model) ? params.model : "gemini-3.1-flash-image";
+
+      // Optional reference image → edit mode (image as visual base + prompt
+      // as instructions); without it the model generates from scratch.
+      const parts = [];
+      if (params.imageBase64) {
+        const raw = String(params.imageBase64);
+        const b64Match = raw.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+        parts.push({
+          inlineData: b64Match
+            ? { mimeType: b64Match[1], data: b64Match[2] }
+            : { mimeType: "image/png", data: raw },
+        });
+      }
+      parts.push({ text: prompt });
+
+      // IMAGE output requires the multimodal response config.
+      const generationConfig = { responseModalities: ["TEXT", "IMAGE"] };
+      if (params.aspectRatio && /^\d{1,2}:\d{1,2}$/.test(String(params.aspectRatio))) {
+        generationConfig.imageConfig = { aspectRatio: String(params.aspectRatio) };
+      }
+
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const aiRes = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig }),
+      });
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => "");
+        throw { code: -32000, message: `Gemini API error ${aiRes.status}: ${errText.substring(0, 300)}` };
+      }
+      const aiJson = await aiRes.json();
+      const imagePart = (aiJson?.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data);
+      if (!imagePart) {
+        const why = aiJson?.candidates?.[0]?.finishReason || aiJson?.promptFeedback?.blockReason || "no image in response";
+        throw { code: -32000, message: `Gemini returned no image (${why})` };
+      }
+      const mimeType = imagePart.inlineData.mimeType || "image/png";
+      return {
+        generated: true,
+        model,
+        mimeType,
+        imageBase64: `data:${mimeType};base64,${imagePart.inlineData.data}`,
+      };
     }
 
     case "ai_palette": {

@@ -743,33 +743,29 @@
   },
   {
     "name": "ai_generate_image",
-    "description": "Generate an AI image via OpenRouter (model-agnostic) and optionally add it to the canvas. Requires OPENROUTER_API_KEY.",
+    "description": "Generate or edit an image with Google's Nano Banana models (Gemini native image generation). Prompt-only creates a new image from scratch; pass imageBase64 to EDIT that image guided by the prompt. Needs a Google Gemini API key — the SAME key as image_to_design: passed as geminiApiKey, the user's BYOK key, or GEMINI_API_KEY on the server.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "prompt": {
           "type": "string",
-          "description": "Image generation prompt"
+          "description": "What to generate, or how to edit the reference image"
         },
-        "templateId": {
+        "imageBase64": {
           "type": "string",
-          "description": "Optional template ID to add generated image to"
+          "description": "Optional reference image (data URI or raw base64). With it the model edits that image; without it a new image is generated from scratch"
         },
-        "x": {
-          "type": "number",
-          "description": "X position (default 0)"
+        "model": {
+          "type": "string",
+          "description": "Nano Banana model: gemini-3.1-flash-image (default), gemini-3.1-flash-lite-image, gemini-3-pro-image, gemini-2.5-flash-image"
         },
-        "y": {
-          "type": "number",
-          "description": "Y position (default 0)"
+        "aspectRatio": {
+          "type": "string",
+          "description": "Optional output aspect ratio like 1:1, 4:3, 9:16, 16:9 (from-scratch generations; default is the model's own)"
         },
-        "width": {
-          "type": "number",
-          "description": "Image width in px (default 512)"
-        },
-        "height": {
-          "type": "number",
-          "description": "Image height in px (default 512)"
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied Google Gemini API key (used for this request only, never stored)"
         }
       },
       "required": [

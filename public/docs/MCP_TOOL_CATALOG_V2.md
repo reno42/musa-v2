@@ -60,7 +60,7 @@
 | Tool | Qué hace |
 |------|----------|
 | `ai_generate_text` | Genera copy |
-| `ai_generate_image` | Genera imagen |
+| `ai_generate_image` | Genera o edita imagen (Nano Banana, Gemini) |
 | `ai_palette` | Sugiere paleta de colores |
 | `ai_suggest_layout` | Sugiere layout |
 | `ai_translate` | Traduce contenido |
@@ -479,6 +479,71 @@ curl -s -X POST https://…netlify.app/mcp -H "Content-Type: application/json" \
 | `clip-path: path()` | Requiere Chrome ≥123 (Chrome-first OK) | Fallback: máscara SVG data-URI autocontenida (ya se usa con inversión/pinceles) |
 | Máscara en frame origin | El svg de máscara se pine a `left:0;top:0` del frame (1×1 overflow:visible) con `d` en coords del frame | No reposicionar el svg a mano — editar solo el `d` del path (`edit_path_points`) |
 | 0 LLM verificable | El flujo no llama ningún endpoint de LLM | Verificable en logs del job (`kind` + `input_url`) y en `segment-core.mjs` — solo `onnxruntime-web` (WASM) |
+
+---
+
+## 🎬 ANIMACIÓN & VIDEO (F0/F1) — IMPLEMENTADAS (20 Ago 2026)
+
+> Fuente de verdad: `docs/ANIMATION_VIDEO_EXPORT_SPEC.md` + `shared/animationSchema.ts`.
+> Una sola fuente: el esquema JSON `frame.animation` → compila a WAAPI (preview) y al mismo sampler (export). 0 tokens LLM, 0 binarios pesados.
+
+| Tool | Qué hace |
+|------|----------|
+| `set_animation` | Escribe/edita `frame.animation` (esquema completo, o atajo `presetIds`+`presetLayerId`, o parches `durationSec`/`loop`; `clear:true` elimina). Normaliza con `normalizeAnimation` |
+| `get_animation` | Lee el esquema + `stats` (clips por capa, timeline, transitions, hasAnimation) |
+| `list_animation_presets` | Catálogo: 10 presets (fade-in, slide-in-up, zoom-in, blur-in, rotate, pop, float, typewriter…), easings (incl. `spring(damping,stiffness)`) y props animables |
+| `apply_transition` | Transición del frame origen → siguiente (`fade\|slide\|zoom\|wipe`, 0.1–5s). Reemplaza la transición previa al mismo target |
+
+**No expuestas (postergadas):** `render_video` / `render_video_status` — F2 requiere Chromium en la función (~50–60MB > límite de 50MB del zip). El export vive 100% en el navegador (F1: WebCodecs+webmMuxer frame-perfect, fallback MediaRecorder → WebM/MP4) desde el panel Animation del editor.
+
+**Persistencia:** sin migración — `frame.animation` viaja dentro de `templates.data` (JSONB) con el upsert existente.
+
+---
+
+## 🛠️ PLATAFORMA, CUOTA & LÍMITES (v27)
+
+### Tools nuevas
+| Tool | Qué hace | Auth |
+|------|----------|------|
+| `platform_get_status` | Lee switches globales: `musa_tick_enabled` (kill switch del dispatcher horario del batch, en `platform_config`) y `monthly_mcp_quota` (cuota MCP mensual por workspace, 0 = ilimitado). Reporta también si el override de emergencia `MUSA_TICK_ENABLED=false` (env) está activo — gana sobre el switch de DB. | Admin key o dueño de workspace |
+| `platform_update_config` | Escribe esos switches. `musaTickEnabled=false` detiene el dispatch horario (el botón «Ejecutar batch» del Kanban sigue funcionando). `monthlyMcpQuota` cambia la cuota al instante (cache 5 min se invalida). Solo campos enviados cambian. | Admin key o dueño de workspace |
+
+### Telemetría de uso (fail-open)
+- Cada `tools/call` autenticado con `workspaceId` suma 1 a `workspace_usage` (mes UTC, atómico vía RPC `increment_workspace_usage`) y al superar la cuota responde error `-32000` con el contador usado (`X / quota`).
+- Sin migración v27 aplicada: no cuenta ni bloquea (la API nunca se cae por telemetría).
+
+### Cambios en tools existentes
+- `task_queue_get_config` → devuelve además `usage: { month, mcp_calls, items_generated, quota }` y las columnas `kanban_autorefresh_enabled` / `kanban_autorefresh_seconds`.
+- `task_queue_update_config` → semántica de **merge** (solo los campos enviados se escriben; antes reescribía la fila completa) y acepta `kanbanAutoRefresh` (bool) + `kanbanPollSeconds` (15/30/60/120).
+
+> Ver `docs/CAPACIDAD_FREEMIUM.md` para el análisis de cuántos usuarios aguanta el stack con estos límites.
+
+---
+
+## 🕸️ GRAFOS CONSULTABLES & RÉPLICA DE MARCA (v28)
+
+### Tools nuevas
+
+| Tool | Qué hace | Params clave |
+|------|----------|--------------|
+| `get_brand_playbook` | Digest consultable de UNA marca (la contracara de datos del grafo visual `get_brand_graph`): design system (templateId, colores, fuentes, styleFingerprint), inventario completo con categoría/campaña/tipo de contenido, subconjunto `replicable` (Plantillas + Archivos) y counts. Es LA tool para «revisá toda la lógica que hicimos para la marca X». | `workspaceId`, `brandId` o `brandName` |
+| `replicate_brand_strategy` | Clona la lógica de marca A sobre marca B: construye el playbook de A, verifica el design system de B (si no tiene, encola primero una tarjeta de extracción con `extract_design_system`) y crea una tarjeta Kanban por archivo replicable (`design_kanban_tasks`, status `backlog`, tags `replica`/`brand:<B>`/`from:<tplA>`, brief con link al diseño fuente). Idempotente: archivos ya replicados se saltean. | `workspaceId`, `sourceBrandId`, `targetBrandId`, `maxCards` (1–30, default 15), `dryRun` |
+
+### Flujo recomendado (para cualquier IA: chat interno, Claude, Codex…)
+
+```
+1. get_brand_graph(workspaceId)                  → IDs de marcas
+2. get_brand_playbook(workspaceId, marcaA)       → qué existe y qué es replicable
+3. replicate_brand_strategy(…, dryRun:true)      → previsualizar el plan
+4. replicate_brand_strategy(…)                   → tarjetas en backlog
+5. musa_batch_run(workspaceId)                   → procesar ya (o esperar el cron horario)
+```
+
+Las dos tools están en el catálogo estándar (`tools/list`) y en la lista del chat interno, así que cualquier cliente MCP las descubre solo.
+
+### platform_get_status (v28)
+
+Ahora también devuelve `plan` (referencia del plan Netlify free: 125K invocaciones/mes, ~1.488 del cron fijo, 100 GB) y `platform_usage` (sumatoria real de `workspace_usage` del mes corriente, todas las cuentas) — alimenta el panel **Configuración → 📊 Límites y consumo**, con proyección a fin de mes por ritmo actual.
 
 ---
 
