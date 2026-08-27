@@ -5101,6 +5101,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             // automatic retry). Anything else keeps counting as a strike.
             if (msg.includes("NO_RUNWAY_KEY") || msg.includes("generation CANCELLED")) throw pollFailed;
             if (msg.includes("generation FAILED")) {
+              // INTERNAL.BAD_OUTPUT = Runway's quality system rejected the
+              // output — logos/watermarks/overlaid text in the image are the
+              // documented #1 cause. Deterministic per their docs: an
+              // identical resubmit just burns another ~76s, so abort with
+              // actionable guidance instead of auto-retrying.
+              if (/INTERNAL\.BAD_OUTPUT/.test(msg)) throw pollFailed;
               if (!retriedRunway && /unexpected error/i.test(msg)) {
                 retriedRunway = true;
                 addToast("Runway falló sin causa específica (glitch transitorio de su lado) — reintentando una vez…", "info");
@@ -5232,6 +5238,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const msg = String(err?.message || "error desconocido");
       if (msg.includes("NO_RUNWAY_KEY")) {
         addToast("Falta tu API key de RunwayML — guardala en el panel.", "info");
+      } else if (/INTERNAL\.BAD_OUTPUT/.test(msg)) {
+        addToast("Runway rechazó el resultado por calidad: la causa nº1 (documentada) es logos, marcas de agua o texto superpuesto en la imagen. Probá con una imagen limpia sin texto.", "error");
+      } else if (/SAFETY\./.test(msg)) {
+        addToast("Runway rechazó el contenido por moderación (entrada o salida) — cambiá la imagen o el prompt antes de reintentar.", "error");
       } else {
         addToast(`No se pudo generar el video: ${msg}`, "error");
       }
