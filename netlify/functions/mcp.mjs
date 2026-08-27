@@ -1713,7 +1713,7 @@ const MCP_TOOLS = [
   },
   {
     name: "separate_image_layers_check",
-    description: "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs] } when done — first output is the base/background image, the rest are transparent overlay layers in stacking order. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
+    description: "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs], layers: [{ url, name, size, boundingBox }] } when done — first entry is the base/background image (full canvas, no box), the rest are transparent element crops; boundingBox.normalized is [x0,y0,x1,y1] on a 0-1000 canvas scale (absolute = output px) and locates each element so the original composition can be rebuilt at exact positions/sizes. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6551,9 +6551,35 @@ async function handleMethod(method, params, userId, auth) {
         throw { code: -32000, message: `Layer separation ${status}: ${why}` };
       }
       if (status === "completed") {
-        const outputs = Array.isArray(result?.outputs) ? result.outputs.filter(u => typeof u === "string" && /^https?:\/\//.test(u)) : [];
+        // Outputs can be plain URL strings OR structured layer objects
+        // ({url, name, size, bounding_box:{absolute, normalized}}) depending
+        // on what WaveSpeed returns for this model (their docs: items are
+        // "usually URL strings, but may be structured result objects"). Keep
+        // BOTH shapes: a flat `outputs` URL array (back-compat) plus a
+        // `layers` array carrying the placement metadata — the editor needs
+        // each element's bounding box to rebuild the original composition at
+        // exact positions and sizes instead of stacking stretched crops.
+        const raw = Array.isArray(result?.layers) && result.layers.length
+          ? result.layers
+          : (Array.isArray(result?.outputs) ? result.outputs : []);
+        const outputs = [];
+        const layers = [];
+        for (const item of raw) {
+          if (typeof item === "string" && /^https?:\/\//.test(item)) {
+            outputs.push(item);
+            layers.push({ url: item, name: null, size: null, boundingBox: null });
+          } else if (item && typeof item === "object" && typeof item.url === "string" && /^https?:\/\//.test(item.url)) {
+            outputs.push(item.url);
+            layers.push({
+              url: item.url,
+              name: typeof item.name === "string" && item.name ? item.name : null,
+              size: typeof item.size === "string" ? item.size : null,
+              boundingBox: item.bounding_box || item.boundingBox || null,
+            });
+          }
+        }
         if (outputs.length === 0) throw { code: -32000, message: "Layer separation completed but returned no image URLs" };
-        return { status: "completed", outputs };
+        return { status: "completed", outputs, layers };
       }
       // created / processing / anything transient — caller keeps polling.
       return { status };

@@ -320,6 +320,125 @@ const LAYER_SPLIT_FIRST_CHECK_MS = 30_000; // first status check
 const LAYER_SPLIT_CHECK_EVERY_MS = 12_000; // then every ~12s (free checks)
 const LAYER_SPLIT_MAX_MS = 8 * 60_000;     // hard stop for the wait loop
 
+/** Aspect ratio (w/h) of an image blob — used to size loose-asset frames. */
+async function blobAspect(blob: Blob): Promise<number> {
+  const bmp = await createImageBitmap(blob);
+  const ratio = bmp.width / Math.max(1, bmp.height);
+  bmp.close();
+  return ratio;
+}
+
+/**
+ * Fallback placement when Seedream returns layers WITHOUT bounding boxes:
+ * masked template matching against the source image. Element layers are
+ * tight crops of the original (upscaled), so a coarse-to-fine search over a
+ * scale ladder with an alpha-masked mean-absolute-difference score (solid
+ * interior pixels only) recovers each crop's original rect. Returns the
+ * match as fractions of the source image (0-1), or null when nothing
+ * matches confidently — the caller then parks that layer as a loose asset.
+ */
+type LayerHit = { left: number; top: number; width: number; height: number };
+async function locateLayerInImage(origUrl: string, layerBlob: Blob): Promise<LayerHit | null> {
+  const toBitmap = async (src: string | Blob) => {
+    const blob = typeof src === "string" ? await (await fetch(src)).blob() : src;
+    return createImageBitmap(blob);
+  };
+  const toData = (bmp: ImageBitmap, w: number, h: number) => {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w));
+    c.height = Math.max(1, Math.round(h));
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("canvas 2d no disponible");
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    return ctx.getImageData(0, 0, c.width, c.height);
+  };
+  // Masked MAD of tpl over orig at (px, py), sampling only the solid-alpha
+  // interior. Early-bails on offsets that are already hopeless.
+  const mad = (orig: ImageData, tpl: ImageData, solid: Int32Array, px: number, py: number, bail: number) => {
+    let sum = 0, n = 0;
+    const oW = orig.width, tW = tpl.width;
+    for (let s = 0; s < solid.length; s += 2) {
+      const x = solid[s], y = solid[s + 1];
+      const ti = (y * tW + x) << 2;
+      const oi = ((py + y) * oW + (px + x)) << 2;
+      sum += Math.abs(tpl.data[ti] - orig.data[oi])
+        + Math.abs(tpl.data[ti + 1] - orig.data[oi + 1])
+        + Math.abs(tpl.data[ti + 2] - orig.data[oi + 2]);
+      n += 3;
+      if (n > 288 && sum / n > bail) return Infinity;
+    }
+    return sum / Math.max(1, n);
+  };
+
+  const origBmp = await toBitmap(origUrl);
+  const layerBmp = await toBitmap(layerBlob);
+  const aspect = layerBmp.width / Math.max(1, layerBmp.height);
+  const fit = (max: number) => aspect >= 1
+    ? { w: max, h: Math.max(1, Math.round(max / aspect)) }
+    : { w: Math.max(1, Math.round(max * aspect)), h: max };
+
+  // Coarse pass: candidate on-canvas widths as a fraction of the original,
+  // stepped ~1.3x apart, on a 256px working copy.
+  const o = fit(256);
+  const orig = toData(origBmp, o.w, o.h);
+  let best = { score: Infinity, fw: 0, fh: 0, fx: 0, fy: 0 };
+  for (const frac of [0.06, 0.09, 0.12, 0.16, 0.21, 0.27, 0.35, 0.45, 0.58, 0.74, 0.92, 1]) {
+    const tW = Math.round(o.w * frac);
+    const tH = Math.max(4, Math.round(tW / aspect));
+    if (tW < 4 || tW > o.w || tH > o.h) continue;
+    const tpl = toData(layerBmp, tW, tH);
+    const solidArr: number[] = [];
+    for (let y = 0; y < tH; y++) for (let x = 0; x < tW; x++) {
+      if (tpl.data[((y * tW + x) << 2) + 3] > 200) solidArr.push(x, y);
+    }
+    if (solidArr.length < 320) continue; // mostly transparent — nothing to anchor on
+    const solid = Int32Array.from(solidArr);
+    const step = Math.max(2, Math.round(Math.min(tW, tH) / 10));
+    for (let py = 0; py + tH <= o.h; py += step) {
+      for (let px = 0; px + tW <= o.w; px += step) {
+        const score = mad(orig, tpl, solid, px, py, 60);
+        if (score < best.score) best = { score, fw: tW / o.w, fh: tH / o.h, fx: px / o.w, fy: py / o.h };
+      }
+    }
+  }
+  if (best.score > 45) return null; // not even a coarse candidate
+
+  // Refine pass at 2x resolution around the coarse hit: the true size
+  // usually sits between ladder steps, so probe a small size/position
+  // neighborhood (samples capped to keep this fast).
+  const r = fit(512);
+  const orig2 = toData(origBmp, r.w, r.h);
+  for (const fmul of [0.84, 0.92, 1, 1.09, 1.18]) {
+    const tW = Math.max(4, Math.round(r.w * best.fw * fmul));
+    const tH = Math.max(4, Math.round(tW / aspect));
+    if (tW > r.w || tH > r.h) continue;
+    const tpl = toData(layerBmp, tW, tH);
+    const solidArr: number[] = [];
+    for (let y = 0; y < tH; y++) for (let x = 0; x < tW; x++) {
+      if (tpl.data[((y * tW + x) << 2) + 3] > 200) solidArr.push(x, y);
+    }
+    if (solidArr.length < 320) continue;
+    let solid = Int32Array.from(solidArr);
+    if (solid.length > 6000) {
+      const picked: number[] = [];
+      const stride = Math.ceil(solidArr.length / 6000) * 2;
+      for (let s = 0; s < solidArr.length; s += stride) { picked.push(solidArr[s], solidArr[s + 1]); }
+      solid = Int32Array.from(picked);
+    }
+    const cx = Math.round(best.fx * r.w), cy = Math.round(best.fy * r.h);
+    for (let dy = -12; dy <= 12; dy += 2) {
+      for (let dx = -12; dx <= 12; dx += 2) {
+        const px = cx + dx, py = cy + dy;
+        if (px < 0 || py < 0 || px + tW > r.w || py + tH > r.h) continue;
+        const score = mad(orig2, tpl, solid, px, py, 45);
+        if (score < best.score) best = { score, fw: tW / r.w, fh: tH / r.h, fx: px / r.w, fy: py / r.h };
+      }
+    }
+  }
+  if (best.score > 25) return null; // plausible match only below this MAD
+  return { left: best.fx, top: best.fy, width: best.fw, height: best.fh };
+}
+
 /**
  * Where the account menu can take you. Ids must match WORKSPACE_TABS — the
  * dashboard reads the one left in sessionStorage on mount and switches to it.
@@ -4631,6 +4750,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const deadline = startedAt + LAYER_SPLIT_MAX_MS;
       let nextCheckAt = startedAt + LAYER_SPLIT_FIRST_CHECK_MS;
       let outputs: string[] | null = null;
+      let layersMeta: any[] | null = null;
       while (alive()) {
         await new Promise(r => setTimeout(r, 1000));
         if (!alive()) return;
@@ -4644,64 +4764,140 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           if (!alive()) return;
           if (check?.status === "completed" && Array.isArray(check.outputs)) {
             outputs = check.outputs;
+            layersMeta = Array.isArray(check.layers) ? check.layers : null;
             break;
           }
         }
       }
       if (!alive()) return;
       if (!outputs || outputs.length === 0) throw new Error("Seedream no devolvió capas");
+      // Full completion payload: per-layer names/sizes/bounding boxes when
+      // WaveSpeed returns structured outputs, else empty (positions are
+      // then recovered by visual matching below).
+      const layerMeta: Array<{ url: string; name: string | null; size: string | null; boundingBox: any }> =
+        Array.isArray(layersMeta) ? layersMeta : [];
 
-      // Pull every layer into our own bucket — WaveSpeed's URLs are not
-      // permanent storage, and a saved design must never depend on them.
+      // Download every layer first and KEEP the blobs — placement may need
+      // the pixels (visual matching) and the upload needs the data anyway.
+      // WaveSpeed's URLs are not permanent storage; a saved design must
+      // never depend on them.
       setSplitStatus("uploading");
-      const uploaded: string[] = [];
+      const downloaded: { url: string; blob: Blob }[] = [];
       for (let i = 0; i < outputs.length; i++) {
         const resp = await fetch(outputs[i]);
         if (!resp.ok) throw new Error(`No se pudo descargar la capa ${i + 1} (${resp.status})`);
-        const blob = await resp.blob();
+        downloaded.push({ url: outputs[i], blob: await resp.blob() });
+      }
+      if (!alive()) return;
+
+      // ---- Placement --------------------------------------------------------
+      // Seedream returns the base as a full-canvas image and every element
+      // as a tight transparent crop PLUS its bounding box on the canvas.
+      // Rebuild the original composition: each layer sits at its exact rect
+      // so the stack recomposes the source image while every element stays
+      // individually selectable, movable and resizable.
+      const frameW = Math.max(1, Math.round(src.width)) || 1080;
+      const frameH = Math.max(1, Math.round(src.height)) || 1080;
+      const baseSize = String(layerMeta[0]?.size || "").match(/^(\d+)x(\d+)$/);
+      const canvasW = baseSize ? Number(baseSize[1]) : 0;
+      const canvasH = baseSize ? Number(baseSize[2]) : 0;
+      const rectFromBox = (box: any): { left: number; top: number; width: number; height: number } | null => {
+        const n = Array.isArray(box?.normalized) && box.normalized.length === 4 ? box.normalized.map(Number) : null;
+        const a = Array.isArray(box?.absolute) && box.absolute.length === 4 ? box.absolute.map(Number) : null;
+        let x0 = 0, y0 = 0, x1 = 0, y1 = 0, ok = false;
+        if (n && n.every(Number.isFinite)) { x0 = n[0] / 1000; y0 = n[1] / 1000; x1 = n[2] / 1000; y1 = n[3] / 1000; ok = true; }
+        else if (a && a.every(Number.isFinite) && canvasW > 0 && canvasH > 0) { x0 = a[0] / canvasW; y0 = a[1] / canvasH; x1 = a[2] / canvasW; y1 = a[3] / canvasH; ok = true; }
+        if (!ok || x1 <= x0 || y1 <= y0 || x0 < -0.01 || y0 < -0.01 || x1 > 1.01 || y1 > 1.01) return null;
+        return {
+          left: Math.round(x0 * frameW), top: Math.round(y0 * frameH),
+          width: Math.max(1, Math.round((x1 - x0) * frameW)), height: Math.max(1, Math.round((y1 - y0) * frameH)),
+        };
+      };
+
+      type Placement = { idx: number; name: string; left: number; top: number; width: number; height: number };
+      const placed: Placement[] = [];
+      const matched = new Set<number>();
+      for (let i = 0; i < downloaded.length; i++) {
+        const meta = layerMeta[i] || null;
+        const name = meta?.name || (i === 0 ? "Capa base (fondo)" : `Capa ${i}`);
+        // The first output is the documented base/background: full canvas
+        // when it carries no bounding box.
+        const rect = i === 0 && !meta?.boundingBox
+          ? { left: 0, top: 0, width: frameW, height: frameH }
+          : rectFromBox(meta?.boundingBox);
+        if (rect) { placed.push({ idx: i, name, ...rect }); matched.add(i); }
+      }
+
+      // Layers without metadata (WaveSpeed returned plain URLs): recover
+      // their spot with masked template matching against the source image.
+      const unmatched = downloaded.map((_, i) => i).filter(i => !matched.has(i) && i !== 0);
+      if (unmatched.length > 0) {
+        addToast(`📍 Ubicando ${unmatched.length} capa(s) por coincidencia visual…`, "info");
+        for (const i of unmatched) {
+          let hit: LayerHit | null = null;
+          try { hit = await locateLayerInImage(src.url, downloaded[i].blob); } catch { hit = null; }
+          if (!alive()) return;
+          if (hit) {
+            placed.push({
+              idx: i,
+              name: layerMeta[i]?.name || `Capa ${i}`,
+              left: Math.round(hit.left * frameW), top: Math.round(hit.top * frameH),
+              width: Math.max(1, Math.round(hit.width * frameW)), height: Math.max(1, Math.round(hit.height * frameH)),
+            });
+            matched.add(i);
+          }
+        }
+      }
+      // The base never goes to the loose row — it IS the canvas.
+      if (!matched.has(0)) { placed.push({ idx: 0, name: layerMeta[0]?.name || "Capa base (fondo)", left: 0, top: 0, width: frameW, height: frameH }); }
+      placed.sort((p, q) => p.idx - q.idx); // HTML order = stacking order
+
+      // ---- Upload to our own bucket -----------------------------------------
+      const assetUrl = new Map<number, string>();
+      for (let i = 0; i < downloaded.length; i++) {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = () => reject(new Error("No se pudo leer la capa"));
-          reader.readAsDataURL(blob);
+          reader.readAsDataURL(downloaded[i].blob);
         });
+        const label = placed.find(p => p.idx === i)?.name
+          ?? (layerMeta[i]?.name ? `Capa suelta (${layerMeta[i]?.name})` : `Capa suelta ${i}`);
         const up = await apiFetch<{ url: string }>("/api/assets/upload", {
           method: "POST",
           body: JSON.stringify({
-            name: i === 0 ? `Seedream base — ${templateName}` : `Seedream capa ${i} — ${templateName}`,
+            name: `${label} — ${templateName}`,
             data: dataUrl,
             workspaceId: templateWorkspaceId,
           }),
         });
-        uploaded.push(up.url);
+        assetUrl.set(i, up.url);
       }
       if (!alive()) return;
 
-      // Layered frame NEXT TO the source image (never on top). Every layer
-      // is a full-canvas plate — base first, transparent overlays stacked
-      // above — so each goes to 0,0 at frame size and composites perfectly
-      // while staying individually selectable/editable in the frame.
-      const frameW = Math.max(1, Math.round(src.width)) || 1080;
-      const frameH = Math.max(1, Math.round(src.height)) || 1080;
-      const layerIds = uploaded.map(() => createLayerId());
-      const html = uploaded.map((url, i) => {
+      // ---- Frames ------------------------------------------------------------
+      // Layered frame NEXT TO the source image (never on top): base at 0,0
+      // full size, each element at its exact rect — the stack recomposes the
+      // original pixel-for-pixel while staying individually editable.
+      const layerIds = placed.map(() => createLayerId());
+      const html = placed.map((p, k) => {
         const el = document.createElement("img");
-        el.setAttribute("data-layer-id", layerIds[i]);
-        el.setAttribute("data-layer-name", i === 0 ? "Capa base (fondo)" : `Capa ${i}`);
+        el.setAttribute("data-layer-id", layerIds[k]);
+        el.setAttribute("data-layer-name", p.name);
         el.setAttribute("data-layer-kind", "image");
-        el.setAttribute("src", url);
-        el.setAttribute("alt", i === 0 ? "Capa base" : `Capa ${i}`);
+        el.setAttribute("src", assetUrl.get(p.idx) || "");
+        el.setAttribute("alt", p.name);
         el.setAttribute("draggable", "false");
         return el.outerHTML;
       }).join("\n");
-      const css = layerIds.map(id => `[data-layer-id="${id}"] {
+      const css = layerIds.map((id, k) => `[data-layer-id="${id}"] {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: ${frameW}px;
-  height: ${frameH}px;
+  left: ${placed[k].left}px;
+  top: ${placed[k].top}px;
+  width: ${placed[k].width}px;
+  height: ${placed[k].height}px;
   display: block;
-  object-fit: contain;
+  object-fit: fill;
 }`).join("\n\n");
       const newFrame: FrameData = {
         id: createFrameId(),
@@ -4714,12 +4910,38 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         css,
         background: "transparent",
       };
-      const updated = [...frames, newFrame];
+
+      // Layers without a confident location become small standalone frames
+      // in a row BELOW the composition — never stretched, never stacked.
+      const looseIdx = downloaded.map((_, i) => i).filter(i => !matched.has(i));
+      const looseFrames: FrameData[] = [];
+      let looseX = Math.round(src.x);
+      const looseY = Math.round(src.y + src.height + 80);
+      for (const i of looseIdx) {
+        let aspect = 1;
+        try { aspect = await blobAspect(downloaded[i].blob); } catch { /* keep 1:1 */ }
+        const w = Math.min(480, Math.max(40, Math.round(200 * aspect)));
+        looseFrames.push({
+          id: createFrameId(),
+          name: `Capa suelta — ${layerMeta[i]?.name || `Capa ${i}`}`,
+          x: looseX,
+          y: looseY,
+          width: w,
+          height: 200,
+          html: `<img data-layer-id="${createLayerId()}" data-layer-name="Capa suelta" data-layer-kind="image" src="${assetUrl.get(i) || ""}" alt="Capa suelta" draggable="false" />`,
+          css: `img {\n  width: 100%;\n  height: 100%;\n  object-fit: contain;\n  display: block;\n}`,
+          background: "transparent",
+        });
+        looseX += w + 24;
+      }
+
+      const updated = [...frames, newFrame, ...looseFrames];
       store.replaceAllWithUndo(updated, "edit");
       setSelectedFrameId(newFrame.id);
       setSelectedFrameIds(new Set([newFrame.id]));
       autoSave(updated);
-      addToast(`✓ ${uploaded.length} capas listas en un frame editable al lado de la original.`, "success");
+      const looseNote = looseIdx.length > 0 ? ` — ${looseIdx.length} sin posición confiable quedaron como assets abajo.` : "";
+      addToast(`✓ ${placed.length} capa${placed.length === 1 ? "" : "s"} en su posición y tamaño exactos${looseNote}`, "success");
     } catch (err: any) {
       const msg = String(err?.message || "error desconocido");
       if (msg.includes("NO_WAVESPEED_KEY")) {
@@ -7661,7 +7883,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Podés seguir editando mientras.</div>
                     </>)}
                     {splitStatus === "uploading" && (
-                      <div style={{ color: "#a5b4fc" }}>📥 Guardando capas en tu biblioteca…</div>
+                      <div style={{ color: "#a5b4fc" }}>📥 Ubicando y guardando capas…</div>
                     )}
                   </div>
                 )}

@@ -493,7 +493,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 43 | `ai_palette` | `templateId`, `prompt` | `count` | Read-only |
 | 44 | `ai_suggest_layout` | `templateId`, `prompt` | `format` | Read-only |
 | 45 | `separate_image_layers` | `imageUrl` | `prompt`, `resolution`, `promptOptimizationMode`, `wavespeedApiKey` | Async → `predictionId` (poll with 46) |
-| 46 | `separate_image_layers_check` | `predictionId` | `wavespeedApiKey` | Free poll → `outputs[]` |
+| 46 | `separate_image_layers_check` | `predictionId` | `wavespeedApiKey` | Free poll → `outputs[]` + `layers[]` (con `boundingBox` para reconstruir posiciones exactas) |
 
 #### Brand & Governance
 

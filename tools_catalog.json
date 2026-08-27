@@ -883,7 +883,7 @@
   },
   {
     "name": "separate_image_layers_check",
-    "description": "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs] } when done — first output is the base/background image, the rest are transparent overlay layers in stacking order. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
+    "description": "Poll a separate_image_layers task. Returns { status } while processing ('created'/'processing') or { status: 'completed', outputs: [image URLs], layers: [{ url, name, size, boundingBox }] } when done — first entry is the base/background image (full canvas, no box), the rest are transparent element crops; boundingBox.normalized is [x0,y0,x1,y1] on a 0-1000 canvas scale (absolute = output px) and locates each element so the original composition can be rebuilt at exact positions/sizes. Terminal failures throw. Also polls any other WaveSpeedAI prediction id. Free — never counted against the workspace monthly quota.",
     "inputSchema": {
       "type": "object",
       "properties": {
