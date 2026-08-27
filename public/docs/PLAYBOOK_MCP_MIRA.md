@@ -1,6 +1,6 @@
 # 🎨 DESIGN TOOL MCP — Guía Completa para Mira
 
-**Versión:** 3.0 — 12 Agosto 2026 (agrega Calado, Máscaras y Selección de imágenes)
+**Versión:** 3.1 — 20 Agosto 2026 (agrega Animación, Transiciones y export a video F0/F1)
 
 ---
 
@@ -268,6 +268,43 @@ draw_path (silueta) → create_mask_from_path (include) → edit_path_points (re
 remove_background (→ cutoutUrl) → segment_click (prompt o clics) → mask aplicada editable
 ```
 
+### 10. ANIMACIÓN Y TRANSICIONES (F0)
+**Problema:** Dar movimiento a un diseño (entrada de capas, loop suave) y encadenar frames con transiciones, sin tocar CSS a mano.
+**Solución:** El frame guarda `animation` — UN solo esquema JSON (timeline + clips + tweens) que el editor compila a WAAPI para preview y el export usa para video. Las tools editan ese esquema; jamás escriben CSS animations sueltas.
+
+```json
+// Ver catálogo de presets y easings (10 presets, spring incluido)
+{"name":"list_animation_presets","arguments":{}}
+// → presets: fade-in, slide-in-up, zoom-in, pop, float, typewriter, ...
+
+// Atajo: aplicar presets a una capa (reemplaza SU clip, conserva el resto)
+{"name":"set_animation","arguments":{"templateId":"tpl_xxx","frameId":"frame_xxx",
+  "presetIds":["fade-in","slide-in-up"],"presetLayerId":"layer_headline"}}
+// El 2º preset REEMPLAZA al 1º en esa capa (1 clip por capa) — para combinar
+// efectos, manda 2 capas o un animation completo con tweens multi-prop.
+
+// Esquema completo (control total): keyframes t=0..1 DENTRO de la ventana del clip
+{"name":"set_animation","arguments":{"templateId":"tpl_xxx","frameId":"frame_xxx",
+  "animation":{"timeline":{"durationSec":5,"fps":30,"loop":"pingpong"},
+    "clips":[{"layerId":"layer_headline","startSec":0.2,"endSec":1.4,
+      "tweens":[{"prop":"opacity","easing":"ease-out-expo",
+        "keyframes":[{"t":0,"value":"0"},{"t":1,"value":"1"}]}]}]}}}
+
+// Leer / auditar
+{"name":"get_animation","arguments":{"templateId":"tpl_xxx","frameId":"frame_xxx"}}
+// → stats: clips por capa, duración, loop, transitions
+
+// Transición hacia el siguiente frame (vive en el frame ORIGEN)
+{"name":"apply_transition","arguments":{"templateId":"tpl_xxx","frameId":"frame_a",
+  "toFrameId":"frame_b","type":"slide","durationSec":0.8}}
+```
+
+**Reglas:**
+- 1 clip por capa; los tweens declaran `prop` + `keyframes[{t,value}]` + `easing` (nombre CSS, `cubic-bezier(...)` o `spring(damping,stiffness)`).
+- Props animables: `transform, opacity, filter, color, backgroundColor, backgroundPosition, clipPath, width, height, top, left`.
+- Preview en el editor: selecciona el frame → pestaña **Animation** (play/scrub/loop). El video exportado usa el MISMO sampler — lo que ves es lo que descargas.
+- Export a video (WebM/MP4): botón **Exportar video** en el panel Animation del editor — 100% navegador, 0 invocaciones, 0 tokens LLM (F1).
+
 ---
 
 ## 🚫 ERRORES COMUNES
@@ -281,6 +318,7 @@ remove_background (→ cutoutUrl) → segment_click (prompt o clics) → mask ap
 | "NO_FRAMES_ERROR" | Template sin frames | Crear con `engine:"html"` primero |
 | Prompt con acentos se corrompe ("camión" → "camiÃ³n") | Payload bash sin escape UTF-8 | Enviar con `ensure_ascii=True` (Python) o escapar a `\uXXXX`; nunca texto acentuado crudo en `-d '{…}'` |
 | "Provide prompt, points or box" | `segment_click` sin prompts | Mandar `points`, `box` o `prompt` (uno alcanza) |
+| "Unknown animation preset: X" | `set_animation` con `presetIds` inválidos | Correr `list_animation_presets` primero; el id va en `presetIds`, no en `animation` |
 | Job queda en "queued" >8s | Cold start descargando modelo | Poll con `segment_status(jobId)` |
 
 ---
