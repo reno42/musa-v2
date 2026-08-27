@@ -30,7 +30,7 @@ const AI_PROMPTS: AiPrompt[] = [
     how: "Agente propio con HTTP: endpoint + clave, sin archivos que tocar.",
     prompt: `Tengo cuenta en Futuraria (design.futuraria.com) y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conéctate al endpoint https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (si no puedes mandar encabezados usa https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI).
-Guárdala permanente en tu configuración, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué piezas empezamos a diseñar.`,
+Guárdala permanente en tu configuración, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué piezas empezamos a diseñar.`,
   },
   {
     id: "claude-code",
@@ -40,7 +40,7 @@ Guárdala permanente en tu configuración, confirma con tools/list (236 herramie
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Ejecuta: claude mcp add futuraria --url https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI"
 (o agrégala a tu .mcp.json con headers: {"x-api-key": "TU_CLAVE_AQUI"}).
-Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "claude-cowork",
@@ -50,7 +50,7 @@ Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-kno
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Agrega el servidor a tu config de Cowork (mcp.json):
 {"mcpServers": {"futuraria": {"url": "https://design.futuraria.com/mcp", "headers": {"x-api-key": "TU_CLAVE_AQUI"}}}}
-Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "codex",
@@ -62,7 +62,7 @@ Agrega a ~/.codex/config.toml:
 [mcp_servers.futuraria]
 url = "https://design.futuraria.com/mcp"
 http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "chatgpt-cowork",
@@ -74,7 +74,7 @@ Agrega el servidor MCP de Futuraria a tu config de Cowork (config.toml):
 [mcp_servers.futuraria]
 url = "https://design.futuraria.com/mcp"
 http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "otra",
@@ -83,7 +83,7 @@ Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-kno
     how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía descargable (SKILL.md).",
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conecta https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (o ?key= en la URL si no soportas encabezados).
-Guárdala permanente, confirma con tools/list (236 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
   },
 ];
 
@@ -637,7 +637,7 @@ export function Landing({ onEnter }: LandingProps) {
 
           <div className="landing-connect-note liquid-glass">
             <strong>Lo que tu IA descubre sola</strong> en <code>/.well-known/mcp.json</code>: endpoint{" "}
-            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>236 tools</strong> de
+            <code>POST /mcp</code> · auth por header <code>x-api-key</code> · <strong>241 tools</strong> de
             diseño (frames, tokens, export, Kanban, brand graph) · <code>tools/list</code> público ·
             guías <code>get_agent_guide</code> y <code>get_playbook</code> listas para leer.
           </div>
@@ -680,7 +680,7 @@ export function Landing({ onEnter }: LandingProps) {
               </div>
               <p className="landing-footer-tag">
                 Tu workspace de diseño MCP-first. Tú diseñas, tu IA diseña, o los dos a la vez —
-                con las mismas 236 herramientas, y tu data solo en tu cuenta.
+                con las mismas 241 herramientas, y tu data solo en tu cuenta.
               </p>
             </div>
             <div className="landing-footer-col">

@@ -11,6 +11,8 @@
  *   2. Regenerates the "Complete Tool Catalog" section of SKILL.md between
  *      the <!-- TOOL_CATALOG_AUTO_START --> / <!-- TOOL_CATALOG_AUTO_END -->
  *      markers (created on first run, right after the curated categories).
+ *   2b. Regenerates tools_catalog.json (name + description + inputSchema)
+ *      from the same parse, so the JSON snapshot can never drift either.
  *   3. Updates the standing counts in SKILL.md so they never drift:
  *        - "through <N> MCP tools" (Agent Discovery intro)
  *        - "Tengo acceso a <N> herramientas" (opening-move script)
@@ -67,6 +69,7 @@ function parseMcpTools(source) {
   // and extract the FIRST name/description of each — nested inputSchema
   // property descriptions are ignored by construction.
   const tools = [];
+  const raws = [];
   let objStart = -1;
   depth = 0;
   for (let j = 1; j < body.length - 1; j++) {
@@ -88,6 +91,7 @@ function parseMcpTools(source) {
       depth--;
       if (depth === 0 && objStart !== -1) {
         tools.push(extractTool(body.slice(objStart, j + 1)));
+        raws.push(body.slice(objStart, j + 1));
         objStart = -1;
       }
     }
@@ -97,7 +101,7 @@ function parseMcpTools(source) {
   if (failed.length) {
     throw new Error(`Could not parse ${failed.length} tool object(s) in MCP_TOOLS — check formatting in mcp.mjs`);
   }
-  return tools;
+  return { tools, raws };
 }
 
 function extractTool(objText) {
@@ -198,7 +202,7 @@ async function checkLive(count) {
 
 // ── Main ────────────────────────────────────────────────────────────────────
 const mcpSource = readFileSync(MCP_SRC, "utf8");
-const tools = parseMcpTools(mcpSource);
+const { tools, raws } = parseMcpTools(mcpSource);
 console.log(`Parsed ${tools.length} tools from netlify/functions/mcp.mjs`);
 
 const skill = readFileSync(SKILL_SRC, "utf8");
@@ -206,5 +210,20 @@ const section = buildCatalogSection(tools);
 const patched = patchSkill(skill, tools, section);
 writeFileSync(SKILL_SRC, patched, "utf8");
 console.log("SKILL.md updated (catalog section + standing counts)");
+
+// tools_catalog.json — browsable JSON snapshot of the full catalog. Tool
+// literals in MCP_TOOLS are plain object literals, so Function() can evaluate
+// them; if one ever isn't (spread, computed key...), degrade gracefully to
+// name+description instead of failing the sync.
+const CATALOG_SRC = resolve(root, "tools_catalog.json");
+const catalog = tools.map((t, i) => {
+  try {
+    return new Function("return (" + raws[i] + ")")();
+  } catch {
+    return { name: t.name, description: t.description };
+  }
+});
+writeFileSync(CATALOG_SRC, JSON.stringify(catalog, null, 2) + "\n", "utf8");
+console.log(`tools_catalog.json regenerated (${catalog.length} tools)`);
 
 if (process.argv.includes("--check-live")) await checkLive(tools.length);

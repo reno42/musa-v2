@@ -10,7 +10,7 @@
   },
   {
     "name": "create_workspace",
-    "description": "Create a new workspace",
+    "description": "DISABLED — Agents must not create their own workspaces. Use list_workspaces to find the user's existing workspace. This tool always returns an error directing agents to use the user's workspace.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -72,7 +72,7 @@
   },
   {
     "name": "create_template",
-    "description": "Create a new design template in a workspace. ALWAYS pass engine='html'. For editable designs, create the empty template and then call set_frame_layers: it requires one independent sibling layer per text, image, button, SVG, or shape with explicit coordinates. Raw html/css is accepted only when it satisfies the flat editability contract. Returns template with .id and .frames[0].id.",
+    "description": "Create a new design template in a workspace. ALWAYS pass engine='html'. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead — it auto-parses the document and handles everything in one call. For editable component designs, create the empty template and call set_frame_layers. Returns template with .id and .frames[0].id.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -101,11 +101,11 @@
         },
         "html": {
           "type": "string",
-          "description": "Initial HTML content (HTML engine only)"
+          "description": "Initial HTML content (HTML engine only). If provided, body { width/height } in CSS will be auto-synced to match width/height parameters."
         },
         "css": {
           "type": "string",
-          "description": "Initial CSS styles (HTML engine only)"
+          "description": "Initial CSS styles (HTML engine only). body dimensions are auto-corrected to match width/height params — no need to manually set them."
         },
         "allowGroupedLayers": {
           "type": "boolean",
@@ -119,8 +119,72 @@
     }
   },
   {
+    "name": "create_html_carousel",
+    "description": "Create one multi-frame HTML carousel at custom dimensions in a single validated call. Use this for social carousels and any multi-frame design that is not a 1920x1080 presentation. Frames are persisted side by side with exactly the requested width and height.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID to create the carousel in"
+        },
+        "name": {
+          "type": "string",
+          "description": "Carousel template name"
+        },
+        "width": {
+          "type": "number",
+          "description": "Width of every frame, from 1 to 10000 pixels"
+        },
+        "height": {
+          "type": "number",
+          "description": "Height of every frame, from 1 to 10000 pixels"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional saved brand guideline to link and copy onto the template"
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 40,
+          "description": "All carousel frames. Every frame must contain final, substantial HTML and CSS.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Frame name"
+              },
+              "html": {
+                "type": "string",
+                "description": "Complete frame HTML (minimum 40 characters)"
+              },
+              "css": {
+                "type": "string",
+                "description": "Complete frame CSS (minimum 20 characters)"
+              }
+            },
+            "required": [
+              "name",
+              "html",
+              "css"
+            ]
+          }
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "width",
+        "height",
+        "frames"
+      ]
+    }
+  },
+  {
     "name": "create_deck",
-    "description": "Create a complete deck (design system, brand manual, PPT-style document) in ONE call. Deterministic scaffolding: 1920x1080 frames laid side by side (never overlapping), cover on the corporate color, page numbering NN/TT, and consistent title/body fonts on every slide. You only send the creative part: free HTML/CSS composition per slide (rendered inside the content zone) and optionally a free cover composition. CSS vars available in your slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.",
+    "description": "Create a complete 1920x1080 presentation deck in ONE call. The generated cover is always the first frame, so total frames = 1 cover + slides.length. Use create_html_carousel instead for social or custom dimensions. Deterministic scaffolding places frames side by side, adds page numbering, and keeps title/body fonts consistent. CSS vars available in slide css: --deck-brand, --deck-bg, --deck-ink, --deck-muted, --deck-title-font, --deck-body-font. Returns templateId + editorUrl.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -131,6 +195,10 @@
         "name": {
           "type": "string",
           "description": "Deck name, e.g. 'Design System — Acme'"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional saved brand guideline. Its sharedCss is inserted into every generated frame."
         },
         "brand": {
           "type": "object",
@@ -175,7 +243,7 @@
         },
         "slides": {
           "type": "array",
-          "description": "One entry per slide. title is placed deterministically; html/css is your free composition inside the 1728x760 content zone.",
+          "description": "Content slides after the generated cover. A 3-frame deck therefore requires exactly 2 entries here. title is placed deterministically; html/css is your free composition inside the 1728x760 content zone.",
           "items": {
             "type": "object",
             "properties": {
@@ -191,7 +259,11 @@
                 "type": "string",
                 "description": "CSS for your composition (scoped per frame)"
               }
-            }
+            },
+            "required": [
+              "html",
+              "css"
+            ]
           }
         }
       },
@@ -205,7 +277,7 @@
   },
   {
     "name": "update_template",
-    "description": "Update template metadata or raw HTML/CSS. Prefer set_frame_layers for design generation: it creates flat, independently editable layers with explicit positions. Raw html/frames are rejected when they contain accidental groups, nested objects, missing layer semantics, or missing coordinates. Set allowGroupedLayers=true only for intentional groups/components.",
+    "description": "Update template metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead. For editable component designs, use set_frame_layers. Raw html/frames require flat editability contract. Set allowGroupedLayers=true only for intentional groups/components.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -431,6 +503,22 @@
     }
   },
   {
+    "name": "list_snapshots",
+    "description": "List in-memory auto-snapshots of a template (newest first): id, type (ia|human|system), trigger, timestamp, frameCount. Pass an id to restore_version's versionId to roll back. Warm-invocation only — durable history is list_versions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
     "name": "save_version",
     "description": "Save the design's current state as a permanent version in the history. Call this BEFORE making a batch of edits so the previous state can be restored and diffed.",
     "inputSchema": {
@@ -632,6 +720,133 @@
       "required": [
         "templateId",
         "frameId"
+      ]
+    }
+  },
+  {
+    "name": "set_animation",
+    "description": "Set or edit a frame's animation — the single JSON source of truth (timeline + clips + tweens + transitions) that compiles to WAAPI preview in the editor and to browser-side video export. Sanitized with normalizeAnimation (never throws on partial input). Shortcut: pass presetIds + presetLayerId to apply catalog presets instead of a full schema. Pass clear:true to remove the animation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "animation": {
+          "type": "object",
+          "description": "AnimationSchema: {timeline:{durationSec,fps,width,height,loop:'once'|'loop'|'pingpong'}, clips:[{layerId,startSec,endSec,tweens:[{prop,keyframes:[{t:0..1,value}],easing}]}], transitions:[{toFrameId,type:'fade'|'slide'|'zoom'|'wipe',durationSec}]}. Keyframe t is normalized WITHIN each clip window."
+        },
+        "presetIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Shortcut: animation preset ids (see list_animation_presets) applied in order to presetLayerId, on top of the existing schema (or a fresh default one)."
+        },
+        "presetLayerId": {
+          "type": "string",
+          "description": "Layer id the presetIds apply to (must exist in the frame html as data-layer-id)"
+        },
+        "windowSec": {
+          "type": "object",
+          "description": "Optional clip window for presets: {startSec, endSec} (default: 0..min(1.2, duration))"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "Convenience timeline patcher: total duration in seconds (0.2-600)"
+        },
+        "loop": {
+          "type": "string",
+          "enum": [
+            "once",
+            "loop",
+            "pingpong"
+          ],
+          "description": "Convenience timeline patcher: loop mode"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the frame's animation entirely"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
+      ]
+    }
+  },
+  {
+    "name": "get_animation",
+    "description": "Read a frame's animation schema plus a summary (stats): clips per layer, timeline, transitions. hasAnimation:false means the frame is static.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId"
+      ]
+    }
+  },
+  {
+    "name": "list_animation_presets",
+    "description": "Catalog of animation presets (fade-in, slide-in, zoom-in, pop, float, typewriter, ...), easing presets (incl. spring(damping,stiffness)) and animatable props. Use before set_animation to pick preset ids, easings and prop names.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "apply_transition",
+    "description": "Set how THIS frame hands over to the next frame in the exported video: fade | slide | zoom | wipe. Lives on the from-frame's animation; replaces any existing transition to the same target frame.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "From-frame ID (where the transition lives)"
+        },
+        "toFrameId": {
+          "type": "string",
+          "description": "Next frame the transition leads to"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "fade",
+            "slide",
+            "zoom",
+            "wipe"
+          ],
+          "description": "Transition type (default fade)"
+        },
+        "durationSec": {
+          "type": "number",
+          "description": "0.1-5 seconds (default 0.6)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "toFrameId"
       ]
     }
   },
@@ -898,6 +1113,78 @@
       },
       "required": [
         "predictionId"
+      ]
+    }
+  },
+  {
+    "name": "generate_image_video",
+    "description": "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 5s or 10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "imageUrl": {
+          "type": "string",
+          "description": "Public PNG/JPEG URL of the image to animate"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional motion description (what moves, camera move, style). Empty = model's best guess"
+        },
+        "model": {
+          "type": "string",
+          "description": "Runway model id: gen4_turbo (default, ~$0.25/5s) or gen4.5 (max quality, ~$0.50/5s)"
+        },
+        "duration": {
+          "type": "number",
+          "description": "Clip length in seconds: 5 (default) or 10"
+        },
+        "ratio": {
+          "type": "string",
+          "description": "Output aspect ratio: 1280:720 (default), 720:1280, 960:960, 1104:832, 832:1104, 1584:672, 672:1584"
+        },
+        "seed": {
+          "type": "number",
+          "description": "Optional seed for reproducible generations"
+        },
+        "runwayApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied RunwayML API key (used for this request only, never stored)"
+        }
+      },
+      "required": [
+        "imageUrl"
+      ]
+    }
+  },
+  {
+    "name": "generate_image_video_check",
+    "description": "Poll a generate_image_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "The task id returned by generate_image_video"
+        },
+        "persist": {
+          "type": "boolean",
+          "description": "true = download the finished mp4 into the workspace bucket (heavy; call once after SUCCEEDED)"
+        },
+        "tempUrl": {
+          "type": "string",
+          "description": "Optional SUCCEEDED tempUrl from a previous check — skips the status GET in persist mode"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace to file the video asset under (bucket path prefix)"
+        },
+        "runwayApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied RunwayML API key (used for this request only, never stored)"
+        }
+      },
+      "required": [
+        "taskId"
       ]
     }
   },
@@ -1420,7 +1707,7 @@
   },
   {
     "name": "set_html",
-    "description": "Replace the HTML content of a frame (or template if no frames). Defaults to the first frame. Server-side sanitized with DOMPurify.",
+    "description": "Replace the HTML content of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_html only when you need to update HTML independently from CSS. Server-side sanitized with DOMPurify.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1445,7 +1732,7 @@
   },
   {
     "name": "set_css",
-    "description": "Replace the CSS stylesheet of a frame (or template if no frames). Defaults to the first frame.",
+    "description": "Replace the CSS stylesheet of a frame. Prefer import_design for importing complete designs (Gemini/ChatGPT/Claude output) — it handles the full document in one call. Use set_css only when you need to update CSS independently from HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1507,7 +1794,7 @@
   },
   {
     "name": "update_element",
-    "description": "Update an HTML element's content or CSS rules by its data-layer-id",
+    "description": "Update an HTML element's content or CSS rules by its data-layer-id A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1540,7 +1827,7 @@
   },
   {
     "name": "add_element",
-    "description": "Add one independent HTML layer. REQUIRES frameId. Keep parentSelector='body' for normal design objects and give the layer explicit position/left/top/width/height in css. Prefer set_frame_layers when creating several objects; nesting is reserved for intentional components/groups.",
+    "description": "Add one independent HTML layer. REQUIRES frameId. Keep parentSelector='body' for normal design objects and give the layer explicit position/left/top/width/height in css. Prefer set_frame_layers when creating several objects; nesting is reserved for intentional components/groups. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1654,7 +1941,7 @@
   },
   {
     "name": "set_frame_layers",
-    "description": "RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML.",
+    "description": "RECOMMENDED tool for AI-generated designs. Replaces one frame with a flat array of independently editable sibling layers. Every text, image, button, SVG, bezier, and shape must be a separate layer with its own id, semantic name, kind, x, y, width, and height. The harness deterministically creates data-layer attributes and absolute CSS; it never invents groups or tries to ungroup generated HTML. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2334,11 +2621,90 @@
   },
   {
     "name": "get_brands",
-    "description": "List all saved brands with colors, fonts, and metadata",
+    "description": "List all saved brands with colors, fonts, and metadata, scoped to one workspace",
     "inputSchema": {
       "type": "object",
-      "properties": {},
-      "required": []
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "get_brand_graph",
+    "description": "Returns the brand hierarchy tree for the Red de Marcas force-directed graph (workspace → brands → Design System / Plantillas / Assets / Archivos → items)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "get_brand_playbook",
+    "description": "Queryable digest of ONE brand's design logic: design system (color/font tokens + style fingerprint), full file inventory (category, campaign, content kind) and the subset of files that are replicable for another brand. This is the tool for 'revisá toda la lógica que hicimos para la marca X' — get_brand_graph returns the visual tree instead, this returns data a model can act on.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand ID (preferred)"
+        },
+        "brandName": {
+          "type": "string",
+          "description": "Brand name — matched case-insensitive when the ID is unknown"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "replicate_brand_strategy",
+    "description": "Clones brand A's design logic onto brand B: builds A's playbook (files, campaigns, design system), checks B has a design system (queues an extraction card first if not) and creates one Kanban card per A replicable file — each card tells the pipeline to rebuild that design with B's identity. Cards land in backlog tagged ['replica', 'brand:<B>', 'from:<sourceTpl>'] (idempotent: already-replicated sources are skipped) so the Musa batch or agents process them. dryRun:true previews the plan without creating anything. Recommended flow: get_brand_playbook on the source brand first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (both brands must live here)"
+        },
+        "sourceBrandId": {
+          "type": "string",
+          "description": "Brand to replicate FROM — accepts brand ID or name"
+        },
+        "targetBrandId": {
+          "type": "string",
+          "description": "Brand to replicate ONTO — accepts brand ID or name"
+        },
+        "maxCards": {
+          "type": "number",
+          "description": "Max cards to create (default 15, cap 30) — remaining sources are reported as skippedByLimit"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Preview the plan (cards + briefs) without creating anything"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "sourceBrandId",
+        "targetBrandId"
+      ]
     }
   },
   {
@@ -2352,11 +2718,15 @@
         },
         "brandId": {
           "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
         }
       },
       "required": [
         "templateId",
-        "brandId"
+        "brandId",
+        "workspaceId"
       ]
     }
   },
@@ -2582,7 +2952,14 @@
         },
         "brandName": {
           "type": "string",
-          "description": "When publishing, save artifacts as a Brand Guideline with this name (creates/updates brand_guidelines row)"
+          "description": "When publishing, save artifacts as a Brand Guideline with this name. If a brand with this exact name already exists in the workspace it's updated (refined); otherwise a new one is created. Use the convention BrandName_Purpose (e.g. Futuraria_SocialMedia, Futuraria_BrandGuidelines) — never the source frame or template's own name, since that collides across unrelated captures."
+        },
+        "frameIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional: scope extraction to just these frame IDs instead of every frame in the template. Use this when the user selected specific frame(s) to capture a style from."
         }
       },
       "required": [
@@ -2592,7 +2969,7 @@
   },
   {
     "name": "extract_design_system",
-    "description": "Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time.",
+    "description": "Analyze one or more templates and extract a complete design system deterministically. Multi-template: merges color palettes, typography, spacing, radii, shadows across all templates. Fills missing semantic colors (success green, warning amber, error red, info blue) derived from the palette. Discovers structural components: rounded rect+text→button, img+heading+p→card, input→form field. Falls back to palette-defaults when nothing found. Outputs full extraction with DTCG tokens, shared.css, and brand manual. Zero AI opinion — same input → same output every time. Frame selection: NO frameIds → style of ALL frames merged (use when the user only names the file); frameIds → style of ONLY those frames (use when the user names file + frame).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2602,6 +2979,13 @@
             "type": "string"
           },
           "description": "Template IDs to analyze. Multiple templates = merged unified design system."
+        },
+        "frameIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional: extract ONLY these frames (frame id or frame name, case-insensitive). Omit to merge the style of ALL frames."
         },
         "workspaceId": {
           "type": "string",
@@ -2930,7 +3314,7 @@
   },
   {
     "name": "image_to_design",
-    "description": "Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Requires GEMINI_API_KEY.",
+    "description": "Convert an image (base64) into HTML/CSS using AI vision and inject it into a frame. Defaults to the first frame. Needs a Google Gemini API key — either passed as geminiApiKey, or configured server-side as GEMINI_API_KEY.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2953,6 +3337,14 @@
         "height": {
           "type": "number",
           "description": "Target height in px (default: image aspect ratio, fallback 1080)"
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Optional GOOGLE GEMINI API key to use for this call (takes precedence over the server's). This is NOT the chat's LLM key — a DeepSeek/OpenAI key will not work against Gemini's endpoint."
+        },
+        "geminiModel": {
+          "type": "string",
+          "description": "Optional Gemini model ID (default: gemini-3.7-flash). Vision-capable text models only — image-generation models (Nano Banana) cannot write code."
         }
       },
       "required": [
@@ -3000,7 +3392,7 @@
   },
   {
     "name": "search_icons",
-    "description": "Search Phosphor Icons (1,300+ MIT-licensed icons, 6 weight styles). Returns icon name, category, available styles, and ready-to-use HTML snippet.",
+    "description": "Search icons by name/keyword/category across multiple MIT-licensed libraries (Phosphor, Lucide, Tabler, plus Simple Icons for brand/social logos) for variety. NEVER use an emoji character as a substitute for an icon in a design — always search here first and insert the real result with insert_icon. Returns icon names to pass to insert_icon (not raw HTML — insert_icon embeds it as a real inline <svg>, which is the only reliable way to ship an icon in an exported design).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3030,9 +3422,21 @@
             "text",
             "time",
             "transportation",
-            "weather"
+            "weather",
+            "brands"
           ],
-          "description": "Filter by category"
+          "description": "Filter by category ('brands' only applies to library: simple-icons)"
+        },
+        "library": {
+          "type": "string",
+          "enum": [
+            "phosphor",
+            "lucide",
+            "tabler",
+            "simple-icons",
+            "iconify"
+          ],
+          "description": "Icon library (default: phosphor). simple-icons is brand/social logos, not general UI icons."
         },
         "style": {
           "type": "string",
@@ -3042,9 +3446,11 @@
             "regular",
             "bold",
             "fill",
-            "duotone"
+            "duotone",
+            "outline",
+            "filled"
           ],
-          "description": "Icon weight style (default: regular)"
+          "description": "Icon weight/style — valid values depend on the library (default: each library's default)"
         },
         "limit": {
           "type": "number",
@@ -3056,7 +3462,7 @@
   },
   {
     "name": "insert_icon",
-    "description": "Insert a Phosphor icon into a frame. Auto-injects the Phosphor Icons CDN CSS if not present. Returns the layerId of the inserted icon element.",
+    "description": "Insert an icon into a frame as a real inline <svg> layer (data-layer-kind=\"svg\") — a first-class editable vector shape, not a webfont glyph, so it always renders in exports/PNG/PDF with no external CDN dependency. Returns the layerId of the inserted element.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3070,7 +3476,18 @@
         },
         "icon": {
           "type": "string",
-          "description": "Phosphor icon name without prefix (e.g. 'heart', 'rocket-launch'). Use search_icons to find names."
+          "description": "Icon name without prefix (e.g. 'heart', 'rocket-launch'). Use search_icons to find names."
+        },
+        "library": {
+          "type": "string",
+          "enum": [
+            "phosphor",
+            "lucide",
+            "tabler",
+            "simple-icons",
+            "iconify"
+          ],
+          "description": "Icon library (default: phosphor)"
         },
         "style": {
           "type": "string",
@@ -3080,9 +3497,11 @@
             "regular",
             "bold",
             "fill",
-            "duotone"
+            "duotone",
+            "outline",
+            "filled"
           ],
-          "description": "Icon weight (default: regular)"
+          "description": "Icon weight/style — valid values depend on the library"
         },
         "x": {
           "type": "number",
@@ -3109,8 +3528,103 @@
     }
   },
   {
+    "name": "get_icon_svg",
+    "description": "Returns a single icon's real SVG source (same pipeline as insert_icon) WITHOUT writing it into any template — for a caller that needs the raw markup itself, e.g. to place it as a standalone canvas object outside any frame.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Icon name. Use search_icons to find names."
+        },
+        "library": {
+          "type": "string",
+          "enum": [
+            "phosphor",
+            "lucide",
+            "tabler",
+            "simple-icons",
+            "iconify"
+          ],
+          "description": "Icon library (default: phosphor)"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "thin",
+            "light",
+            "regular",
+            "bold",
+            "fill",
+            "duotone",
+            "outline",
+            "filled"
+          ],
+          "description": "Icon weight/style"
+        },
+        "color": {
+          "type": "string",
+          "description": "CSS color (default: #000000)"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "search_illustrations",
+    "description": "Search unDraw illustrations (MIT licensed, free for commercial use, no attribution required) — full scenes/spot illustrations, a different vocabulary than single-concept UI icons. Returns slugs to pass to get_illustration_svg.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "description": "Keyword (e.g. 'team', 'design', 'analytics')"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 24, max 50)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_illustration_svg",
+    "description": "Returns an unDraw illustration's real SVG source as an editable vector layer (data-layer-kind=\"svg\"), with no external dependency at export time. Use search_illustrations to find slugs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "Illustration slug from search_illustrations"
+        }
+      },
+      "required": [
+        "slug"
+      ]
+    }
+  },
+  {
+    "name": "resolve_icon_hints",
+    "description": "Swaps every <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> placeholder in the given HTML for the real Phosphor SVG (same pipeline as insert_icon/image_to_design/import_design). Use this when you're handed raw HTML (e.g. pasted from an external chat) that already follows the icon-hint convention and you need it resolved before applying — does not touch any template, purely a text transform.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "html": {
+          "type": "string",
+          "description": "HTML containing zero or more data-icon-hint placeholders"
+        }
+      },
+      "required": [
+        "html"
+      ]
+    }
+  },
+  {
     "name": "create_html_frame",
-    "description": "Create an HTML frame. For AI design production, create it empty and then call set_frame_layers so every visible object is independently editable and explicitly positioned. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
+    "description": "Create an HTML frame. For importing designs from Gemini/ChatGPT/Claude (complete HTML+CSS document), use import_design — it's the single-tool entry point that auto-parses documents and handles everything. For editable component designs, create the frame empty and call set_frame_layers. Raw html/css must satisfy the flat editability contract. Position is auto-calculated so frames never overlap.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3163,7 +3677,7 @@
   },
   {
     "name": "update_html_frame",
-    "description": "Update an HTML frame's metadata or raw HTML/CSS. Prefer set_frame_layers for generated design content. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
+    "description": "Update an HTML frame's metadata or raw HTML/CSS. For importing complete designs (from Gemini, etc.), use import_design instead — it handles both new frames and existing frame updates in one call. For editable component designs, use set_frame_layers. Raw HTML must use flat sibling layers with data-layer-id/name/kind and explicit position/left/top; accidental groups are rejected before persistence.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3485,6 +3999,45 @@
             "bottom"
           ],
           "description": "Alignment axis"
+        },
+        "bounds": {
+          "type": "array",
+          "description": "Optional rendered geometry in frame coordinates. Supply this when the caller can measure the DOM: an auto-sized element carries no width/height in the stylesheet, and right/centre alignment needs its real box. Omitted, the stylesheet is used.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "layerId": {
+                "type": "string"
+              },
+              "left": {
+                "type": "number"
+              },
+              "top": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "layerId",
+              "left",
+              "top",
+              "width",
+              "height"
+            ]
+          }
+        },
+        "frameWidth": {
+          "type": "number",
+          "description": "Frame width, used when a single element aligns against its frame"
+        },
+        "frameHeight": {
+          "type": "number",
+          "description": "Frame height, used when a single element aligns against its frame"
         }
       },
       "required": [
@@ -3492,6 +4045,47 @@
         "frameId",
         "elementIds",
         "align"
+      ]
+    }
+  },
+  {
+    "name": "set_paint",
+    "description": "Set a layer's FILL and/or STROKE. This is the only way to colour a layer: a layer has two paints and no background. The right CSS property is chosen for you — background-color on a div, fill on an SVG shape, color on a text — so you never name it yourself. On a GROUP the paint reaches every object inside it, because a group paints nothing of its own; painting a box behind a group is not something this editor can express.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "elementId": {
+          "type": "string",
+          "description": "data-layer-id of the layer to paint"
+        },
+        "fill": {
+          "type": "string",
+          "description": "Colour for the layer's interior, e.g. '#3B82F6'. On a group, every object inside it is filled."
+        },
+        "stroke": {
+          "type": "string",
+          "description": "Colour for the layer's outline"
+        },
+        "strokeWidth": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "description": "Outline thickness; a bare number is read as px. 0 removes the outline."
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "elementId"
       ]
     }
   },
@@ -3586,6 +4180,355 @@
         "elementId",
         "newPathData"
       ]
+    }
+  },
+  {
+    "name": "create_mask_from_path",
+    "description": "Turn a CLOSED SVG path into a non-destructive mask over an <img> layer. The path stays the editable source of truth (tagged data-mask-for/data-mask-mode; edit_path_points re-bakes automatically). mode 'include' clips the image to inside the path (exterior removed); 'exclude' hides the inside and keeps the exterior. Give pathElementId of an existing path layer (from draw_bezier), or raw pathData in frame coordinates to create the layer on the fly.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "pathElementId": {
+          "type": "string",
+          "description": "data-layer-id of an existing SVG path layer (e.g. from draw_bezier)"
+        },
+        "pathData": {
+          "type": "string",
+          "description": "Raw closed path d in FRAME coordinates, when the path layer does not exist yet (Z closes it if missing)"
+        },
+        "x": {
+          "type": "number",
+          "description": "With pathData: bbox X in frame coordinates (defaults to the path's own bounds)"
+        },
+        "y": {
+          "type": "number",
+          "description": "With pathData: bbox Y in frame coordinates"
+        },
+        "width": {
+          "type": "number",
+          "description": "With pathData: bbox width in frame coordinates"
+        },
+        "height": {
+          "type": "number",
+          "description": "With pathData: bbox height in frame coordinates"
+        },
+        "targetImageLayerId": {
+          "type": "string",
+          "description": "data-layer-id of the <img> layer to mask"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "include",
+            "exclude"
+          ],
+          "description": "include = keep inside the path (default); exclude = keep the outside"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "targetImageLayerId"
+      ]
+    }
+  },
+  {
+    "name": "invert_mask",
+    "description": "Flip an existing path mask on an image: include becomes exclude and vice versa (the CSS re-bakes between clip-path and an inverted SVG mask). The image's pixels are never touched.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "imageLayerId": {
+          "type": "string",
+          "description": "data-layer-id of the masked <img> layer"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "imageLayerId"
+      ]
+    }
+  },
+  {
+    "name": "fill_mask",
+    "description": "Fill the masked subject of an image with a colour: the image gets an exclude mask (the subject becomes a hole) and a div clipped to the subject shape is placed behind it, painted with the fill colour or gradient. Delete that div layer to remove the fill.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID"
+        },
+        "imageLayerId": {
+          "type": "string",
+          "description": "data-layer-id of the masked <img> layer"
+        },
+        "fill": {
+          "type": "string",
+          "description": "CSS colour or gradient for the fill, e.g. '#3B82F6' or 'linear-gradient(90deg, #f00, #00f)' (default #3B82F6)"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "imageLayerId",
+        "fill"
+      ]
+    }
+  },
+  {
+    "name": "mask_brush",
+    "description": "F4: paint non-destructive brush strokes on an image's mask. Each stroke is a trail of points in IMAGE-LOCAL px (0,0 = the img layer's top-left corner), a brush size and a mode (erase = black = remove, restore = white = bring back). Strokes accumulate in data-mask-brushes on the img and bake into a self-contained data-URI mask; calling again with more strokes edits non-destructively. If the image has no mask yet, a full-rect include mask is created automatically. Editing the mask path with edit_path_points re-bakes the strokes too.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID containing the image"
+        },
+        "imageLayerId": {
+          "type": "string",
+          "description": "data-layer-id of the <img> layer"
+        },
+        "strokes": {
+          "type": "array",
+          "description": "Brush trails in image-local coordinates",
+          "items": {
+            "type": "object",
+            "properties": {
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ]
+                },
+                "minItems": 1
+              },
+              "size": {
+                "type": "number",
+                "description": "Brush diameter in px (default 24)"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "erase",
+                  "restore"
+                ],
+                "description": "erase subtracts from the mask (black), restore brings pixels back (white). Default erase."
+              }
+            },
+            "required": [
+              "points"
+            ]
+          }
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "imageLayerId",
+        "strokes"
+      ]
+    }
+  },
+  {
+    "name": "remove_background",
+    "description": "Remove the background of an image with u2netp (local ONNX, zero LLM tokens): the result is a PNG with alpha (cutoutUrl) plus a mask PNG and a traced SVG path. Give assetId (a workspace asset) or a direct url. Dispatches a background job and polls ~8s; u2netp usually finishes in 1-3s warm. If the job is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the target <img> layer's src is swapped to the cutout (original kept in data-orig-src). Idempotent per asset: re-running returns the existing cutout.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "description": "Workspace asset id to segment (preferred: enables idempotency)"
+        },
+        "url": {
+          "type": "string",
+          "description": "Direct image URL (http/https). Use when there is no workspace asset yet."
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when assetId is given — derived from the asset)"
+        },
+        "applyTo": {
+          "type": "object",
+          "description": "Optional: apply the cutout to an existing image layer",
+          "properties": {
+            "templateId": {
+              "type": "string",
+              "description": "Template ID"
+            },
+            "frameId": {
+              "type": "string",
+              "description": "Frame ID"
+            },
+            "layerId": {
+              "type": "string",
+              "description": "data-layer-id of the <img> layer to swap"
+            }
+          },
+          "required": [
+            "templateId",
+            "frameId",
+            "layerId"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "segment_status",
+    "description": "Poll a segmentation job by id (remove_background / segment_click / segment_text). Done jobs carry result_json: cutoutUrl (PNG alpha), maskUrl, svgPath (boundary trace with bbox), image dims.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "description": "Job id returned by remove_background or segment_click"
+        }
+      },
+      "required": [
+        "jobId"
+      ]
+    }
+  },
+  {
+    "name": "segment_click",
+    "description": "Segment an image with MobileSAM from click prompts or CLIPSeg from a text prompt (local ONNX, zero LLM tokens): every point runs through ONE encoder pass, and the mask comes back as a cutout PNG (alpha), a mask PNG and a traced SVG path (dNorm normalized 0..1 over the image). Points: x/y either normalized 0..1 or px with imageWidth/imageHeight; neg=true marks a background point (Alt+click in the UI). prompt (e.g. \"la persona\") runs CLIPSeg text mode instead and takes precedence over points/box. Dispatches a background job and polls ~8s; if it is still running you get a jobId — poll it with segment_status(jobId). With applyTo {templateId, frameId, layerId} the traced mask is applied to the target <img> layer as a non-destructive mask path (F1 mechanism: editable with edit_path_points, re-bakes).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "description": "Workspace asset id to segment"
+        },
+        "url": {
+          "type": "string",
+          "description": "Direct image URL (http/https). Use when there is no workspace asset yet."
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (optional when assetId is given — derived from the asset)"
+        },
+        "points": {
+          "type": "array",
+          "description": "SAM click prompts: x/y normalized 0..1 over the image (or px + imageWidth/imageHeight); neg=true = background (Alt+click)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "neg": {
+                "type": "boolean",
+                "description": "Background point (Alt+click). Default false."
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ]
+          },
+          "minItems": 1
+        },
+        "box": {
+          "type": "object",
+          "description": "Optional SAM box prompt {x,y,w,h} normalized 0..1 (or px + imageWidth/imageHeight)",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "w": {
+              "type": "number"
+            },
+            "h": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "w",
+            "h"
+          ]
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional CLIPSeg text prompt (e.g. \"la persona\", \"the red car\"). Runs segment_text instead of SAM clicks and takes precedence over points/box."
+        },
+        "imageWidth": {
+          "type": "number",
+          "description": "Source image px width — required when points/box are given in px instead of 0..1"
+        },
+        "imageHeight": {
+          "type": "number",
+          "description": "Source image px height — required when points/box are given in px instead of 0..1"
+        },
+        "applyTo": {
+          "type": "object",
+          "description": "Optional: apply the traced mask to an existing image layer as a non-destructive mask path",
+          "properties": {
+            "templateId": {
+              "type": "string",
+              "description": "Template ID"
+            },
+            "frameId": {
+              "type": "string",
+              "description": "Frame ID"
+            },
+            "layerId": {
+              "type": "string",
+              "description": "data-layer-id of the <img> layer to mask"
+            }
+          },
+          "required": [
+            "templateId",
+            "frameId",
+            "layerId"
+          ]
+        }
+      }
     }
   },
   {
@@ -3871,6 +4814,10 @@
         "id": {
           "type": "string",
           "description": "Recipe ID (rec_xxx)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "If provided, the recipe must belong to this workspace or the call fails — prevents cross-tenant reads."
         }
       },
       "required": [
@@ -3932,6 +4879,14 @@
             "type": "string"
           },
           "description": "Template IDs to profile. Uses the first frame of each template as the source."
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Exact frame to profile (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one."
+        },
+        "frameName": {
+          "type": "string",
+          "description": "Alias of frameId — the human frame name."
         }
       },
       "required": [
@@ -3955,6 +4910,14 @@
         "rowCount": {
           "type": "number",
           "description": "Number of empty data rows to generate (default 1)"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Exact frame to build the CSV from (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one."
+        },
+        "frameName": {
+          "type": "string",
+          "description": "Alias of frameId — the human frame name."
         },
         "delimiter": {
           "type": "string",
@@ -4015,6 +4978,14 @@
             "continue_warn"
           ],
           "description": "What to do if text exceeds slot maxChars (default 'truncate')"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Exact frame to apply CSV rows onto (id or name, case-insensitive). REQUIRED when the template has multiple frames; auto-used when it has exactly one."
+        },
+        "frameName": {
+          "type": "string",
+          "description": "Alias of frameId — the human frame name."
         }
       },
       "required": [
@@ -4185,7 +5156,7 @@
   },
   {
     "name": "paste_style",
-    "description": "Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule.",
+    "description": "Apply copied CSS properties to a target element. Merges the provided style declarations into the element's existing CSS rule. A layer has a fill and a stroke and no background: set_paint picks the right property for you (background-color on a div, fill on an SVG shape, color on a text) and on a group paints every object inside rather than a box behind them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4257,7 +5228,7 @@
   },
   {
     "name": "create_brand_guideline",
-    "description": "Create a reusable brand guideline record (stored in brand_guidelines table). Brand guidelines contain design tokens, DESIGN.md, and shared.css that can be shared across templates in a workspace. Use this to establish a canonical brand identity that persists independently of any single template.",
+    "description": "Create a new brand guideline. Automatically creates a Design System template file (is_brand_manual=true) for the brand. Use this to create a brand from scratch; to extract styles from a design, prefer generate_design_artifacts(action: 'publish').",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4289,12 +5260,17 @@
           "type": "string",
           "description": "SHA-256 hash of source frames for staleness detection"
         },
+        "styleFingerprint": {
+          "type": "string",
+          "description": "Optional deterministic style fingerprint"
+        },
         "sourceTemplateIds": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "string"
           },
-          "description": "Template IDs that contributed to this brand"
+          "description": "Template IDs that contribute styles to this brand. Optional for brand creation; required for style extraction."
         }
       },
       "required": [
@@ -4309,25 +5285,38 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID that owns the style"
+        },
         "brandId": {
           "type": "string",
           "description": "Brand Guideline ID"
         }
       },
       "required": [
+        "workspaceId",
         "brandId"
       ]
     }
   },
   {
     "name": "list_brand_guidelines",
-    "description": "List all brand guidelines in a workspace. Returns id, name, description, and metadata for each brand. Use this to discover available brand identities before applying one.",
+    "description": "List brand guideline summaries in a workspace. Artifacts are omitted by default to protect agent context. Set includeDeleted=true to see trashed brands. After discovery, prefer get_brand_guideline for one exact style.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "workspaceId": {
           "type": "string",
           "description": "Workspace ID"
+        },
+        "includeArtifacts": {
+          "type": "boolean",
+          "description": "Include full tokensJson, designMd and sharedCss documents. Default false."
+        },
+        "includeDeleted": {
+          "type": "boolean",
+          "description": "Include soft-deleted brands in trash. Default false (active brands only)."
         }
       },
       "required": [
@@ -4341,6 +5330,10 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID that owns the style"
+        },
         "brandId": {
           "type": "string",
           "description": "Brand Guideline ID"
@@ -4369,32 +5362,112 @@
           "type": "string",
           "description": "Updated source hash"
         },
+        "styleFingerprint": {
+          "type": "string",
+          "description": "Updated deterministic style fingerprint"
+        },
         "sourceTemplateIds": {
           "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "type": "string"
           },
-          "description": "Updated source template IDs"
+          "description": "Updated non-empty source template IDs. Omitting preserves current references."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "append"
+          ],
+          "description": "replace (default) overwrites fields. append concatenates tokensJson, designMd, and sharedCss to the end of existing content — useful for incrementally building a brand guideline without reading the current value first."
         }
       },
       "required": [
+        "workspaceId",
         "brandId"
       ]
     }
   },
   {
     "name": "delete_brand_guideline",
-    "description": "Delete a brand guideline permanently. This does NOT affect templates that reference it; they will retain their last-seen designArtifacts snapshot.",
+    "description": "Soft-delete a brand guideline. The brand moves to the trash (deleted_at set) and can be restored. Set cascadeDs=true to also soft-delete the brand's Design System template file. When cascadeDs is false/omitted, the DS template survives as a regular design file under the user's default brand.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID that owns the style"
+        },
         "brandId": {
           "type": "string",
           "description": "Brand Guideline ID to delete"
+        },
+        "cascadeDs": {
+          "type": "boolean",
+          "description": "Also soft-delete the Design System template file. Default: false (DS template survives as regular design)."
         }
       },
       "required": [
+        "workspaceId",
         "brandId"
+      ]
+    }
+  },
+  {
+    "name": "restore_brand_guideline",
+    "description": "Restore a soft-deleted brand guideline from the trash. Also restores the brand's Design System template if it was soft-deleted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID that owns the style"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand Guideline ID to restore"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId"
+      ]
+    }
+  },
+  {
+    "name": "add_frame_to_brand",
+    "description": "Duplicate a frame from a source template into a brand's Design System template. The source template and frame are NOT modified — a copy is inserted into the DS file. This is the 'click plin' operation: add a design to the Brand Library without altering the original.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Target brand guideline ID"
+        },
+        "sourceTemplateId": {
+          "type": "string",
+          "description": "Template containing the frame to copy"
+        },
+        "sourceFrameId": {
+          "type": "string",
+          "description": "Frame ID to duplicate from the source template"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional label for the copied frame (default: source frame name)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "brandId",
+        "sourceTemplateId",
+        "sourceFrameId"
       ]
     }
   },
@@ -4493,10 +5566,12 @@
         },
         "sourceBrandIds": {
           "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "type": "string"
           },
-          "description": "Brand IDs to merge into target and then delete"
+          "description": "Brand IDs from the same workspace to merge into target and then delete"
         }
       },
       "required": [
@@ -4753,7 +5828,7 @@
   },
   {
     "name": "update_thumbnail",
-    "description": "Set or update the preview thumbnail for a template. Pass a base64 data URL (data:image/png;base64,...) or a URL to an image. Thumbnails are used in the dashboard Cover Flow and grid views for instant preview without rendering live iframes.",
+    "description": "Set or update the preview thumbnail for a template — call this after creating or substantially changing a design, so its card shows the work instead of a generated placeholder. The capture replaces the design's previous one at a fixed path; there is no thumbnail history, by design. Render at card size (~480px on the long edge), not full artboard resolution.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4761,9 +5836,13 @@
           "type": "string",
           "description": "Template ID"
         },
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional. The storage folder is derived from the template's own workspace, so this is only a fallback — and passing one that disagrees is rejected by the tenancy guard."
+        },
         "thumbnail": {
           "type": "string",
-          "description": "Base64 data URL or HTTPS image URL for the thumbnail preview"
+          "description": "Base64 data URL (max 1MB as a string) or HTTPS image URL for the thumbnail preview"
         }
       },
       "required": [
@@ -5134,11 +6213,1645 @@
     }
   },
   {
+    "name": "import_design",
+    "description": "Import a complete design from HTML+CSS (from Gemini, ChatGPT, Claude, or any AI). This is the ONE tool for importing designs — handles both combined document and separate html/css. Accepts EITHER a 'document' field (complete HTML with inline <style> tags — the tool auto-extracts body HTML and CSS) OR separate 'html' + 'css' fields. Auto-creates a frame if frameId is omitted. Auto-detects dimensions from CSS body { width/height }. No editability enforcement — use this for posters, landing pages, social media designs, and any design where visual fidelity matters more than per-element editing. ICONS: any <div data-icon-hint=\"name\" data-icon-color=\"#hex\" style=\"position:absolute;left:Xpx;top:Ypx;width:Npx;height:Npx;\"></div> in the imported HTML is automatically swapped for the real Phosphor SVG — if the source HTML uses emoji or hand-drawn icon glyphs instead, tell whoever generated it to use this placeholder convention instead so icons render reliably. Returns { templateId, frameId, htmlLength, cssLength, detectedWidth, detectedHeight }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID (must be engine='html')"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Optional. Existing frame ID to update. If omitted, a new frame is auto-created."
+        },
+        "document": {
+          "type": "string",
+          "description": "Complete HTML document (with <style> tags, <body> content, font @import links). Auto-parsed: <style> → CSS, <body> → HTML, <link> fonts → @import."
+        },
+        "html": {
+          "type": "string",
+          "description": "HTML body content (use when you have html and css separately). Ignored if 'document' is provided."
+        },
+        "css": {
+          "type": "string",
+          "description": "CSS stylesheet (use when you have html and css separately). Ignored if 'document' is provided."
+        },
+        "name": {
+          "type": "string",
+          "description": "Frame name (only used when creating a new frame). Default: 'Imported Design'."
+        },
+        "width": {
+          "type": "number",
+          "description": "Frame width in px. Auto-detected from CSS body { width } if omitted. Default 1080."
+        },
+        "height": {
+          "type": "number",
+          "description": "Frame height in px. Auto-detected from CSS body { height } if omitted. Default 1080."
+        },
+        "background": {
+          "type": "string",
+          "description": "Background color (default '#ffffff')"
+        },
+        "frameStrategy": {
+          "type": "string",
+          "enum": [
+            "multi",
+            "single-web"
+          ],
+          "description": "'multi' = one design per frame. 'single-web' = one long frame for a web page."
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
     "name": "get_agent_guide",
     "description": "Get the agent onboarding guide — a summary of how to work with Futuraria MCP effectively. Call this as your second step after initialize. Returns: connection info, auth details, quick tool reference, playbook index, creative vs editable mode guide, memory instructions, and a 3-step getting-started checklist.",
     "inputSchema": {
       "type": "object",
       "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "verify_api_key",
+    "description": "PUBLIC TOOL (no auth required). Check if an API key is valid and get a full diagnostic. Use this when authentication fails with 401 to find out WHY: key_not_found, key_revoked, key_expired, database_error, etc. Pass the same key you would send in the x-api-key header. Clients that cannot send headers (e.g. Claude Connectors) can append ?key=YOUR_KEY to the MCP URL instead — the server reads both.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "description": "The API key to verify (e.g. 'fdr_ws_...')"
+        }
+      },
+      "required": [
+        "apiKey"
+      ]
+    }
+  },
+  {
+    "name": "studio_create_card",
+    "description": "Create a design task card in the Studio Board (Kanban). Each card represents a design to be produced: banner, post, deck, landing, etc. The card tracks status through the pipeline: pending -> in_progress -> review -> done. Use this when you need to track a design task.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title of the design task"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand guideline ID — pre-resolved by leader. The implementer uses this directly without lookup."
+        },
+        "styleName": {
+          "type": "string",
+          "description": "Human-readable style name (e.g. 'Futuraria_Infographic'). Paired with brandId so the card carries full context."
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Template ID if editing an existing design (optional — omit for new designs)"
+        },
+        "frameCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Exact number of frames to create. Pre-resolved by leader so implementer doesn't guess."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "banner",
+            "post",
+            "deck",
+            "template",
+            "landing",
+            "factura",
+            "cotizacion",
+            "other"
+          ],
+          "description": "Design type"
+        },
+        "format": {
+          "type": "string",
+          "description": "Format descriptor with dimensions (e.g. 'deck 1920x1080', 'instagram_story 1080x1920', 'linkedin_post 1200x627')"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "research",
+            "draft",
+            "design",
+            "review",
+            "feedback",
+            "done"
+          ],
+          "description": "Initial status (default: backlog)"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Priority: 1=urgent, 2=normal, 3=low"
+        },
+        "deadline": {
+          "type": "string",
+          "description": "Deadline in YYYY-MM-DD format"
+        },
+        "brief": {
+          "type": "string",
+          "description": "Description of the design task"
+        },
+        "tone": {
+          "type": "string",
+          "description": "Tone (professional, casual, etc.)"
+        },
+        "cta": {
+          "type": "string",
+          "description": "Call to action text"
+        },
+        "assignedTo": {
+          "type": "string",
+          "description": "Agent/person assigned to this task"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Free-form tags"
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Acceptance criteria — objective verifiable items. The reviewer checks each one. Example: ['Button exists in topbar', 'Build passes without TS errors']"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "mcp",
+            "chat_internal",
+            "human"
+          ],
+          "description": "Provenance: mcp (via external AI/MCP call), chat_internal (via the in-app chat), or human (manually created)"
+        },
+        "aiModel": {
+          "type": "string",
+          "description": "AI model that created this task (e.g. claude-sonnet-4, gpt-4o). Omit for human-created tasks."
+        },
+        "contentType": {
+          "type": "string",
+          "enum": [
+            "ad",
+            "organico"
+          ],
+          "description": "ad (paid advertisement) or organico (organic content)"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "name": "studio_list_cards",
+    "description": "List design task cards from the Studio Board. Filter by workspace, brand, status, priority, or assigned person. Returns cards sorted by priority then deadline.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Filter by workspace"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filter by brand"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "research",
+            "draft",
+            "design",
+            "review",
+            "feedback",
+            "done"
+          ],
+          "description": "Filter by status"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Filter by priority"
+        },
+        "assignedTo": {
+          "type": "string",
+          "description": "Filter by assigned person/agent"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "studio_move_card",
+    "description": "Move a design task card to a new status in the Studio Board. Use this to progress cards through the pipeline: backlog -> research -> draft -> design -> review -> done, or send back to feedback.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Card ID to move"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "research",
+            "draft",
+            "design",
+            "review",
+            "feedback",
+            "done"
+          ],
+          "description": "New status"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional comment explaining the status change"
+        }
+      },
+      "required": [
+        "cardId",
+        "status"
+      ]
+    }
+  },
+  {
+    "name": "studio_get_card",
+    "description": "Get full details of a single design task card, including activity log of all status transitions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Card ID"
+        }
+      },
+      "required": [
+        "cardId"
+      ]
+    }
+  },
+  {
+    "name": "studio_update_card",
+    "description": "Update fields of a Kanban card. Whitelisted fields only: title, brief, tone, cta, priority, deadline, status, type, format, frame_count, tags, acceptance, assigned_to, brand_id, style_name, template_id, source, ai_model, content_type, enabled. The enabled boolean controls whether the Musa daily batch (scheduled function musa-batch) processes the card.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Card ID to update"
+        },
+        "title": {
+          "type": "string",
+          "description": "Card title"
+        },
+        "brief": {
+          "type": "string",
+          "description": "Design brief / instructions"
+        },
+        "tone": {
+          "type": "string",
+          "description": "Copy tone (e.g. 'profesional', 'cercano')"
+        },
+        "cta": {
+          "type": "string",
+          "description": "Call to action text"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Priority: 1=urgent, 2=normal, 3=low"
+        },
+        "deadline": {
+          "type": "string",
+          "description": "Deadline in YYYY-MM-DD format"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "research",
+            "draft",
+            "design",
+            "review",
+            "feedback",
+            "done"
+          ],
+          "description": "New Kanban column"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "banner",
+            "post",
+            "deck",
+            "template",
+            "landing",
+            "factura",
+            "cotizacion",
+            "story",
+            "square",
+            "other"
+          ],
+          "description": "Design type"
+        },
+        "format": {
+          "type": "string",
+          "description": "Format descriptor with dimensions (e.g. '1080x1920')"
+        },
+        "frameCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of frames"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Free-form tags"
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Acceptance criteria — objective verifiable items"
+        },
+        "assignedTo": {
+          "type": "string",
+          "description": "Agent/person assigned to this task"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand guideline ID"
+        },
+        "styleName": {
+          "type": "string",
+          "description": "Human-readable style name"
+        },
+        "aiModel": {
+          "type": "string",
+          "description": "AI model to use for this card"
+        },
+        "contentType": {
+          "type": "string",
+          "enum": [
+            "ad",
+            "organico"
+          ],
+          "description": "ad (paid) or organico (organic)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "If false, the Musa daily batch skips this card"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional activity log comment when status changes"
+        }
+      },
+      "required": [
+        "cardId"
+      ]
+    }
+  },
+  {
+    "name": "studio_delete_card",
+    "description": "Delete a Kanban card together with its activity log and agent time rows. Irreversible — the card disappears from the board and the batch immediately.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Card ID to delete"
+        }
+      },
+      "required": [
+        "cardId"
+      ]
+    }
+  },
+  {
+    "name": "studio_log_agent_time",
+    "description": "Log time, tokens, and model usage for an agent session on a Kanban task. Accumulates totals on the card and calculates cost from the deterministic ai_model_pricing table. Call this when an agent (leader/implementer/reviewer) finishes work on a task.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Card ID to log time against"
+        },
+        "agentRole": {
+          "type": "string",
+          "enum": [
+            "leader",
+            "implementer",
+            "reviewer",
+            "explorer"
+          ],
+          "description": "Role of the agent"
+        },
+        "agentName": {
+          "type": "string",
+          "description": "Name of the agent (e.g. 'claude', 'hermes')"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Duration in milliseconds"
+        },
+        "tokensUsed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tokens consumed in this session"
+        },
+        "aiModel": {
+          "type": "string",
+          "description": "AI model used (e.g. claude-sonnet-4). Used for cost lookup."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional notes about this session"
+        }
+      },
+      "required": [
+        "taskId",
+        "agentRole",
+        "durationMs"
+      ]
+    }
+  },
+  {
+    "name": "studio_list_models",
+    "description": "List all AI models and their pricing from the deterministic lookup table. Returns model name, provider, and per-1M-token input/output prices. Use this to see available models and their costs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "harness_get_context",
+    "description": "Bootstrap context for an agent session. Returns the agent definition (labor + protocol + hard_rules), and when workspaceId is provided: active styles, brand guidelines, and recent templates. Use this BEFORE doing any work — it replaces reading many files. For the leader, this is step 0 and returns everything needed for context validation (step 0.5).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agentType": {
+          "type": "string",
+          "enum": [
+            "leader",
+            "implementer",
+            "reviewer",
+            "explorer"
+          ],
+          "description": "Which role to bootstrap"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID — when provided, returns active styles, brands, and templates for this workspace"
+        },
+        "taskId": {
+          "type": "string",
+          "description": "Optional task to include its acceptance criteria"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Optional session to include its latest entries"
+        }
+      },
+      "required": [
+        "agentType"
+      ]
+    }
+  },
+  {
+    "name": "harness_list_features",
+    "description": "List Kanban tasks eligible for work (the cloud equivalent of feature_list.json). Returns pending tasks with acceptance criteria. The leader picks ONE. Filtering by status is supported — defaults to backlog.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "research",
+            "draft",
+            "design",
+            "review",
+            "feedback",
+            "done"
+          ],
+          "description": "Status filter (default: backlog)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Filter by workspace"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Filter by brand"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Max tasks returned (default: 20)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "harness_claim_feature",
+    "description": "Atomically claim a task for this agent. Sets status to 'draft' (in_progress). Fails with code -32000 if there is already an active task for the account (hard rule: only ONE in_progress at a time per account, mirroring init.sh's check). On success, returns the full task with acceptance.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Task to claim"
+        }
+      },
+      "required": [
+        "taskId"
+      ]
+    }
+  },
+  {
+    "name": "harness_release_feature",
+    "description": "Release the lock on a claimed task (set to 'feedback' or 'backlog'). Use when blocked or pausing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Task to release"
+        },
+        "toStatus": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "feedback"
+          ],
+          "description": "Status to release to (default: backlog)"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why releasing (saved to activity log)"
+        }
+      },
+      "required": [
+        "taskId"
+      ]
+    }
+  },
+  {
+    "name": "harness_start_session",
+    "description": "Start a new harness session for an agent working on a task. Returns a minimal context_summary built from the agent definition + acceptance + recent entries — subagents get only what they need (anti-context-degradation).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Task being worked on"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "leader",
+            "implementer",
+            "reviewer",
+            "explorer",
+            "custom"
+          ],
+          "description": "Agent role"
+        },
+        "agentName": {
+          "type": "string",
+          "description": "Who is running this session (e.g. 'claude', 'hermes', 'qoder')"
+        },
+        "plan": {
+          "type": "string",
+          "description": "3-5 bullet plan"
+        }
+      },
+      "required": [
+        "taskId",
+        "role"
+      ]
+    }
+  },
+  {
+    "name": "harness_log_entry",
+    "description": "Append to the bitácora (anti-teléfono-descompuesto). Subagents write results HERE, not in chat. The leader reads references, not content. Every meaningful step should be logged: plan, progress, blocker, exploration, verdict.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Session to log to"
+        },
+        "entryType": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "progress",
+            "blocker",
+            "review",
+            "verdict",
+            "summary",
+            "exploration",
+            "context_dump",
+            "diagnostic",
+            "subagent_trace"
+          ],
+          "description": "Type of entry"
+        },
+        "content": {
+          "type": "string",
+          "description": "Markdown content of the entry"
+        },
+        "filesTouched": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Files modified"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "If entryType=verdict: APPROVED or CHANGES_REQUESTED"
+        },
+        "promptUsed": {
+          "type": "string",
+          "description": "Prompt that produced this result (for harness auto-improvement)"
+        },
+        "promptOutcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "partial",
+            "failed"
+          ],
+          "description": "Did the prompt work?"
+        }
+      },
+      "required": [
+        "sessionId",
+        "entryType",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "harness_dump_context",
+    "description": "Extract current context (decisions, learnings, state) into harness_entries as a context_dump. Frees the context window. The next agent (or next session of the same agent) reads it via harness_get_context. Critical for >40% context usage.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Session to dump to"
+        },
+        "content": {
+          "type": "string",
+          "description": "Markdown summary of what to remember"
+        }
+      },
+      "required": [
+        "sessionId",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "harness_get_entries",
+    "description": "Read bitácora entries for a session. Used by reviewers to audit implementer work, and by leaders to recover context after a flush. Returns entries in reverse chronological order.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Session to read"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Max entries (default: 50)"
+        },
+        "entryType": {
+          "type": "string",
+          "description": "Filter by type"
+        }
+      },
+      "required": [
+        "sessionId"
+      ]
+    }
+  },
+  {
+    "name": "harness_healthcheck",
+    "description": "Cloud equivalent of init.sh. Verifies: (1) MCP reachable, (2) Supabase reachable, (3) harness tables exist, (4) design_kanban_tasks reachable, (5) optional lint_design on a template. Returns ok: true|false and per-check details. The reviewer MUST call this before approving.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Optional template to lint_design as part of the check"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional workspace to verify ownership"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "harness_evaluate_checkpoint",
+    "description": "Record pass/fail for a checkpoint (C1-C5) on a task. Reviewer calls this once per checkpoint while reviewing. Implementation stores result in harness_checkpoints AND in design_kanban_tasks.checkpoint_json.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Task being evaluated"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Active reviewer session for this task"
+        },
+        "checkpointId": {
+          "type": "string",
+          "description": "Checkpoint identifier (e.g. 'C1', 'C2')"
+        },
+        "description": {
+          "type": "string",
+          "description": "What this checkpoint checks"
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Pass or fail"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Evidence or failure reason"
+        }
+      },
+      "required": [
+        "taskId",
+        "sessionId",
+        "checkpointId",
+        "description",
+        "passed"
+      ]
+    }
+  },
+  {
+    "name": "harness_submit_for_review",
+    "description": "Implementer signals work is ready for review. Sets task status to 'review' and logs the submission. The leader then launches a reviewer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Implementer session"
+        },
+        "summary": {
+          "type": "string",
+          "description": "What was done"
+        }
+      },
+      "required": [
+        "sessionId",
+        "summary"
+      ]
+    }
+  },
+  {
+    "name": "harness_complete_feature",
+    "description": "Reviewer-only completion gate. Requires an active reviewer session, a real harness_submit_for_review marker from the implementer, and fresh passing C1-C5 checkpoints.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "description": "Task to complete"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Active reviewer session that evaluated C1-C5"
+        }
+      },
+      "required": [
+        "taskId",
+        "sessionId"
+      ]
+    }
+  },
+  {
+    "name": "harness_record_runtime_event",
+    "description": "Append one sanitized, idempotent runtime transition for a harness session. Never send prompts, tool arguments, HTML/CSS, or credentials.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "clientEventId": {
+          "type": "string",
+          "description": "Stable client id for idempotency"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "start",
+            "request",
+            "tool",
+            "retry",
+            "compaction",
+            "done",
+            "error",
+            "cancelled"
+          ]
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxRounds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cumulativeTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenCountKind": {
+          "type": "string",
+          "enum": [
+            "actual",
+            "estimated"
+          ]
+        },
+        "contextChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "templateIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "error": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "sessionId",
+        "clientEventId",
+        "eventType"
+      ]
+    }
+  },
+  {
+    "name": "harness_get_runtime_events",
+    "description": "Read sanitized runtime events for one authorized session using a monotonic cursor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "afterId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "sessionId"
+      ]
+    }
+  },
+  {
+    "name": "harness_list_sessions",
+    "description": "List authorized harness sessions for a task, optionally filtered by status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "taskId"
+      ]
+    }
+  },
+  {
+    "name": "harness_finish_session",
+    "description": "CAS-close an active/paused session. completed is reviewer-only; implementers must call harness_submit_for_review so the review-cycle marker is recorded.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "blocked"
+          ],
+          "description": "completed is accepted only for reviewer sessions"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "status"
+      ]
+    }
+  },
+  {
+    "name": "harness_list_cronjobs",
+    "description": "List scheduled cronjobs for the account. Returns enabled and disabled jobs with their schedule, last_run_at, and next_run_at.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "enabledOnly": {
+          "type": "boolean",
+          "description": "If true, return only enabled cronjobs (default: false)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "harness_create_cronjob",
+    "description": "Create a scheduled cronjob that auto-creates and processes tasks. Requires a cron schedule, a task template, and the account's fdr_ws_ api key (stored encrypted_api_key) so the cron runner can authenticate to MCP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human label for the cronjob"
+        },
+        "schedule": {
+          "type": "string",
+          "description": "5-field cron expression, e.g. '0 6 * * *' for daily at 6am"
+        },
+        "taskTemplate": {
+          "type": "object",
+          "description": "Template for created tasks",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "brief": {
+              "type": "string"
+            },
+            "acceptance": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "brandId": {
+          "type": "string"
+        },
+        "encryptedApiKey": {
+          "type": "string",
+          "description": "Account's fdr_ws_ API key — used by the cron runner to call MCP on the account's behalf"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone (default: America/Lima)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Start enabled? (default: true)"
+        }
+      },
+      "required": [
+        "name",
+        "schedule",
+        "taskTemplate"
+      ]
+    }
+  },
+  {
+    "name": "harness_toggle_cronjob",
+    "description": "Enable, disable, or delete a cronjob.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cronjobId": {
+          "type": "string",
+          "description": "Cronjob to modify"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "enable",
+            "disable",
+            "delete"
+          ],
+          "description": "What to do"
+        }
+      },
+      "required": [
+        "cronjobId",
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "harness_report_error",
+    "description": "Registra un error en Supabase (harness_error_logs) para análisis interno. Usar cuando cualquier tool falle.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "Nombre de la tool que falló"
+        },
+        "args": {
+          "type": "object",
+          "description": "Argumentos con los que se llamó"
+        },
+        "error_message": {
+          "type": "string",
+          "description": "Mensaje de error o resultado"
+        },
+        "step": {
+          "type": "number"
+        },
+        "totalSteps": {
+          "type": "number"
+        },
+        "round": {
+          "type": "number"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "mcp_status_code": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "description": "chatfab, mcp, manual"
+        }
+      },
+      "required": [
+        "tool",
+        "error_message"
+      ]
+    }
+  },
+  {
+    "name": "harness_list_errors",
+    "description": "Retrieve recent error logs from harness_error_logs. Use after a cascade to see what actually failed and why.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "Max errors to return (default 20)"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Filter by tool name"
+        }
+      }
+    }
+  },
+  {
+    "name": "comment_add",
+    "description": "Add a comment pin on the canvas. Auto-creates a Kanban task unless createKanbanTask is false. When the template is a Brand Manual (is_brand_manual=true), comment_type defaults to 'documentation' instead of 'feedback'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID (optional)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "xPct": {
+          "type": "number",
+          "description": "X position in frame as percentage 0-100"
+        },
+        "yPct": {
+          "type": "number",
+          "description": "Y position in frame as percentage 0-100"
+        },
+        "body": {
+          "type": "string",
+          "description": "Comment text"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Who wrote this comment"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "editor_pin",
+            "mobile_pin",
+            "kanban",
+            "ai_review",
+            "chat",
+            "documentation"
+          ],
+          "description": "Where the comment was created"
+        },
+        "commentType": {
+          "type": "string",
+          "enum": [
+            "feedback",
+            "documentation"
+          ],
+          "description": "Comment type. Defaults to 'documentation' for Brand Manual templates, 'feedback' otherwise."
+        },
+        "createKanbanTask": {
+          "type": "boolean",
+          "description": "If true (default), also creates a Kanban task"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "Parent comment ID for threaded replies"
+        }
+      },
+      "required": [
+        "templateId",
+        "body"
+      ]
+    }
+  },
+  {
+    "name": "comment_list",
+    "description": "List comments for a template, optionally filtered by frame and status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Filter by frame"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "resolved",
+            "archived"
+          ],
+          "description": "Filter by status"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "comment_resolve",
+    "description": "Mark a comment as resolved.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "commentId": {
+          "type": "string",
+          "description": "Comment to resolve"
+        }
+      },
+      "required": [
+        "commentId"
+      ]
+    }
+  },
+  {
+    "name": "comment_reply",
+    "description": "Reply to an existing comment (threading).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "Parent comment ID"
+        },
+        "body": {
+          "type": "string",
+          "description": "Reply text"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Who wrote this reply"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID (optional)"
+        }
+      },
+      "required": [
+        "templateId",
+        "parentId",
+        "body"
+      ]
+    }
+  },
+  {
+    "name": "vectorize_image",
+    "description": "Convert a raster image (base64 or URL) into an editable SVG vector using Quiver AI. Inserts the result as a vector layer (data-layer-kind=\"svg\") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG directly.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID to inject the SVG into"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Optional frame ID. If omitted, writes to the first frame."
+        },
+        "imageBase64": {
+          "type": "string",
+          "description": "Base64-encoded image data (data:image/...;base64,...). Either this or imageUrl is required."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Public URL of the image to vectorize. Used if imageBase64 is not provided."
+        },
+        "autoCrop": {
+          "type": "boolean",
+          "description": "Automatically detect and crop to the main subject (default: true)"
+        },
+        "targetSize": {
+          "type": "string",
+          "description": "Target SVG viewport size, e.g. '1024x1024' (default: original image size)"
+        },
+        "x": {
+          "type": "number",
+          "description": "Absolute X position in px for the inserted SVG (default: 0)"
+        },
+        "y": {
+          "type": "number",
+          "description": "Absolute Y position in px for the inserted SVG (default: 0)"
+        },
+        "model": {
+          "type": "string",
+          "description": "Quiver model ID (default: arrow-1.1). Options: arrow-1.1, arrow-1.1-max"
+        }
+      },
+      "required": [
+        "templateId"
+      ]
+    }
+  },
+  {
+    "name": "generate_svg",
+    "description": "Generate SVG vector art from a text prompt using Quiver AI. Inserts the result as a vector layer (data-layer-kind=\"svg\") in the specified frame. Requires a Quiver API key configured in AI Settings (server-side encrypted). Non-streaming — returns the final SVG(s) directly.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID to inject the SVG into"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Target frame ID"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Text description of the SVG to generate (e.g. 'a minimalist unicorn icon')"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Optional style guidance (e.g. 'flat design, single color, rounded corners')"
+        },
+        "n": {
+          "type": "number",
+          "description": "Number of variations to generate (1-4, default: 1). The first is auto-inserted."
+        },
+        "model": {
+          "type": "string",
+          "description": "Quiver model ID (default: arrow-1.1). Options: arrow-1.1, arrow-1.1-max"
+        },
+        "x": {
+          "type": "number",
+          "description": "Absolute X position in px for the inserted SVG (default: 50)"
+        },
+        "y": {
+          "type": "number",
+          "description": "Absolute Y position in px for the inserted SVG (default: 50)"
+        }
+      },
+      "required": [
+        "templateId",
+        "prompt"
+      ]
+    }
+  },
+  {
+    "name": "task_queue_add",
+    "description": "DEPRECATED: creates a Kanban card (design_kanban_tasks) in backlog instead of a task_queue row. The Musa daily batch (scheduled function musa-batch, 9 UTC) processes Kanban cards by status. Prefer studio_create_card for new work.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Design instructions for the LLM"
+        },
+        "width": {
+          "type": "number",
+          "description": "Canvas width in px (default: 1080)"
+        },
+        "height": {
+          "type": "number",
+          "description": "Canvas height in px (default: 1080)"
+        },
+        "style": {
+          "type": "string",
+          "description": "Optional style guidance"
+        },
+        "name": {
+          "type": "string",
+          "description": "Template name for the generated design"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Queue tag (default: 'auto')"
+        },
+        "priority": {
+          "type": "number",
+          "description": "Priority (higher = first, default: 0)"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "instructions"
+      ]
+    }
+  },
+  {
+    "name": "task_queue_list",
+    "description": "DEPRECATED: returns Kanban cards (design_kanban_tasks) instead of task_queue rows. Prefer studio_list_cards, which also groups by status column.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "status": {
+          "type": "string",
+          "description": "Filter by status: pending, processing, done, failed"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Filter by tag"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "task_queue_get_config",
+    "description": "Read the automation configuration for a workspace. Returns auto_process_enabled, provider, limits, and notification settings. Use this to load the initial toggle state in the UI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "task_queue_update_config",
+    "description": "Create or update the automation configuration for a workspace. Used to toggle auto-processing on/off and configure provider and limits. Merge semantics (v27): only sent fields are written, the rest keep their current DB values — the Configuración panel saves the Automatización card and the Kanban card independently. No schedule field: the global daily cron processes every enabled workspace on each run.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID"
+        },
+        "autoProcessEnabled": {
+          "type": "boolean",
+          "description": "Enable/disable automated design processing"
+        },
+        "autoProcessMaxItems": {
+          "type": "number",
+          "description": "Max items per batch run (default: 50)"
+        },
+        "autoProcessTag": {
+          "type": "string",
+          "description": "Queue tag to process (default: 'auto')"
+        },
+        "notifyOnComplete": {
+          "type": "boolean",
+          "description": "Send Telegram notification when batch finishes"
+        },
+        "notifyChatId": {
+          "type": "string",
+          "description": "Telegram chat ID for notifications"
+        },
+        "batchLlmProvider": {
+          "type": "string",
+          "description": "LLM provider: deepseek, openai, anthropic (default: deepseek). The API key is resolved per-user via BYOK."
+        },
+        "kanbanAutoRefresh": {
+          "type": "boolean",
+          "description": "Enable/disable the Kanban auto-refresh poll (Configuración → Kanban). The poll only fires while the tab is visible."
+        },
+        "kanbanPollSeconds": {
+          "type": "number",
+          "description": "Kanban auto-refresh interval in seconds: 15, 30, 60 or 120 (default: 30)."
+        }
+      },
+      "required": [
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "name": "platform_get_status",
+    "description": "PLATFORM TOOL (admin key or workspace owner only). Read platform-level switches and limits: musa_tick_enabled (hourly batch dispatcher kill switch, stored in platform_config, migration v27) and monthly_mcp_quota (per-workspace MCP calls/month, 0 = unlimited). Also reports whether the env-level MUSA_TICK_ENABLED=false emergency override is active (it wins over the DB switch).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "platform_update_config",
+    "description": "PLATFORM TOOL (admin key or workspace owner only). Update platform-level switches and limits. musaTickEnabled=false stops the hourly musa-batch-tick from dispatching the batch (the manual 'Ejecutar batch' button in the Kanban keeps working). monthlyMcpQuota sets the per-workspace monthly MCP call quota (0 = unlimited, default: 5000); it takes effect immediately. Idempotent; only provided fields change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "musaTickEnabled": {
+          "type": "boolean",
+          "description": "Enable/disable the hourly Musa batch dispatcher (musa-batch-tick)"
+        },
+        "monthlyMcpQuota": {
+          "type": "number",
+          "description": "Per-workspace monthly MCP call quota. 0 = unlimited (default: 5000)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "process_daily_batch",
+    "description": "Dry-run preview of the Musa batch. The real pipeline runs in the musa-batch BACKGROUND function (netlify.toml), dispatched hourly by the musa-batch-tick scheduled function and on demand by musa_batch_run; it advances every enabled Kanban card one step (leader/implementer/reviewer). This sync method only supports dryRun:true (no LLM cost). To actually RUN the batch now, call musa_batch_run instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Optional: limit the batch to a single workspace ID."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Optional: if true, only list what would be processed without generating."
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "musa_batch_run",
+    "description": "One-click trigger: dispatch the Musa batch for a workspace NOW instead of waiting for the hourly tick. Validates the dispatch to the musa-batch BACKGROUND function (Netlify 202 = accepted) and returns { started: true } immediately — the leader/implementer/reviewer pipeline then runs in background for up to 15 min (watch the Kanban cards advance). A failed dispatch returns started:false with the real error. Non-admin callers can only trigger their own workspace (workspaceId is validated/forced). With dryRun:true it instead awaits and returns the full dry-run preview inline (no LLM cost).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace to process. Non-admin callers: only their own workspace (server-resolved if omitted). Admin may omit it to run every enabled workspace."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "If true, await and return the dry-run preview (what each card would run) without LLM cost."
+        }
+      },
       "required": []
     }
   }
