@@ -5043,7 +5043,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         ratio: videoRatio,
       });
       if (!alive()) return;
-      const taskId = submitted?.taskId;
+      let taskId = submitted?.taskId;
       if (!taskId) throw new Error("El servidor no devolvió el id de la tarea");
 
       // The GPUs at Runway do the waiting — we never hold a server
@@ -5053,8 +5053,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // strike — up to 5 in a row — instead of killing the whole wait:
       // the task keeps running on Runway either way.
       setVideoStatus("processing");
-      const startedAt = Date.now();
-      const deadline = startedAt + VIDEO_GEN_MAX_MS;
+      let startedAt = Date.now();
+      let deadline = startedAt + VIDEO_GEN_MAX_MS;
       let nextCheckAt = startedAt + VIDEO_GEN_FIRST_CHECK_MS;
       let videoUrl: string | null = null;
       let persistent = true;
@@ -5062,6 +5062,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       const MAX_POLL_STRIKES = 5;
       let strikes = 0;
       let warnedUnstable = false;
+      let retriedRunway = false;
       while (alive() && !tempUrl) {
         await new Promise(r => setTimeout(r, 1000));
         if (!alive()) return;
@@ -5081,12 +5082,46 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           if (!alive()) return;
           if (pollFailed) {
             const msg = String((pollFailed as any)?.message || pollFailed);
-            // Terminal causes abort immediately; anything else is a strike.
-            if (msg.includes("NO_RUNWAY_KEY") || msg.includes("generation FAILED") || msg.includes("generation CANCELLED")) throw pollFailed;
-            strikes++;
-            console.error(`[videoGen] status check ${strikes}/${MAX_POLL_STRIKES} failed:`, msg);
-            if (strikes >= 3 && !warnedUnstable) { warnedUnstable = true; addToast("Conexión inestable con Runway — seguimos reintentando…", "info"); }
-            if (strikes >= MAX_POLL_STRIKES) throw new Error(`Se perdieron ${MAX_POLL_STRIKES} chequeos seguidos — la tarea sigue en Runway (id ${taskId}), pero dejamos de esperar. (${msg})`);
+            // Terminal causes abort immediately. Exception: Runway's generic
+            // "unexpected error" FAILED is their documented transient GPU
+            // glitch — their own troubleshooting says retry — so we silently
+            // resubmit ONCE (each attempt costs credits, never more than one
+            // automatic retry). Anything else keeps counting as a strike.
+            if (msg.includes("NO_RUNWAY_KEY") || msg.includes("generation CANCELLED")) throw pollFailed;
+            if (msg.includes("generation FAILED")) {
+              if (!retriedRunway && /unexpected error/i.test(msg)) {
+                retriedRunway = true;
+                addToast("Runway falló sin causa específica (glitch transitorio de su lado) — reintentando una vez…", "info");
+                try {
+                  const resubmitted = await callVideo("generate_image_video", {
+                    imageUrl: src.url,
+                    ...(videoPrompt.trim() ? { prompt: videoPrompt.trim() } : {}),
+                    model: videoModel,
+                    duration: videoDuration,
+                    ratio: videoRatio,
+                  });
+                  if (!alive()) return;
+                  const newTaskId = resubmitted?.taskId;
+                  if (!newTaskId) throw new Error("resubmit sin taskId");
+                  console.error(`[videoGen] FAILED genérico — reintento como tarea ${newTaskId}`);
+                  taskId = newTaskId;
+                  strikes = 0;
+                  startedAt = Date.now();
+                  deadline = startedAt + VIDEO_GEN_MAX_MS;
+                  nextCheckAt = startedAt + VIDEO_GEN_FIRST_CHECK_MS;
+                } catch (resubmitErr) {
+                  console.error("[videoGen] resubmit failed:", resubmitErr);
+                  throw pollFailed;
+                }
+              } else {
+                throw pollFailed;
+              }
+            } else {
+              strikes++;
+              console.error(`[videoGen] status check ${strikes}/${MAX_POLL_STRIKES} failed:`, msg);
+              if (strikes >= 3 && !warnedUnstable) { warnedUnstable = true; addToast("Conexión inestable con Runway — seguimos reintentando…", "info"); }
+              if (strikes >= MAX_POLL_STRIKES) throw new Error(`Se perdieron ${MAX_POLL_STRIKES} chequeos seguidos — la tarea sigue en Runway (id ${taskId}), pero dejamos de esperar. (${msg})`);
+            }
           } else if (check?.status === "POLL_ERROR") {
             strikes++;
             console.error(`[videoGen] transient poll ${strikes}/${MAX_POLL_STRIKES}:`, check.message);

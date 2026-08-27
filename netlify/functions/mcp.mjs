@@ -6653,6 +6653,64 @@ async function handleMethod(method, params, userId, auth) {
       const seedNum = Number(params.seed);
       if (Number.isFinite(seedNum)) body.seed = seedNum;
 
+      // Robustness: Runway's generic "unexpected error" task failures usually
+      // come from their async fetch of promptImage (their downloader must
+      // satisfy HEAD/content-type/no-redirect rules our signed URLs may not).
+      // Uploading the bytes to Runway's EPHEMERAL storage first (POST
+      // /v1/uploads → presigned multipart POST → runway:// URI, valid 24h)
+      // removes that failure mode entirely: the generation reads bytes
+      // already sitting on Runway's side. Any hiccup here silently falls
+      // back to the direct URL — exactly the previous behavior.
+      let usedEphemeral = false;
+      try {
+        const abort = new AbortController();
+        // Whole ephemeral attempt capped at 8s so the submit below still fits
+        // the platform's 10s function budget even in the worst case.
+        const budget = setTimeout(() => abort.abort(), 8000);
+        try {
+          const imgResp = await fetch(imageUrl, { signal: abort.signal });
+          if (!imgResp.ok) throw new Error(`image download ${imgResp.status}`);
+          const contentType = String(imgResp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+          const ext = contentType === "image/jpeg" ? "jpg"
+            : contentType === "image/png" ? "png"
+            : contentType === "image/webp" ? "webp" : null;
+          if (!ext) throw new Error(`unsupported content-type "${contentType || "unknown"}" (jpg/png/webp only)`);
+          const buf = Buffer.from(await imgResp.arrayBuffer());
+          if (buf.length < 512) throw new Error(`image too small (${buf.length}B, Runway min 512)`);
+          if (buf.length > 16 * 1024 * 1024) throw new Error(`image too large (${(buf.length / 1048576).toFixed(1)}MB)`);
+
+          const slotResp = await fetch("https://api.dev.runwayml.com/v1/uploads", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${rwKey}`,
+              "Content-Type": "application/json",
+              "X-Runway-Version": "2024-11-06",
+            },
+            body: JSON.stringify({ filename: `futuraria.${ext}`, type: "ephemeral" }),
+            signal: abort.signal,
+          });
+          if (!slotResp.ok) throw new Error(`POST /v1/uploads ${slotResp.status}: ${(await slotResp.text().catch(() => "")).substring(0, 200)}`);
+          const slot = await slotResp.json();
+          if (!slot?.uploadUrl || !slot?.runwayUri || !slot?.fields) throw new Error("incomplete /v1/uploads response");
+
+          // Presigned multipart POST — every returned field first, the file
+          // LAST (S3 convention). fetch sets the multipart boundary itself;
+          // never set Content-Type manually here.
+          const form = new FormData();
+          for (const [k, v] of Object.entries(slot.fields)) form.append(k, String(v));
+          form.append("file", new Blob([buf], { type: contentType }), `futuraria.${ext}`);
+          const upResp = await fetch(slot.uploadUrl, { method: "POST", body: form, signal: abort.signal });
+          if (!upResp.ok) throw new Error(`upload POST ${upResp.status}`);
+
+          body.promptImage = slot.runwayUri;
+          usedEphemeral = true;
+        } finally {
+          clearTimeout(budget);
+        }
+      } catch (ephErr) {
+        console.error(`[runway] ephemeral upload failed → direct URL fallback: ${String(ephErr?.message || ephErr)}`);
+      }
+
       const submit = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
         method: "POST",
         headers: {
@@ -6668,7 +6726,7 @@ async function handleMethod(method, params, userId, auth) {
       }
       const task = await submit.json();
       if (!task?.id) throw { code: -32000, message: "Runway returned no task id" };
-      return { taskId: task.id, status: task.status || "PENDING", note: "Poll with generate_image_video_check — median 1-3 min, free status checks" };
+      return { taskId: task.id, status: task.status || "PENDING", ephemeral: usedEphemeral, note: "Poll with generate_image_video_check — median 1-3 min, free status checks" };
     }
 
     case "generate_image_video_check": {
