@@ -40,9 +40,20 @@ export interface ContentRow {
   campaign?: string | null;
   ad_set?: string | null;
   template_id?: string | null;
+  /** REQ-023: the exact frame inside template_id's file. A grid is one file
+   *  with several designs side by side; the file alone cannot say which art
+   *  is this piece's. */
+  frame_id?: string | null;
   asset_id?: string | null;
   external_url?: string | null;
   permalink?: string | null;
+  // ── Display-only, resolved at render time ─────────────────────────────
+  // The sheet and the exports show NAMES ("Archivo", "Diseño"), not ids — a
+  // client-facing grid that says "tpl_a83f…" is not a grid anyone can read.
+  // Resolved client-side from the workspace's file list and each file's
+  // frames, so exports stay pure functions of the rows plus these names.
+  template_name?: string | null;
+  frame_name?: string | null;
 }
 
 // ── Calendar layout ────────────────────────────────────────────────────────
@@ -201,6 +212,11 @@ export const EXPORT_COLUMNS: Array<{ key: string; label: string }> = [
   { key: "actual_views", label: "REAL Views" },
   { key: "avance_spend", label: "AVANCE Inversión" },
   { key: "avance_impressions", label: "AVANCE Impresiones" },
+  // REQ-023: what the sheet shows as Archivo/Diseño, by name. The export
+  // carries every column the UI has — an export that drops some is the one
+  // the client asks to be re-sent as a screenshot.
+  { key: "template_name", label: "Archivo" },
+  { key: "frame_name", label: "Diseño" },
   { key: "permalink", label: "Enlace publicado" },
 ];
 

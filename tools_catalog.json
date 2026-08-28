@@ -7988,7 +7988,7 @@
   },
   {
     "name": "update_content",
-    "description": "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
+    "description": "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId + frameId pins the exact frame of a multi-frame grid, or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8041,7 +8041,11 @@
         },
         "templateId": {
           "type": "string",
-          "description": "Attach a design file from this workspace"
+          "description": "Attach a design file from this workspace (get ids from list_templates)"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Exact frame inside the templateId file — REQUIRED for grids: one file holds several designs, and the export/PPT shows this piece's art by frame. Get frame ids from get_template (frames[].id). Send an empty string to clear it. Changing templateId clears frameId automatically."
         },
         "externalUrl": {
           "type": "string",

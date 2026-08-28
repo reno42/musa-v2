@@ -195,6 +195,25 @@ test("the CSV carries the plan, the actual and the pacing", () => {
   assert.match(first, /0\.5/, "300 of 600 is half the budget");
 });
 
+test("REQ-023: the export carries Archivo and Diseño by name, not by id", () => {
+  // A grid is one file with several frames; the export must answer which
+  // file AND which frame, in names a client can actually read.
+  const csv = toCSVExport([row({
+    template_name: "Grilla Marzo",
+    frame_name: "Post 3 — Reel tapa",
+  })]);
+  const [header, first] = csv.trim().split("\n");
+  assert.match(header, /Archivo/);
+  assert.match(header, /Diseño/);
+  const cells = first.split('","');
+  assert.equal(
+    cells[EXPORT_COLUMNS.findIndex(c => c.key === "template_name")].replace(/"/g, ""),
+    "Grilla Marzo");
+  assert.equal(
+    cells[EXPORT_COLUMNS.findIndex(c => c.key === "frame_name")].replace(/"/g, ""),
+    "Post 3 — Reel tapa");
+});
+
 test("a copy containing commas, quotes and newlines survives the CSV", () => {
   const csv = toCSVExport([row({ copy: 'Dijo "hola", y\nse fue' })]);
   assert.ok(csv.includes('"Dijo ""hola"", y\nse fue"'));

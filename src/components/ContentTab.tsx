@@ -11,9 +11,11 @@
  * gesture feel like two different tools.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
+import { rasterizeFrame } from "../lib/frameCapture";
+import { useAuth } from "../lib/auth";
 import {
   CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
   applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, pacing,
@@ -87,6 +89,24 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropDate, setDropDate] = useState<string | null>(null);
 
+  const { user } = useAuth();
+
+  // REQ-023: the workspace's design files, so the sheet's Archivo column is
+  // a name a human recognises, and Diseño can pin the exact frame of a grid.
+  const [files, setFiles] = useState<Array<{ id: string; name: string }>>([]);
+  // frame list per linked file — loaded lazily, the first time some row
+  // points at that file. State (not a ref) because the Diseño select renders it.
+  const [framesByFile, setFramesByFile] = useState<Record<string, Array<{ id: string; name: string }>>>({});
+  const frameFetchTried = useRef<Set<string>>(new Set());
+
+  // PPT export: the popup defines the range and the brand first — nothing
+  // downloads behind the user's back.
+  const [pptOpen, setPptOpen] = useState(false);
+  const [pptFrom, setPptFrom] = useState("");
+  const [pptTo, setPptTo] = useState("");
+  const [pptBrandId, setPptBrandId] = useState("");
+  const [pptBusy, setPptBusy] = useState("");
+
   const load = useCallback(async () => {
     if (!workspaceId) return;
     setError("");
@@ -112,14 +132,58 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
       .catch(() => { /* the section works unfiltered */ });
   }, [workspaceId]);
 
+  // The Archivo column picks from real files — "which design" is a question
+  // about names, not about pasting ids. 300 is the route's own cap.
+  useEffect(() => {
+    if (!workspaceId) return;
+    void apiFetch<{ data?: Array<{ id: string; name: string }> }>(
+      `/api/templates?workspaceId=${encodeURIComponent(workspaceId)}&limit=300`,
+    )
+      .then(res => setFiles(Array.isArray(res?.data)
+        ? res.data.map(t => ({ id: t.id, name: t.name }))
+        : []))
+      .catch(() => { /* the sheet still works; ids just stop resolving */ });
+  }, [workspaceId]);
+
+  // Frames of every linked file, for the Diseño column — one GET per file,
+  // only for files some row actually points at. `tried` keeps a deleted or
+  // unreachable file from being re-fetched on every keystroke.
+  useEffect(() => {
+    const linked = new Set<string>();
+    for (const r of rows) if (r.template_id) linked.add(r.template_id);
+    const missing = [...linked].filter(id => !framesByFile[id] && !frameFetchTried.current.has(id));
+    if (missing.length === 0) return;
+    missing.forEach(id => frameFetchTried.current.add(id));
+    missing.forEach(async id => {
+      try {
+        const res = await apiFetch<{ data?: { frames?: Array<{ id: string; name?: string }> } }>(`/api/templates/${id}`);
+        const frames = (res?.data?.frames || []).map((f, i) => ({ id: f.id, name: f.name || `Frame ${i + 1}` }));
+        setFramesByFile(cur => ({ ...cur, [id]: frames }));
+      } catch { /* deleted file → empty select; the ↗ jump still shows the id */ }
+    });
+  }, [rows, framesByFile]);
+
   const brandNameById = useMemo(
     () => new Map(brands.map(b => [b.id, b.name])), [brands]);
+  const templateNameById = useMemo(
+    () => new Map(files.map(f => [f.id, f.name])), [files]);
 
   /** Every view below reads THIS, never `rows` — so an export is exactly what
-   *  is on screen, which is the whole point of being able to stack filters. */
+   *  is on screen, which is the whole point of being able to stack filters.
+   *  Archivo/Diseño resolve to names here, so the exports (which read these
+   *  rows) carry names, never ids — a client-facing grid that says "tpl_a83f…"
+   *  is not a grid anyone can read. */
   const visible = useMemo(
-    () => applyFilters(rows, filters).map(r => ({ ...r, brandName: brandNameById.get(r.brand_id || "") || "" })),
-    [rows, filters, brandNameById]);
+    () => applyFilters(rows, filters).map(r => {
+      const frames = r.template_id ? framesByFile[r.template_id] : undefined;
+      return {
+        ...r,
+        brandName: brandNameById.get(r.brand_id || "") || "",
+        template_name: r.template_id ? (templateNameById.get(r.template_id) || "") : "",
+        frame_name: r.frame_id && frames ? (frames.find(f => f.id === r.frame_id)?.name || "") : "",
+      };
+    }),
+    [rows, filters, brandNameById, templateNameById, framesByFile]);
 
   const exportAs = useCallback((format: "csv" | "xlsx") => {
     const stamp = isoDate(new Date());
@@ -133,6 +197,151 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         `reporte-${stamp}.xls`);
     }
   }, [visible]);
+
+  // ── PPT export (REQ-023) ─────────────────────────────────────────────
+  // One deck per range: a cover presenting the grid, then one slide per
+  // piece — the copy as NATIVE text (selectable in PowerPoint and Google
+  // Slides, which is the point) and the exact frame rendered to PNG on the
+  // right. The team that does not automate yet gets a client-ready grid.
+
+  const pptRangeCount = useMemo(
+    () => applyFilters(rows, {
+      from: pptFrom || undefined,
+      to: pptTo || undefined,
+      brandId: pptBrandId || undefined,
+    }).length,
+    [rows, pptFrom, pptTo, pptBrandId]);
+
+  // Escape closes the popup — unless a generation is in flight, which must
+  // not be abandoned half-rendered.
+  useEffect(() => {
+    if (!pptOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !pptBusy) setPptOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pptOpen, pptBusy]);
+
+  const generatePpt = useCallback(async () => {
+    if (!workspaceId) return;
+    setError("");
+    try {
+      const pptRows = applyFilters(rows, {
+        from: pptFrom || undefined,
+        to: pptTo || undefined,
+        brandId: pptBrandId || undefined,
+      })
+        .slice()
+        .sort((a, b) =>
+          `${a.scheduled_date} ${a.scheduled_time || ""}`
+            .localeCompare(`${b.scheduled_date} ${b.scheduled_time || ""}`));
+      if (pptRows.length === 0) {
+        setError("No hay piezas en ese rango con esa marca.");
+        return;
+      }
+
+      setPptBusy("Cargando generador…");
+      // Dynamic import keeps pptxgenjs out of the main bundle: this button is
+      // used once a month, not on every load.
+      const { default: PptxGenJS } = await import("pptxgenjs");
+      const pptx = new PptxGenJS();
+      pptx.layout = "LAYOUT_16x9"; // 10" × 5.625"
+      const userName = user?.user_metadata?.full_name || user?.email || "Futuraria";
+      pptx.author = String(userName);
+      const brandName = brands.find(b => b.id === pptBrandId)?.name || "Todas las marcas";
+
+      // ── Portada: the grid, the brand, the range, who made it ──
+      const cover = pptx.addSlide();
+      cover.background = { color: "0B0D13" };
+      cover.addText("Grilla de contenido", { x: 0.7, y: 1.55, w: 8.6, fontSize: 40, bold: true, color: "FFFFFF" });
+      cover.addText(brandName, { x: 0.7, y: 2.6, w: 8.6, fontSize: 18, color: "A5B4FC" });
+      cover.addText(`${pptFrom || "inicio"}  →  ${pptTo || "hoy"}`, { x: 0.7, y: 3.1, w: 8.6, fontSize: 14, color: "9CA3AF" });
+      cover.addText(
+        `Preparado por ${userName} · ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })} · ${pptRows.length} ${pptRows.length === 1 ? "pieza" : "piezas"}`,
+        { x: 0.7, y: 3.6, w: 8.6, fontSize: 12, color: "6B7280" },
+      );
+
+      // Frame → PNG. Templates are read FRESH here (not from the sheet's
+      // select cache): the grid must carry the art as it is right now.
+      const tplCache = new Map<string, any>();
+      const loadTemplate = async (templateId: string) => {
+        if (!tplCache.has(templateId)) {
+          try {
+            const res = await apiFetch<{ data?: any }>(`/api/templates/${templateId}`);
+            tplCache.set(templateId, res?.data || null);
+          } catch { tplCache.set(templateId, null); }
+        }
+        return tplCache.get(templateId);
+      };
+      const frameToPng = async (templateId: string, frameId: string) => {
+        const tpl = await loadTemplate(templateId);
+        const frame = tpl && Array.isArray(tpl.frames) ? tpl.frames.find((f: any) => f.id === frameId) : null;
+        if (!frame) return null;
+        const canvas = await rasterizeFrame({
+          html: frame.html ?? tpl.html ?? "",
+          css: frame.css ?? tpl.css ?? "",
+          width: Number(frame.width) || 1080,
+          height: Number(frame.height) || 1080,
+          background: frame.background || "#ffffff",
+        }, 1.5);
+        return { data: canvas.toDataURL("image/png").replace(/^data:/, ""), w: canvas.width, h: canvas.height };
+      };
+
+      for (let i = 0; i < pptRows.length; i++) {
+        const r = pptRows[i];
+        setPptBusy(`Generando… (${i + 1}/${pptRows.length})`);
+        const slide = pptx.addSlide();
+        slide.background = { color: "0B0D13" };
+
+        const fecha = r.scheduled_date + (r.scheduled_time ? ` ${r.scheduled_time.slice(0, 5)}` : "");
+        const canal = (r.channels || []).join(", ");
+        slide.addText([fecha, canal].filter(Boolean).join("   ·   "),
+          { x: 0.5, y: 0.3, w: 9, fontSize: 12, color: "9CA3AF" });
+
+        // Left: the copy. Native text boxes, so it selects and copies in
+        // PowerPoint AND Google Slides — an image of text would defeat the
+        // export for everyone who pastes captions into the scheduler.
+        const runs: Array<Record<string, unknown>> = [];
+        if (r.topic) runs.push({ text: r.topic, options: { fontSize: 17, bold: true, color: "FFFFFF", breakLine: true, paraSpaceAfter: 8 } });
+        runs.push({ text: r.copy || "(sin copy todavía)", options: { fontSize: 12.5, color: "E5E7EB" } });
+        slide.addText(runs as any, { x: 0.5, y: 1.05, w: 4.6, h: 4.1, valign: "top", shrinkText: true });
+
+        // Right: the exact frame as PNG, aspect-fit into its half.
+        const png = r.template_id && r.frame_id ? await frameToPng(r.template_id, r.frame_id) : null;
+        if (png) {
+          const fit = Math.min(4.0 / png.w, 4.4 / png.h);
+          const w = png.w * fit, h = png.h * fit;
+          slide.addImage({ data: png.data, x: 5.5 + (4.0 - w) / 2, y: 0.85 + (4.4 - h) / 2, w, h });
+        } else {
+          slide.addText(r.template_id ? "Diseño sin frame exacto" : "Sin diseño vinculado", {
+            x: 5.6, y: 2.7, w: 3.8, h: 0.7, align: "center", valign: "middle",
+            fontSize: 11, color: "6B7280", fill: { color: "151A26" },
+          });
+        }
+
+        // Footer: which file ▸ which frame, by name — the same answer the
+        // sheet's Archivo/Diseño columns give, so slide and sheet agree.
+        const tplName = r.template_id ? (templateNameById.get(r.template_id) || "") : "";
+        const frmName = r.frame_id && r.template_id
+          ? (framesByFile[r.template_id]?.find(f => f.id === r.frame_id)?.name || "")
+          : "";
+        const designLabel = [tplName, frmName].filter(Boolean).join(" ▸ ");
+        if (designLabel) {
+          slide.addText(designLabel, { x: 0.5, y: 5.2, w: 9, fontSize: 9.5, color: "4B5563" });
+        }
+      }
+
+      setPptBusy("Escribiendo archivo…");
+      const blob = (await pptx.write({ outputType: "blob" })) as Blob;
+      const tag = (brands.find(b => b.id === pptBrandId)?.name || "marcas")
+        .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "marcas";
+      downloadBlob(blob, `grilla-${tag}-${pptFrom || "inicio"}-a-${pptTo || "hoy"}.pptx`);
+      setPptOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPptBusy("");
+    }
+  }, [workspaceId, rows, pptFrom, pptTo, pptBrandId, brands, user, templateNameById, framesByFile]);
 
   /** Optimistic write: the cell changes before the request leaves. */
   const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
@@ -246,6 +455,15 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
           {/* Exports carry exactly what the filters left on screen. */}
           <button type="button" style={btn} onClick={() => exportAs("csv")}>⇩ CSV</button>
           <button type="button" style={btn} onClick={() => exportAs("xlsx")}>⇩ Excel</button>
+          {/* The PPT asks range and brand first — a grid is a per-client,
+              per-month artifact, and downloading "everything" would be noise. */}
+          <button type="button" style={btn} onClick={() => {
+            const mm = String(cursor.getMonth() + 1).padStart(2, "0");
+            setPptFrom(`${cursor.getFullYear()}-${mm}-01`);
+            setPptTo(isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)));
+            setPptBrandId(filters.brandId || "");
+            setPptOpen(true);
+          }}>⇩ PPT</button>
         </div>
       )}
 
@@ -360,7 +578,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
             <thead>
               <tr>
                 {["Fecha", "Hora", "Tipo", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
-                  "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", ""].map(h => (
+                  "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
                     fontWeight: 600, color: "rgba(255,255,255,0.65)", fontSize: 11.5,
@@ -444,14 +662,32 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                     })()}
                   </td>
                   <td style={{ ...CELL, minWidth: 170 }}>
-                    {/* Editable AND one click away from the editor: paste a
-                        templateId (or one an AI attached via MCP) and jump to
-                        the design without leaving the sheet. */}
+                    {/* A file picker, not an id input: "which design" is a
+                        question about names. Changing the file clears the
+                        frame — a frame id from another file would silently
+                        point at nothing. One click still jumps to the editor. */}
                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      <input value={r.template_id || ""} placeholder="ID de diseño"
-                        title="ID del diseño (templateId). El botón lo abre en el editor."
-                        style={{ ...field, width: "auto", flex: 1, fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}
-                        onChange={e => patch(r.id, { template_id: e.target.value })} />
+                      <select
+                        value={r.template_id || ""}
+                        onChange={e => {
+                          const template_id = e.target.value || null;
+                          const body: Record<string, unknown> = { template_id };
+                          if (template_id !== (r.template_id || null)) body.frame_id = null;
+                          patch(r.id, body);
+                        }}
+                        title="Archivo de diseño de esta pieza"
+                        style={{ ...control, width: "auto", flex: 1 }}
+                      >
+                        <option value="" style={{ background: "#000" }}>(sin archivo)</option>
+                        {r.template_id && !templateNameById.has(r.template_id) && (
+                          <option value={r.template_id} style={{ background: "#000" }}>
+                            {r.template_id.slice(0, 14)}… (no está en el workspace)
+                          </option>
+                        )}
+                        {files.map(f => (
+                          <option key={f.id} value={f.id} style={{ background: "#000" }}>{f.name}</option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         disabled={!r.template_id}
@@ -464,6 +700,41 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                         }}
                       >↗</button>
                     </div>
+                  </td>
+                  <td style={{ ...CELL, minWidth: 150 }}>
+                    {/* REQ-023: the exact frame inside the linked file. A grid
+                        holds several designs in ONE file; "the file" cannot
+                        say which art is this piece's. */}
+                    {(() => {
+                      const frames = r.template_id ? (framesByFile[r.template_id] || []) : [];
+                      const loading = !!r.template_id && !framesByFile[r.template_id];
+                      const known = frames.some(f => f.id === r.frame_id);
+                      return (
+                        <select
+                          value={r.frame_id || ""}
+                          disabled={!r.template_id}
+                          title={r.template_id ? "Frame exacto del archivo" : "Elige primero un archivo"}
+                          onChange={e => patch(r.id, { frame_id: e.target.value || null })}
+                          style={{
+                            ...control, width: "100%",
+                            opacity: !r.template_id ? 0.45 : 1,
+                            cursor: r.template_id ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          <option value="" style={{ background: "#000" }}>
+                            {loading ? "(cargando frames…)" : r.template_id ? "(todo el archivo)" : "—"}
+                          </option>
+                          {r.frame_id && !known && !loading && (
+                            <option value={r.frame_id} style={{ background: "#000" }}>
+                              {r.frame_id.slice(0, 14)}… (frame no encontrado)
+                            </option>
+                          )}
+                          {frames.map(f => (
+                            <option key={f.id} value={f.id} style={{ background: "#000" }}>{f.name}</option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </td>
                   <td style={CELL}>
                     <button type="button" onClick={() => removeRow(r.id)} title="Eliminar"
@@ -485,6 +756,73 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         </div>
       ) : (
         <CopyRecipesTab workspaceId={workspaceId} />
+      )}
+
+      {pptOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Exportar grilla en PPT"
+          onClick={() => { if (!pptBusy) setPptOpen(false); }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(5,7,12,0.66)", backdropFilter: "blur(2px)",
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: "min(430px, calc(100vw - 48px))",
+              background: "rgba(15,18,28,0.98)",
+              border: "1px solid rgba(99,102,241,0.35)",
+              padding: 20, fontFamily: "inherit", color: "#fff",
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Grilla en PPT</div>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", margin: "0 0 14px", lineHeight: 1.5 }}>
+              Un documento para PowerPoint y Google Slides: portada con la marca, el rango y tu
+              nombre, y un slide por pieza — copy seleccionable a la izquierda, diseño exportado
+              en PNG a la derecha. Listo para enviar al equipo que todavía no automatiza.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                Desde
+                <input type="date" value={pptFrom} onChange={e => setPptFrom(e.target.value)}
+                  aria-label="Desde"
+                  style={{ ...control, colorScheme: "dark", display: "block", marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                Hasta
+                <input type="date" value={pptTo} onChange={e => setPptTo(e.target.value)}
+                  aria-label="Hasta"
+                  style={{ ...control, colorScheme: "dark", display: "block", marginTop: 4 }} />
+              </label>
+            </div>
+            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", display: "block", marginBottom: 12 }}>
+              Marca
+              <select value={pptBrandId} onChange={e => setPptBrandId(e.target.value)}
+                aria-label="Marca de la grilla"
+                style={{ ...control, display: "block", marginTop: 4, width: "100%" }}>
+                <option value="" style={{ background: "#000" }}>Todas las marcas</option>
+                {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+              </select>
+            </label>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>
+              {pptRangeCount} {pptRangeCount === 1 ? "pieza" : "piezas"} en el rango → {pptRangeCount + 1} slides (portada incluida)
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" style={{ ...btn, opacity: pptBusy ? 0.45 : 1 }}
+                disabled={!!pptBusy} onClick={() => setPptOpen(false)}>Cancelar</button>
+              <button type="button"
+                style={{ ...btn, opacity: pptBusy || pptRangeCount === 0 ? 0.45 : 1 }}
+                disabled={!!pptBusy || pptRangeCount === 0}
+                onClick={() => void generatePpt()}>
+                {pptBusy || "⇩ Generar PPT"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

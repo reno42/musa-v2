@@ -4566,7 +4566,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_content",
-    description: "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
+    description: "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId + frameId pins the exact frame of a multi-frame grid, or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4581,7 +4581,8 @@ const MCP_TOOLS = [
         brandId: { type: "string", description: "Brand id" },
         campaign: { type: "string", description: "Campaign name" },
         adSet: { type: "string", description: "Ad set name" },
-        templateId: { type: "string", description: "Attach a design file from this workspace" },
+        templateId: { type: "string", description: "Attach a design file from this workspace (get ids from list_templates)" },
+        frameId: { type: "string", description: "Exact frame inside the templateId file — REQUIRED for grids: one file holds several designs, and the export/PPT shows this piece's art by frame. Get frame ids from get_template (frames[].id). Send an empty string to clear it. Changing templateId clears frameId automatically." },
         externalUrl: { type: "string", description: "External design link" },
         notes: { type: "string", description: "Internal notes" },
       },
@@ -4831,6 +4832,7 @@ function mapCalendarRow(r) {
     adSet: r.ad_set || null,
     brandId: r.brand_id || null,
     templateId: r.template_id || null,
+    frameId: r.frame_id || null,
     externalUrl: r.external_url || null,
     notes: r.notes || null,
     publishedAt: r.published_at || null,
@@ -8597,7 +8599,15 @@ async function handleMethod(method, params, userId, auth) {
       if (params.campaign !== undefined) patch.campaign = params.campaign ? String(params.campaign) : null;
       if (params.adSet !== undefined) patch.ad_set = params.adSet ? String(params.adSet) : null;
       if (params.brandId !== undefined) patch.brand_id = params.brandId ? String(params.brandId) : null;
-      if (params.templateId !== undefined) patch.template_id = params.templateId ? String(params.templateId) : null;
+      if (params.templateId !== undefined) {
+        patch.template_id = params.templateId ? String(params.templateId) : null;
+        // Changing the file orphans whatever frame was pinned — unless the
+        // caller pinned a new one in the same call.
+        if (params.frameId === undefined) patch.frame_id = null;
+      }
+      // REQ-023: pin the exact frame of the grid — templateId alone cannot
+      // say which of a file's designs is this piece's.
+      if (params.frameId !== undefined) patch.frame_id = params.frameId ? String(params.frameId) : null;
       if (params.externalUrl !== undefined) patch.external_url = params.externalUrl ? String(params.externalUrl) : null;
       if (params.notes !== undefined) patch.notes = params.notes ? String(params.notes) : null;
       if (Object.keys(patch).length === 0) {

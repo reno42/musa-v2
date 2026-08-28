@@ -38,6 +38,9 @@ function buildPatch(body: Record<string, any>): Record<string, any> {
   if (body.campaign !== undefined) patch.campaign = text(body.campaign);
   if (body.ad_set !== undefined) patch.ad_set = text(body.ad_set);
   if (body.template_id !== undefined) patch.template_id = text(body.template_id);
+  // REQ-023: the exact frame inside that file — a grid has several designs
+  // side by side, and "which file" alone cannot say which one is this piece.
+  if (body.frame_id !== undefined) patch.frame_id = text(body.frame_id);
   if (body.asset_id !== undefined) patch.asset_id = text(body.asset_id);
   if (body.external_url !== undefined) patch.external_url = text(body.external_url);
   if (body.permalink !== undefined) patch.permalink = text(body.permalink);
@@ -101,7 +104,25 @@ const SETUP_MESSAGE =
   + "proyecto de Supabase que usa producción y recarga el esquema "
   + "(Settings → API → Reload schema cache).";
 
-/** Wraps a handler so a missing table reads as setup, with the exact step. */
+/**
+ * PostgREST raises 42703 when the row exists but the frame_id column does
+ * not — v22 ran, v34 did not. Same shape as the missing table above: a setup
+ * step, surfaced with the exact file to run, not a 500 the user stares at.
+ */
+export function isMissingColumn(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | null;
+  if (err?.code === "42703") return true;
+  const message = String(err?.message ?? "").toLowerCase();
+  return message.includes("frame_id")
+    && (message.includes("does not exist") || message.includes("no existe"));
+}
+
+const COLUMN_SETUP_MESSAGE =
+  "Falta la columna frame_id en content_calendar. Ejecuta supabase_migrations_v34.sql "
+  + "en el proyecto de Supabase que usa producción (es idempotente, se puede "
+  + "re-ejecutar) y recarga el esquema (Settings → API → Reload schema cache).";
+
+/** Wraps a handler so a missing table or column reads as setup, with the step. */
 function withSetupCheck(fn: (req: any, res: any) => Promise<unknown>) {
   return asyncRoute(async (req: any, res: any) => {
     try {
@@ -109,6 +130,9 @@ function withSetupCheck(fn: (req: any, res: any) => Promise<unknown>) {
     } catch (err) {
       if (isMissingTable(err)) {
         return res.status(503).json({ success: false, error: SETUP_MESSAGE, setupRequired: true });
+      }
+      if (isMissingColumn(err)) {
+        return res.status(503).json({ success: false, error: COLUMN_SETUP_MESSAGE, setupRequired: true });
       }
       throw err;
     }
