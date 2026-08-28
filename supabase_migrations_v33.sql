@@ -26,13 +26,17 @@ COMMENT ON COLUMN copy_recipes.owner_id IS
   'Usuario dueño de la receta personal. NULL + is_default FALSE solo si el backfill no pudo resolver el owner.';
 
 -- 2) Backfill: lo existente pasa a ser personal del owner del workspace ──
+-- workspaces.owner_id es TEXT (herencia de las tablas de tenancy), mientras
+-- que copy_recipes.owner_id es UUID: hace falta el cast explícito. El regex
+-- guarda el cast — un owner_id malformado salta la fila en vez de romper
+-- toda la migración.
 UPDATE copy_recipes r
-SET    owner_id = w.owner_id
+SET    owner_id = w.owner_id::uuid
 FROM   workspaces w
 WHERE  r.workspace_id = w.id
   AND  r.owner_id IS NULL
   AND  NOT r.is_default
-  AND  w.owner_id IS NOT NULL;
+  AND  w.owner_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
 -- 3) Índices ──────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_crx_defaults ON copy_recipes (is_default) WHERE is_default;
