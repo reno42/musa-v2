@@ -4510,6 +4510,135 @@ const MCP_TOOLS = [
       required: [],
     },
   },
+  // ── REQ-016: Content Calendar + Copy Recipes (copywriting) ──
+  {
+    name: "list_calendar_entries",
+    description: "List content_calendar entries — the single table behind the Calendario, Contenidos and Reportes views. Filter by date window (from/to, YYYY-MM-DD), status (idea|diseño|aprobación|programado|publicado) and kind (organic|ad). Use it to see what is already planned before adding ideas, or to find entries whose copy is still empty (an idea without copy is the normal state of a raw idea).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key when omitted)" },
+        from: { type: "string", description: "Window start, YYYY-MM-DD (inclusive)" },
+        to: { type: "string", description: "Window end, YYYY-MM-DD (inclusive)" },
+        status: { type: "string", description: "Filter: idea | diseño | aprobación | programado | publicado" },
+        kind: { type: "string", description: "Filter: organic | ad" },
+        limit: { type: "number", description: "Max results (default 100, cap 500)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "add_content_idea",
+    description: "Add a content IDEA to the calendar: a content_calendar row with status='idea' and empty copy. Requires scheduledDate (YYYY-MM-DD) and topic; channels/kind/campaign/notes optional. The idea shows up in Calendario and Contenidos immediately. Draft the actual copy later with update_content, following the workspace's copy recipes (list_copy_recipes).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        scheduledDate: { type: "string", description: "Publication date, YYYY-MM-DD" },
+        scheduledTime: { type: "string", description: "Optional time, HH:MM" },
+        topic: { type: "string", description: "What the piece is about — required; an idea without a topic cannot be found later" },
+        copy: { type: "string", description: "Optional draft already written. Omit for a pure idea (empty copy is normal)." },
+        channels: { type: "array", items: { type: "string" }, description: "Target channels: instagram, facebook, tiktok…" },
+        kind: { type: "string", description: "organic (default) | ad" },
+        brandId: { type: "string", description: "Optional brand id from the workspace" },
+        campaign: { type: "string", description: "Optional campaign name" },
+        notes: { type: "string", description: "Optional internal notes" },
+      },
+      required: ["scheduledDate", "topic"],
+    },
+  },
+  {
+    name: "update_content",
+    description: "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Content entry id (cc_…)" },
+        topic: { type: "string", description: "New topic" },
+        copy: { type: "string", description: "The caption/copy itself. Draft it following the workspace copy recipes (list_copy_recipes)." },
+        status: { type: "string", description: "idea | diseño | aprobación | programado | publicado" },
+        scheduledDate: { type: "string", description: "New date, YYYY-MM-DD" },
+        scheduledTime: { type: "string", description: "New time, HH:MM (or empty)" },
+        channels: { type: "array", items: { type: "string" }, description: "Replacement channel list" },
+        kind: { type: "string", description: "organic | ad" },
+        brandId: { type: "string", description: "Brand id" },
+        campaign: { type: "string", description: "Campaign name" },
+        adSet: { type: "string", description: "Ad set name" },
+        templateId: { type: "string", description: "Attach a design file from this workspace" },
+        externalUrl: { type: "string", description: "External design link" },
+        notes: { type: "string", description: "Internal notes" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_content",
+    description: "Delete a calendar entry (idea or content) by id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Content entry id (cc_…)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "list_copy_recipes",
+    description: "List the workspace WRITING recipes: hooks, communication tones and copywriting frameworks (AIDA, PAS, StoryBrand…) saved by the user or by AIs. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Workspace (auto-resolved from the API key)" },
+        type: { type: "string", description: "Filter: hook | tono | framework | otro" },
+        search: { type: "string", description: "Search by name" },
+        limit: { type: "number", description: "Max results (default 50)" },
+        offset: { type: "number", description: "Pagination offset" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "create_copy_recipe",
+    description: "Create a writing recipe in the workspace library (type: hook | tono | framework | otro). Humans and AIs share this exact CRUD — when the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string", description: "Target workspace (auto-resolved from the API key)" },
+        type: { type: "string", description: "hook | tono | framework | otro" },
+        name: { type: "string", description: "Recipe name, e.g. 'AIDA para lanzamientos'" },
+        content: { type: "string", description: "The recipe itself: structure, rules and one worked example" },
+        tags: { type: "array", items: { type: "string" }, description: "Free-form tags: 'ecommerce', 'corto', 'urgente'…" },
+        source: { type: "string", description: "humano | ia (informational provenance; MCP calls default to ia)" },
+      },
+      required: ["type", "name", "content"],
+    },
+  },
+  {
+    name: "update_copy_recipe",
+    description: "Update an existing writing recipe (name, content, type or tags) by id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Recipe id (crx_…)" },
+        type: { type: "string", description: "hook | tono | framework | otro" },
+        name: { type: "string", description: "New name" },
+        content: { type: "string", description: "New content" },
+        tags: { type: "array", items: { type: "string" }, description: "Replacement tag list" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_copy_recipe",
+    description: "Delete a writing recipe by id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Recipe id (crx_…)" },
+      },
+      required: ["id"],
+    },
+  },
 ];
 
 // REQ-011 — Claude "Conectores" (web/escritorio) solo pide URL + nombre: no
@@ -4660,6 +4789,50 @@ async function meterWorkspaceUsage(scopedParams, id, headers) {
     }
     return null;
   } catch { return null; }
+}
+
+// ── REQ-016: Content Calendar + Copy Recipes helpers ───────────────────
+// content_calendar / copy_recipes rows are snake_case in Postgres; MCP
+// answers are camelCase like every other tool in this file.
+
+const CC_STATUSES = ["idea", "diseño", "aprobación", "programado", "publicado"];
+const CC_KINDS = ["organic", "ad"];
+const CRX_TYPES = ["hook", "tono", "framework", "otro"];
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function mapCalendarRow(r) {
+  return {
+    id: r.id,
+    scheduledDate: r.scheduled_date,
+    scheduledTime: r.scheduled_time || null,
+    topic: r.topic || "",
+    copy: r.copy || "",
+    kind: r.kind,
+    status: r.status,
+    channels: r.channels || [],
+    campaign: r.campaign || null,
+    adSet: r.ad_set || null,
+    brandId: r.brand_id || null,
+    templateId: r.template_id || null,
+    externalUrl: r.external_url || null,
+    notes: r.notes || null,
+    publishedAt: r.published_at || null,
+    updatedAt: r.updated_at,
+  };
+}
+
+function mapCopyRecipeRow(r) {
+  return {
+    id: r.id,
+    workspaceId: r.workspace_id,
+    type: r.type,
+    name: r.name,
+    content: r.content,
+    tags: r.tags || [],
+    source: r.source || "humano",
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
 }
 
 // Platform-management gate: admin key (MCP_ADMIN_KEY) or the owner of at
@@ -8231,6 +8404,233 @@ async function handleMethod(method, params, userId, auth) {
         width: recipe.template_width || 1080,
         height: recipe.template_height || 1080,
       };
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // REQ-016: Content Calendar + Copy Recipes (copywriting)
+    // Calendario/Contenidos/Reportes son tres vistas de content_calendar:
+    // una "idea" es una fila con status 'idea' y copy vacío — así aparece
+    // en la tabla sin tener contenido todavía, que es lo pedido.
+    // ═══════════════════════════════════════════════════════════
+
+    case "list_calendar_entries": {
+      const sb = getSupabase();
+      if (!sb) return { entries: [], total: 0, _note: "Supabase not configured" };
+      try {
+        let q = sb.from("content_calendar").select("*", { count: "exact" });
+        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        if (params.from) q = q.gte("scheduled_date", String(params.from));
+        if (params.to) q = q.lte("scheduled_date", String(params.to));
+        if (params.status) q = q.eq("status", String(params.status));
+        if (params.kind) q = q.eq("kind", String(params.kind));
+        q = q.order("scheduled_date", { ascending: true }).limit(Math.min(Number(params.limit) || 100, 500));
+        const { data, count, error } = await q;
+        if (error) throw error;
+        const entries = (data || []).map(mapCalendarRow);
+        return { entries, total: count || entries.length };
+      } catch (e) {
+        return { entries: [], total: 0, _error: e.message };
+      }
+    }
+
+    case "add_content_idea": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const date = String(params.scheduledDate || "");
+      if (!ISO_DATE_RE.test(date) || Number.isNaN(Date.parse(date))) {
+        throw { code: -32602, message: "scheduledDate must be a valid YYYY-MM-DD date" };
+      }
+      const topic = String(params.topic || "").trim();
+      if (!topic) throw { code: -32602, message: "topic is required — an idea without a topic cannot be found later" };
+      const row = {
+        workspace_id: params.workspaceId,
+        scheduled_date: date,
+        scheduled_time: params.scheduledTime || null,
+        topic,
+        // A pure idea ships without copy on purpose; the Contenidos sheet
+        // shows the row with an empty Copy cell until update_content fills it.
+        copy: params.copy ? String(params.copy) : null,
+        kind: CC_KINDS.includes(params.kind) ? params.kind : "organic",
+        channels: Array.isArray(params.channels)
+          ? [...new Set(params.channels.map(c => String(c).trim()).filter(Boolean))]
+          : [],
+        status: "idea",
+        campaign: params.campaign ? String(params.campaign) : null,
+        notes: params.notes ? String(params.notes) : null,
+        brand_id: params.brandId ? String(params.brandId) : null,
+      };
+      const { data, error } = await sb.from("content_calendar").insert(row).select("*").single();
+      if (error) throw { code: -32000, message: `content_calendar insert failed: ${error.message} (¿ejecutaste supabase_migrations_v22.sql?)` };
+      return {
+        ...mapCalendarRow(data),
+        _note: "Idea creada con status 'idea' y copy vacío. Para redactar: list_copy_recipes → update_content con el copy final.",
+      };
+    }
+
+    case "update_content": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("content_calendar")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing) throw { code: -32000, message: `Content not found: ${params.id}` };
+      // Same anti-cross-tenant shape as get_recipe: a foreign id reads as
+      // "not found", never as someone else's row.
+      if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Content not found: ${params.id}` };
+      }
+
+      const patch = {};
+      if (params.topic !== undefined) patch.topic = String(params.topic).trim() || null;
+      if (params.copy !== undefined) patch.copy = String(params.copy);
+      if (params.scheduledDate !== undefined) {
+        const date = String(params.scheduledDate || "");
+        if (!ISO_DATE_RE.test(date) || Number.isNaN(Date.parse(date))) {
+          throw { code: -32602, message: "scheduledDate must be a valid YYYY-MM-DD date" };
+        }
+        patch.scheduled_date = date;
+      }
+      if (params.scheduledTime !== undefined) patch.scheduled_time = params.scheduledTime || null;
+      if (params.status !== undefined) {
+        const status = String(params.status || "").trim();
+        if (!CC_STATUSES.includes(status)) {
+          throw { code: -32602, message: `status must be one of: ${CC_STATUSES.join(", ")}` };
+        }
+        patch.status = status;
+      }
+      if (params.kind !== undefined) {
+        const kind = String(params.kind || "").trim();
+        if (!CC_KINDS.includes(kind)) throw { code: -32602, message: "kind must be organic or ad" };
+        patch.kind = kind;
+      }
+      if (params.channels !== undefined) {
+        patch.channels = Array.isArray(params.channels)
+          ? [...new Set(params.channels.map(c => String(c).trim()).filter(Boolean))]
+          : [];
+      }
+      if (params.campaign !== undefined) patch.campaign = params.campaign ? String(params.campaign) : null;
+      if (params.adSet !== undefined) patch.ad_set = params.adSet ? String(params.adSet) : null;
+      if (params.brandId !== undefined) patch.brand_id = params.brandId ? String(params.brandId) : null;
+      if (params.templateId !== undefined) patch.template_id = params.templateId ? String(params.templateId) : null;
+      if (params.externalUrl !== undefined) patch.external_url = params.externalUrl ? String(params.externalUrl) : null;
+      if (params.notes !== undefined) patch.notes = params.notes ? String(params.notes) : null;
+      if (Object.keys(patch).length === 0) {
+        throw { code: -32602, message: "Nothing to update — provide at least one field" };
+      }
+      patch.updated_at = new Date().toISOString();
+      const { data, error } = await sb.from("content_calendar")
+        .update(patch).eq("id", params.id).select("*").single();
+      if (error) throw { code: -32000, message: error.message };
+      return mapCalendarRow(data);
+    }
+
+    case "delete_content": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("content_calendar")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing) throw { code: -32000, message: `Content not found: ${params.id}` };
+      if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Content not found: ${params.id}` };
+      }
+      const { error } = await sb.from("content_calendar").delete().eq("id", params.id);
+      if (error) throw { code: -32000, message: error.message };
+      return { deleted: true, id: params.id };
+    }
+
+    case "list_copy_recipes": {
+      const sb = getSupabase();
+      if (!sb) return { recipes: [], total: 0, _note: "Supabase not configured" };
+      try {
+        let q = sb.from("copy_recipes").select("*", { count: "exact" });
+        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        if (params.type) q = q.eq("type", String(params.type));
+        if (params.search) q = q.ilike("name", `%${params.search}%`);
+        q = q.order("updated_at", { ascending: false });
+        q = q.range(Number(params.offset) || 0, (Number(params.offset) || 0) + (Number(params.limit) || 50) - 1);
+        const { data, count, error } = await q;
+        if (error) throw error;
+        const recipes = (data || []).map(mapCopyRecipeRow);
+        return { recipes, total: count || recipes.length };
+      } catch (e) {
+        return { recipes: [], total: 0, _error: e.message };
+      }
+    }
+
+    case "create_copy_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
+      const name = String(params.name || "").trim();
+      const content = String(params.content || "").trim();
+      if (!name || !content) throw { code: -32602, message: "name and content are required" };
+      const row = {
+        workspace_id: params.workspaceId,
+        type: CRX_TYPES.includes(params.type) ? params.type : "otro",
+        name, content,
+        tags: Array.isArray(params.tags)
+          ? [...new Set(params.tags.map(t => String(t).trim()).filter(Boolean))]
+          : [],
+        source: params.source === "humano" ? "humano" : "ia",
+      };
+      const { data, error } = await sb.from("copy_recipes").insert(row).select("*").single();
+      if (error) throw { code: -32000, message: `copy_recipes insert failed: ${error.message} (¿ejecutaste supabase_migrations_v32.sql?)` };
+      return mapCopyRecipeRow(data);
+    }
+
+    case "update_copy_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("copy_recipes")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing) throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      }
+
+      const patch = {};
+      if (params.type !== undefined) patch.type = CRX_TYPES.includes(params.type) ? params.type : "otro";
+      if (params.name !== undefined) {
+        const name = String(params.name || "").trim();
+        if (!name) throw { code: -32602, message: "name cannot be empty" };
+        patch.name = name;
+      }
+      if (params.content !== undefined) {
+        const content = String(params.content || "").trim();
+        if (!content) throw { code: -32602, message: "content cannot be empty" };
+        patch.content = content;
+      }
+      if (params.tags !== undefined) {
+        patch.tags = Array.isArray(params.tags)
+          ? [...new Set(params.tags.map(t => String(t).trim()).filter(Boolean))]
+          : [];
+      }
+      if (Object.keys(patch).length === 0) {
+        throw { code: -32602, message: "Nothing to update — provide at least one field" };
+      }
+      patch.updated_at = new Date().toISOString();
+      const { data, error } = await sb.from("copy_recipes")
+        .update(patch).eq("id", params.id).select("*").single();
+      if (error) throw { code: -32000, message: error.message };
+      return mapCopyRecipeRow(data);
+    }
+
+    case "delete_copy_recipe": {
+      const sb = getSupabase();
+      if (!sb) throw { code: -32000, message: "Supabase not configured" };
+      const { data: existing, error: readError } = await sb.from("copy_recipes")
+        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+      if (readError) throw { code: -32000, message: readError.message };
+      if (!existing) throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      }
+      const { error } = await sb.from("copy_recipes").delete().eq("id", params.id);
+      if (error) throw { code: -32000, message: error.message };
+      return { deleted: true, id: params.id };
     }
 
     // ═══════════════════════════════════════════════════════════

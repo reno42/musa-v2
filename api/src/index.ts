@@ -29,6 +29,7 @@ import { getBrandGraph } from "./routes/brandGraph.js";
 import { storageRoutes } from "./routes/storage.js";
 import { segmentationRoutes } from "./routes/segmentation.js";
 import { contentRoutes } from "./routes/contentCalendar.js";
+import { copyRecipeRoutes } from "./routes/copyRecipes.js";
 import { chatRoutes } from "./routes/chatHistory.js";
 import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
@@ -160,6 +161,7 @@ app.get("/api/graph", getDesignGraph);
 app.get("/api/brand-graph", getBrandGraph);
 
 app.use("/api/content", contentRoutes);
+app.use("/api/copy-recipes", copyRecipeRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);

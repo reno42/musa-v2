@@ -7854,5 +7854,304 @@
       },
       "required": []
     }
+  },
+  {
+    "name": "list_calendar_entries",
+    "description": "List content_calendar entries — the single table behind the Calendario, Contenidos and Reportes views. Filter by date window (from/to, YYYY-MM-DD), status (idea|diseño|aprobación|programado|publicado) and kind (organic|ad). Use it to see what is already planned before adding ideas, or to find entries whose copy is still empty (an idea without copy is the normal state of a raw idea).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key when omitted)"
+        },
+        "from": {
+          "type": "string",
+          "description": "Window start, YYYY-MM-DD (inclusive)"
+        },
+        "to": {
+          "type": "string",
+          "description": "Window end, YYYY-MM-DD (inclusive)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Filter: idea | diseño | aprobación | programado | publicado"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Filter: organic | ad"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 100, cap 500)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "add_content_idea",
+    "description": "Add a content IDEA to the calendar: a content_calendar row with status='idea' and empty copy. Requires scheduledDate (YYYY-MM-DD) and topic; channels/kind/campaign/notes optional. The idea shows up in Calendario and Contenidos immediately. Draft the actual copy later with update_content, following the workspace's copy recipes (list_copy_recipes).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "scheduledDate": {
+          "type": "string",
+          "description": "Publication date, YYYY-MM-DD"
+        },
+        "scheduledTime": {
+          "type": "string",
+          "description": "Optional time, HH:MM"
+        },
+        "topic": {
+          "type": "string",
+          "description": "What the piece is about — required; an idea without a topic cannot be found later"
+        },
+        "copy": {
+          "type": "string",
+          "description": "Optional draft already written. Omit for a pure idea (empty copy is normal)."
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Target channels: instagram, facebook, tiktok…"
+        },
+        "kind": {
+          "type": "string",
+          "description": "organic (default) | ad"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Optional brand id from the workspace"
+        },
+        "campaign": {
+          "type": "string",
+          "description": "Optional campaign name"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional internal notes"
+        }
+      },
+      "required": [
+        "scheduledDate",
+        "topic"
+      ]
+    }
+  },
+  {
+    "name": "update_content",
+    "description": "Update a calendar entry by id: write the copy, change topic/date/time/channels/campaign, attach a design (templateId or externalUrl) or move the status along idea → diseño → aprobación → programado → publicado. Writing copy is what turns a raw idea into drafted content; an empty copy string clears the draft back to a bare idea.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Content entry id (cc_…)"
+        },
+        "topic": {
+          "type": "string",
+          "description": "New topic"
+        },
+        "copy": {
+          "type": "string",
+          "description": "The caption/copy itself. Draft it following the workspace copy recipes (list_copy_recipes)."
+        },
+        "status": {
+          "type": "string",
+          "description": "idea | diseño | aprobación | programado | publicado"
+        },
+        "scheduledDate": {
+          "type": "string",
+          "description": "New date, YYYY-MM-DD"
+        },
+        "scheduledTime": {
+          "type": "string",
+          "description": "New time, HH:MM (or empty)"
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Replacement channel list"
+        },
+        "kind": {
+          "type": "string",
+          "description": "organic | ad"
+        },
+        "brandId": {
+          "type": "string",
+          "description": "Brand id"
+        },
+        "campaign": {
+          "type": "string",
+          "description": "Campaign name"
+        },
+        "adSet": {
+          "type": "string",
+          "description": "Ad set name"
+        },
+        "templateId": {
+          "type": "string",
+          "description": "Attach a design file from this workspace"
+        },
+        "externalUrl": {
+          "type": "string",
+          "description": "External design link"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Internal notes"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "delete_content",
+    "description": "Delete a calendar entry (idea or content) by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Content entry id (cc_…)"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "list_copy_recipes",
+    "description": "List the workspace WRITING recipes: hooks, communication tones and copywriting frameworks (AIDA, PAS, StoryBrand…) saved by the user or by AIs. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace (auto-resolved from the API key)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Filter: hook | tono | framework | otro"
+        },
+        "search": {
+          "type": "string",
+          "description": "Search by name"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 50)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Pagination offset"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "create_copy_recipe",
+    "description": "Create a writing recipe in the workspace library (type: hook | tono | framework | otro). Humans and AIs share this exact CRUD — when the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Target workspace (auto-resolved from the API key)"
+        },
+        "type": {
+          "type": "string",
+          "description": "hook | tono | framework | otro"
+        },
+        "name": {
+          "type": "string",
+          "description": "Recipe name, e.g. 'AIDA para lanzamientos'"
+        },
+        "content": {
+          "type": "string",
+          "description": "The recipe itself: structure, rules and one worked example"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Free-form tags: 'ecommerce', 'corto', 'urgente'…"
+        },
+        "source": {
+          "type": "string",
+          "description": "humano | ia (informational provenance; MCP calls default to ia)"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "update_copy_recipe",
+    "description": "Update an existing writing recipe (name, content, type or tags) by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Recipe id (crx_…)"
+        },
+        "type": {
+          "type": "string",
+          "description": "hook | tono | framework | otro"
+        },
+        "name": {
+          "type": "string",
+          "description": "New name"
+        },
+        "content": {
+          "type": "string",
+          "description": "New content"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Replacement tag list"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "delete_copy_recipe",
+    "description": "Delete a writing recipe by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Recipe id (crx_…)"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
   }
 ]

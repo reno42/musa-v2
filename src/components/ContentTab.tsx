@@ -20,8 +20,9 @@ import {
   toCSVExport, toExcelXml, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
 import { TextsTab } from "./TextsTab";
+import { CopyRecipesTab } from "./CopyRecipesTab";
 
-type Pane = "calendar" | "sheet" | "reports" | "copies";
+type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes";
 
 interface Props {
   workspaceId: string | null;
@@ -184,15 +185,16 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
         <Tab active={pane === "sheet"} onClick={() => setPane("sheet")}>Contenidos</Tab>
         <Tab active={pane === "reports"} onClick={() => setPane("reports")}>Reportes</Tab>
         <Tab active={pane === "copies"} onClick={() => setPane("copies")}>Copys</Tab>
+        <Tab active={pane === "recipes"} onClick={() => setPane("recipes")}>Recetas</Tab>
         <div style={{ flex: 1 }} />
-        {pane !== "copies" && (
+        {pane !== "copies" && pane !== "recipes" && (
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
             {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
           </span>
         )}
       </div>
 
-      {pane !== "copies" && (
+      {pane !== "copies" && pane !== "recipes" && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
           padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
@@ -243,7 +245,7 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
         </div>
       )}
 
-      {loading && pane !== "copies" ? (
+      {loading && pane !== "copies" && pane !== "recipes" ? (
         <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando…</div>
       ) : pane === "calendar" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -423,10 +425,12 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
         </div>
       ) : pane === "reports" ? (
         <ReportsPane rows={visible} filters={filters} onExport={exportAs} />
-      ) : (
+      ) : pane === "copies" ? (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
         </div>
+      ) : (
+        <CopyRecipesTab workspaceId={workspaceId} />
       )}
     </div>
   );
