@@ -72,7 +72,7 @@
   },
   {
     "name": "create_template",
-    "description": "Create a new design template in a workspace. ALWAYS pass engine='html'. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead — it auto-parses the document and handles everything in one call. For editable component designs, create the empty template and call set_frame_layers. Returns template with .id and .frames[0].id.",
+    "description": "Create a new design template in a workspace. ALWAYS pass engine='html' and width/height matching the target format (e.g. 1080x1350 Instagram portrait) — the first frame is created at exactly those dimensions. Pass initialFrame:false to create the file with ZERO frames, then add the first frame via create_html_frame (accepts width/height) or set_frame_layers — no need to create-and-delete a wrong-sized frame. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead. For editable component designs, create the empty template (initialFrame:false) and call set_frame_layers. Returns template with .id and .frames[0].id (null when initialFrame:false).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -98,6 +98,10 @@
             "html"
           ],
           "description": "Rendering engine (default 'html'). Use 'html' for code-based designs."
+        },
+        "initialFrame": {
+          "type": "boolean",
+          "description": "Default true creates one frame sized width×height. Set false to create the file with ZERO frames (valid state) and add the first frame with create_html_frame at exact dimensions — avoids wasting tokens on a delete+recreate cycle."
         },
         "html": {
           "type": "string",
@@ -704,7 +708,7 @@
   },
   {
     "name": "delete_frame",
-    "description": "Delete a frame and all its contained objects",
+    "description": "Delete a frame and all its contained objects. Deleting the LAST frame is allowed — files may exist with zero frames (REQ-022); add a new one anytime with create_html_frame/create_frame at exact dimensions.",
     "inputSchema": {
       "type": "object",
       "properties": {

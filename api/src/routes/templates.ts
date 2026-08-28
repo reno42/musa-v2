@@ -45,6 +45,9 @@ export const templateRoutes = Router();
  * @body {number} [width=1080]    Canvas width in pixels
  * @body {number} [height=1080]   Canvas height in pixels
  * @body {object} [canvas]        Canvas JSON for import (V2: use html/css/frames instead)
+ * @body {boolean} [initialFrame=true] With engine='html': false creates the file
+ *                                    with ZERO frames (REQ-022) — the client then
+ *                                    adds the first frame at exact dimensions.
  *
  * @returns {201} { success, data: DesignTemplate }
  * @returns {400} Validation error
@@ -53,7 +56,7 @@ export const templateRoutes = Router();
  */
 templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
   try {
-    const { name, width, height, canvas, workspaceId, engine, html, css } = req.body;
+    const { name, width, height, canvas, workspaceId, engine, html, css, initialFrame } = req.body;
     if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
       return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
     }
@@ -61,8 +64,10 @@ templateRoutes.post("/", validate(createTemplateSchema), async (req, res) => {
     if (!tpl.id) {
       return res.status(500).json({ success: false, error: "Template creation failed: no ID returned" });
     }
-    // HTML engine: create initial frame with content (consistent with MCP handler)
-    if (engine === "html") {
+    // HTML engine: create initial frame with content (consistent with MCP handler).
+    // REQ-022: initialFrame=false skips it — a zero-frame file is valid; the
+    // store already initializes frames to [].
+    if (engine === "html" && initialFrame !== false) {
       tpl.engine = "html";
       tpl.html = html || "";
       tpl.css = css || "";

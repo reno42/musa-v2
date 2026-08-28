@@ -247,12 +247,25 @@ function App(): JSX.Element {
     };
   }, [authConfigured, authLoading, authRequired, route, user]);
 
-  const handleCreateHtmlTemplate = async (workspaceId: string, name: string) => {
+  const handleCreateHtmlTemplate = async (
+    workspaceId: string,
+    name: string,
+    opts?: { width?: number; height?: number; initialFrame?: boolean },
+  ) => {
     try {
       const response = await fetch("/api/templates", {
         method: "POST",
         headers: getApiHeaders(),
-        body: JSON.stringify({ workspaceId, name, width: 1080, height: 1080, engine: "html" }),
+        // REQ-022: forward the popup's choice — custom dimensions for the first
+        // frame, or initialFrame:false for a zero-frame file.
+        body: JSON.stringify({
+          workspaceId,
+          name,
+          width: opts?.width ?? 1080,
+          height: opts?.height ?? 1080,
+          engine: "html",
+          initialFrame: opts?.initialFrame !== false,
+        }),
       });
       const payload = await response.json();
       if (payload.success && payload.data) {

@@ -40,6 +40,9 @@ export const createTemplateSchema = z.object({
   engine: z.enum(["html"]).optional(),
   html: z.string().optional(),
   css: z.string().optional(),
+  // REQ-022: false → create the file with ZERO frames (the caller adds the
+  // first frame at exact dimensions). Default behavior is unchanged.
+  initialFrame: z.boolean().optional(),
 });
 
 export const updateTemplateSchema = z.object({

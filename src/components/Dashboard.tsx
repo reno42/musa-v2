@@ -27,6 +27,7 @@ import { WorkspaceConsole } from "./WorkspaceConsole";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
 import { planOptions, type PlanId } from "../lib/ndaContent";
+import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, EMPTY_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
 
 interface Template {
   id: string;
@@ -70,7 +71,13 @@ interface Brand {
 
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
-  onCreateHtmlTemplate: (workspaceId: string, name: string) => void;
+  /** REQ-022: opts carries the first frame's dimensions, or initialFrame:false
+   *  for a zero-frame file. Omitted opts keep the old 1080×1080 behavior. */
+  onCreateHtmlTemplate: (
+    workspaceId: string,
+    name: string,
+    opts?: { width?: number; height?: number; initialFrame?: boolean },
+  ) => void;
 }
 
 const API_BASE = "/api";
@@ -143,6 +150,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [editingTplName, setEditingTplName] = useState("");
   const [creatingTpl, setCreatingTpl] = useState(false);
   const [newTplName, setNewTplName] = useState("");
+  // REQ-022 — new-file popup: format preset, custom dimensions, or a zero-frame start.
+  const [newTplFormat, setNewTplFormat] = useState(SOCIAL_FORMATS[0]?.id ?? CUSTOM_FORMAT_ID);
+  const [newTplW, setNewTplW] = useState(String(SOCIAL_FORMATS[0]?.width ?? 1080));
+  const [newTplH, setNewTplH] = useState(String(SOCIAL_FORMATS[0]?.height ?? 1080));
   // The active tab lives in the URL hash (#workspace/<tab>), so a refresh
   // comes back to the same tab instead of resetting to Archivos — the editor
   // already survived a refresh because it carries ?template=<id>, and this
@@ -948,13 +959,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setEditingTplId(null);
   };
 
-  const handleCreateWithName = async () => {
+  const handleCreateWithName = () => {
     if (!activeWorkspaceId) return;
     const name = newTplName.trim() || "Untitled";
+    const opts = newTplFormat === EMPTY_FORMAT_ID
+      ? { initialFrame: false }
+      : { width: clampFrameDimension(newTplW), height: clampFrameDimension(newTplH) };
     setCreatingTpl(false);
     setNewTplName("");
-    onCreateHtmlTemplate(activeWorkspaceId, name);
+    onCreateHtmlTemplate(activeWorkspaceId, name, opts);
   };
+
+  const resetNewTplForm = useCallback(() => {
+    setNewTplFormat(SOCIAL_FORMATS[0]?.id ?? CUSTOM_FORMAT_ID);
+    setNewTplW(String(SOCIAL_FORMATS[0]?.width ?? 1080));
+    setNewTplH(String(SOCIAL_FORMATS[0]?.height ?? 1080));
+    setNewTplName("");
+  }, []);
 
   /* Snapshot all templates: rasterize each frame (see frameCapture.ts — replaced
      html2canvas, which never supported CSS filters and dropped body/html rules
@@ -1571,54 +1592,154 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Perennial create (v27): this button is always here. The old
               "+ New Template" only lived inside the empty state, so once you
               had files there was NO human way to create another one. */}
-          {creatingTpl ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                ref={newTplInputRef}
-                value={newTplName}
-                onChange={e => setNewTplName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter") handleCreateWithName();
-                  if (e.key === "Escape") { setCreatingTpl(false); setNewTplName(""); }
-                }}
-                placeholder="Nombre del archivo…"
-                aria-label="Nombre del nuevo archivo"
-                autoFocus
-                style={{
-                  padding: "6px 12px", borderRadius: 8, fontSize: 12, width: 200,
-                  background: "rgba(15,18,28,0.95)", border: "1px solid rgba(99,102,241,0.5)",
-                  color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
-                }}
-              />
-              <button type="button" onClick={handleCreateWithName}
-                style={{
-                  padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-                  background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)",
-                  color: "#fff", fontFamily: "inherit", whiteSpace: "nowrap",
-                }}>
-                Crear
-              </button>
-              <button type="button" onClick={() => { setCreatingTpl(false); setNewTplName(""); }}
-                style={{
-                  padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-                  background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
-                  color: "rgba(255,255,255,0.55)", fontFamily: "inherit", whiteSpace: "nowrap",
-                }}>
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <button type="button" onClick={() => setCreatingTpl(true)}
-              title="Crear un nuevo archivo de diseño"
+          {/* REQ-022 — the inline name-only input became a popup: it asks for
+              the first frame's format (social presets, custom, or zero frames)
+              so the file is born with the right size instead of a surprise
+              1080×1080 that the user must delete. Rendered as a fixed overlay;
+              position in the tree is irrelevant. */}
+          {creatingTpl && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Nuevo archivo de diseño"
+              onKeyDown={e => { if (e.key === "Escape") { setCreatingTpl(false); resetNewTplForm(); } }}
+              onClick={() => { setCreatingTpl(false); resetNewTplForm(); }}
               style={{
-                display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                background: "rgba(99,102,241,0.22)", border: "1px solid rgba(99,102,241,0.5)",
-                color: "#fff", fontFamily: "inherit",
-              }}>
-              <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>+</span> Nuevo archivo
-            </button>
+                position: "fixed", inset: 0, zIndex: 1000,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "rgba(5,7,12,0.66)", backdropFilter: "blur(6px)",
+                fontFamily: "inherit",
+              }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  width: "min(430px, calc(100vw - 48px))",
+                  borderRadius: 16, padding: "22px 24px",
+                  background: "rgba(15,18,28,0.98)",
+                  border: "1px solid rgba(99,102,241,0.35)",
+                  boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Nuevo archivo</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 16 }}>
+                  Elige el formato del primer frame. Podrás agregar o borrar frames después, incluso dejar el archivo vacío.
+                </div>
+
+                <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                  Nombre
+                </label>
+                <input
+                  ref={newTplInputRef}
+                  value={newTplName}
+                  onChange={e => setNewTplName(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleCreateWithName(); }}
+                  placeholder="Nombre del archivo… (Enter para crear)"
+                  aria-label="Nombre del nuevo archivo"
+                  autoFocus
+                  style={{
+                    width: "100%", boxSizing: "border-box", marginBottom: 14,
+                    padding: "8px 12px", borderRadius: 8, fontSize: 13,
+                    background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                    color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                  }}
+                />
+
+                <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                  Formato del primer frame
+                </label>
+                <select
+                  value={newTplFormat}
+                  onChange={e => {
+                    const id = e.target.value;
+                    const preset = SOCIAL_FORMATS.find(f => f.id === id);
+                    setNewTplFormat(id);
+                    if (preset) {
+                      setNewTplW(String(preset.width));
+                      setNewTplH(String(preset.height));
+                    }
+                  }}
+                  aria-label="Formato del primer frame"
+                  style={{
+                    width: "100%", boxSizing: "border-box", marginBottom: 14,
+                    padding: "8px 12px", borderRadius: 8, fontSize: 13, cursor: "pointer",
+                    background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                    color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                  }}
+                >
+                  {SOCIAL_FORMATS.map(f => (
+                    <option key={f.id} value={f.id}>{f.label} — {f.width}×{f.height}</option>
+                  ))}
+                  <option value={CUSTOM_FORMAT_ID}>Personalizado…</option>
+                  <option value={EMPTY_FORMAT_ID}>Empezar en blanco (sin frames)</option>
+                </select>
+
+                {newTplFormat !== EMPTY_FORMAT_ID && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
+                    <input
+                      type="number" min={1} max={10000}
+                      value={newTplW}
+                      onChange={e => {
+                        setNewTplW(e.target.value);
+                        if (newTplFormat !== CUSTOM_FORMAT_ID) setNewTplFormat(CUSTOM_FORMAT_ID);
+                      }}
+                      aria-label="Ancho del primer frame en píxeles"
+                      style={{
+                        width: 90, padding: "8px 10px", borderRadius: 8, fontSize: 13,
+                        background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                        color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                      }}
+                    />
+                    <span aria-hidden="true" style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>×</span>
+                    <input
+                      type="number" min={1} max={10000}
+                      value={newTplH}
+                      onChange={e => {
+                        setNewTplH(e.target.value);
+                        if (newTplFormat !== CUSTOM_FORMAT_ID) setNewTplFormat(CUSTOM_FORMAT_ID);
+                      }}
+                      aria-label="Alto del primer frame en píxeles"
+                      style={{
+                        width: 90, padding: "8px 10px", borderRadius: 8, fontSize: 13,
+                        background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                        color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                      }}
+                    />
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 4 }}>px</span>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button type="button" onClick={() => { setCreatingTpl(false); resetNewTplForm(); }}
+                    style={{
+                      padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                      background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
+                      color: "rgba(255,255,255,0.55)", fontFamily: "inherit", whiteSpace: "nowrap",
+                    }}>
+                    Cancelar
+                  </button>
+                  <button type="button" onClick={handleCreateWithName}
+                    style={{
+                      padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)",
+                      color: "#fff", fontFamily: "inherit", whiteSpace: "nowrap",
+                    }}>
+                    Crear archivo
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
+          <button type="button" onClick={() => { resetNewTplForm(); setCreatingTpl(true); }}
+            title="Crear un nuevo archivo de diseño"
+            style={{
+              display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              background: "rgba(99,102,241,0.22)", border: "1px solid rgba(99,102,241,0.5)",
+              color: "#fff", fontFamily: "inherit",
+            }}>
+            <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>+</span> Nuevo archivo
+          </button>
 
           {/* Zoom slider */}
           <label style={{

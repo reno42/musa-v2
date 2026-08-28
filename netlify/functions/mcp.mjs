@@ -1221,7 +1221,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_template",
-    description: "Create a new design template in a workspace. ALWAYS pass engine='html'. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead — it auto-parses the document and handles everything in one call. For editable component designs, create the empty template and call set_frame_layers. Returns template with .id and .frames[0].id.",
+    description: "Create a new design template in a workspace. ALWAYS pass engine='html' and width/height matching the target format (e.g. 1080x1350 Instagram portrait) — the first frame is created at exactly those dimensions. Pass initialFrame:false to create the file with ZERO frames, then add the first frame via create_html_frame (accepts width/height) or set_frame_layers — no need to create-and-delete a wrong-sized frame. For designs from Gemini/ChatGPT/Claude (complete HTML+CSS), use import_design instead. For editable component designs, create the empty template (initialFrame:false) and call set_frame_layers. Returns template with .id and .frames[0].id (null when initialFrame:false).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1230,6 +1230,7 @@ const MCP_TOOLS = [
         width: { type: "number", description: "Canvas width in pixels (default 1080)" },
         height: { type: "number", description: "Canvas height in pixels (default 1080)" },
         engine: { type: "string", enum: ["html"], description: "Rendering engine (default 'html'). Use 'html' for code-based designs." },
+        initialFrame: { type: "boolean", description: "Default true creates one frame sized width×height. Set false to create the file with ZERO frames (valid state) and add the first frame with create_html_frame at exact dimensions — avoids wasting tokens on a delete+recreate cycle." },
         html: { type: "string", description: "Initial HTML content (HTML engine only). If provided, body { width/height } in CSS will be auto-synced to match width/height parameters." },
         css: { type: "string", description: "Initial CSS styles (HTML engine only). body dimensions are auto-corrected to match width/height params — no need to manually set them." },
         allowGroupedLayers: { type: "boolean", description: "Set true only when groups/components are intentional. Default false rejects grouped raw HTML." },
@@ -1542,7 +1543,7 @@ const MCP_TOOLS = [
   },
   {
     name: "delete_frame",
-    description: "Delete a frame and all its contained objects",
+    description: "Delete a frame and all its contained objects. Deleting the LAST frame is allowed — files may exist with zero frames (REQ-022); add a new one anytime with create_html_frame/create_frame at exact dimensions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5479,17 +5480,24 @@ async function handleMethod(method, params, userId, auth) {
         }
         tpl.html = params.html || "";
         tpl.css = syncedCss;
-        // Create a default frame with the template dimensions
-        const defaultFrame = {
-          id: `frame_${uuid().slice(0, 12)}`,
-          name: tplName,
-          x: 0, y: 0,
-          width: tplWidth, height: tplHeight,
-          html: params.html || "",
-          css: syncedCss,
-          background: undefined,
-        };
-        tpl.frames = [defaultFrame];
+        if (params.initialFrame === false) {
+          // REQ-022: zero-frame start is a valid state — the agent creates the
+          // first frame with create_html_frame at exact dimensions instead of
+          // creating a default 1080x1080 frame only to delete it right after.
+          tpl.frames = [];
+        } else {
+          // Create a default frame with the template dimensions
+          const defaultFrame = {
+            id: `frame_${uuid().slice(0, 12)}`,
+            name: tplName,
+            x: 0, y: 0,
+            width: tplWidth, height: tplHeight,
+            html: params.html || "",
+            css: syncedCss,
+            background: undefined,
+          };
+          tpl.frames = [defaultFrame];
+        }
         // CRITICAL FIX: persist engine/html/css/frames — previously missing!
         // Also verify persistence succeeded — return an error if the DB write failed.
         const persisted = await templates.updateTemplate(tpl.id, {

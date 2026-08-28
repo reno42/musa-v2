@@ -18,6 +18,7 @@ import type { Guide, ColumnConfig } from "../components/CanvasGuides";
 import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
+import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
 import { HtmlContextualPanel } from "../components/HtmlContextualPanel";
 import { AnimationPanel } from "../components/AnimationPanel";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
@@ -684,6 +685,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [canvasObjects, setCanvasObjects] = useState<HtmlCanvasObject[]>([]);
   const canvasObjectsRef = useRef(canvasObjects);
   canvasObjectsRef.current = canvasObjects;
+  // ── REQ-022 zero-frame empty state: same social-format picker as the
+  // dashboard's new-file popup, so recovering from an empty file offers the
+  // exact dimensions instead of dragging a mystery box. ──
+  const [emptyFormatId, setEmptyFormatId] = useState(SOCIAL_FORMATS[0]?.id ?? CUSTOM_FORMAT_ID);
+  const [emptyW, setEmptyW] = useState(String(SOCIAL_FORMATS[0]?.width ?? 1080));
+  const [emptyH, setEmptyH] = useState(String(SOCIAL_FORMATS[0]?.height ?? 1080));
   const [showSvgImport, setShowSvgImport] = useState(false);
 
   // ── Comments (Supabase design_comments) + public/private share toggle ──
@@ -772,8 +779,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         setTemplateName(t.name || "Untitled");
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
 
-        // Multi-frame support: if template has frames[], use them
-        if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
+        // Multi-frame support: frames[] is the source of truth. An EMPTY array
+        // is a valid zero-frame file (REQ-022) — loading it must not resurrect
+        // a phantom 1080×1080 frame. Only templates WITHOUT the key fall back
+        // to the legacy single-frame shape.
+        if (t.frames && Array.isArray(t.frames)) {
           const loaded: FrameData[] = t.frames.map((f: any, i: number) => {
             // Legacy designs repeat data-layer-id across elements; normalize
             // before anything addresses a layer by id (see dedupeLayerIds).
@@ -1261,9 +1271,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   store.replaceAll(t.frames as FrameData[]);
                   for (const rf of t.frames as FrameData[]) autoUngroupIncomingFrame(rf.id);
                 }
-              } else if (framesRef.current.length > 0 && (!t.frames || t.frames.length === 0)) {
-                // Remote has no frames but we do → re-save our frames as recovery
-                autoSave(framesRef.current);
+              } else if (Array.isArray(t.frames) && t.frames.length === 0 && framesRef.current.length > 0) {
+                // REQ-022: a saved zero-frame file is legitimate (the last frame
+                // was deleted in another session or via MCP). We only poll when
+                // not dirty, so accept the remote state instead of resurrecting
+                // the deleted frames.
+                store.replaceAll([]);
+                setSelectedFrameId(null);
+                setSelectedFrameIds(new Set());
               } else if (t.html !== undefined || t.css !== undefined) {
                 const _pf = store.frames as FrameData[];
                 store.replaceAll(_pf.map(f =>
@@ -1702,7 +1717,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const deleteFrames = useCallback((frameIds: Set<string>): boolean => {
     if (frameIds.size === 0) return false;
     const updated = frames.filter(frame => !frameIds.has(frame.id));
-    if (updated.length === 0 || updated.length === frames.length) return false;
+    // REQ-022: zero frames is a valid state — deleting the last frame is
+    // allowed; the canvas then shows the add-frame empty state. The only
+    // failure left is "nothing was actually deleted".
+    if (updated.length === frames.length) return false;
 
     store.replaceAllWithUndo(updated, "edit");
     setSelectedFrameId(updated[0]?.id ?? null);
@@ -2943,7 +2961,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
     const frameIds = new Set(clipboard.frames.map(frame => frame.id));
     if (!deleteFrames(frameIds)) {
-      addToast("El diseño debe conservar al menos un frame.", "error");
+      addToast("No se pudo cortar la selección.", "error");
       return;
     }
     persistDesignClipboard(clipboard);
@@ -7395,6 +7413,106 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onCommentDelete={handleDeleteComment}
             onCommentToKanban={handleCommentToKanban}
           />
+          {/* REQ-022 — zero-frame empty state: deleting the last frame is a
+              valid place to be, not a dead end. This card keeps the file
+              usable by offering the first frame's dimensions directly. */}
+          {frames.length === 0 && !loading && !error && (
+            <div
+              aria-label="Archivo sin frames"
+              style={{
+                position: "absolute", inset: 0, zIndex: 6,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex", flexDirection: "column", gap: 10,
+                  width: 300, padding: "22px 24px", borderRadius: 16,
+                  background: "rgba(13,16,26,0.92)",
+                  border: "1px solid rgba(99,102,241,0.35)",
+                  boxShadow: "0 24px 64px rgba(0,0,0,0.45)",
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Este archivo está vacío</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 2 }}>
+                  Agrega el primer frame con el formato que necesitas.
+                </div>
+                <select
+                  value={emptyFormatId}
+                  onChange={e => {
+                    const id = e.target.value;
+                    const preset = SOCIAL_FORMATS.find(f => f.id === id);
+                    setEmptyFormatId(id);
+                    if (preset) {
+                      setEmptyW(String(preset.width));
+                      setEmptyH(String(preset.height));
+                    }
+                  }}
+                  aria-label="Formato del frame a crear"
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    padding: "8px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                    background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                    color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                  }}
+                >
+                  {SOCIAL_FORMATS.map(f => (
+                    <option key={f.id} value={f.id}>{f.label} — {f.width}×{f.height}</option>
+                  ))}
+                  <option value={CUSTOM_FORMAT_ID}>Personalizado…</option>
+                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="number" min={1} max={10000}
+                    value={emptyW}
+                    onChange={e => {
+                      setEmptyW(e.target.value);
+                      if (emptyFormatId !== CUSTOM_FORMAT_ID) setEmptyFormatId(CUSTOM_FORMAT_ID);
+                    }}
+                    aria-label="Ancho del frame en píxeles"
+                    style={{
+                      width: 86, padding: "7px 9px", borderRadius: 8, fontSize: 12,
+                      background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                      color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                    }}
+                  />
+                  <span aria-hidden="true" style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>×</span>
+                  <input
+                    type="number" min={1} max={10000}
+                    value={emptyH}
+                    onChange={e => {
+                      setEmptyH(e.target.value);
+                      if (emptyFormatId !== CUSTOM_FORMAT_ID) setEmptyFormatId(CUSTOM_FORMAT_ID);
+                    }}
+                    aria-label="Alto del frame en píxeles"
+                    style={{
+                      width: 86, padding: "7px 9px", borderRadius: 8, fontSize: 12,
+                      background: "rgba(9,11,18,0.95)", border: "1px solid rgba(99,102,241,0.5)",
+                      color: "rgba(255,255,255,0.9)", fontFamily: "inherit", outline: "none",
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 4 }}>px</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCreateFrameAt(0, 0, clampFrameDimension(emptyW), clampFrameDimension(emptyH))}
+                  style={{
+                    padding: "9px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    background: "rgba(99,102,241,0.35)", border: "1px solid rgba(99,102,241,0.6)",
+                    color: "#fff", fontFamily: "inherit",
+                  }}
+                >
+                  + Agregar frame
+                </button>
+                <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.35)" }}>
+                  También puedes usar la herramienta Frame (tecla F) y dibujar la medida exacta.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
