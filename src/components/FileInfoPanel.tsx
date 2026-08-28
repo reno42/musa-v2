@@ -264,27 +264,36 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         </div>
       </div>
 
-      {/* Brand */}
-      <label style={sectionStyle}>
-        <span style={labelStyle}>Marca</span>
-        <select
-          style={selectStyle}
-          value={meta.brand_id || (meta.brand ? `legacy:${meta.brand}` : "")}
+      {/* Brand — a combobox, not a closed list: typing a name that does not
+          exist yet creates the brand on save (the API resolves bare names and
+          creates the missing ones), so a new client can be filed without
+          leaving the editor. Same contract as the campaign field below. */}
+      <div style={sectionStyle}>
+        <label style={labelStyle}>Marca</label>
+        <input
+          style={inputStyle}
+          list={`brands-${templateId || "none"}`}
+          value={meta.brand}
           onChange={event => {
-            const selected = brands.find(brand => brand.id === event.target.value);
-            scheduleSave({ brand_id: selected?.id || null, brand: selected?.name || "", campaign_id: null, campaign: "" });
+            const typed = event.target.value;
+            // The name and nothing else — no "· Cliente / · Lead" suffix: the
+            // label must match exactly what the brand table calls the brand.
+            const match = brands.find(brand => brand.name.toLocaleLowerCase() === typed.trim().toLocaleLowerCase());
+            scheduleSave(
+              match
+                ? { brand_id: match.id, brand: match.name, campaign_id: null, campaign: "" }
+                : { brand_id: null, brand: typed, campaign_id: null, campaign: "" },
+            );
           }}
-        >
-          <option value="">Sin marca</option>
-          {meta.brand && !meta.brand_id && <option value={`legacy:${meta.brand}`}>{meta.brand} (sin vincular)</option>}
-          {/* The name and nothing else. The old "· Cliente / · Lead" suffix was
-              relationship_status painted onto the label, so this picker and the
-              brand table disagreed about what a brand is called — and a name
-              that really does contain a dash became impossible to tell from
-              one this was decorating. */}
-          {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-        </select>
-      </label>
+          placeholder="Elegí una marca o escribí una nueva"
+        />
+        <datalist id={`brands-${templateId || "none"}`}>
+          {brands.map(brand => <option key={brand.id} value={brand.name} />)}
+        </datalist>
+        <div style={{ fontSize: 10, color: "#666", marginTop: 3 }}>
+          Un nombre que no exista se crea como marca nueva al guardar.
+        </div>
+      </div>
 
       {/* Categoria — the same four branches the brand table writes, on the
           same design_file_meta.category column, so the two panels cannot

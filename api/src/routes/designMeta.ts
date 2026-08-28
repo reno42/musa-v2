@@ -125,12 +125,13 @@ designMetaRoutes.put("/:templateId", async (req, res) => {
         .eq("workspace_id", template.workspace_id).eq("id", patch.brand_id).maybeSingle();
       if (!selectedBrand) return res.status(400).json({ success: false, error: "Brand does not belong to this workspace" });
       patch.brand = selectedBrand.name;
-    } else if (patch.brand !== undefined && brand_id === undefined) {
+    } else if (patch.brand !== undefined && !patch.brand_id) {
       // A caller that sends only a brand NAME (the data tables do — the user
-      // types into the cell) used to have it stored as loose text while
-      // brand_id kept pointing at the old brand. The graph reads brand_id
-      // first, so the file never moved and the edit looked ignored. Resolve
-      // the name to a real row here, creating the brand when it is new.
+      // types into the cell; the info panel sends the whole meta object with
+      // brand_id null) used to have it stored as loose text while brand_id
+      // kept pointing at the old brand. The graph reads brand_id first, so
+      // the file never moved and the edit looked ignored. Resolve the name to
+      // a real row here, creating the brand when it is new.
       const typed = String(patch.brand ?? "").trim();
       if (!typed) {
         patch.brand = null;

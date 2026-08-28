@@ -468,16 +468,19 @@ async function locateLayerInImage(origUrl: string, layerBlob: Blob): Promise<Lay
 /**
  * Where the account menu can take you. Ids must match WORKSPACE_TABS — the
  * dashboard reads the one left in sessionStorage on mount and switches to it.
+ * An optional pane names the sub-tab to land on: "Recetas" is NOT the
+ * top-level "recipes" tab (that is the Key Visuals grid, which has nothing a
+ * human can add) — the copy recipes live inside Copywriting → Recetas.
  */
-const EDITOR_NAV_TABS = [
+const EDITOR_NAV_TABS: Array<{ id: string; label: string; pane?: string }> = [
   { id: "diseno", label: "Diseño" },
   { id: "agentes", label: "Agentes" },
   { id: "copywriting", label: "Copywriting" },
   { id: "contactos", label: "Contactos" },
   { id: "configuracion", label: "Configuración" },
-  { id: "recipes", label: "Recetas" },
+  { id: "copywriting", label: "Recetas", pane: "recipes" },
   { id: "workspace", label: "Workspace" },
-] as const;
+];
 
 /** What the right-click mask commands act on: a closed path layer and the
  * image beneath it, resolved inside one frame's shadow content. */
@@ -6901,11 +6904,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   </div>
                   {EDITOR_NAV_TABS.map(tab => (
                     <button
-                      key={tab.id}
+                      key={tab.label}
                       type="button"
                       onClick={() => {
                         setUserMenuOpen(false);
-                        try { sessionStorage.setItem("dashboardInitialTab", tab.id); } catch { /* private mode */ }
+                        try {
+                          sessionStorage.setItem("dashboardInitialTab", tab.id);
+                          if (tab.pane) sessionStorage.setItem("dashboardInitialPane", tab.pane);
+                        } catch { /* private mode */ }
                         onBack();
                       }}
                       style={{

@@ -23,10 +23,15 @@ import { TextsTab } from "./TextsTab";
 import { CopyRecipesTab } from "./CopyRecipesTab";
 
 type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes";
+const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes"];
 
 interface Props {
   workspaceId: string | null;
   onOpenTemplate?: (templateId: string) => void;
+  /** Landing pane requested from outside — the editor menu's "Recetas" and the
+   *  URL hash name it, but the dashboard can only hand it down as a prop
+   *  because these sub-tabs are this component's own state. */
+  paneHint?: string;
 }
 
 const CELL: React.CSSProperties = {
@@ -63,11 +68,17 @@ const CSS = `
 .cal-day:hover .cal-add { opacity: 1; }
 `;
 
-export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
+export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
   const [pane, setPane] = useState<Pane>("calendar");
   const [rows, setRows] = useState<ContentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Follow an outside landing request (editor menu → "Recetas"). Runs only
+  // when the hint changes, so the user's own tab clicks are never undone.
+  useEffect(() => {
+    if (paneHint && PANES.includes(paneHint as Pane)) setPane(paneHint as Pane);
+  }, [paneHint]);
   const [cursor, setCursor] = useState(() => new Date());
   const [filters, setFilters] = useState<ContentFilters>({});
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);

@@ -2514,24 +2514,19 @@ html, body, #root { height: 100%; width: 100%; }
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-/* ── Card action buttons: hidden until hover ── */
+/* ── Card action buttons: always visible ── */
+/* Card actions are always visible: the old hover-only reveal made the delete
+   entry point practically undiscoverable, and transparent-on-transparent text
+   kept it that way even after hovering. */
 .dash-card-actions button {
-  opacity: 0;
-  transition: opacity 0.2s ease, color 0.2s ease;
+  color: rgba(255, 255, 255, 0.65);
+  transition: color 0.2s ease, border-color 0.2s ease;
 }
 .dash-card:hover .dash-card-actions button {
-  opacity: 1;
-  color: rgba(255, 255, 255, 0.45);
+  color: #fff;
 }
 .dash-card:hover .dash-card-action-danger {
   color: #f87171 !important;
-}
-.dash-card-actions {
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.dash-card:hover .dash-card-actions {
-  opacity: 1;
 }
 
 /* Card design preview — monochrome + blurred default, full-color sharp on hover */

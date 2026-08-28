@@ -1033,18 +1033,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <button
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
-            style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", padding: "4px 12px", color: "rgba(255,255,255,0.6)", fontSize: 12, minWidth: 28 }}
-            title="Actions"
+            style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "4px 12px", color: "rgba(255,255,255,0.92)", fontSize: 12, fontWeight: 700, letterSpacing: 2, minWidth: 28, cursor: "pointer", fontFamily: "inherit" }}
+            title="Acciones (duplicar, eliminar, info)"
+            aria-label={`Acciones de ${t.name}`}
           >
             ···
           </button>
           {actionDropdownId === t.id && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              <div className="liquid-glass" style={{
+              <div style={{
                 position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
                 minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
                 display: "flex", flexDirection: "column",
+                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
@@ -1117,18 +1120,23 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           <button
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
-            style={{ ...cardAction, borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)", padding: "3px 12px", color: "rgba(255,255,255,0.5)", fontSize: 11, flex: "none", borderRight: "1px solid rgba(255,255,255,0.08)" }}
-            title="Actions"
+            style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 12px", color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 700, letterSpacing: 2, lineHeight: 1.2, flex: "none", cursor: "pointer", fontFamily: "inherit", margin: "4px 0" }}
+            title="Acciones (duplicar, eliminar, info)"
+            aria-label={`Acciones de ${t.name}`}
           >
             ···
           </button>
           {actionDropdownId === t.id && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
-              <div className="liquid-glass" style={{
+              {/* Solid dark panel — liquid-glass over light covers left the
+                  white menu text on a whitish surface. */}
+              <div style={{
                 position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
                 minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
                 display: "flex", flexDirection: "column",
+                background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
               }}>
                 <button type="button" onClick={e => { e.stopPropagation(); handleDuplicate(t.id); setActionDropdownId(null); }} style={ddItemStyle}>📋 Duplicate</button>
                 <button type="button" onClick={e => { e.stopPropagation(); confirmDelete(t.id, t.name); setActionDropdownId(null); }} style={{ ...ddItemStyle, color: "#f87171" }}>🗑 Delete</button>
@@ -1721,7 +1729,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Copywriting Tab ── */}
       {activeTab === "copywriting" && (
-        <ContentTab workspaceId={activeWorkspaceId} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+        <ContentTab workspaceId={activeWorkspaceId} paneHint={activePane} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
       )}
 
       {/* ── Agentes Tab (sub-tabs: Kanban / Tabla / Agentes) ── */}
@@ -1790,12 +1798,12 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
 
                 {/* Actions */}
-                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12 }}>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleCreateFromRecipe(r.id, r.name); }} style={cardAction}>
-                    Create
+                <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", gap: 4, justifyContent: "center", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12, padding: "4px 0" }}>
+                  <button type="button" onClick={e => { e.stopPropagation(); handleCreateFromRecipe(r.id, r.name); }} style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 12px", color: "rgba(255,255,255,0.92)", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                    Crear
                   </button>
-                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} style={{ ...cardAction, color: "#f87171" }} className="dash-card-action-danger">
-                    Delete
+                  <button type="button" onClick={e => { e.stopPropagation(); handleDeleteRecipe(r.id); }} className="dash-card-action-danger" style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(248,113,113,0.35)", borderRadius: 6, padding: "3px 12px", color: "#f87171", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                    Eliminar
                   </button>
                 </div>
               </div>
@@ -2711,7 +2719,7 @@ const ddItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 6,
   padding: "8px 12px", borderRadius: 6, fontSize: 12,
   background: "transparent", border: "none",
-  color: "rgba(255,255,255,0.7)",
+  color: "rgba(255,255,255,0.88)",
   cursor: "pointer", textAlign: "left" as const,
   fontFamily: "inherit", fontWeight: 400,
   transition: "all 0.15s ease",
