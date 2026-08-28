@@ -59,6 +59,11 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
   });
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [addingBrand, setAddingBrand] = useState(false);
+  const [newBrandName, setNewBrandName] = useState("");
+  const [brandBusy, setBrandBusy] = useState(false);
+  const [brandError, setBrandError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -96,21 +101,27 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
     } catch { /* keep whatever is on screen */ }
   }, [templateId]);
 
+  /** Workspace brands + campaigns, and the workspace id the brand-creation
+   * endpoint needs. Separate from loadMeta so creating a brand can refresh
+   * the list without touching the row being edited. */
+  const loadTaxonomy = useCallback(async () => {
+    if (!templateId) { setBrands([]); setCampaigns([]); return; }
+    try {
+      const d = await fetch(`/api/meta/${templateId}/taxonomy`, { headers: getApiHeaders() }).then(r => r.json());
+      if (!d.success) return;
+      setBrands(Array.isArray(d.data?.brands) ? d.data.brands : []);
+      setCampaigns(Array.isArray(d.data?.campaigns) ? d.data.campaigns : []);
+      if (d.data?.workspaceId) setWorkspaceId(d.data.workspaceId);
+    } catch { setBrands([]); setCampaigns([]); }
+  }, [templateId]);
+
   // Fetch metadata on mount / templateId change
   useEffect(() => {
     if (!templateId) { setLoading(false); return; }
     setLoading(true);
     void loadMeta().finally(() => setLoading(false));
-
-    fetch(`/api/meta/${templateId}/taxonomy`, { headers: getApiHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        if (!d.success) return;
-        setBrands(Array.isArray(d.data?.brands) ? d.data.brands : []);
-        setCampaigns(Array.isArray(d.data?.campaigns) ? d.data.campaigns : []);
-      })
-      .catch(() => { setBrands([]); setCampaigns([]); });
-  }, [templateId, loadMeta]);
+    void loadTaxonomy();
+  }, [templateId, loadMeta, loadTaxonomy]);
 
   // Re-read when this same file was written somewhere else in the app — the
   // brand table is the other view of this row.
@@ -183,6 +194,45 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
 
   // Cleanup timer
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  /** Create a brand from the panel and file this design under it. Goes through
+   * the SAME endpoint the CRM uses, so the row is identical everywhere: it
+   * appears in the CRM, in the grafo (the API lists every brand, designs or
+   * not) and in every brand dropdown — and it gets its Design System file
+   * unless the user opted out of auto-DS creation. */
+  const createBrand = useCallback(async () => {
+    const name = newBrandName.trim();
+    if (!name || !templateId) return;
+    setBrandError("");
+    // Local dedupe first: the endpoint's own ilike-dedupe path would also
+    // overwrite CRM fields, and an existing brand only needs linking here.
+    const existing = brands.find(brand => brand.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing) {
+      scheduleSave({ brand_id: existing.id, brand: existing.name, campaign_id: null, campaign: "" });
+      setAddingBrand(false); setNewBrandName("");
+      return;
+    }
+    if (!workspaceId) { setBrandError("No se pudo resolver el workspace."); return; }
+    setBrandBusy(true);
+    try {
+      let skipDesignSystem = false;
+      try { skipDesignSystem = localStorage.getItem("futuraria-auto-design-system") === "false"; } catch {}
+      const res = await fetch(`/api/workspaces/${workspaceId}/brands`, {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: JSON.stringify({ name, relationshipStatus: "lead", skipDesignSystem }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.success) throw new Error(d.error || "No se pudo crear la marca");
+      const created = d.data as { id: string; name: string };
+      const option: BrandOption = { id: created.id, name: created.name, relationship_status: "lead" };
+      setBrands(cur => [...cur, option].sort((a, b) => a.name.localeCompare(b.name)));
+      scheduleSave({ brand_id: created.id, brand: created.name, campaign_id: null, campaign: "" });
+      setAddingBrand(false); setNewBrandName("");
+    } catch (cause) {
+      setBrandError(cause instanceof Error ? cause.message : "No se pudo crear la marca");
+    } finally { setBrandBusy(false); }
+  }, [newBrandName, templateId, workspaceId, brands, scheduleSave]);
 
   // Tags
   const addTag = () => {
@@ -264,35 +314,63 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         </div>
       </div>
 
-      {/* Brand — a combobox, not a closed list: typing a name that does not
-          exist yet creates the brand on save (the API resolves bare names and
-          creates the missing ones), so a new client can be filed without
-          leaving the editor. Same contract as the campaign field below. */}
+      {/* Brand — a closed dropdown over the workspace's brands (the same
+          `brands` table the CRM and the grafo read), plus an in-place creation
+          option. Created brands are identical to CRM-created ones: same row,
+          same Design System file, same graph node. */}
       <div style={sectionStyle}>
         <label style={labelStyle}>Marca</label>
-        <input
-          style={inputStyle}
-          list={`brands-${templateId || "none"}`}
-          value={meta.brand}
+        <select
+          style={selectStyle}
+          value={(() => {
+            const byId = brands.find(brand => brand.id === meta.brand_id);
+            if (byId) return byId.id;
+            const byName = meta.brand
+              ? brands.find(brand => brand.name.toLocaleLowerCase() === meta.brand.toLocaleLowerCase())
+              : undefined;
+            return byName ? byName.id : "";
+          })()}
           onChange={event => {
-            const typed = event.target.value;
-            // The name and nothing else — no "· Cliente / · Lead" suffix: the
-            // label must match exactly what the brand table calls the brand.
-            const match = brands.find(brand => brand.name.toLocaleLowerCase() === typed.trim().toLocaleLowerCase());
-            scheduleSave(
-              match
-                ? { brand_id: match.id, brand: match.name, campaign_id: null, campaign: "" }
-                : { brand_id: null, brand: typed, campaign_id: null, campaign: "" },
-            );
+            if (event.target.value === "__add__") {
+              setAddingBrand(true);
+              setNewBrandName("");
+              setBrandError("");
+              return; // the controlled value above never moved — the select snaps back
+            }
+            const brand = brands.find(item => item.id === event.target.value);
+            scheduleSave({ brand_id: brand?.id || null, brand: brand?.name || "", campaign_id: null, campaign: "" });
           }}
-          placeholder="Elegí una marca o escribí una nueva"
-        />
-        <datalist id={`brands-${templateId || "none"}`}>
-          {brands.map(brand => <option key={brand.id} value={brand.name} />)}
-        </datalist>
-        <div style={{ fontSize: 10, color: "#666", marginTop: 3 }}>
-          Un nombre que no exista se crea como marca nueva al guardar.
-        </div>
+        >
+          <option value="">Sin marca</option>
+          {brands.map(brand => (
+            <option key={brand.id} value={brand.id}>{brand.name}</option>
+          ))}
+          <option value="__add__">➕ Agregar marca nueva…</option>
+        </select>
+        {addingBrand && (
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            <input
+              style={inputStyle}
+              value={newBrandName}
+              autoFocus
+              disabled={brandBusy}
+              onChange={event => setNewBrandName(event.target.value)}
+              onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void createBrand(); } }}
+              placeholder="Nombre de la nueva marca"
+            />
+            <button type="button" style={uploadBtnStyle} onClick={() => void createBrand()} disabled={brandBusy || !newBrandName.trim()}>
+              {brandBusy ? "Creando…" : "Crear"}
+            </button>
+            <button type="button" style={uploadBtnStyle} onClick={() => { setAddingBrand(false); setBrandError(""); }} disabled={brandBusy} aria-label="Cancelar">
+              ✕
+            </button>
+          </div>
+        )}
+        {brandError
+          ? <div style={{ fontSize: 10, color: "#f87171", marginTop: 3 }}>{brandError}</div>
+          : <div style={{ fontSize: 10, color: "#666", marginTop: 3 }}>
+              Se crea al instante y queda sincronizada con el CRM y el grafo.
+            </div>}
       </div>
 
       {/* Categoria — the same four branches the brand table writes, on the

@@ -403,6 +403,10 @@ designMetaRoutes.get("/:templateId/taxonomy", async (req, res) => {
     res.json({
       success: true,
       data: {
+        // The panel needs the workspace id to hit the CRM brand endpoints
+        // (POST /api/workspaces/:id/brands) when the user adds a brand in
+        // place — one table, every surface (CRM, grafo, panel) stays in sync.
+        workspaceId: template.workspace_id,
         brands: (brandResult.data || []).map((brand: any) => ({
           id: brand.id,
           name: brand.name,
