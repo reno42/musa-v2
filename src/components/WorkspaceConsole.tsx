@@ -5,13 +5,12 @@ import { browserSupabase } from "../lib/supabaseClient";
 import { AiConnectPrompts } from "./AiConnectPrompts";
 import { CrmWorkspace } from "./CrmWorkspace";
 
-type Section = "general" | "team" | "agents" | "account";
+type Section = "general" | "team" | "agents";
 type ConsoleMode = "crm" | "settings";
 const SETTINGS_SECTIONS = [
   ["general", "General"],
   ["team", "Equipo"],
   ["agents", "API MCP"],
-  ["account", "Cuenta"],
 ] as const satisfies ReadonlyArray<readonly [Section, string]>;
 type Member = { id: string; email?: string; display_name?: string; role: "owner" | "admin" | "editor" | "viewer" };
 type Invitation = { id: string; email: string; role: "admin" | "editor" | "viewer"; status: "pending" | "accepted" | "declined" | "revoked" | "expired"; expiresAt: string; createdAt: string; lastSentAt?: string; deliveryMethod: string; workspaceName?: string; invitedBy?: string };
@@ -73,7 +72,7 @@ export function WorkspaceConsole({
   const statusId = useId();
 
   const load = useCallback(async () => {
-    if (!workspaceId || mode === "crm" || section === "general" || section === "account") return;
+    if (!workspaceId || mode === "crm" || section === "general") return;
     setLoading(true); setError("");
     try {
       if (section === "team") {
@@ -124,10 +123,9 @@ export function WorkspaceConsole({
           setNotice={(message) => { setError(""); setNotice(message); }}
         />
       )}
-      {mode === "settings" && section === "general" && children}
+      {mode === "settings" && section === "general" && <>{children}<AccountSection setError={setError} setNotice={setNotice} /></>}
       {mode === "settings" && section === "team" && <TeamSection workspaceId={workspaceId} members={members} invitations={invitations} currentUserId={user?.id} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
       {mode === "settings" && section === "agents" && <AgentsSection workspaceId={workspaceId} keys={keys} connections={connections} reload={load} setError={setError} setNotice={setNotice} setConfirmAction={setConfirmAction} />}
-      {mode === "settings" && section === "account" && <AccountSection setError={setError} setNotice={setNotice} />}
       {confirmAction && <ConfirmDialog title={confirmAction.title} body={confirmAction.body} confirmLabel={confirmAction.label} onConfirm={confirmAction.run} onClose={() => setConfirmAction(null)} />}
     </section>
   );
@@ -255,9 +253,11 @@ function TeamSection({ workspaceId, members, invitations, currentUserId, reload,
   );
 }
 
+/** Account panels folded into the General tab (no separate Cuenta tab):
+ * cambiar correo, cambiar contraseña e invitaciones recibidas. El perfil
+ * editable ya vive en el card "Perfil" del General (Dashboard). */
 function AccountSection({ setError, setNotice }: { setError: (value: string) => void; setNotice: (value: string) => void }) {
   const { user } = useAuth();
-  const [displayName, setDisplayName] = useState(() => String(user?.user_metadata?.full_name || user?.user_metadata?.name || ""));
   const [newEmail, setNewEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -273,21 +273,6 @@ function AccountSection({ setError, setNotice }: { setError: (value: string) => 
   }, [setError]);
 
   useEffect(() => { void loadIncoming(); }, [loadIncoming]);
-
-  const saveProfile = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!browserSupabase) return;
-    setSubmitting(true); setError("");
-    const { error } = await browserSupabase.auth.updateUser({
-      data: { ...user?.user_metadata, full_name: displayName.trim() },
-    });
-    if (error) setError(error.message);
-    else {
-      await workspaceFetch("/api/account/bootstrap", { method: "POST", body: "{}" });
-      setNotice("Perfil actualizado.");
-    }
-    setSubmitting(false);
-  };
 
   const changeEmail = async (event: FormEvent) => {
     event.preventDefault();
@@ -340,14 +325,6 @@ function AccountSection({ setError, setNotice }: { setError: (value: string) => 
 
   return (
     <div className="workspace-grid">
-      <article className="workspace-panel">
-        <h3>Perfil</h3>
-        <form className="workspace-form" onSubmit={saveProfile}>
-          <Field label="Nombre"><input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></Field>
-          <Field label="Correo actual"><input value={user?.email || ""} readOnly /></Field>
-          <button className="workspace-button" disabled={submitting}>Guardar perfil</button>
-        </form>
-      </article>
       <article className="workspace-panel">
         <h3>Cambiar correo</h3>
         <p className="workspace-muted">Supabase solicitará confirmación antes de mover tu cuenta al correo nuevo.</p>
