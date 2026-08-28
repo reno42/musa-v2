@@ -334,6 +334,10 @@ const VIDEO_GEN_RATIOS = [
   { id: "1280:720", label: "1280:720 — horizontal" },
   { id: "720:1280", label: "720:1280 — vertical" },
   { id: "960:960", label: "960:960 — cuadrado" },
+  { id: "1104:832", label: "1104:832 — 4:3" },
+  { id: "832:1104", label: "832:1104 — 3:4" },
+  { id: "1584:672", label: "1584:672 — 21:9 cine" },
+  { id: "672:1584", label: "672:1584 — 9:21" },
 ];
 const VIDEO_GEN_MODEL_SLOT = "futuraria-videogen-model";
 const VIDEO_GEN_RATIO_SLOT = "futuraria-videogen-ratio";
@@ -5011,7 +5015,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const saved = localStorage.getItem(VIDEO_GEN_RATIO_SLOT);
     return VIDEO_GEN_RATIOS.some(r => r.id === saved) ? saved! : VIDEO_GEN_RATIOS[0].id;
   });
-  const [videoDuration, setVideoDuration] = useState<5 | 10>(5);
+  const [videoDuration, setVideoDuration] = useState<number>(5);
+  // image = animate a selected image; text = prompt-only generation.
+  const [videoMode, setVideoMode] = useState<"image" | "text">("image");
   const [videoStatus, setVideoStatus] = useState<"idle" | "submitting" | "processing" | "saving">("idle");
   const [videoEtaLeft, setVideoEtaLeft] = useState(0);     // seconds to ETA (0 = overtime)
   const [videoNextCheck, setVideoNextCheck] = useState(0); // seconds to next status check
@@ -5023,7 +5029,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   const handleGenerateVideo = useCallback(async () => {
     const src = resolveSelectedImage();
-    if (!src) { addToast("Seleccioná una imagen en el editor primero.", "error"); return; }
+    if (videoMode === "image" && !src) { addToast("Seleccioná una imagen en el editor primero.", "error"); return; }
+    if (videoMode === "text" && !videoPrompt.trim()) { addToast("Escribí un prompt describiendo la escena completa.", "error"); return; }
     if (!runwayConfigured) { addToast("Guardá tu API key de RunwayML en el panel.", "info"); return; }
 
     const runId = ++videoRunIdRef.current;
@@ -5040,14 +5047,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setVideoStatus("submitting");
     setVideoResult(null);
     try {
-      addToast("🎬 Enviando imagen a Runway...", "info");
-      const submitted = await callVideo("generate_image_video", {
-        imageUrl: src.url,
-        ...(videoPrompt.trim() ? { prompt: videoPrompt.trim() } : {}),
-        model: videoModel,
-        duration: videoDuration,
-        ratio: videoRatio,
-      });
+      addToast("🎬 Enviando a Runway...", "info");
+      const submitTool = videoMode === "text" ? "generate_text_video" : "generate_image_video";
+      const submitParams = videoMode === "text"
+        ? { prompt: videoPrompt.trim(), model: videoModel, duration: videoDuration, ratio: videoRatio }
+        : { imageUrl: src!.url, ...(videoPrompt.trim() ? { prompt: videoPrompt.trim() } : {}), model: videoModel, duration: videoDuration, ratio: videoRatio };
+      const submitted = await callVideo(submitTool, submitParams);
       if (!alive()) return;
       let taskId = submitted?.taskId;
       if (!taskId) throw new Error("El servidor no devolvió el id de la tarea");
@@ -5111,13 +5116,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 retriedRunway = true;
                 addToast("Runway falló sin causa específica (glitch transitorio de su lado) — reintentando una vez…", "info");
                 try {
-                  const resubmitted = await callVideo("generate_image_video", {
-                    imageUrl: src.url,
-                    ...(videoPrompt.trim() ? { prompt: videoPrompt.trim() } : {}),
-                    model: videoModel,
-                    duration: videoDuration,
-                    ratio: videoRatio,
-                  });
+                  const resubmitted = await callVideo(submitTool, submitParams);
                   if (!alive()) return;
                   const newTaskId = resubmitted?.taskId;
                   if (!newTaskId) throw new Error("resubmit sin taskId");
@@ -5196,7 +5195,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       videoElement.setAttribute("data-layer-name", videoName);
       videoElement.setAttribute("data-layer-kind", "video");
       videoElement.setAttribute("src", videoUrl);
-      videoElement.setAttribute("poster", src.url);
+      if (src) videoElement.setAttribute("poster", src.url);
       videoElement.setAttribute("controls", "");
       videoElement.setAttribute("muted", "");
       videoElement.setAttribute("loop", "");
@@ -5213,11 +5212,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   display: block;
   object-fit: contain;
 }`;
+      // Image mode places the video NEXT TO its source; text mode has no
+      // source, so it goes next to the last frame on canvas (or the origin).
+      const lastFrame = frames[frames.length - 1];
       const newFrame: FrameData = {
         id: createFrameId(),
         name: videoName,
-        x: Math.round(src.x + src.width + FRAME_GAP),
-        y: Math.round(src.y),
+        x: Math.round(src ? src.x + src.width + FRAME_GAP : lastFrame ? lastFrame.x + lastFrame.width + FRAME_GAP : 0),
+        y: Math.round(src ? src.y : lastFrame ? lastFrame.y : 0),
         width: frameW,
         height: frameH,
         html,
@@ -5247,7 +5249,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
     if (alive()) setVideoStatus("idle");
-  }, [videoPrompt, videoModel, videoRatio, videoDuration, runwayConfigured, resolveSelectedImage, frames, templateWorkspaceId, autoSave, addToast]);
+  }, [videoMode, videoPrompt, videoModel, videoRatio, videoDuration, runwayConfigured, resolveSelectedImage, frames, templateWorkspaceId, autoSave, addToast]);
 
   /** Cross-origin-safe mp4 download — the bucket/Runway URL never honors
    *  the download attribute from another origin, so we ferry it through a
@@ -8240,34 +8242,56 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           {rightPanelTab === "videoGen" && (() => {
             const src = resolveSelectedImage();
             const busy = videoStatus !== "idle";
+            const ready = videoMode === "text" ? !!videoPrompt.trim() : !!src;
             const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
             return (
               <div style={{ padding: 12, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14, fontSize: 12, color: "#d6d0c0" }}>
-                {/* Mode: an image selection is required — video animates it */}
-                <div style={{ padding: "8px 10px", borderRadius: 8, background: src ? "rgba(236,72,153,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${src ? "rgba(236,72,153,0.35)" : "rgba(255,255,255,0.08)"}`, display: "flex", alignItems: "center", gap: 8 }}>
-                  {src ? (
-                    <>
-                      <img src={src.url} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(236,72,153,0.4)" }} />
-                      <div>
-                        <div style={{ color: "#f9a8d4", fontWeight: 600 }}>🎬 Animar imagen seleccionada</div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Runway genera un video de la imagen, en un frame al lado. Se reproduce y se descarga como mp4.</div>
-                      </div>
-                    </>
-                  ) : (
-                    <div>
-                      <div style={{ color: "#c8b898", fontWeight: 600 }}>Seleccioná una imagen</div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Elegí una imagen del editor para convertirla en video con IA.</div>
-                    </div>
-                  )}
+                {/* Mode toggle: animate a selected image OR generate from prompt alone */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {([["image", "🖼️ Animar imagen"], ["text", "✍️ Solo texto"]] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setVideoMode(mode)}
+                      style={{ padding: "7px 8px", fontSize: 12, fontWeight: videoMode === mode ? 600 : 400, border: `1px solid ${videoMode === mode ? "rgba(236,72,153,0.45)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, cursor: "pointer", background: videoMode === mode ? "rgba(236,72,153,0.12)" : "rgba(255,255,255,0.03)", color: videoMode === mode ? "#f9a8d4" : "#9a958a", fontFamily: "inherit" }}
+                    >{label}</button>
+                  ))}
                 </div>
+                {videoMode === "image" ? (
+                  <div style={{ padding: "8px 10px", borderRadius: 8, background: src ? "rgba(236,72,153,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${src ? "rgba(236,72,153,0.35)" : "rgba(255,255,255,0.08)"}`, display: "flex", alignItems: "center", gap: 8 }}>
+                    {src ? (
+                      <>
+                        <img src={src.url} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(236,72,153,0.4)" }} />
+                        <div>
+                          <div style={{ color: "#f9a8d4", fontWeight: 600 }}>🎬 Animar imagen seleccionada</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Runway genera un video de la imagen, en un frame al lado. Se reproduce y se descarga como mp4.</div>
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <div style={{ color: "#c8b898", fontWeight: 600 }}>Seleccioná una imagen</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Elegí una imagen del editor para convertirla en video con IA.</div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.3)" }}>
+                    <div style={{ color: "#d8b4fe", fontWeight: 600 }}>✍️ Runway inventa toda la escena</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>No necesita imagen: describí sujeto, ambiente, movimiento, cámara y estilo, y el video se genera desde cero.</div>
+                  </div>
+                )}
 
                 {/* Motion prompt */}
                 <div>
-                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Prompt de movimiento (opcional)</label>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>
+                    {videoMode === "text" ? "Prompt de escena (obligatorio)" : "Prompt de movimiento (opcional)"}
+                  </label>
                   <textarea
                     value={videoPrompt}
                     onChange={e => setVideoPrompt(e.target.value)}
-                    placeholder="Vacío = la IA decide. Ej: la cámara acercándose lentamente, el humo en movimiento, luz de atardecer"
+                    placeholder={videoMode === "text"
+                      ? "Ej: un zorro rojo cruzando un bosque nevado al amanecer, cámara siguiéndolo a ras de suelo, luz suave, estilo cinematográfico"
+                      : "Vacío = la IA decide. Ej: la cámara acercándose lentamente, el humo en movimiento, luz de atardecer"}
                     rows={3}
                     style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "inherit", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", resize: "vertical" }}
                   />
@@ -8308,16 +8332,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Duración</label>
                     <select
                       value={String(videoDuration)}
-                      onChange={e => setVideoDuration(e.target.value === "10" ? 10 : 5)}
+                      onChange={e => setVideoDuration(Math.max(2, Math.min(10, parseInt(e.target.value, 10) || 5)))}
                       style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
                     >
-                      <option value="5">5s — más barato</option>
-                      <option value="10">10s</option>
+                      {[2, 3, 4, 5, 6, 7, 8, 9, 10].map(s => (
+                        <option key={s} value={String(s)}>{s}s{s === 5 ? " — más barato" : s === 10 ? " — máximo" : ""}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
                 <div style={{ fontSize: 10, color: "#7a7668", lineHeight: 1.5 }}>
-                  Gen-4 Turbo cuesta ~$0.25 los 5s y ~$0.50 los 10s; Gen-4.5 el doble (créditos de tu cuenta Runway, ~$0.01 c/u). Tarda 1-3 min y el mp4 queda guardado en tu biblioteca.
+                  Runway cobra por segundo: Gen-4 Turbo ~$0.05/s y Gen-4.5 ~$0.10/s (máximo 10s por generación — para piezas más largas, generá escenas separadas). Tarda 1-3 min y el mp4 queda guardado en tu biblioteca.
                 </div>
 
                 {/* Runway API key — same BYOK store as the AI Settings tab */}
@@ -8361,7 +8386,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 {busy && (
                   <div style={{ padding: 12, borderRadius: 8, background: "rgba(236,72,153,0.08)", border: "1px solid rgba(236,72,153,0.3)", textAlign: "center" }}>
                     {videoStatus === "submitting" && (
-                      <div style={{ color: "#f9a8d4" }}>🎬 Enviando imagen…</div>
+                      <div style={{ color: "#f9a8d4" }}>{videoMode === "text" ? "🎬 Enviando prompt…" : "🎬 Enviando imagen…"}</div>
                     )}
                     {videoStatus === "processing" && (<>
                       <div style={{ fontSize: 22, fontWeight: 700, color: "#f9a8d4", fontFamily: "SF Mono, monospace" }}>
@@ -8397,11 +8422,11 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 {/* Generate */}
                 <button
                   type="button"
-                  disabled={!src || busy || !runwayConfigured}
+                  disabled={!ready || busy || !runwayConfigured}
                   onClick={handleGenerateVideo}
-                  style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(236,72,153,0.3)", borderRadius: 6, cursor: src && !busy && runwayConfigured ? "pointer" : "not-allowed", background: src && !busy && runwayConfigured ? "linear-gradient(135deg, rgba(236,72,153,0.25), rgba(168,85,247,0.25))" : "rgba(255,255,255,0.03)", color: src && !busy && runwayConfigured ? "#f9a8d4" : "#555", fontFamily: "inherit" }}
+                  style={{ padding: "9px 12px", fontSize: 12, fontWeight: 600, border: "1px solid rgba(236,72,153,0.3)", borderRadius: 6, cursor: ready && !busy && runwayConfigured ? "pointer" : "not-allowed", background: ready && !busy && runwayConfigured ? "linear-gradient(135deg, rgba(236,72,153,0.25), rgba(168,85,247,0.25))" : "rgba(255,255,255,0.03)", color: ready && !busy && runwayConfigured ? "#f9a8d4" : "#555", fontFamily: "inherit" }}
                 >
-                  {busy ? "Generando…" : "🎬 Generar video"}
+                  {busy ? "Generando…" : videoMode === "text" ? "✍️ Generar desde texto" : "🎬 Generar video"}
                 </button>
               </div>
             );

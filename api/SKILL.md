@@ -408,7 +408,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 1. GET  /mcp                                      → SSE handshake
 2. POST /mcp  { method: "initialize" }             → capabilities exchange
 3. POST /mcp  { method: "notifications/initialized" } → confirm ready
-4. POST /mcp  { method: "tools/list" }             → discover 249 tools
+4. POST /mcp  { method: "tools/list" }             → discover 250 tools
 5. POST /mcp  { method: "tools/call", params: {...} } → invoke any tool
 ```
 
@@ -555,7 +555,7 @@ curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key
 # List tools
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...249 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...250 tools...}]}}
 
 # Create workspace
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
@@ -935,5 +935,5 @@ api/src/
 | `api/src/middleware/auth.ts` | Auth extraction (dev_user_default fallback) |
 | `api/src/middleware/rateLimit.ts` | 100 req/15s rate limiter |
 | `netlify/functions/api.mjs` | Express → Netlify Function bridge |
-| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 249 tools) |
+| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 250 tools) |
 | `netlify.toml` | Build config + /api/* → /mcp → /* redirects |

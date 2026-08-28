@@ -1118,7 +1118,7 @@
   },
   {
     "name": "generate_image_video",
-    "description": "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 5s or 10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    "description": "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 2-10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1136,7 +1136,7 @@
         },
         "duration": {
           "type": "number",
-          "description": "Clip length in seconds: 5 (default) or 10"
+          "description": "Clip length in seconds: any integer 2-10 (default 5). Runway caps every generation at 10s — for longer pieces, generate scenes separately"
         },
         "ratio": {
           "type": "string",
@@ -1158,7 +1158,7 @@
   },
   {
     "name": "generate_image_video_check",
-    "description": "Poll a generate_image_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
+    "description": "Poll a generate_image_video / generate_text_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1185,6 +1185,42 @@
       },
       "required": [
         "taskId"
+      ]
+    }
+  },
+  {
+    "name": "generate_text_video",
+    "description": "Submit a RunwayML text-to-video task (Gen-4 / Gen-4.5): generates a 2-10s mp4 from a text prompt ALONE — no input image, the model invents the whole scene. Describe subject, setting, motion, camera move and style. ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "REQUIRED. Full scene description: subject, setting, motion, camera move, style/lighting. The more concrete, the better the video"
+        },
+        "model": {
+          "type": "string",
+          "description": "Runway model id: gen4_turbo (default, fastest ~$0.05/s) or gen4.5 (max quality ~$0.10/s)"
+        },
+        "duration": {
+          "type": "number",
+          "description": "Clip length in seconds: any integer 2-10 (default 5). Runway caps every generation at 10s — for longer pieces, generate scenes separately"
+        },
+        "ratio": {
+          "type": "string",
+          "description": "Output aspect ratio: 1280:720 (default), 720:1280, 960:960, 1104:832, 832:1104, 1584:672, 672:1584"
+        },
+        "seed": {
+          "type": "number",
+          "description": "Optional seed for reproducible generations"
+        },
+        "runwayApiKey": {
+          "type": "string",
+          "description": "Optional caller-supplied RunwayML API key (used for this request only, never stored)"
+        }
+      },
+      "required": [
+        "prompt"
       ]
     }
   },
@@ -6202,7 +6238,8 @@
             "create-from-scratch",
             "csv-batch",
             "design-system",
-            "multi-agent"
+            "multi-agent",
+            "content-calendar"
           ],
           "description": "Playbook name from the index (e.g. 'replicate-html', 'csv-batch')"
         }

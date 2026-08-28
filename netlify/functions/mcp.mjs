@@ -1736,14 +1736,14 @@ const MCP_TOOLS = [
   },
   {
     name: "generate_image_video",
-    description: "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 5s or 10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    description: "Submit a RunwayML image-to-video task (Gen-4 / Gen-4.5): animates ONE image into a 2-10s mp4 (median 1-3 min). ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
     inputSchema: {
       type: "object",
       properties: {
         imageUrl: { type: "string", description: "Public PNG/JPEG URL of the image to animate" },
         prompt: { type: "string", description: "Optional motion description (what moves, camera move, style). Empty = model's best guess" },
         model: { type: "string", description: "Runway model id: gen4_turbo (default, ~$0.25/5s) or gen4.5 (max quality, ~$0.50/5s)" },
-        duration: { type: "number", description: "Clip length in seconds: 5 (default) or 10" },
+        duration: { type: "number", description: "Clip length in seconds: any integer 2-10 (default 5). Runway caps every generation at 10s — for longer pieces, generate scenes separately" },
         ratio: { type: "string", description: "Output aspect ratio: 1280:720 (default), 720:1280, 960:960, 1104:832, 832:1104, 1584:672, 672:1584" },
         seed: { type: "number", description: "Optional seed for reproducible generations" },
         runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
@@ -1753,7 +1753,7 @@ const MCP_TOOLS = [
   },
   {
     name: "generate_image_video_check",
-    description: "Poll a generate_image_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
+    description: "Poll a generate_image_video / generate_text_video task. Without persist: returns { status } while processing ('PENDING'/'THROTTLED'/'RUNNING'), { status: 'POLL_ERROR' } on transient hiccups (429/5xx — retry, don't abort), or { status: 'SUCCEEDED', tempUrl } when the video is ready. With persist:true (call ONCE after SUCCEEDED, optionally passing tempUrl to skip the status GET): downloads the mp4 and returns { status: 'completed', videoUrl, persistent } — persistent:true means it was re-uploaded to the design-assets bucket (Runway's own output URLs expire); on persistence failure persistent:false and the temporary URL is returned with a warning. Terminal failures throw. Free — never counted against the workspace monthly quota.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1764,6 +1764,22 @@ const MCP_TOOLS = [
         runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "generate_text_video",
+    description: "Submit a RunwayML text-to-video task (Gen-4 / Gen-4.5): generates a 2-10s mp4 from a text prompt ALONE — no input image, the model invents the whole scene. Describe subject, setting, motion, camera move and style. ASYNC — returns a taskId immediately; poll it with generate_image_video_check until status 'completed'. Key resolution: runwayApiKey param → user's BYOK key (provider 'runway') → RUNWAY_API_KEY env.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "REQUIRED. Full scene description: subject, setting, motion, camera move, style/lighting. The more concrete, the better the video" },
+        model: { type: "string", description: "Runway model id: gen4_turbo (default, fastest ~$0.05/s) or gen4.5 (max quality ~$0.10/s)" },
+        duration: { type: "number", description: "Clip length in seconds: any integer 2-10 (default 5). Runway caps every generation at 10s — for longer pieces, generate scenes separately" },
+        ratio: { type: "string", description: "Output aspect ratio: 1280:720 (default), 720:1280, 960:960, 1104:832, 832:1104, 1584:672, 672:1584" },
+        seed: { type: "number", description: "Optional seed for reproducible generations" },
+        runwayApiKey: { type: "string", description: "Optional caller-supplied RunwayML API key (used for this request only, never stored)" },
+      },
+      required: ["prompt"],
     },
   },
   {
@@ -6845,10 +6861,11 @@ async function handleMethod(method, params, userId, auth) {
 
       const RW_MODELS = new Set(["gen4_turbo", "gen4.5"]);
       const RW_RATIOS = new Set(["1280:720", "720:1280", "960:960", "1104:832", "832:1104", "1584:672", "672:1584"]);
+      const dur = Number(params.duration);
       const body = {
         model: RW_MODELS.has(params.model) ? params.model : "gen4_turbo",
         promptImage: imageUrl,
-        duration: Number(params.duration) === 10 ? 10 : 5,
+        duration: Number.isInteger(dur) && dur >= 2 && dur <= 10 ? dur : 5,
         ratio: RW_RATIOS.has(params.ratio) ? params.ratio : "1280:720",
       };
       if (params.prompt) body.promptText = String(params.prompt).slice(0, 2000);
@@ -6971,6 +6988,65 @@ async function handleMethod(method, params, userId, auth) {
         ...(ephemeralError ? { ephemeralError } : {}),
         ...(inputInfo.bytes ? { input: inputInfo } : {}),
         promptImage: String(body.promptImage).slice(0, 120),
+        note: "Poll with generate_image_video_check — median 1-3 min, free status checks",
+      };
+    }
+
+    case "generate_text_video": {
+      // RunwayML text-to-video: the prompt-only sibling of
+      // generate_image_video — the model invents the whole scene, so there
+      // is no image to normalize/upload and the submit is a single POST.
+      // Same BYOK chain and same polling tool (tasks are model-agnostic).
+      let rwKey = params.runwayApiKey;
+      if (!rwKey && auth?.userId) {
+        const userKey = await getUserKey(auth.userId, "runway");
+        if (userKey.key) rwKey = userKey.key;
+      }
+      if (!rwKey) rwKey = process.env.RUNWAY_API_KEY;
+      if (!rwKey) {
+        throw {
+          code: -32000,
+          message: "NO_RUNWAY_KEY: Falta una API key de RunwayML. Pasala en runwayApiKey, configurá tu key BYOK (provider 'runway'), o definí RUNWAY_API_KEY en el servidor.",
+        };
+      }
+
+      const prompt = String(params.prompt || "").trim();
+      if (!prompt) {
+        throw { code: -32000, message: "prompt is required for text-to-video — describe the scene (subject, setting, motion, camera, style)" };
+      }
+
+      const RW_MODELS = new Set(["gen4_turbo", "gen4.5"]);
+      const RW_RATIOS = new Set(["1280:720", "720:1280", "960:960", "1104:832", "832:1104", "1584:672", "672:1584"]);
+      const dur = Number(params.duration);
+      const body = {
+        model: RW_MODELS.has(params.model) ? params.model : "gen4_turbo",
+        promptText: prompt.slice(0, 2000),
+        duration: Number.isInteger(dur) && dur >= 2 && dur <= 10 ? dur : 5,
+        ratio: RW_RATIOS.has(params.ratio) ? params.ratio : "1280:720",
+      };
+      const seedNum = Number(params.seed);
+      if (Number.isFinite(seedNum)) body.seed = seedNum;
+
+      const submit = await fetch("https://api.dev.runwayml.com/v1/text_to_video", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${rwKey}`,
+          "Content-Type": "application/json",
+          "X-Runway-Version": "2024-11-06",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!submit.ok) {
+        const errText = await submit.text().catch(() => "");
+        throw { code: -32000, message: `Runway submit error ${submit.status}: ${errText.substring(0, 300)}` };
+      }
+      const task = await submit.json();
+      if (!task?.id) throw { code: -32000, message: "Runway returned no task id" };
+      return {
+        taskId: task.id,
+        status: task.status || "PENDING",
+        mode: "text",
+        promptLength: prompt.length,
         note: "Poll with generate_image_video_check — median 1-3 min, free status checks",
       };
     }
