@@ -4600,7 +4600,7 @@ const MCP_TOOLS = [
   },
   {
     name: "list_copy_recipes",
-    description: "List the workspace WRITING recipes: hooks, communication tones and copywriting frameworks (AIDA, PAS, StoryBrand…) saved by the user or by AIs. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
+    description: "List the account's WRITING recipes: 10 factory-default frameworks (AIDA, PAS, StoryBrand…) shared by every account plus personal recipes saved by THIS user. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. Recipes with isDefault=true are read-only. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4615,7 +4615,7 @@ const MCP_TOOLS = [
   },
   {
     name: "create_copy_recipe",
-    description: "Create a writing recipe in the workspace library (type: hook | tono | framework | otro). Humans and AIs share this exact CRUD — when the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context.",
+    description: "Create a writing recipe in the account's library (type: hook | tono | framework | otro). Saved recipes are personal — only this user sees them; the 10 factory defaults are shared and read-only. When the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context (a bare name is valid, but fill the content when you have it).",
     inputSchema: {
       type: "object",
       properties: {
@@ -4631,7 +4631,7 @@ const MCP_TOOLS = [
   },
   {
     name: "update_copy_recipe",
-    description: "Update an existing writing recipe (name, content, type or tags) by id.",
+    description: "Update an existing writing recipe (name, content, type or tags) by id. Only personal recipes can be updated — factory defaults (isDefault=true in list_copy_recipes) are read-only; create your own copy with create_copy_recipe instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4646,7 +4646,7 @@ const MCP_TOOLS = [
   },
   {
     name: "delete_copy_recipe",
-    description: "Delete a writing recipe by id.",
+    description: "Delete a writing recipe by id. Only personal recipes can be deleted — factory defaults (isDefault=true) are shared by every account and cannot be removed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4846,6 +4846,7 @@ function mapCopyRecipeRow(r) {
     content: r.content,
     tags: r.tags || [],
     source: r.source || "humano",
+    isDefault: Boolean(r.is_default),   // REQ-020: factory framework, read-only
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -8620,8 +8621,14 @@ async function handleMethod(method, params, userId, auth) {
       const sb = getSupabase();
       if (!sb) return { recipes: [], total: 0, _note: "Supabase not configured" };
       try {
+        // REQ-020 (v33): the library every account sees = factory defaults
+        // (is_default) + recipes THIS user saved. API-key calls run on the
+        // admin client (RLS bypassed), so the owner filter is explicit here.
+        const uid = UUID_RE.test(userId || "") ? userId : null;
         let q = sb.from("copy_recipes").select("*", { count: "exact" });
-        if (params.workspaceId) q = q.eq("workspace_id", params.workspaceId);
+        q = uid
+          ? q.or(`is_default.eq.true,owner_id.eq.${uid}`)
+          : q.eq("is_default", true);
         if (params.type) q = q.eq("type", String(params.type));
         if (params.search) q = q.ilike("name", `%${params.search}%`);
         q = q.order("updated_at", { ascending: false });
@@ -8640,8 +8647,8 @@ async function handleMethod(method, params, userId, auth) {
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       if (!params.workspaceId) throw { code: -32602, message: "workspaceId is required" };
       const name = String(params.name || "").trim();
+      if (!name) throw { code: -32602, message: "name is required" };
       const content = String(params.content || "").trim();
-      if (!name || !content) throw { code: -32602, message: "name and content are required" };
       const row = {
         workspace_id: params.workspaceId,
         type: CRX_TYPES.includes(params.type) ? params.type : "otro",
@@ -8650,9 +8657,12 @@ async function handleMethod(method, params, userId, auth) {
           ? [...new Set(params.tags.map(t => String(t).trim()).filter(Boolean))]
           : [],
         source: params.source === "humano" ? "humano" : "ia",
+        // REQ-020 (v33): personal recipe — stamped to the calling user so
+        // only they (and their AIs) see it. Factory defaults are shared.
+        owner_id: UUID_RE.test(userId || "") ? userId : null,
       };
       const { data, error } = await sb.from("copy_recipes").insert(row).select("*").single();
-      if (error) throw { code: -32000, message: `copy_recipes insert failed: ${error.message} (¿ejecutaste supabase_migrations_v32.sql?)` };
+      if (error) throw { code: -32000, message: `copy_recipes insert failed: ${error.message} (¿ejecutaste supabase_migrations_v32.sql y supabase_migrations_v33.sql?)` };
       return mapCopyRecipeRow(data);
     }
 
@@ -8660,10 +8670,18 @@ async function handleMethod(method, params, userId, auth) {
       const sb = getSupabase();
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       const { data: existing, error: readError } = await sb.from("copy_recipes")
-        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+        .select("id, workspace_id, is_default, owner_id").eq("id", params.id).maybeSingle();
       if (readError) throw { code: -32000, message: readError.message };
       if (!existing) throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
       if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      }
+      // REQ-020 (v33): factory defaults are read-only (shared by all
+      // accounts), and personal recipes only answer to their owner.
+      if (existing.is_default) {
+        throw { code: -32000, message: "Factory default recipes are read-only — create your own copy with create_copy_recipe to customize it." };
+      }
+      if (existing.owner_id && existing.owner_id !== userId) {
         throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
       }
 
@@ -8675,9 +8693,8 @@ async function handleMethod(method, params, userId, auth) {
         patch.name = name;
       }
       if (params.content !== undefined) {
-        const content = String(params.content || "").trim();
-        if (!content) throw { code: -32602, message: "content cannot be empty" };
-        patch.content = content;
+        // Empty is allowed (REQ-020): rows can start as a bare name.
+        patch.content = String(params.content || "").trim();
       }
       if (params.tags !== undefined) {
         patch.tags = Array.isArray(params.tags)
@@ -8698,10 +8715,18 @@ async function handleMethod(method, params, userId, auth) {
       const sb = getSupabase();
       if (!sb) throw { code: -32000, message: "Supabase not configured" };
       const { data: existing, error: readError } = await sb.from("copy_recipes")
-        .select("id, workspace_id").eq("id", params.id).maybeSingle();
+        .select("id, workspace_id, is_default, owner_id").eq("id", params.id).maybeSingle();
       if (readError) throw { code: -32000, message: readError.message };
       if (!existing) throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
       if (params.workspaceId && existing.workspace_id !== params.workspaceId) {
+        throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
+      }
+      // REQ-020 (v33): defaults are shared by every account — never deletable
+      // through a user/AI call; personal rows only by their owner.
+      if (existing.is_default) {
+        throw { code: -32000, message: "Factory default recipes are read-only and cannot be deleted." };
+      }
+      if (existing.owner_id && existing.owner_id !== userId) {
         throw { code: -32000, message: `Copy recipe not found: ${params.id}` };
       }
       const { error } = await sb.from("copy_recipes").delete().eq("id", params.id);

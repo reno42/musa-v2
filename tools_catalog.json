@@ -8071,7 +8071,7 @@
   },
   {
     "name": "list_copy_recipes",
-    "description": "List the workspace WRITING recipes: hooks, communication tones and copywriting frameworks (AIDA, PAS, StoryBrand…) saved by the user or by AIs. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
+    "description": "List the account's WRITING recipes: 10 factory-default frameworks (AIDA, PAS, StoryBrand…) shared by every account plus personal recipes saved by THIS user. Read them BEFORE drafting a copy so it follows the user's voice, and mention which recipes you applied. Recipes with isDefault=true are read-only. These are copy_recipes (instructional text) — for design recipes / key visuals use list_recipes instead.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8101,7 +8101,7 @@
   },
   {
     "name": "create_copy_recipe",
-    "description": "Create a writing recipe in the workspace library (type: hook | tono | framework | otro). Humans and AIs share this exact CRUD — when the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context.",
+    "description": "Create a writing recipe in the account's library (type: hook | tono | framework | otro). Saved recipes are personal — only this user sees them; the 10 factory defaults are shared and read-only. When the user asks you to research frameworks/hooks online and save them for future copies, this is the tool. Keep content self-contained: instructions + one worked example, so any AI can apply it later without extra context (a bare name is valid, but fill the content when you have it).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8142,7 +8142,7 @@
   },
   {
     "name": "update_copy_recipe",
-    "description": "Update an existing writing recipe (name, content, type or tags) by id.",
+    "description": "Update an existing writing recipe (name, content, type or tags) by id. Only personal recipes can be updated — factory defaults (isDefault=true in list_copy_recipes) are read-only; create your own copy with create_copy_recipe instead.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8177,7 +8177,7 @@
   },
   {
     "name": "delete_copy_recipe",
-    "description": "Delete a writing recipe by id.",
+    "description": "Delete a writing recipe by id. Only personal recipes can be deleted — factory defaults (isDefault=true) are shared by every account and cannot be removed.",
     "inputSchema": {
       "type": "object",
       "properties": {

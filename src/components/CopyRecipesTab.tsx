@@ -6,6 +6,10 @@
  * copies — and a user can ask their AI to research frameworks online and store
  * them here for later. Styling follows the ContentTab brand-table language on
  * purpose: this is data entry, not chrome.
+ *
+ * REQ-020 (v33): the library mixes 10 factory-default frameworks (is_default,
+ * read-only, shared by every account) with personal recipes. A NAME is enough
+ * to add a row (Enter submits); the content can be filled in later, inline.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,6 +23,8 @@ export interface CopyRecipeRow {
   content: string;
   tags: string[];
   source: string;
+  is_default?: boolean;
+  owner_id?: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -120,8 +126,9 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
     }
   }, [rows]);
 
+  /** REQ-020: a name alone is enough — Enter in the name/tags field submits. */
   const add = useCallback(async () => {
-    if (!workspaceId || !newName.trim() || !newContent.trim()) return;
+    if (!workspaceId || !newName.trim()) return;
     setError("");
     try {
       const res = await apiFetch<{ data?: CopyRecipeRow }>("/api/copy-recipes", {
@@ -143,6 +150,10 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
       setError(e instanceof Error ? e.message : "No se pudo crear la receta");
     }
   }, [workspaceId, newType, newName, newContent, newTags]);
+
+  const submitNew = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") { e.preventDefault(); void add(); }
+  }, [add]);
 
   const visible = rows.filter(r => !typeFilter || r.type === typeFilter);
 
@@ -171,8 +182,10 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
         borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
       }}>
         Tus IAs leen y escriben estas recetas vía MCP (list_copy_recipes / create_copy_recipe).
-        Pídele que busque frameworks en internet y los guarde aquí, o que redacte los copys del
-        calendario siguiendo tu tono. Las que guardan las IAs aparecen con origen «ia».
+        Las marcadas como «Default» vienen de fábrica para todas las cuentas y son de solo
+        lectura; las que agregues —o guarde tu IA— son exclusivamente tuyas. Con un nombre
+        basta para agregar, y Enter la crea de una. Pídele a tu IA que redacte los copys del
+        calendario siguiendo tu tono.
       </div>
 
       {error && (
@@ -209,10 +222,14 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
               </tr>
             </thead>
             <tbody>
-              {visible.map(r => (
+              {visible.map(r => {
+                // Factory defaults are shared by every account → read-only here.
+                const locked = Boolean(r.is_default);
+                return (
                 <tr key={r.id}>
                   <td style={CELL}>
-                    <select value={r.type} style={{ ...control, width: "100%" }}
+                    <select value={r.type} style={{ ...control, width: "100%" }} disabled={locked}
+                      title={locked ? "Receta default (solo lectura)" : undefined}
                       onChange={e => patch(r.id, { type: e.target.value })}>
                       {NEW_TYPES.map(([value, label]) => (
                         <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
@@ -220,34 +237,44 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                     </select>
                   </td>
                   <td style={{ ...CELL, minWidth: 160 }}>
-                    <input value={r.name} placeholder="Nombre" style={field}
+                    <input value={r.name} placeholder="Nombre" style={field} disabled={locked}
+                      title={locked ? "Receta default (solo lectura)" : undefined}
                       onChange={e => patch(r.id, { name: e.target.value })} />
                   </td>
                   <td style={{ ...CELL, minWidth: 320 }}>
                     <textarea value={r.content} placeholder="Instrucciones, estructura, ejemplo…" rows={2}
-                      style={{ ...field, resize: "vertical", minHeight: 36 }}
+                      style={{ ...field, resize: "vertical", minHeight: 36 }} disabled={locked}
+                      title={locked ? "Receta default (solo lectura)" : undefined}
                       onChange={e => patch(r.id, { content: e.target.value })} />
                   </td>
                   <td style={{ ...CELL, minWidth: 130 }}>
-                    <input value={(r.tags || []).join(", ")} placeholder="tag, tag" style={field}
+                    <input value={(r.tags || []).join(", ")} placeholder="tag, tag" style={field} disabled={locked}
+                      title={locked ? "Receta default (solo lectura)" : undefined}
                       onChange={e => patch(r.id, { tags: parseTags(e.target.value) })} />
                   </td>
                   <td style={CELL}>
                     <span style={{
                       fontSize: 10, padding: "2px 8px", borderRadius: 100,
-                      background: r.source === "ia" ? "rgba(139,92,246,0.10)" : "rgba(255,255,255,0.06)",
-                      color: r.source === "ia" ? "rgba(167,139,250,0.9)" : "rgba(255,255,255,0.55)",
-                    }}>{r.source === "ia" ? "IA" : "Humano"}</span>
+                      background: locked
+                        ? "rgba(251,191,36,0.10)"
+                        : r.source === "ia" ? "rgba(139,92,246,0.10)" : "rgba(255,255,255,0.06)",
+                      color: locked
+                        ? "rgba(252,211,77,0.9)"
+                        : r.source === "ia" ? "rgba(167,139,250,0.9)" : "rgba(255,255,255,0.55)",
+                    }}>{locked ? "Default" : r.source === "ia" ? "IA" : "Humano"}</span>
                   </td>
                   <td style={{ ...CELL, fontSize: 11, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>
                     {r.updated_at ? new Date(r.updated_at).toLocaleDateString("es", { day: "2-digit", month: "short" }) : "—"}
                   </td>
                   <td style={CELL}>
-                    <button type="button" onClick={() => remove(r.id)} title="Eliminar"
-                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>×</button>
+                    {!locked && (
+                      <button type="button" onClick={() => remove(r.id)} title="Eliminar"
+                        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>×</button>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -266,21 +293,22 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
               </td>
               <td style={{ ...CELL, minWidth: 160 }}>
                 <input value={newName} placeholder="Nombre (ej. AIDA para lanzamientos)" style={field}
-                  onChange={e => setNewName(e.target.value)} aria-label="Nombre de la nueva receta" />
+                  onChange={e => setNewName(e.target.value)} onKeyDown={submitNew} aria-label="Nombre de la nueva receta" />
               </td>
               <td style={{ ...CELL, minWidth: 320 }}>
-                <textarea value={newContent} placeholder="Receta: estructura, reglas y un ejemplo" rows={2}
+                <textarea value={newContent} placeholder="Receta (opcional): estructura, reglas y un ejemplo — puedes llenarla después" rows={2}
                   style={{ ...field, resize: "vertical", minHeight: 36 }}
-                  onChange={e => setNewContent(e.target.value)} aria-label="Contenido de la nueva receta" />
+                  onChange={e => setNewContent(e.target.value)} aria-label="Contenido de la nueva receta"
+                  onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submitNew(e); }} />
               </td>
               <td style={{ ...CELL, minWidth: 130 }}>
                 <input value={newTags} placeholder="tags, separados, por coma" style={field}
-                  onChange={e => setNewTags(e.target.value)} aria-label="Tags de la nueva receta" />
+                  onChange={e => setNewTags(e.target.value)} onKeyDown={submitNew} aria-label="Tags de la nueva receta" />
               </td>
               <td style={CELL}>
-                <button type="button" onClick={add} disabled={!newName.trim() || !newContent.trim()}
-                  style={{ ...btn, opacity: newName.trim() && newContent.trim() ? 1 : 0.4,
-                    cursor: newName.trim() && newContent.trim() ? "pointer" : "not-allowed" }}>
+                <button type="button" onClick={add} disabled={!newName.trim()}
+                  style={{ ...btn, opacity: newName.trim() ? 1 : 0.4,
+                    cursor: newName.trim() ? "pointer" : "not-allowed" }}>
                   + Agregar
                 </button>
               </td>
