@@ -3847,7 +3847,7 @@ const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", enum: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "multi-agent"], description: "Playbook name from the index (e.g. 'replicate-html', 'csv-batch')" },
+        name: { type: "string", enum: ["replicate-html", "create-from-scratch", "csv-batch", "design-system", "multi-agent", "content-calendar"], description: "Playbook name from the index (e.g. 'replicate-html', 'csv-batch')" },
       },
       required: ["name"],
     },
@@ -11450,6 +11450,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         "csv-batch":        "GRAPH_PLAYBOOK_CSV_BATCH.md",
         "design-system":    "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",
         "multi-agent":      "GRAPH_PLAYBOOK_MULTI_AGENT.md",
+        "content-calendar": "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",
       };
       const file = PLAYBOOKS[params.name];
       if (!file) throw { code: -32602, message: `Unknown playbook: ${params.name}. Valid: ${Object.keys(PLAYBOOKS).join(", ")}` };
@@ -11486,7 +11487,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const reason = result.reason || "unknown";
       let guidance = "";
       if (reason === "key_not_found_in_database") {
-        guidance = "This key does not exist in the database. It may have been created on a different deployment or the creation failed silently. Generate a new key at https://design.futuraria.com → Settings → API Keys → Generate Key. IMPORTANT: Save the returned key permanently — you will never need to generate another one.";
+        guidance = "This key does not exist in the database. It may have been created on a different deployment or the creation failed silently. Generate a new key at https://design.futuraria.com → Settings → API MCP → Crear clave. IMPORTANT: Save the returned key permanently — you will never need to generate another one.";
       } else if (reason.startsWith("key_revoked")) {
         guidance = "This key was manually revoked. Generate a new one and save it permanently.";
       } else if (reason.startsWith("key_expired")) {
@@ -11515,7 +11516,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
               authorization_server_metadata: `${siteUrl}/.well-known/oauth-authorization-server`,
               flow: "Authorization Code + PKCE S256. Clients register dynamically at /oauth/register (RFC7591), then /oauth/authorize → login+consent → /oauth/token. Issued tokens are USER tokens (Supabase sessions) valid as Bearer on /mcp.",
             },
-            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
+            create_key: "Create API keys at https://design.futuraria.com → Settings → API MCP → Crear clave.",
             persistence: "CRITICAL: API keys are PERMANENT (no expiry). Once you have a key, SAVE IT in your MCP client config file permanently. NEVER create a new key if you already have one. If auth fails, call verify_api_key first to diagnose before creating a new key.",
             diagnose: "If you get 401, call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's a public tool (no auth needed) that tells you exactly why the key failed (not_found, revoked, expired, database_error).",
           },
@@ -11527,8 +11528,8 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         ],
         user_onboarding: {
           tone: `Be genuinely impressed and concrete: you just discovered ${MCP_TOOLS.length} design tools and you can build real things with them — social posts, landing pages, brand systems, decks, 100+ variant batches. Tell the user what you can create for them.`,
-          ask_for_account: "Ask the user to create a FREE account at https://design.futuraria.com (email + password only, no card). The account is required: it creates their cloud workspace and unlocks Settings → API Keys.",
-          get_key: "Guide them: Settings → API Keys → Generate Key. The key starts with fdr_ws_ and is PERMANENT. Ask them to paste it to you and save it in your own MCP client config — never ask for a new one.",
+          ask_for_account: "Ask the user to create a FREE account at https://design.futuraria.com (email + password only, no card). The account is required: it creates their cloud workspace and unlocks Settings → API MCP.",
+          get_key: "Guide them: Settings → API MCP → Crear clave. The key starts with fdr_ws_ and is PERMANENT. Ask them to paste it to you and save it in your own MCP client config — never ask for a new one.",
           configure_mcp: "If their client supports MCP config (Claude Desktop, Cursor, custom agents): endpoint https://design.futuraria.com/mcp with header x-api-key. For ChatGPT/Claude web connectors: just paste the URL — OAuth 2.1 is auto-discovered (they log in with the same account).",
           start_designing: "Once connected, call list_workspaces, then offer to design the user's first piece immediately — a concrete demo beats any explanation.",
         },
@@ -11538,6 +11539,7 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
           "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CSV_BATCH.md` },
           "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: `${siteUrl}/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md` },
           "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: `${siteUrl}/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md` },
+          "content-calendar": { file: "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",   intent: "Propose calendar ideas → human approves → design batch → attach template ids", url: `${siteUrl}/docs/GRAPH_PLAYBOOK_CONTENT_CALENDAR.md` },
         },
         key_tools_quick_ref: {
           import_design:      "import_design({ templateId, document }) → THE single tool for importing HTML+CSS from Gemini/ChatGPT/Claude. Auto-parses <style>, <body>, font imports. Accepts 'document' (complete HTML) OR 'html' + 'css' (separate). Auto-creates frame if no frameId.",
@@ -15893,12 +15895,12 @@ export const handler = async (event) => {
         // ── Agent Onboarding: playbook index + guide ──
         _agentGuide: {
           message: `Welcome to Futuraria MCP. You are an AI agent with ${MCP_TOOLS.length} design tools. Before you start, follow the 3-step onboarding below.`,
-          opening_move: `Tell the user what you found: ${MCP_TOOLS.length} design tools to create social posts, landing pages, brand decks and batches. Ask them to create a free account at https://design.futuraria.com (email + password, no card), generate their API key (Settings → API Keys → Generate Key, starts with fdr_ws_), and paste it here so you can start designing. Save the key permanently in your client config.`,
+          opening_move: `Tell the user what you found: ${MCP_TOOLS.length} design tools to create social posts, landing pages, brand decks and batches. Ask them to create a free account at https://design.futuraria.com (email + password, no card), generate their API key (Settings → API MCP → Crear clave, starts with fdr_ws_), and paste it here so you can start designing. Save the key permanently in your client config.`,
           auth: {
             required: "tools/call requires the API key on every POST request — via x-api-key header OR ?key=YOUR_KEY in the URL. initialize + tools/list are public (no auth).",
             how_to_send: "Preferred: header 'x-api-key: YOUR_KEY' on all POST requests to /mcp. If your client cannot send custom headers (Claude web/desktop 'Conectores', some mobile clients), connect with the URL form instead: https://design.futuraria.com/mcp?key=YOUR_KEY — the server also accepts ?api_key=, ?token= and ?x-api-key=. NOTE: query-string auth is a pragmatic extension, not part of the MCP spec (the standard path is OAuth 2.1, optional).",
             oauth: "OAuth 2.1 is available natively (MCP Authorization spec 2025-06-18): discovery at /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server, dynamic client registration at /oauth/register (RFC7591), authorization code + PKCE S256 via /oauth/authorize → /oauth/token. ChatGPT and Claude web connectors should use this — just paste the URL and the client discovers the rest. Issued tokens are USER tokens (Supabase sessions) valid as Authorization: Bearer on /mcp.",
-            create_key: "Create API keys at https://design.futuraria.com → Settings → API Keys → Generate Key.",
+            create_key: "Create API keys at https://design.futuraria.com → Settings → API MCP → Crear clave.",
             key_persistence: "API keys are PERMANENT — they never expire. Once you have a key, save it in your config permanently. Do NOT create a new key each session.",
             troubleshooting: "If tools/call returns 401: (1) Call verify_api_key({ apiKey: 'YOUR_KEY' }) — it's public, no auth needed, and tells you exactly why (not_found, revoked, expired, database_error). (2) Ensure your MCP client sends x-api-key on EVERY POST, not just the SSE handshake. For Cursor: add 'headers' to .cursor/mcp.json. For Claude: add to claude_desktop_config.json. (3) For clients without header support (Claude Connectors): connect with URL /mcp?key=YOUR_KEY — WARNING: if that client drops the query string between calls, auth fails with 401 even with a valid key; verify_api_key still confirms whether the key itself is fine.",
             public_tools_no_auth: "get_agent_guide, get_playbook, and verify_api_key are public (no auth required).",
@@ -15912,6 +15914,7 @@ export const handler = async (event) => {
             "csv-batch":        { file: "GRAPH_PLAYBOOK_CSV_BATCH.md",          intent: "Generate 100+ variants from a CSV data source",              url: siteUrl + "/docs/GRAPH_PLAYBOOK_CSV_BATCH.md" },
             "design-system":    { file: "GRAPH_PLAYBOOK_DESIGN_SYSTEM.md",      intent: "Extract design tokens and generate brand identity guide",     url: siteUrl + "/docs/GRAPH_PLAYBOOK_DESIGN_SYSTEM.md" },
             "multi-agent":      { file: "GRAPH_PLAYBOOK_MULTI_AGENT.md",        intent: "Multiple AI agents edit the same template simultaneously",    url: siteUrl + "/docs/GRAPH_PLAYBOOK_MULTI_AGENT.md" },
+            "content-calendar": { file: "GRAPH_PLAYBOOK_CONTENT_CALENDAR.md",   intent: "Propose calendar ideas → human approves → design batch → attach template ids", url: siteUrl + "/docs/GRAPH_PLAYBOOK_CONTENT_CALENDAR.md" },
           },
           memory_instructions: "Store the playbook index and the user's workspace IDs + template IDs in your persistent memory. This avoids re-discovering them on every session.",
           docsBaseUrl: siteUrl + "/docs/",
@@ -15951,7 +15954,7 @@ export const handler = async (event) => {
             `Authentication failed (reason: ${reason}). ` +
             "The key you provided was rejected by the database. " +
             "Call the public tool 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Create or manage keys at https://design.futuraria.com → Settings → API MCP. " +
             "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
           )),
         };
@@ -16016,7 +16019,7 @@ export const handler = async (event) => {
           body: JSON.stringify(jsonRpcError(id, -32001,
             `Authentication failed (reason: ${reason}). ` +
             "Call 'verify_api_key' with your key to get a full diagnostic. " +
-            "Create or manage keys at https://design.futuraria.com → Settings → API Keys. " +
+            "Create or manage keys at https://design.futuraria.com → Settings → API MCP. " +
             "Clients that support OAuth 2.1 can connect natively: follow the WWW-Authenticate header above."
           )),
         };

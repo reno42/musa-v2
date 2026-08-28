@@ -71,6 +71,10 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
   const [cursor, setCursor] = useState(() => new Date());
   const [filters, setFilters] = useState<ContentFilters>({});
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  // Calendar drag & drop: which piece is being dragged, and which day cell
+  // is currently highlighted as the drop target.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropDate, setDropDate] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -254,6 +258,9 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
             <span style={{ fontSize: 13, color: "#fff", minWidth: 170, textTransform: "capitalize" }}>{monthLabel}</span>
             <button type="button" style={btn} onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>→</button>
             <button type="button" style={btn} onClick={() => setCursor(new Date())}>Hoy</button>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+              Arrastra una pieza a otro día para moverla
+            </span>
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 16px 16px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 1, background: "rgba(255,255,255,0.10)" }}>
@@ -264,10 +271,27 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
                 <div
                   key={cell.date}
                   className="cal-day"
+                  // Dropping on a cell reschedules the piece to that date —
+                  // the calendar equivalent of editing Fecha in the sheet.
+                  onDragOver={e => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    setDropDate(cell.date);
+                  }}
+                  onDragLeave={() => setDropDate(cur => (cur === cell.date ? null : cur))}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const id = e.dataTransfer.getData("text/plain");
+                    setDropDate(null);
+                    setDragId(null);
+                    if (id) patch(id, { scheduled_date: cell.date });
+                  }}
                   style={{
                     background: "#000", minHeight: 104, padding: 6,
                     opacity: cell.inMonth ? 1 : 0.35,
-                    outline: cell.isToday ? "1px solid rgba(255,255,255,0.55)" : "none",
+                    outline: dropDate === cell.date
+                      ? "2px dashed rgba(255,255,255,0.7)"
+                      : cell.isToday ? "1px solid rgba(255,255,255,0.55)" : "none",
                     outlineOffset: -1,
                   }}
                 >
@@ -292,7 +316,15 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
                       type="button"
                       onClick={() => setPane("sheet")}
                       title={item.copy || item.topic || ""}
+                      draggable
+                      onDragStart={e => {
+                        e.dataTransfer.setData("text/plain", item.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDragId(item.id);
+                      }}
+                      onDragEnd={() => { setDragId(null); setDropDate(null); }}
                       style={{
+                        opacity: dragId === item.id ? 0.35 : 1,
                         display: "block", width: "100%", textAlign: "left", marginBottom: 3,
                         padding: "3px 5px", fontSize: 11, cursor: "pointer", fontFamily: "inherit",
                         color: "#fff", background: "rgba(255,255,255,0.08)",
@@ -400,16 +432,27 @@ export function ContentTab({ workspaceId, onOpenTemplate }: Props) {
                       return p === null ? "—" : `${Math.round(p * 100)}%`;
                     })()}
                   </td>
-                  <td style={{ ...CELL, minWidth: 150 }}>
-                    {r.template_id ? (
-                      <button type="button" onClick={() => onOpenTemplate?.(r.template_id!)}
-                        style={{ ...field, textAlign: "left", cursor: "pointer", textDecoration: "underline" }}>
-                        abrir diseño
-                      </button>
-                    ) : (
-                      <input value={r.external_url || ""} placeholder="ID de diseño o enlace" style={field}
-                        onChange={e => patch(r.id, { external_url: e.target.value })} />
-                    )}
+                  <td style={{ ...CELL, minWidth: 170 }}>
+                    {/* Editable AND one click away from the editor: paste a
+                        templateId (or one an AI attached via MCP) and jump to
+                        the design without leaving the sheet. */}
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <input value={r.template_id || ""} placeholder="ID de diseño"
+                        title="ID del diseño (templateId). El botón lo abre en el editor."
+                        style={{ ...field, width: "auto", flex: 1, fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}
+                        onChange={e => patch(r.id, { template_id: e.target.value })} />
+                      <button
+                        type="button"
+                        disabled={!r.template_id}
+                        onClick={() => r.template_id && onOpenTemplate?.(r.template_id)}
+                        title="Abrir en el editor"
+                        style={{
+                          ...btn, padding: "3px 8px", flexShrink: 0,
+                          opacity: r.template_id ? 1 : 0.35,
+                          cursor: r.template_id ? "pointer" : "default",
+                        }}
+                      >↗</button>
+                    </div>
                   </td>
                   <td style={CELL}>
                     <button type="button" onClick={() => removeRow(r.id)} title="Eliminar"

@@ -75,8 +75,9 @@ When a user gives you a task, identify the intent and load the playbook:
 | "Generate 100 variants from this CSV" | `csv-batch` | `get_playbook({ name: "csv-batch" })` |
 | "Extract the design system and make a brand manual" | `design-system` | `get_playbook({ name: "design-system" })` |
 | "Multiple agents edit the same template" | `multi-agent` | `get_playbook({ name: "multi-agent" })` |
+| "Propose a content calendar, then design all approved pieces" | `content-calendar` | `get_playbook({ name: "content-calendar" })` |
 
-Each playbook is a 300-500 line graph-engineered guide with: Mermaid DAG → Node contracts → Tool sequences → Validation gates → Error recovery → Copy-paste MCP calls.
+Each playbook is a graph-engineered guide with: Mermaid DAG → Node contracts → Tool sequences → Validation gates → Error recovery → Copy-paste MCP calls.
 
 ### 🧠 What to Store in Your Memory
 
