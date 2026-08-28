@@ -145,7 +145,7 @@ export function AiConnectPrompts({ initialKey = "" }: { initialKey?: string }) {
         <span className="landing-key-hint">
           {apiKey
             ? "Los prompts de abajo ya incluyen tu clave — copia el de tu IA y pégalo."
-            : "Sin clave aún: crea una en el panel de abajo, cópiala acá y el prompt se arma solo."}
+            : "Sin clave aún: crea una en el panel de arriba, cópiala acá y el prompt se arma solo."}
         </span>
       </div>
       <div className="landing-ai-prompts">
