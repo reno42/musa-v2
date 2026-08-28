@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
 import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
@@ -7,93 +7,13 @@ interface LandingProps {
   onEnter: () => void;
 }
 
-/** Prompts listos para pegarle a cada IA (harnesses de escritorio con acceso a
- *  sus propios archivos de config). El usuario pega su clave una vez y cada
- *  prompt se arma con ella: la IA configura su MCP, guarda la clave permanente,
- *  confirma con tools/list y empieza a diseñar. TU_CLAVE_AQUI es el placeholder. */
-interface AiPrompt {
-  id: string;
-  name: string;
-  badge: string;
-  how: string;
-  prompt: string;
-}
-
-const renderPrompt = (prompt: string, apiKey: string) =>
-  prompt.split("TU_CLAVE_AQUI").join(apiKey || "TU_CLAVE_AQUI");
-
-const AI_PROMPTS: AiPrompt[] = [
-  {
-    id: "hermes",
-    name: "Hermes",
-    badge: "HTTP directo",
-    how: "Agente propio con HTTP: endpoint + clave, sin archivos que tocar.",
-    prompt: `Tengo cuenta en Futuraria (design.futuraria.com) y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Conéctate al endpoint https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (si no puedes mandar encabezados usa https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI).
-Guárdala permanente en tu configuración, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué piezas empezamos a diseñar.`,
-  },
-  {
-    id: "claude-code",
-    name: "Claude Code",
-    badge: "CLI · mcp.json",
-    how: "CLI: ejecuta claude mcp add … o agrega el servidor a tu .mcp.json; reinicia la sesión.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Ejecuta: claude mcp add futuraria --url https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI"
-(o agrégala a tu .mcp.json con headers: {"x-api-key": "TU_CLAVE_AQUI"}).
-Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-  {
-    id: "claude-cowork",
-    name: "Claude Cowork",
-    badge: "Desktop · mcp.json",
-    how: "Desktop: agrega el servidor a tu mcp.json de Cowork y reinicia la app.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega el servidor a tu config de Cowork (mcp.json):
-{"mcpServers": {"futuraria": {"url": "https://design.futuraria.com/mcp", "headers": {"x-api-key": "TU_CLAVE_AQUI"}}}}
-Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    badge: "CLI · config.toml",
-    how: "CLI: agrega el bloque [mcp_servers.futuraria] a ~/.codex/config.toml y reinicia la sesión.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega a ~/.codex/config.toml:
-[mcp_servers.futuraria]
-url = "https://design.futuraria.com/mcp"
-http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-  {
-    id: "chatgpt-cowork",
-    name: "ChatGPT Cowork",
-    badge: "Desktop · config.toml",
-    how: "Desktop: agrega el servidor MCP de Futuraria a tu config de Cowork y reinicia la app.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega el servidor MCP de Futuraria a tu config de Cowork (config.toml):
-[mcp_servers.futuraria]
-url = "https://design.futuraria.com/mcp"
-http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-  {
-    id: "otra",
-    name: "Otra IA",
-    badge: "Endpoint + clave",
-    how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía descargable (SKILL.md).",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Conecta https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (o ?key= en la URL si no soportas encabezados).
-Guárdala permanente, confirma con tools/list (241 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-];
-
+/** Prompts de conexión para IAs: ahora viven en Configuración → API MCP
+ * (src/components/AiConnectPrompts.tsx, junto a la creación de claves). */
 export function Landing({ onEnter }: LandingProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState("");
 
   // ── Exit animation: button stretch → brand appears → hero fades → navigate ──
   const handleEnter = useCallback(() => {
@@ -106,43 +26,6 @@ export function Landing({ onEnter }: LandingProps) {
   const scrollToSection = useCallback((id: string) => {
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
-  // ── Copy one AI prompt (clipboard + execCommand fallback) ──
-  const handleCopyPrompt = useCallback((id: string) => {
-    const text = renderPrompt(AI_PROMPTS.find(p => p.id === id)?.prompt ?? "", apiKey);
-    const done = () => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1600);
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => {});
-      return;
-    }
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand("copy");
-      done();
-    } catch {
-      /* clipboard no disponible */
-    }
-    document.body.removeChild(ta);
-  }, [apiKey]);
-
-  // ── One click on a prompt selects the whole text (easy copy-paste) ──
-  const handleSelectPrompt = useCallback((e: ReactMouseEvent<HTMLPreElement>) => {
-    const range = document.createRange();
-    range.selectNodeContents(e.currentTarget);
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
   }, []);
 
   // ── Video fade-in/fade-out loop ──
@@ -560,65 +443,24 @@ export function Landing({ onEnter }: LandingProps) {
             <div className="landing-step">
               <div className="landing-step-num">1</div>
               <div>
-                <div className="landing-step-title">Pega el prompt de tu IA</div>
+                <div className="landing-step-title">Crea tu cuenta y tu clave</div>
                 <p className="landing-step-desc">
-                  ¿Ya tienes cuenta y clave? Pégala abajo y cada prompt se arma con ella — un solo
-                  mensaje y tu IA queda conectada. (Donde los prompts dicen "x-api-key" es el nombre
-                  del encabezado: ahí va pegada tu clave fdr_ws_…, no hay que crear nada más.)
+                  Entra al workspace, ve a <strong>Configuración → API MCP</strong> y genera una clave MCP
+                  (<code>fdr_ws_…</code>). Una por IA y por persona del equipo: todos diseñan a la vez,
+                  cada uno con su propia IA.
                 </p>
-                <div className="landing-key-box">
-                  <label className="landing-key-label" htmlFor="landing-key-input">Tu clave MCP (opcional)</label>
-                  <input
-                    id="landing-key-input"
-                    className="landing-key-input"
-                    type="text"
-                    placeholder="fdr_ws_…"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value.trim())}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <span className="landing-key-hint">
-                    {apiKey
-                      ? "Los prompts de abajo ya incluyen tu clave — copia el de tu IA y pégalo."
-                      : "Sin clave aún: deja el campo vacío, cópiale el prompt a tu IA y ella te guiará para crearla."}
-                  </span>
-                </div>
-                <div className="landing-ai-prompts">
-                  {AI_PROMPTS.map(ai => (
-                    <div key={ai.id} className="landing-ai-prompt-box">
-                      <div className="landing-ai-prompt-head">
-                        <span className="landing-ai-prompt-name">{ai.name}</span>
-                        <span className="landing-ai-badge">{ai.badge}</span>
-                      </div>
-                      <p className="landing-ai-how">{ai.how}</p>
-                      <pre
-                        className="landing-code-block landing-copy-wrap landing-ai-pre"
-                        onClick={handleSelectPrompt}
-                        title="Clic para seleccionar todo el prompt"
-                      >
-                        {renderPrompt(ai.prompt, apiKey)}
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); handleCopyPrompt(ai.id); }}
-                          className="landing-copy-btn"
-                        >
-                          {copiedId === ai.id ? "✓ Copiado" : "Copiar"}
-                        </button>
-                      </pre>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
             <div className="landing-step">
               <div className="landing-step-num">2</div>
               <div>
-                <div className="landing-step-title">Crea tu cuenta y tu clave</div>
+                <div className="landing-step-title">Copia el prompt de tu IA</div>
                 <p className="landing-step-desc">
-                  Entra al workspace, ve a <strong>Configuración → API Keys</strong> y genera una clave MCP
-                  (<code>fdr_ws_…</code>). Una por IA y por persona del equipo: todos diseñan a la vez,
-                  cada uno con su propia IA.
+                  En esa misma pestaña pegas tu clave y el prompt de tu IA se arma solo — Claude Code,
+                  Codex, ChatGPT/Claude Cowork, Hermes u otra. Cópialo, pégaselo a tu IA y queda
+                  conectada: guarda la clave permanente, confirma con tools/list y empieza a diseñar.
+                  (Donde los prompts dicen "x-api-key" es el nombre del encabezado: ahí va tu clave
+                  fdr_ws_…, no hay que crear nada más.)
                 </p>
               </div>
             </div>
