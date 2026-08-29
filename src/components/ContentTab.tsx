@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/supabase";
 import { downloadBlob } from "../lib/download";
-import { rasterizeFrame } from "../lib/frameCapture";
+import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type PptTextBlock } from "../lib/frameCapture";
 import { useAuth } from "../lib/auth";
 import {
   CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
@@ -199,10 +199,11 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
   }, [visible]);
 
   // ── PPT export (REQ-023) ─────────────────────────────────────────────
-  // One deck per range: a cover presenting the grid, then one slide per
-  // piece — the copy as NATIVE text (selectable in PowerPoint and Google
-  // Slides, which is the point) and the exact frame rendered to PNG on the
-  // right. The team that does not automate yet gets a client-ready grid.
+  // One deck per range: a cover headed by the brand and the requesting
+  // user, then one slide per piece — the caption AND the design's own
+  // words as NATIVE text (selectable, copyable, movable in PowerPoint and
+  // Google Slides, which is the point) over the exact art, whose own text
+  // layer ships hidden so nothing renders twice.
 
   const pptRangeCount = useMemo(
     () => applyFilters(rows, {
@@ -249,15 +250,16 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
       pptx.author = String(userName);
       const brandName = brands.find(b => b.id === pptBrandId)?.name || "Todas las marcas";
 
-      // ── Portada: the grid, the brand, the range, who made it ──
+      // ── Portada: brand as the headline, who requested it, the range ──
       const cover = pptx.addSlide();
       cover.background = { color: "0B0D13" };
-      cover.addText("Grilla de contenido", { x: 0.7, y: 1.55, w: 8.6, fontSize: 40, bold: true, color: "FFFFFF" });
-      cover.addText(brandName, { x: 0.7, y: 2.6, w: 8.6, fontSize: 18, color: "A5B4FC" });
-      cover.addText(`${pptFrom || "inicio"}  →  ${pptTo || "hoy"}`, { x: 0.7, y: 3.1, w: 8.6, fontSize: 14, color: "9CA3AF" });
+      cover.addText("GRILLA DE CONTENIDO", { x: 0.7, y: 1.0, w: 8.6, fontSize: 11, color: "6B7280", charSpacing: 4 });
+      cover.addText(brandName, { x: 0.7, y: 1.4, w: 8.6, fontSize: 44, bold: true, color: "FFFFFF" });
+      cover.addText(`Presentado por ${userName}`, { x: 0.7, y: 2.55, w: 8.6, fontSize: 17, bold: true, color: "A5B4FC" });
+      cover.addText(`${pptFrom || "inicio"}  →  ${pptTo || "hoy"}`, { x: 0.7, y: 3.2, w: 8.6, fontSize: 13, color: "9CA3AF" });
       cover.addText(
-        `Preparado por ${userName} · ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })} · ${pptRows.length} ${pptRows.length === 1 ? "pieza" : "piezas"}`,
-        { x: 0.7, y: 3.6, w: 8.6, fontSize: 12, color: "6B7280" },
+        `${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })} · ${pptRows.length} ${pptRows.length === 1 ? "pieza" : "piezas"}`,
+        { x: 0.7, y: 3.65, w: 8.6, fontSize: 11.5, color: "6B7280" },
       );
 
       // Frame → PNG. Templates are read FRESH here (not from the sheet's
@@ -272,18 +274,27 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         }
         return tplCache.get(templateId);
       };
-      const frameToPng = async (templateId: string, frameId: string) => {
+      const frameToSlideArt = async (templateId: string, frameId: string) => {
         const tpl = await loadTemplate(templateId);
         const frame = tpl && Array.isArray(tpl.frames) ? tpl.frames.find((f: any) => f.id === frameId) : null;
         if (!frame) return null;
-        const canvas = await rasterizeFrame({
+        const source = {
           html: frame.html ?? tpl.html ?? "",
           css: frame.css ?? tpl.css ?? "",
           width: Number(frame.width) || 1080,
           height: Number(frame.height) || 1080,
           background: frame.background || "#ffffff",
-        }, 1.5);
-        return { data: canvas.toDataURL("image/png").replace(/^data:/, ""), w: canvas.width, h: canvas.height };
+        };
+        // The design's own words become real PowerPoint text; the art under
+        // them is painted with its text hidden. If extraction finds nothing
+        // (or fails), the classic text-baked raster is the safe fallback —
+        // worst case equals yesterday's output, never an empty slide.
+        let blocks: PptTextBlock[] = [];
+        try { blocks = await extractFrameTextBlocks(source); } catch { blocks = []; }
+        const canvas = blocks.length
+          ? await rasterizeFrameWithoutText(source, 1.5)
+          : await rasterizeFrame(source, 1.5);
+        return { canvas, blocks, frameWidth: source.width, frameHeight: source.height };
       };
 
       for (let i = 0; i < pptRows.length; i++) {
@@ -305,12 +316,34 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         runs.push({ text: r.copy || "(sin copy todavía)", options: { fontSize: 12.5, color: "E5E7EB" } });
         slide.addText(runs as any, { x: 0.5, y: 1.05, w: 4.6, h: 4.1, valign: "top", shrinkText: true });
 
-        // Right: the exact frame as PNG, aspect-fit into its half.
-        const png = r.template_id && r.frame_id ? await frameToPng(r.template_id, r.frame_id) : null;
-        if (png) {
-          const fit = Math.min(4.0 / png.w, 4.4 / png.h);
-          const w = png.w * fit, h = png.h * fit;
-          slide.addImage({ data: png.data, x: 5.5 + (4.0 - w) / 2, y: 0.85 + (4.4 - h) / 2, w, h });
+        // Right: the frame — art PNG with its text hidden, every text block
+        // re-emitted as a NATIVE text box on top. The words inside the
+        // design select, copy, edit and move like any PowerPoint object.
+        const art = r.template_id && r.frame_id ? await frameToSlideArt(r.template_id, r.frame_id) : null;
+        if (art) {
+          // Frame pixels → slide inches, once; px→points is ×72.
+          const fit = Math.min(4.0 / art.frameWidth, 4.4 / art.frameHeight);
+          const w = art.frameWidth * fit, h = art.frameHeight * fit;
+          const artX = 5.5 + (4.0 - w) / 2, artY = 0.85 + (4.4 - h) / 2;
+          slide.addImage({ data: art.canvas.toDataURL("image/png").replace(/^data:/, ""), x: artX, y: artY, w, h });
+          for (const b of art.blocks) {
+            slide.addText(b.text, {
+              x: artX + b.x * fit,
+              y: artY + b.y * fit,
+              w: b.w * fit,
+              h: b.h * fit,
+              fontSize: Math.max(1, b.fontSize * fit * 72),
+              bold: b.bold,
+              italic: b.italic,
+              underline: b.underline ? { style: "sng" } : undefined,
+              color: b.color,
+              align: b.align,
+              fontFace: b.fontFace || undefined,
+              lineSpacingMultiple: b.lineSpacingMultiple,
+              margin: 0,
+              isTextBox: true,
+            } as any);
+          }
         } else {
           slide.addText(r.template_id ? "Diseño sin frame exacto" : "Sin diseño vinculado", {
             x: 5.6, y: 2.7, w: 3.8, h: 0.7, align: "center", valign: "middle",

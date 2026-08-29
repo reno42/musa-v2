@@ -255,3 +255,156 @@ export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HT
 export function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: number): Promise<Blob | null> {
   return new Promise(resolve => canvas.toBlob(blob => resolve(blob), mimeType, quality));
 }
+
+// ═════════ Native-text export support (REQ-023 "texto copiable") ═════════
+// The raster bakes the design's words into pixels. PowerPoint consumers need
+// those words as real, selectable text — so the PPT export lays native text
+// boxes over a raster whose own text layer was hidden. Two primitives here:
+// the geometry (a live-layout twin of the SVG path) and the text-free paint.
+
+/** Appended when rasterizing the art-only background: every character
+ *  disappears (color, webkit fill, text shadows) while boxes, images and
+ *  the rest of the design stay untouched. */
+export const HIDE_TEXT_CSS =
+  "\n#__df_content,#__df_content *{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}";
+
+/** One design text block, in FRAME pixels, ready to become a native
+ *  PowerPoint text box (px→inches and px→points are the caller's math). */
+export interface PptTextBlock {
+  /** Whitespace-collapsed, text-transform-applied — what PPT should show. */
+  text: string;
+  /** Laid-out rect, clamped to the frame bounds. */
+  x: number; y: number; w: number; h: number;
+  /** CSS px, as painted. */
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  color: string; // #rrggbb
+  align: "left" | "center" | "right";
+  fontFace: string; // first family of the computed stack
+  lineSpacingMultiple: number; // computed line-height / font-size
+}
+
+/**
+ * Measure where the design's text actually sits. rasterizeFrame paints
+ * through an SVG <foreignObject> — no live DOM to query — so this renders
+ * the SAME markup (mapBodySelectors scoping, inlined fonts and images) into
+ * a hidden same-origin iframe and reads the browser's own layout: one block
+ * per element carrying direct text, with its computed style.
+ *
+ * Best-effort by contract: callers fall back to the classic text-baked
+ * raster when this returns [] or throws, so a measurement miss can never
+ * produce an empty-looking slide.
+ */
+export async function extractFrameTextBlocks(source: FrameSource): Promise<PptTextBlock[]> {
+  const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
+    .map(m => m[1])
+    .filter(url => url.includes("fonts.googleapis.com"));
+  const [{ html, css }, fontCss] = await Promise.all([
+    inlineFrameImages(source.html, source.css),
+    inlineGoogleFontCss(importUrls),
+  ]);
+
+  const iframe = document.createElement("iframe");
+  // Off-screen but RENDERED — display:none would skip layout entirely.
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;left:-99999px;top:0;border:0;opacity:0;pointer-events:none";
+  iframe.width = String(Math.ceil(source.width));
+  iframe.height = String(Math.ceil(source.height));
+  document.body.appendChild(iframe);
+
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error("No iframe document");
+    doc.open();
+    doc.write(
+      `<!DOCTYPE html><html><head><style>${fontCss}</style>` +
+      `<style>html,body{margin:0;padding:0}</style>` +
+      `<style>${mapBodySelectors(css)}\n#__df_content{width:${source.width}px;height:${source.height}px;position:relative;background:${source.background};overflow:hidden}</style>` +
+      `</head><body><div id="__df_content">${html}</div></body></html>`,
+    );
+    doc.close();
+
+    // Same settle contract as rasterizeFrame: web fonts swap in late; give
+    // them a beat so rects are measured against the final face.
+    try { await iframe.contentDocument?.fonts?.ready; } catch { /* older engines */ }
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    const root = doc.getElementById("__df_content");
+    const win = iframe.contentWindow;
+    if (!root || !win) return [];
+
+    // One block per ELEMENT with direct text (not per text node):
+    // <p>Hello <b>world</b></p> yields the p's own text and the b's text
+    // as separate blocks — matching style runs, not re-parsing layout.
+    const byParent = new Map<Element, { rects: DOMRect[]; text: string }>();
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const raw = node.textContent || "";
+      if (!raw.trim()) continue;
+      const parent = node.parentElement;
+      if (!parent || /^(script|style|svg)$/i.test(parent.tagName)) continue;
+      const entry = byParent.get(parent) || { rects: [] as DOMRect[], text: "" };
+      entry.text += (entry.text ? " " : "") + raw;
+      const range = doc.createRange();
+      range.selectNodeContents(node);
+      for (const rect of Array.from(range.getClientRects())) entry.rects.push(rect);
+      byParent.set(parent, entry);
+    }
+
+    const blocks: PptTextBlock[] = [];
+    for (const [parent, { rects, text }] of byParent) {
+      if (!rects.length) continue;
+      const cs = win.getComputedStyle(parent);
+      if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity || "1") === 0) continue;
+      if (/rgba\([^)]*,\s*0\)/.test(cs.color)) continue; // invisible ink — the art hides it too
+      let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const r of rects) {
+        x = Math.min(x, r.left); y = Math.min(y, r.top);
+        right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+      }
+      // Clamp to the frame: the live root has overflow:hidden, so anything
+      // past the edges never reached the raster either.
+      x = Math.max(0, x); y = Math.max(0, y);
+      const w = Math.min(right, source.width) - x;
+      const h = Math.min(bottom, source.height) - y;
+      if (w <= 1 || h <= 1) continue;
+
+      let value = text.replace(/\s+/g, " ").trim();
+      if (cs.textTransform === "uppercase") value = value.toUpperCase();
+      else if (cs.textTransform === "lowercase") value = value.toLowerCase();
+      else if (cs.textTransform === "capitalize") value = value.replace(/\b\p{L}/gu, c => c.toUpperCase());
+      if (!value) continue;
+
+      const rgb = cs.color.match(/\d+(?:\.\d+)?/g)?.map(Number) || [0, 0, 0];
+      const fontSize = parseFloat(cs.fontSize) || 16;
+      const lineHeightPx = parseFloat(cs.lineHeight);
+      const weight = cs.fontWeight === "bold" ? 700 : parseInt(cs.fontWeight, 10) || 400;
+      const decoration = (cs as CSSStyleDeclaration & { textDecorationLine?: string }).textDecorationLine || cs.textDecoration || "";
+
+      blocks.push({
+        text: value,
+        x, y, w, h,
+        fontSize,
+        bold: weight >= 600,
+        italic: cs.fontStyle === "italic" || cs.fontStyle === "oblique",
+        underline: decoration.includes("underline"),
+        color: rgb.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, "0")).join(""),
+        align: cs.textAlign === "center" ? "center" : (cs.textAlign === "right" || cs.textAlign === "end") ? "right" : "left",
+        fontFace: (cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim(),
+        lineSpacingMultiple: Number.isFinite(lineHeightPx) ? Math.min(3, Math.max(0.8, lineHeightPx / fontSize)) : 1.2,
+      });
+      if (blocks.length >= 120) break; // pathological frame — cap the box count
+    }
+    return blocks;
+  } finally {
+    iframe.remove();
+  }
+}
+
+/** rasterizeFrame, but the text layer is invisible — the clean "art only"
+ *  background that native PPT text boxes are laid over. */
+export async function rasterizeFrameWithoutText(source: FrameSource, scale = 2): Promise<HTMLCanvasElement> {
+  return rasterizeFrame({ ...source, css: source.css + HIDE_TEXT_CSS }, scale);
+}
