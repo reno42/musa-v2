@@ -337,10 +337,14 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
           const artX = 5.5 + (4.0 - w) / 2, artY = 0.85 + (4.4 - h) / 2;
           slide.addImage({ data: art.canvas.toDataURL("image/png").replace(/^data:/, ""), x: artX, y: artY, w, h });
           for (const b of art.blocks) {
+            // +8% width headroom, capped at the frame edge: renderers that
+            // ignore wrap="none" or substitute a wider font still keep the
+            // line on ONE line instead of spilling onto a second.
+            const lineW = Math.min(b.w * 1.08, art.frameWidth - b.x) * fit;
             slide.addText(b.text, {
               x: artX + b.x * fit,
               y: artY + b.y * fit,
-              w: b.w * fit,
+              w: lineW,
               h: b.h * fit,
               fontSize: Math.max(1, b.fontSize * fit * 72),
               bold: b.bold,

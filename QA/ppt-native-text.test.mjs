@@ -37,6 +37,9 @@ test("ContentTab renders design text as native boxes and falls back to the baked
   // font can never re-wrap a line down onto its neighbor.
   assert.match(tab, /wrap: false/);
   assert.doesNotMatch(tab, /lineSpacingMultiple/);
+  // Width headroom (+8%, capped at the frame edge) so renderers that
+  // ignore wrap="none" still keep borderline lines on one row.
+  assert.match(tab, /Math\.min\(b\.w \* 1\.08, art\.frameWidth - b\.x\) \* fit/);
 });
 
 test("the cover leads with the brand and the requesting user", () => {
