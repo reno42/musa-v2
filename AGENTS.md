@@ -31,6 +31,8 @@
 | `docs/harness/verification.md` | Cómo verificar que tu trabajo funciona | Antes de declarar done |
 | `docs/harness/checkpoints.md` | Criterios objetivos C1-C5 (estado final correcto) | Para auto-evaluarte |
 | `SKILL.md` | Catálogo completo de MCP tools del editor | Antes de usar tools de diseño |
+| `harness/CHART_RECIPES.md` | Reglas de composición (#8 vertical ≥70%, #9 chart obligatorio) + 6 recetas CSS de charts | Antes de crear cualquier template/deck |
+| `harness/SPEC_CREATE_CHART.md` | Spec de la tool nativa `create_chart` + lint COVERAGE/TYPE_FLOOR | Al implementar features de charts |
 | `supabase_migrations/harness.sql` | Schema del harness (multi-tenant) | Si necesitas entender el modelo de datos |
 
 ## 3. Reglas duras (no negociables)
