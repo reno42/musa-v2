@@ -491,8 +491,11 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
               Arrastra una pieza a otro día para moverla
             </span>
           </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "0 16px 16px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 1, background: "rgba(255,255,255,0.10)" }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px 16px" }}>
+            {/* Fit-to-viewport: the weekday row is auto and the week rows share
+                the remaining height, so a whole month is visible without
+                scrolling (user request). grid.length is always a multiple of 7. */}
+            <div style={{ display: "grid", height: "100%", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gridTemplateRows: `auto repeat(${grid.length / 7}, minmax(0, 1fr))`, gap: 1, background: "rgba(255,255,255,0.10)" }}>
               {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(d => (
                 <div key={d} style={{ background: "#000", padding: "6px 8px", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{d}</div>
               ))}
@@ -516,7 +519,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                     if (id) patch(id, { scheduled_date: cell.date });
                   }}
                   style={{
-                    background: "#000", minHeight: 104, padding: 6,
+                    background: "#000", minHeight: 0, overflow: "hidden", padding: 6,
                     opacity: cell.inMonth ? 1 : 0.35,
                     outline: dropDate === cell.date
                       ? "2px dashed rgba(255,255,255,0.7)"
