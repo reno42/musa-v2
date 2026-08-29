@@ -39,3 +39,14 @@ test("the cover leads with the brand and the requesting user", () => {
   // The file's metadata author is the requester too.
   assert.match(tab, /pptx\.author = String\(userName\)/);
 });
+
+test("the export popup offers editable vs flat design text", () => {
+  const tab = read("src/components/ContentTab.tsx");
+  assert.match(tab, /const \[pptTextMode, setPptTextMode\] = useState<"native" \| "flat">\("native"\)/);
+  assert.match(tab, /<option value="native"/);
+  assert.match(tab, /<option value="flat"/);
+  // Flat mode must skip extraction — the raster keeps its baked text.
+  assert.match(tab, /if \(pptTextMode === "native"\) \{\s*try \{ blocks = await extractFrameTextBlocks/);
+  // The generator must actually react to the chosen mode.
+  assert.match(tab, /pptBrandId, pptTextMode, brands,/);
+});

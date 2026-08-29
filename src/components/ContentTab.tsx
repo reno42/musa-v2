@@ -105,6 +105,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
   const [pptFrom, setPptFrom] = useState("");
   const [pptTo, setPptTo] = useState("");
   const [pptBrandId, setPptBrandId] = useState("");
+  // Design text on each slide: native boxes (copyable, movable) or baked
+  // into the raster — the user picks per export, both are first-class.
+  const [pptTextMode, setPptTextMode] = useState<"native" | "flat">("native");
   const [pptBusy, setPptBusy] = useState("");
 
   const load = useCallback(async () => {
@@ -285,12 +288,15 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
           height: Number(frame.height) || 1080,
           background: frame.background || "#ffffff",
         };
-        // The design's own words become real PowerPoint text; the art under
-        // them is painted with its text hidden. If extraction finds nothing
-        // (or fails), the classic text-baked raster is the safe fallback —
-        // worst case equals yesterday's output, never an empty slide.
+        // "native" mode: the design's own words become real PowerPoint
+        // text and the art under them is painted with its text hidden.
+        // "flat" mode skips extraction entirely — the classic baked
+        // raster, byte for byte yesterday's output. A failed extraction in
+        // native mode falls back to that same raster, never an empty slide.
         let blocks: PptTextBlock[] = [];
-        try { blocks = await extractFrameTextBlocks(source); } catch { blocks = []; }
+        if (pptTextMode === "native") {
+          try { blocks = await extractFrameTextBlocks(source); } catch { blocks = []; }
+        }
         const canvas = blocks.length
           ? await rasterizeFrameWithoutText(source, 1.5)
           : await rasterizeFrame(source, 1.5);
@@ -374,7 +380,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
     } finally {
       setPptBusy("");
     }
-  }, [workspaceId, rows, pptFrom, pptTo, pptBrandId, brands, user, templateNameById, framesByFile]);
+  }, [workspaceId, rows, pptFrom, pptTo, pptBrandId, pptTextMode, brands, user, templateNameById, framesByFile]);
 
   /** Optimistic write: the cell changes before the request leaves. */
   const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
@@ -818,8 +824,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Grilla en PPT</div>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", margin: "0 0 14px", lineHeight: 1.5 }}>
               Un documento para PowerPoint y Google Slides: portada con la marca, el rango y tu
-              nombre, y un slide por pieza — copy seleccionable a la izquierda, diseño exportado
-              en PNG a la derecha. Listo para enviar al equipo que todavía no automatiza.
+              nombre, y un slide por pieza — copy seleccionable a la izquierda y, en el diseño,
+              tú eliges si su texto llega editable o como parte de la imagen.
             </p>
             <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
               <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
@@ -842,6 +848,15 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                 style={{ ...control, display: "block", marginTop: 4, width: "100%" }}>
                 <option value="" style={{ background: "#000" }}>Todas las marcas</option>
                 {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", display: "block", marginBottom: 12 }}>
+              Texto del diseño
+              <select value={pptTextMode} onChange={e => setPptTextMode(e.target.value as "native" | "flat")}
+                aria-label="Modo del texto del diseño"
+                style={{ ...control, display: "block", marginTop: 4, width: "100%" }}>
+                <option value="native" style={{ background: "#000" }}>Editable — texto copiable y movible</option>
+                <option value="flat" style={{ background: "#000" }}>Imagen — fiel al diseño, no editable</option>
               </select>
             </label>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>
