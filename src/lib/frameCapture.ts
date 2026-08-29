@@ -128,6 +128,22 @@ function collectCssImageUrls(css: string): string[] {
 }
 
 /**
+ * Custom (user-uploaded) fonts persist in the design css as @font-face rules
+ * pointing at their bucket URL. An SVG <img> fetches no external resources —
+ * the same constraint that data-URIs the Google fonts — so every such url()
+ * is swapped for a data: URI before the frame is drawn or measured.
+ */
+const CUSTOM_FONT_URL_RE = /url\((['"]?)(https?:\/\/[^'")]+\/storage\/v1\/object\/public\/custom-fonts\/[^'")]+)\1\)/g;
+
+async function inlineCustomFontUrls(css: string): Promise<string> {
+  const urls = [...new Set([...css.matchAll(CUSTOM_FONT_URL_RE)].map(m => m[2]))];
+  if (urls.length === 0) return css;
+  let out = css;
+  for (const url of urls) out = out.split(url).join(await inlineImageUrl(url));
+  return out;
+}
+
+/**
  * Replace every external (http/https) image reference in a frame's html
  * (`<img src>`) and css (`background(-image): url(...)`, inline `style`
  * attributes) with its inlined data: URI. Must run before the markup is
@@ -225,10 +241,11 @@ export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HT
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
     .map(m => m[1])
     .filter(url => url.includes("fonts.googleapis.com"));
-  const [{ html, css }, fontCss] = await Promise.all([
+  const [{ html, css: withImages }, fontCss] = await Promise.all([
     inlineFrameImages(source.html, source.css),
     inlineGoogleFontCss(importUrls),
   ]);
+  const css = await inlineCustomFontUrls(withImages);
   const svg = buildFrameSvgMarkup({ ...source, html, css }, fontCss);
 
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -301,10 +318,14 @@ export async function extractFrameTextBlocks(source: FrameSource): Promise<PptTe
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
     .map(m => m[1])
     .filter(url => url.includes("fonts.googleapis.com"));
-  const [{ html, css }, fontCss] = await Promise.all([
+  const [{ html, css: withImages }, fontCss] = await Promise.all([
     inlineFrameImages(source.html, source.css),
     inlineGoogleFontCss(importUrls),
   ]);
+  // Same inlining as the raster path: measurement must happen with the real
+  // glyphs, and an iframe document can no more reach the bucket URL than the
+  // SVG <img> could.
+  const css = await inlineCustomFontUrls(withImages);
 
   const iframe = document.createElement("iframe");
   // Off-screen but RENDERED — display:none would skip layout entirely.

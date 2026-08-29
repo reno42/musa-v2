@@ -6,8 +6,9 @@ import {
   isGenericFamily,
   needsWebfont,
   primaryFamily,
+  registerCustomFontFamily,
 } from "../src/lib/fontFamily.ts";
-import { ensureGoogleFontImport, googleFontHref } from "../src/lib/googleFonts.ts";
+import { buildCss2Axis, ensureGoogleFontImport, googleFontHref } from "../src/lib/googleFonts.ts";
 
 // Every system font in the catalogue carries its substitutes, because a design
 // made on a Mac still has to render on a PC.
@@ -98,4 +99,31 @@ test("blank and whitespace values do not produce a stray comma", () => {
   assert.equal(cssFontFamily(""), "");
   assert.equal(cssFontFamily("   "), "");
   assert.equal(cssFontFamily("Arial, , sans-serif"), "Arial, sans-serif");
+});
+
+test("every variant flavor lands in the css2 axis — italics included", () => {
+  // The old loader dropped every variant that was not a bare "NNN", so a
+  // picked bold italic rendered as its regular face. Full tuples now.
+  assert.equal(buildCss2Axis([]), "");
+  assert.equal(buildCss2Axis(["regular"]), "");
+  assert.equal(buildCss2Axis(["regular", "700"]), ":wght@400;700");
+  assert.equal(buildCss2Axis(["italic"]), ":ital,wght@1,400");
+  assert.equal(buildCss2Axis(["300italic", "regular", "700"]), ":ital,wght@0,400;0,700;1,300");
+  assert.equal(buildCss2Axis(["nonsense"]), "", "an unrecognized variant degrades to the default, not a bogus request");
+  assert.match(googleFontHref("Playfair Display", ["italic"]), /ital,wght@1,400/);
+});
+
+test("a narrow import is upgraded in place, never stacked", () => {
+  const base = "body { color: red; }";
+  const narrow = ensureGoogleFontImport(base, "Roboto");
+  const wide = ensureGoogleFontImport(narrow, "Roboto", ["700", "italic"]);
+  assert.match(wide, /ital,wght@/, "the fuller axis replaces the old import");
+  assert.equal((wide.match(/@import/g) || []).length, 1, "one import per family");
+  assert.equal(ensureGoogleFontImport(wide, "Roboto", ["700", "italic"]), wide, "same arguments are an exact no-op");
+});
+
+test("a custom upload never goes near a webfont host", () => {
+  registerCustomFontFamily("MiFuente");
+  assert.equal(needsWebfont("MiFuente"), false);
+  assert.equal(googleFontHref("MiFuente"), "", "no request is even built");
 });

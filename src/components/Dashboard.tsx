@@ -25,6 +25,7 @@ import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProvid
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
 import { saveUserPrefs } from "../lib/userPrefs";
 import { WorkspaceConsole } from "./WorkspaceConsole";
+import { FontsUsageCard } from "./FontsUsageCard";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
 import { planOptions, type PlanId } from "../lib/ndaContent";
@@ -2639,6 +2640,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </button>
               </div>
             </div>
+
+            {/* Fuentes personalizadas — uso contra límites del plan */}
+            <FontsUsageCard />
 
             {/* Estado de conexión */}
             <div className="bento-card bento-7">

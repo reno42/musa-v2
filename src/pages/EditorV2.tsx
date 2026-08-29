@@ -4,6 +4,7 @@ import { SETTLE_MS, shouldCapture, thumbnailScale } from "../lib/autoSnapshot";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
+import { ensureCustomFontImport, injectCustomFontIntoFrames, loadCustomFontInDocument, type CustomFont } from "../lib/customFonts";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { FileInfoPanel } from "../components/FileInfoPanel";
 import { StyleLibraryPanel } from "../components/StyleLibraryPanel";
@@ -1910,18 +1911,28 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [selectedElement, multiSelectLayerIds]);
 
   // ── Font select ──
-  const handleFontSelect = useCallback((fontFamily: string) => {
+  const handleFontSelect = useCallback((fontFamily: string, meta?: { variants?: string[]; custom?: CustomFont }) => {
     if (!fontFamily || !selectedFrameId) return;
     setSelectedFont(fontFamily);
     setShowFontPicker(false);
     let newCss = activeCss;
-    // A system font arrives as its whole fallback stack, which is already
-    // installed. Asking a webfont host for it builds a bogus request out of the
-    // commas, and the silent fallback reads as the picker ignoring the click.
-    if (needsWebfont(fontFamily)) {
+    if (meta?.custom) {
+      // A custom upload lives at its own URL — no webfont host can serve it.
+      // The @font-face is persisted into the css (so reloads and exports see
+      // it) and primed into this document and the live frames right now.
+      newCss = ensureCustomFontImport(newCss, meta.custom);
+      void loadCustomFontInDocument(meta.custom).catch(() => undefined);
+      injectCustomFontIntoFrames(meta.custom);
+    } else if (needsWebfont(fontFamily)) {
+      // A system font arrives as its whole fallback stack, which is already
+      // installed. Asking a webfont host for it builds a bogus request out of
+      // the commas, and the silent fallback reads as the picker ignoring the
+      // click.
       const family = primaryFamily(fontFamily);
-      newCss = ensureGoogleFontImport(newCss, family);
-      injectGoogleFontIntoFrames(family);
+      // The picker's variant list rides along: without it the frame only ever
+      // loaded the default 400, and bold rendered as a faux face.
+      newCss = ensureGoogleFontImport(newCss, family, meta?.variants);
+      injectGoogleFontIntoFrames(family, meta?.variants);
     }
     // Quoting the whole stack would name a single family with commas in it,
     // which nothing has installed — the browser then falls back to its own

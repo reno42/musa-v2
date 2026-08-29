@@ -5955,6 +5955,59 @@
     }
   },
   {
+    "name": "font_list_custom",
+    "description": "List the user's own uploaded fonts. User-scoped: only this account's faces are visible, never another account's.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "font_upload_custom",
+    "description": "Upload a font file (ttf/otf/woff/woff2, max 2MB) to the user's account. It becomes available in the editor font picker under 'Tus fuentes' and in every design that names its family. Re-uploading the same family+format replaces the stored file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "description": "Original file name, e.g. MiFuente-Bold.ttf — the family name is derived from it"
+        },
+        "dataBase64": {
+          "type": "string",
+          "description": "Base64 of the font file bytes (a data: URI is also accepted)"
+        }
+      },
+      "required": [
+        "fileName",
+        "dataBase64"
+      ]
+    }
+  },
+  {
+    "name": "font_delete_custom",
+    "description": "Delete one of the user's uploaded fonts by id — the stored file and its row leave together.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fontId": {
+          "type": "string",
+          "description": "Id from font_list_custom"
+        }
+      },
+      "required": [
+        "fontId"
+      ]
+    }
+  },
+  {
+    "name": "font_usage_custom",
+    "description": "Custom-font usage against the account's plan limits: how many fonts and how much storage are spent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
     "name": "list_workspace_integrations",
     "description": "List enabled MCP and model API connections for a workspace without exposing credentials.",
     "inputSchema": {

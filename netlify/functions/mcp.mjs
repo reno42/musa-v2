@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import * as templates from "../../api/src/services/templates.js";
 import * as brands from "../../api/src/services/brands.js";
 import * as versionHistory from "../../api/src/services/versionHistory.js";
@@ -3732,6 +3732,37 @@ const MCP_TOOLS = [
       properties: { workspaceId: { type: "string" } },
       required: ["workspaceId"],
     },
+  },
+  {
+    name: "font_list_custom",
+    description: "List the user's own uploaded fonts. User-scoped: only this account's faces are visible, never another account's.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "font_upload_custom",
+    description: "Upload a font file (ttf/otf/woff/woff2, max 2MB) to the user's account. It becomes available in the editor font picker under 'Tus fuentes' and in every design that names its family. Re-uploading the same family+format replaces the stored file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileName: { type: "string", description: "Original file name, e.g. MiFuente-Bold.ttf — the family name is derived from it" },
+        dataBase64: { type: "string", description: "Base64 of the font file bytes (a data: URI is also accepted)" },
+      },
+      required: ["fileName", "dataBase64"],
+    },
+  },
+  {
+    name: "font_delete_custom",
+    description: "Delete one of the user's uploaded fonts by id — the stored file and its row leave together.",
+    inputSchema: {
+      type: "object",
+      properties: { fontId: { type: "string", description: "Id from font_list_custom" } },
+      required: ["fontId"],
+    },
+  },
+  {
+    name: "font_usage_custom",
+    description: "Custom-font usage against the account's plan limits: how many fonts and how much storage are spent.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "list_workspace_integrations",
@@ -13890,6 +13921,114 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
     case "list_api_keys": {
       const keys = await listApiKeys(params.workspaceId);
       return { keys, total: keys.length };
+    }
+
+    // ── Custom fonts (user-scoped uploads; same rules as /api/fonts/custom) ──
+    case "font_list_custom": {
+      const sb = getSupabaseAdmin();
+      if (!sb) return { fonts: [], total: 0 };
+      const { data, error } = await sb.from("custom_fonts")
+        .select("id, family_name, file_name, format, size_bytes, created_at")
+        .eq("user_id", userId).order("created_at", { ascending: false });
+      if (error) throw error;
+      const fonts = (data || []).map(r => ({
+        id: r.id, familyName: r.family_name, fileName: r.file_name,
+        format: r.format, sizeBytes: Number(r.size_bytes) || 0, createdAt: r.created_at,
+      }));
+      return { fonts, total: fonts.length };
+    }
+    case "font_upload_custom": {
+      if (!params.fileName || !params.dataBase64) throw { code: -32602, message: "fileName and dataBase64 are required" };
+      const sb = getSupabaseAdmin();
+      if (!sb) throw new Error("Supabase not configured");
+      const rawB64 = String(params.dataBase64);
+      const b64 = rawB64.startsWith("data:") ? (rawB64.split(",")[1] || "") : rawB64;
+      const buf = Buffer.from(b64, "base64");
+      if (buf.length === 0) throw { code: -32602, message: "Empty font file" };
+      if (buf.length > 2 * 1024 * 1024) throw { code: -32602, message: `Max font size is 2MB (got ${(buf.length / 1048576).toFixed(1)}MB)` };
+      const FONT_MIME = { ttf: "font/ttf", otf: "font/otf", woff: "font/woff", woff2: "font/woff2" };
+      let format = null;
+      if (buf.length > 3 && buf[0] === 0 && buf[1] === 1 && buf[2] === 0 && buf[3] === 0) format = "ttf";
+      else {
+        const tag = buf.toString("ascii", 0, 4);
+        if (tag === "OTTO") format = "otf";
+        else if (tag === "wOFF") format = "woff";
+        else if (tag === "wOF2") format = "woff2";
+        else {
+          const ext = (String(params.fileName).split(".").pop() || "").toLowerCase();
+          if (ext in FONT_MIME) format = ext;
+        }
+      }
+      if (!format) throw { code: -32602, message: "Unsupported font format: upload ttf, otf, woff or woff2" };
+      const { data: profile } = await sb.from("user_profiles").select("access_plan").eq("id", userId).maybeSingle();
+      const limits = profile?.access_plan === "corporate"
+        ? { maxCount: 50, maxBytes: 104857600 }
+        : { maxCount: 10, maxBytes: 20971520 };
+      const [{ count }, { data: sizeRows }] = await Promise.all([
+        sb.from("custom_fonts").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        sb.from("custom_fonts").select("size_bytes").eq("user_id", userId),
+      ]);
+      const used = (sizeRows || []).reduce((s, r) => s + (Number(r.size_bytes) || 0), 0);
+      if ((count || 0) >= limits.maxCount) throw { code: -32602, message: `Plan limit: ${limits.maxCount} fonts` };
+      if (used + buf.length > limits.maxBytes) throw { code: -32602, message: `Plan limit: ${Math.round(limits.maxBytes / 1048576)}MB of fonts` };
+      const familyName = String(params.fileName).replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ")
+        .replace(/[^a-zA-Z0-9À-ÿ ]/g, "").replace(/\s+/g, " ").trim().slice(0, 48) || "Fuente personalizada";
+      const { data: existing } = await sb.from("custom_fonts")
+        .select("id, storage_path").eq("user_id", userId).eq("family_name", familyName).eq("format", format).maybeSingle();
+      const storagePath = `${userId}/${randomUUID()}.${format}`;
+      const { error: upErr } = await sb.storage.from("custom-fonts")
+        .upload(storagePath, buf, { contentType: FONT_MIME[format], upsert: false });
+      if (upErr) throw new Error(`Storage upload failed: ${upErr.message}`);
+      let row;
+      if (existing) {
+        await sb.storage.from("custom-fonts").remove([existing.storage_path]);
+        const { data, error } = await sb.from("custom_fonts")
+          .update({ file_name: String(params.fileName), storage_path: storagePath, size_bytes: buf.length })
+          .eq("id", existing.id).select().single();
+        if (error) throw error;
+        row = data;
+      } else {
+        const { data, error } = await sb.from("custom_fonts")
+          .insert({
+            user_id: userId, family_name: familyName, file_name: String(params.fileName),
+            storage_path: storagePath, format, size_bytes: buf.length,
+          })
+          .select().single();
+        if (error) throw error;
+        row = data;
+      }
+      return {
+        id: row.id, familyName: row.family_name, format: row.format,
+        sizeBytes: Number(row.size_bytes),
+        note: "Available in the editor font picker under 'Tus fuentes'. Use the family name in any text layer's font-family.",
+      };
+    }
+    case "font_delete_custom": {
+      if (!params.fontId) throw { code: -32602, message: "fontId required" };
+      const sb = getSupabaseAdmin();
+      if (!sb) throw new Error("Supabase not configured");
+      const { data: row } = await sb.from("custom_fonts")
+        .select("id, storage_path").eq("id", params.fontId).eq("user_id", userId).maybeSingle();
+      if (!row) throw { code: -32602, message: "Font not found" };
+      await sb.storage.from("custom-fonts").remove([row.storage_path]);
+      const { error } = await sb.from("custom_fonts").delete().eq("id", row.id);
+      if (error) throw error;
+      return { deleted: true, fontId: row.id };
+    }
+    case "font_usage_custom": {
+      const sb = getSupabaseAdmin();
+      if (!sb) return { count: 0, bytes: 0, limits: { maxCount: 10, maxBytes: 20971520 }, plan: "unknown" };
+      const [{ count }, { data: sizeRows }, { data: profile }] = await Promise.all([
+        sb.from("custom_fonts").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        sb.from("custom_fonts").select("size_bytes").eq("user_id", userId),
+        sb.from("user_profiles").select("access_plan").eq("id", userId).maybeSingle(),
+      ]);
+      const bytes = (sizeRows || []).reduce((s, r) => s + (Number(r.size_bytes) || 0), 0);
+      const plan = profile?.access_plan || "friends_family";
+      const limits = plan === "corporate"
+        ? { maxCount: 50, maxBytes: 104857600 }
+        : { maxCount: 10, maxBytes: 20971520 };
+      return { count: count || 0, bytes, limits, plan };
     }
     case "list_workspace_integrations": {
       const sb = getSupabaseAdmin();

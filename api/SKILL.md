@@ -408,7 +408,7 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 1. GET  /mcp                                      → SSE handshake
 2. POST /mcp  { method: "initialize" }             → capabilities exchange
 3. POST /mcp  { method: "notifications/initialized" } → confirm ready
-4. POST /mcp  { method: "tools/list" }             → discover 250 tools
+4. POST /mcp  { method: "tools/list" }             → discover 255 tools
 5. POST /mcp  { method: "tools/call", params: {...} } → invoke any tool
 ```
 
@@ -529,6 +529,10 @@ The MCP server runs at `https://futuraria.netlify.app/mcp` and exposes the same 
 | 62 | `claim_section` | `templateId`, `sectionId`, `agentId` | `ttlSeconds` | Supabase |
 | 63 | `get_active_agents` | `templateId` | — | Supabase read |
 | 64 | `broadcast_section_change` | `channelId`, `sectionId`, `html`, `css`, `agentId` | — | Supabase Realtime |
+| 65 | `font_list_custom` | — | — | Supabase read |
+| 66 | `font_upload_custom` | `fileName`, `dataBase64` | — | Supabase + Storage |
+| 67 | `font_delete_custom` | `fontId` | — | Supabase + Storage |
+| 68 | `font_usage_custom` | — | — | Supabase read |
 
 > ⚠️ `create_template` **validates** `workspaceId` — missing returns `-32602` (enforced in mcp.mjs).
 
@@ -555,7 +559,7 @@ curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key
 # List tools
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...250 tools...}]}}
+# → {"jsonrpc":"2.0","id":2,"result":{"tools":[{...255 tools...}]}}
 
 # Create workspace
 curl -s -X POST $BASE -H "Content-Type: application/json" -H "x-api-key: dev-key" \
@@ -935,5 +939,5 @@ api/src/
 | `api/src/middleware/auth.ts` | Auth extraction (dev_user_default fallback) |
 | `api/src/middleware/rateLimit.ts` | 100 req/15s rate limiter |
 | `netlify/functions/api.mjs` | Express → Netlify Function bridge |
-| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 250 tools) |
+| `netlify/functions/mcp.mjs` | MCP server (SSE + JSON-RPC, 255 tools) |
 | `netlify.toml` | Build config + /api/* → /mcp → /* redirects |

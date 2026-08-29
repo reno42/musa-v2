@@ -24,6 +24,24 @@ const GENERIC_FAMILIES = new Set([
 /** CSS-wide keywords, which are values rather than family names. */
 const CSS_WIDE_KEYWORDS = new Set(["inherit", "initial", "revert", "revert-layer", "unset"]);
 
+/**
+ * Families the user uploaded themselves, registered at runtime as @font-face
+ * by the picker. Asking a webfont host for one 404s into the same silent
+ * fallback that made system stacks look broken — so a custom family must be
+ * recognized here, in the pure module both the editor and the node tests
+ * import, and never sent to Google.
+ */
+const customFontFamilies = new Set<string>();
+
+export function registerCustomFontFamily(family: string): void {
+  const bare = stripQuotes(family || "");
+  if (bare) customFontFamilies.add(bare);
+}
+
+export function isCustomFontFamily(family: string): boolean {
+  return customFontFamilies.has(stripQuotes(family || ""));
+}
+
 const stripQuotes = (name: string) => name.trim().replace(/^['"]|['"]$/g, "").trim();
 
 /**
@@ -109,9 +127,10 @@ export function isGenericFamily(value: string): boolean {
 
 /**
  * Whether to fetch this font from a webfont host. A stack means it is
- * installed locally, and a generic keyword is not a font at all.
+ * installed locally, a generic keyword is not a font at all, and a custom
+ * upload already lives at its own @font-face — none of them go to Google.
  */
 export function needsWebfont(value: string): boolean {
   const family = primaryFamily(value);
-  return Boolean(family) && !isFontStack(value) && !isGenericFamily(family);
+  return Boolean(family) && !isFontStack(value) && !isGenericFamily(family) && !isCustomFontFamily(family);
 }

@@ -35,8 +35,8 @@ import { bugReportRoutes } from "./routes/bugReports.js";
 import { accountRoutes, invitationRoutes, workspaceSaasRoutes } from "./routes/saas.js";
 import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuthClient } from "./services/supabase.js";
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
-import fontCatalog from "./data/google-fonts.json" with { type: "json" };
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
+import { customFontRoutes } from "./routes/customFonts.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -166,17 +166,20 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);
 app.use("/api/segment", segmentationRoutes);
+app.use("/api/fonts/custom", customFontRoutes);
 
 // ── Google Fonts Catalog ──
-// Global endpoint: search/browse 94 popular Google Fonts by name or category
+// Global endpoint: search/browse the WHOLE Google Fonts library by name or
+// category. Nothing is bundled — when the live API is unreachable the response
+// says so (live: false) and the picker surfaces a retry, rather than silently
+// serving a shrunken list as if it were the full library.
 // GET /api/fonts/catalog?search=mont&category=sans-serif&limit=20&offset=0
 app.get("/api/fonts/catalog", asyncRoute(async (req, res) => {
   const search = (req.query.search as string || "").toLowerCase();
   const category = req.query.category as string || "";
 
-  // System fonts first, then Google — bundled, or the full ~1800 when
-  // GOOGLE_FONTS_API_KEY is set.
-  let fonts = await buildCatalog(fontCatalog as Array<{family: string; category: string; variants: string[]}>);
+  const { fonts: allFonts, live } = await buildCatalog();
+  let fonts = allFonts;
   if (category) fonts = fonts.filter(f => f.category === category);
   if (search) {
     fonts = fonts.filter(f =>
@@ -193,7 +196,7 @@ app.get("/api/fonts/catalog", asyncRoute(async (req, res) => {
   // editor rather than as an unavailable typeface.
   const note = paged.length === 0 ? licensedNote(search) : null;
 
-  res.json({ success: true, data: { fonts: paged, total, limit, offset, note } });
+  res.json({ success: true, data: { fonts: paged, total, limit, offset, note, live } });
 }));
 
 /**
