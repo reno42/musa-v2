@@ -671,11 +671,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (showRightPanel && rightPanelTab === tab) setShowRightPanel(false);
     else { setRightPanelTab(tab); setShowRightPanel(true); }
   };
-  // Fail-safe below 1280px: the panel cluster collapses into a single "⋯"
-  // menu, so no panel is ever inaccessible on small laptops.
+  // Fail-safe below 1536px: the panel cluster collapses into a single "⋯"
+  // menu, so no panel is ever inaccessible on smaller desktops. 1536 is the
+  // common 1920-screen-at-125%-scaling width — the last width where the
+  // full labeled cluster still crowds out the user chip.
   const [isNarrowTopbar, setIsNarrowTopbar] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 1279px)");
+    const mq = window.matchMedia("(max-width: 1535px)");
     const apply = () => setIsNarrowTopbar(mq.matches);
     apply();
     mq.addEventListener("change", apply);
@@ -6399,7 +6401,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div style={{ flex: 1 }} />
 
         {/* ═══ Zona: Documento (zoom + guardado de versión) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {/* Zoom: minus, the live level (click to type an exact %), plus.
               No magnifiers — "- 100% +" already reads as zoom, and the glyphs
               were three icons doing one icon's work. The tool itself lives in
@@ -6486,9 +6488,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ Zona: Paneles — los 4 botones que abren el panel derecho,
             juntos: encontrar el que buscas es escanear UN grupo, no recordar
-            en qué zona quedó cada panel. Bajo 1280px colapsan a un menú "⋯"
+            en qué zona quedó cada panel. Bajo 1536px colapsan a un menú "⋯"
             para que ningún panel quede inaccesible en laptops chicas. ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {isNarrowTopbar ? (
             <div style={{ position: "relative" }}>
               <button
@@ -6567,7 +6569,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             menú con checkmarks reales (antes eran 4 botones permanentes que
             solo se usaban al armar el diseño). El toggle de capas sigue en
             la barra de herramientas izquierda, con las demás herramientas. ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-vista" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="editor-v2-topbar-group" data-tour="topbar-vista" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           <div style={{ position: "relative" }}>
             <button
               type="button"
@@ -6618,7 +6620,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div className="editor-v2-topbar-sep" />
 
         {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {/* IA ▾ — the seven AI actions that lived here as emoji-only
               buttons (🪄 ✦ 🍌 🧅 🎬 Lint ⚙️). One trigger, named entries:
               nobody has to guess what 🧅 does, and the bar loses the width
@@ -6728,7 +6730,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         <div className="editor-v2-topbar-sep" />
 
         {/* ═══ Zona: Import / Export (mover contenido dentro y fuera) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-import-export" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="editor-v2-topbar-group" data-tour="topbar-import-export" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
           {/* Import: single entry point that routes to the right tool (SVG
               editor, design-file import, or HTML/CSS import) based on
               what's dropped or picked — see ImportRouterModal. */}
@@ -6825,7 +6827,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
         {/* ═══ User Account (fixed in editor — sign out without leaving) ═══ */}
         {user ? (
-          <div style={{ position: "relative", marginLeft: "auto" }}>
+          <div style={{ position: "relative", marginLeft: "auto", flexShrink: 0 }}>
             <button
               type="button"
               className="editor-v2-topbar-icon-btn"
@@ -6842,7 +6844,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               }}>
                 {(user.email || "?")[0].toUpperCase()}
               </span>
-              <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+              <span style={{ maxWidth: "clamp(64px, 6vw, 96px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
                 {user.email?.split("@")[0] || "Account"}
               </span>
               <IconChevronDown size={11} />

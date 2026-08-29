@@ -2653,9 +2653,14 @@ html, body, #root { height: 100%; width: 100%; }
 .editor-v2-topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* Fluid spacing: gaps breathe with the viewport so the right side (user
+     chip) always fits — a fixed 8px gap is what pushed it off-screen on
+     smaller desktops. --tb-inner-gap is inherited by the topbar groups. */
+  --tb-gap: clamp(2px, 0.4vw, 8px);
+  --tb-inner-gap: clamp(3px, 0.45vw, 6px);
+  gap: var(--tb-gap);
   height: 40px;
-  padding: 0 12px;
+  padding: 0 clamp(6px, 0.8vw, 12px);
   background: rgba(8, 8, 8, 0.88);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -2668,7 +2673,7 @@ html, body, #root { height: 100%; width: 100%; }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 10px;
+  padding: 5px clamp(5px, 0.55vw, 10px);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -2685,9 +2690,9 @@ html, body, #root { height: 100%; width: 100%; }
 }
 
 .editor-v2-topbar-icon-btn {
-  min-width: 32px;
+  min-width: clamp(26px, 2.3vw, 32px);
   height: 32px;
-  padding: 0 6px;
+  padding: 0 clamp(3px, 0.4vw, 6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2723,7 +2728,7 @@ html, body, #root { height: 100%; width: 100%; }
   width: 1px;
   height: 22px;
   background: rgba(255, 255, 255, 0.16);
-  margin: 0 8px;
+  margin: 0 var(--tb-gap, 8px);
   flex-shrink: 0;
 }
 
@@ -2763,6 +2768,13 @@ html, body, #root { height: 100%; width: 100%; }
   font-size: 13px;
   font-weight: 600;
   color: var(--text-bright);
+  /* A long name yields space before the toolbar does — the buttons are
+     irreplaceable, the name is not. */
+  min-width: 0;
+  max-width: clamp(90px, 15vw, 280px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-v2-frame-info {
@@ -2770,6 +2782,11 @@ html, body, #root { height: 100%; width: 100%; }
   color: var(--text-muted);
   font-family: 'SF Mono', monospace;
   margin-left: 4px;
+  min-width: 0;
+  max-width: clamp(80px, 12vw, 220px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-v2-saving {
