@@ -2108,7 +2108,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   }, [input]);
   useEffect(() => { writeFlag(LS_INFLIGHT_KEY, sending); }, [sending]);
 
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
+  // Newest-first list: new messages land at the top, so anchor the view there.
+  useEffect(() => { scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }); }, [messages]);
   useEffect(() => {
     if (!sending) return;
     setClockNow(Date.now());
@@ -2961,13 +2962,29 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
           flex: 1, overflowY: "auto", padding: "14px 18px",
           display: "flex", flexDirection: "column", gap: 10,
         }}>
-          {renderItems.map(item => {
+          {sending && (
+            <div style={{ alignSelf: "flex-start", fontSize: 12, color: "#a1a1aa", fontStyle: "italic" }}>
+              <span aria-hidden="true">
+                {activeProgress
+                  ? `${activeProgress.role} · ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]} · ${formatDuration(activeElapsedMs)} · ronda ${activeProgress.round}/${activeProgress.maxRounds} · ${activeProgress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(activeProgress.cumulativeTokens)} tokens${activeProgress.currentTool ? ` · ${activeProgress.currentTool}` : ""}`
+                  : toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
+              </span>
+              <span role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+                {activeProgress
+                  ? `${activeProgress.role}: ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]}, ronda ${activeProgress.round} de ${activeProgress.maxRounds}${activeProgress.currentTool ? `, herramienta ${activeProgress.currentTool}` : ""}`
+                  : toolEvents.length > 0 ? "Ejecutando herramientas" : "Pensando"}
+              </span>
+            </div>
+          )}
+          {/* Newest first: the reply renders above the question (user request). */}
+          {[...renderItems].reverse().map(item => {
             if (item.type === "message") {
               const m = item.message;
               return (
                 <div key={item.index} style={{
                   alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "85%",
+                  /* Fixed equal width so question and reply bubbles share the same size. */
+                  width: "85%",
                   background: m.role === "user" ? "rgba(200,184,152,0.15)" : "rgba(255,255,255,0.04)",
                   border: `1px solid ${m.role === "user" ? "rgba(200,184,152,0.3)" : "rgba(255,255,255,0.06)"}`,
                   borderRadius: 12, padding: "10px 14px",
@@ -3010,20 +3027,6 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
               </div>
             );
           })}
-          {sending && (
-            <div style={{ alignSelf: "flex-start", fontSize: 12, color: "#a1a1aa", fontStyle: "italic" }}>
-              <span aria-hidden="true">
-                {activeProgress
-                  ? `${activeProgress.role} · ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]} · ${formatDuration(activeElapsedMs)} · ronda ${activeProgress.round}/${activeProgress.maxRounds} · ${activeProgress.tokenCountKind === "estimated" ? "~" : ""}${formatTokens(activeProgress.cumulativeTokens)} tokens${activeProgress.currentTool ? ` · ${activeProgress.currentTool}` : ""}`
-                  : toolEvents.length > 0 ? "ejecutando…" : "pensando…"}
-              </span>
-              <span role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
-                {activeProgress
-                  ? `${activeProgress.role}: ${SUBAGENT_PROGRESS_LABELS[activeProgress.state]}, ronda ${activeProgress.round} de ${activeProgress.maxRounds}${activeProgress.currentTool ? `, herramienta ${activeProgress.currentTool}` : ""}`
-                  : toolEvents.length > 0 ? "Ejecutando herramientas" : "Pensando"}
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Tool events — native disclosure buttons, stable IDs, selectable details. */}

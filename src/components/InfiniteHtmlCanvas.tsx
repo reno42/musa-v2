@@ -1408,9 +1408,9 @@ export function InfiniteHtmlCanvas({
         smartGuides={[...smartGuides, ...liveSmartGuides]}
       />
 
-      {/* Zoom + selection badge */}
+      {/* Zoom + selection badge — bottom-left per user request */}
       <div style={{
-        position: "absolute", bottom: 12, right: 12,
+        position: "absolute", bottom: 12, left: 12,
         background: "rgba(0,0,0,0.65)", color: "#fff",
         padding: "4px 10px", borderRadius: 6, fontSize: 12,
         fontFamily: "monospace", pointerEvents: "none",
