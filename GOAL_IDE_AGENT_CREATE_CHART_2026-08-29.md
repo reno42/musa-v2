@@ -32,6 +32,7 @@ Post-mortem del deck seed 2026-08-29: las IAs generaban slides con 45–55% de c
 | G3 | Validaciones (Σ=100%±0.5, ≤5 segmentos donut, ≤7 barras, placeholder forzado en ranges) | P0 |
 | G4 | lint_design: COVERAGE (<70% zona) · TYPE_FLOOR (<20px en canvas ≥1080) · CHART_MISSING (regex título numérico sin chart) | P1 |
 | G5 | Paleta: leer brand tokens del frame si existen, si no default Futuraria | P2 |
+| G6 | lint_design AI-TELLS (basado en `harness/AI_TELLS.md`): BORDER_LEFT_ACCENT (`border-left` con color de acento ≥3px en cards/quotes) · EMOJI_ICON (🚀💡✨ en labels) · PILL_RADIUS abusivo (>5 elementos `border-radius:999px`) · BUZZWORDS (regex "seamless\|delve\|leverage\|unlock\|empower\|cutting-edge") · GRADIENT_CTA (linear-gradient en botones) | P1 |
 
 ## 🗺️ RUTAS
 
@@ -59,4 +60,6 @@ Post-mortem del deck seed 2026-08-29: las IAs generaban slides con 45–55% de c
 - [ ] create_chart(vbars, [120,420,900]) → heights ≈ 15.5%/54.3%/100% (headroom 1.15)
 - [ ] create_chart(timeline, 4 nodos) → left% equiespaciados 8–92%, cards alternadas sin overlap
 - [ ] lint_design sobre deck v1 (tpl_419198f1) → COVERAGE falla; sobre v2 (tpl_8e2c338b) → pasa
+- [ ] lint AI-TELLS: CSS con `border-left:4px solid #d2ff02` → BORDER_LEFT_ACCENT FAIL; mismo frame sin eso → PASS
+- [ ] lint BUZZWORDS sobre un HTML con "Seamless experience" → FAIL con match señalado
 - [ ] Kanban card_mtewcpgf_doib6k → done tras review
