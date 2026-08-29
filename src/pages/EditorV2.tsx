@@ -247,6 +247,77 @@ const batchMenuItemStyle: React.CSSProperties = {
   padding: "8px 10px", cursor: "pointer", color: "#f0ebe0", fontFamily: "inherit",
 };
 
+// Fase 1 (topbar legibility): shared shell for the topbar dropdowns (IA,
+// Vista, Batchamator, Compartir, ⋯ paneles) — same glass panel the
+// Batchamator menu used, plus the click-away overlay. align="right" for
+// triggers anchored near the screen edge so the panel never spills off.
+function TopbarMenu({ open, onClose, align = "left", width = 250, children }: {
+  open: boolean;
+  onClose: () => void;
+  align?: "left" | "right";
+  width?: number;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 999 }} />
+      <div
+        style={{
+          position: "absolute", top: "calc(100% + 6px)", zIndex: 1000,
+          ...(align === "right" ? { right: 0 } : { left: 0 }),
+          background: "var(--glass-bg)", backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          border: "1px solid var(--glass-border)", borderRadius: 10,
+          padding: 6, width, display: "flex", flexDirection: "column", gap: 2,
+        }}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
+// One named entry inside a topbar dropdown: title + one-line description —
+// the legibility rule from the topbar audit: every action reads by name,
+// never by glyph alone (nothing emoji-only, nothing under 11px).
+function TopbarMenuItem({ icon, title, desc, active = false, disabled = false, onClick, trailing = null }: {
+  icon?: React.ReactNode;
+  title: string;
+  desc?: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={desc ? `${title} — ${desc}` : title}
+      style={{
+        ...batchMenuItemStyle,
+        display: "flex", alignItems: "center", gap: 8,
+        opacity: disabled ? 0.45 : 1,
+        cursor: disabled ? "default" : "pointer",
+        background: active ? "rgba(255,255,255,0.06)" : "transparent",
+      }}
+      onMouseOver={e => { if (!disabled) e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+      onMouseOut={e => { e.currentTarget.style.background = active ? "rgba(255,255,255,0.06)" : "transparent"; }}
+    >
+      {icon != null && (
+        <span style={{ width: 18, display: "inline-flex", justifyContent: "center", alignItems: "center", fontSize: 14, lineHeight: 1, flexShrink: 0 }}>{icon}</span>
+      )}
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontWeight: 600, fontSize: 12.5 }}>{title}</span>
+        {desc && <span style={{ display: "block", fontSize: 11, color: "#9a9484", marginTop: 1 }}>{desc}</span>}
+      </span>
+      {trailing}
+    </button>
+  );
+}
+
 const DEFAULT_HTML = `<div class="card">
   <h1 data-layer-id="heading">Hello World</h1>
   <p data-layer-id="paragraph">Edit this HTML + CSS in the panel on the left.</p>
@@ -665,6 +736,26 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const layerSelectionSequenceRef = useRef(0);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<string>("contextual");
+  // Topbar legibility (Fase 1): grouped menus replace the emoji-only IA row
+  // and the canvas-toggle row — one trigger + named entries each.
+  const [showAiMenu, setShowAiMenu] = useState(false);
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [showMorePanels, setShowMorePanels] = useState(false);
+  const toggleRightPanel = (tab: string) => {
+    if (showRightPanel && rightPanelTab === tab) setShowRightPanel(false);
+    else { setRightPanelTab(tab); setShowRightPanel(true); }
+  };
+  // Fail-safe below 1280px: the panel cluster collapses into a single "⋯"
+  // menu, so no panel is ever inaccessible on small laptops.
+  const [isNarrowTopbar, setIsNarrowTopbar] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1279px)");
+    const apply = () => setIsNarrowTopbar(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   // Sub-tabs of the "contextual" page specifically — whatever is currently
   // selected (an element or a frame), Properties/Code/Animation all inspect
   // THAT same selection, just from a different angle.
@@ -6458,75 +6549,255 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               <polyline points="17 21 17 13 7 13 7 21" />
               <polyline points="7 3 7 8 15 8" />
             </svg>
-            <span style={{ fontSize: 9, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
+            <span style={{ fontSize: 11, marginLeft: 3 }}>{savingVersion ? "…" : "Guardar"}</span>
           </button>
 
-          {/* History sits right next to Guardar — it's the record of what
-              that button produces, not a design-context panel. */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "history" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "history") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("history");
-                setShowRightPanel(true);
-              }
-            }}
-            title="History"
-          >
-            <IconHistory size={14} />
-          </button>
-
-          {/* Information: brand/campaign/tags metadata for this file
-              (formerly labeled "Obsidian") — also where the cover-image
-              capture lives (Dashboard prefers this cover over the auto
-              thumbnail, so the old separate "Capture Thumbnail" button
-              was redundant). */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "meta") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("meta");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Information — marca, campaña, tags y conexiones del grafo"
-          >
-            <IconInfo size={14} />
-          </button>
+          {/* History/Info moved to the Paneles cluster (Fase 1): the four
+              right-panel toggles live together now — one group to scan
+              instead of one button remembered per zone. */}
         </div>
 
         <div className="editor-v2-topbar-sep" />
 
-        {/* ═══ Zona: Bibliotecas (recursos reusables que guardas y aplicas
-            a otros diseños — estilos, assets, iconos, key visuals, y el
-            contexto de marca/campaña de Obsidian) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-bibliotecas" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Biblioteca: opens as a right-side panel (like Properties/
-              History/Información) — Estilos (Brand Guidelines), Plantillas
-              (Key Visuals) y Recursos (Assets) viven en sus pestañas internas. */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "styleLibrary" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "styleLibrary") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("styleLibrary");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Biblioteca — Estilos, Plantillas y Recursos"
-          >
-            <IconPalette size={14} />
-            <span style={{ fontSize: 9, marginLeft: 3 }}>Biblioteca</span>
-          </button>
+        {/* ═══ Zona: Paneles — los 4 botones que abren el panel derecho,
+            juntos: encontrar el que buscas es escanear UN grupo, no recordar
+            en qué zona quedó cada panel. Bajo 1280px colapsan a un menú "⋯"
+            para que ningún panel quede inaccesible en laptops chicas. ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-paneles" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {isNarrowTopbar ? (
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showMorePanels ? "active" : ""}`}
+                onClick={() => setShowMorePanels(v => !v)}
+                title="Paneles — Historial, Info, Biblioteca, Propiedades"
+              >
+                <span style={{ fontSize: 13, lineHeight: 1 }}>⋯</span>
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Paneles</span>
+              </button>
+              <TopbarMenu open={showMorePanels} onClose={() => setShowMorePanels(false)} width={250}>
+                {([
+                  { tab: "history", label: "Historial", desc: "Versiones guardadas del archivo" },
+                  { tab: "meta", label: "Info", desc: "Marca, campaña, tags y conexiones del grafo" },
+                  { tab: "styleLibrary", label: "Biblioteca", desc: "Estilos (Brand Guidelines), Plantillas y Recursos" },
+                  { tab: "contextual", label: "Props", desc: "Propiedades de lo seleccionado" },
+                ] as const).map(({ tab, label, desc }) => (
+                  <TopbarMenuItem
+                    key={tab}
+                    title={label}
+                    desc={desc}
+                    active={showRightPanel && rightPanelTab === tab}
+                    onClick={() => { toggleRightPanel(tab); setShowMorePanels(false); }}
+                  />
+                ))}
+              </TopbarMenu>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "history" ? "active" : ""}`}
+                onClick={() => toggleRightPanel("history")}
+                title="Historial — versiones guardadas del archivo"
+              >
+                <IconHistory size={14} />
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Historial</span>
+              </button>
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
+                onClick={() => toggleRightPanel("meta")}
+                title="Info — marca, campaña, tags y conexiones del grafo"
+              >
+                <IconInfo size={14} />
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Info</span>
+              </button>
+              {/* Biblioteca: Estilos (Brand Guidelines), Plantillas (Key
+                  Visuals) y Recursos (Assets) viven en sus pestañas internas. */}
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "styleLibrary" ? "active" : ""}`}
+                onClick={() => toggleRightPanel("styleLibrary")}
+                title="Biblioteca — Estilos, Plantillas y Recursos"
+              >
+                <IconPalette size={14} />
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Biblioteca</span>
+              </button>
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "contextual" ? "active" : ""}`}
+                onClick={() => toggleRightPanel("contextual")}
+                title="Propiedades de lo seleccionado"
+              >
+                <IconSliders size={14} />
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Props</span>
+              </button>
+            </>
+          )}
+        </div>
 
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Vista — reglas, grilla y guías del lienzo en un solo
+            menú con checkmarks reales (antes eran 4 botones permanentes que
+            solo se usaban al armar el diseño). El toggle de capas sigue en
+            la barra de herramientas izquierda, con las demás herramientas. ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-vista" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`editor-v2-topbar-icon-btn ${showViewMenu ? "active" : ""}`}
+              onClick={() => setShowViewMenu(v => !v)}
+              title="Vista — reglas, grilla de píxeles y guías"
+            >
+              <IconColumns size={14} />
+              <span style={{ fontSize: 11, marginLeft: 4 }}>Vista</span>
+              <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
+            </button>
+            <TopbarMenu open={showViewMenu} onClose={() => setShowViewMenu(false)} width={260}>
+              <TopbarMenuItem
+                icon={<IconRuler size={14} />}
+                title="Reglas"
+                desc="Medidas en los bordes del lienzo (Ctrl+R)"
+                active={showRulers}
+                trailing={showRulers ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
+                onClick={() => { setShowRulers(v => !v); setShowViewMenu(false); }}
+              />
+              <TopbarMenuItem
+                icon={<IconGrid size={14} />}
+                title="Grilla de píxeles"
+                desc="Alineación fina al píxel (Ctrl+')"
+                active={showGrid}
+                trailing={showGrid ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
+                onClick={() => { setShowGrid(v => !v); setShowViewMenu(false); }}
+              />
+              <TopbarMenuItem
+                icon={<IconColumns size={14} />}
+                title="Guías de columnas"
+                desc="Configurar columnas de layout"
+                active={showColumnPanel}
+                trailing={showColumnPanel ? <span style={{ fontSize: 13, color: "#c8b898" }}>✓</span> : null}
+                onClick={() => { setShowColumnPanel(v => !v); setShowViewMenu(false); }}
+              />
+              <TopbarMenuItem
+                icon={<IconEraser size={14} />}
+                title="Limpiar guías"
+                desc="Quita las guías manuales del lienzo"
+                disabled={guides.length === 0}
+                onClick={() => { setGuides([]); setShowViewMenu(false); }}
+              />
+            </TopbarMenu>
+          </div>
+        </div>
+
+        <div className="editor-v2-topbar-sep" />
+
+        {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
+        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* IA ▾ — the seven AI actions that lived here as emoji-only
+              buttons (🪄 ✦ 🍌 🧅 🎬 Lint ⚙️). One trigger, named entries:
+              nobody has to guess what 🧅 does, and the bar loses the width
+              of ~8 permanent buttons. */}
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`editor-v2-topbar-icon-btn ${showAiMenu ? "active" : ""}`}
+              onClick={() => setShowAiMenu(v => !v)}
+              title="IA — imagen a diseño, vectorizar, imagen/video, capas, lint, ajustes"
+            >
+              <IconWand size={14} />
+              <span style={{ fontSize: 11, marginLeft: 4 }}>IA</span>
+              <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
+            </button>
+            <TopbarMenu open={showAiMenu} onClose={() => setShowAiMenu(false)} width={310}>
+              <TopbarMenuItem
+                icon={mcpLoading === "imageToDesign" ? "⏳" : "🪄"}
+                title="Imagen → Diseño"
+                desc="Convierte la imagen seleccionada en un diseño"
+                disabled={mcpLoading === "imageToDesign"}
+                onClick={() => { setShowAiMenu(false); if (!geminiConfigured) { openAiConfigPanel(); return; } handleConvertSelectedImageToDesign(); }}
+              />
+              <TopbarMenuItem
+                icon={vectorizeLoading ? "⏳" : "✦"}
+                title="Vectorizar"
+                desc="Imagen seleccionada → SVG editable (Quiver AI)"
+                disabled={vectorizeLoading}
+                onClick={() => { setShowAiMenu(false); if (!quiverConfigured) { openAiConfigPanel(); return; } handleVectorizeSelectedImage(); }}
+              />
+              <TopbarMenuItem
+                icon="🍌"
+                title="Nano Banana"
+                desc="Genera o edita imágenes con IA (Gemini)"
+                active={showRightPanel && rightPanelTab === "genImage"}
+                onClick={() => { setShowAiMenu(false); toggleRightPanel("genImage"); }}
+              />
+              <TopbarMenuItem
+                icon={splitStatus !== "idle" ? "⏳" : "🧅"}
+                title="Separar en capas"
+                desc="Divide la imagen en capas editables (Seedream 5.0 Pro)"
+                active={showRightPanel && rightPanelTab === "layerSplit"}
+                onClick={() => { setShowAiMenu(false); toggleRightPanel("layerSplit"); }}
+              />
+              <TopbarMenuItem
+                icon={videoStatus !== "idle" ? "⏳" : "🎬"}
+                title="Generar video"
+                desc="Video desde la imagen seleccionada (RunwayML Gen-4)"
+                active={showRightPanel && rightPanelTab === "videoGen"}
+                onClick={() => { setShowAiMenu(false); toggleRightPanel("videoGen"); }}
+              />
+              <TopbarMenuItem
+                icon={mcpLoading === "lint" ? "⏳" : <IconWand size={14} />}
+                title="Lint del diseño"
+                desc="Revisa el diseño en busca de problemas"
+                disabled={mcpLoading === "lint"}
+                onClick={() => { setShowAiMenu(false); handleLintDesign(); }}
+              />
+              <TopbarMenuItem
+                icon="⚙️"
+                title="Ajustes de IA"
+                desc="Modelo y API keys sin salir del editor"
+                active={showRightPanel && rightPanelTab === "ai"}
+                onClick={() => { setShowAiMenu(false); toggleRightPanel("ai"); }}
+              />
+            </TopbarMenu>
+          </div>
+
+          {/* Batchamator — un botón, tres flujos: Content Machine, Brand
+              Guidelines, Design System. Ver handleContentMachine /
+              handleBrandGuidelinesCapture / handleDesignSystemCapture.
+              La "B" de 9px no se leía — ahora es "Batch". */}
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`editor-v2-topbar-icon-btn ${(showRightPanel && rightPanelTab === "batch") || showBatchMenu ? "active" : ""}`}
+              onClick={() => setShowBatchMenu(v => !v)}
+              title="Batchamator — Content Machine, Brand Guidelines, Design System"
+            >
+              <IconGrid size={14} />
+              <span style={{ fontSize: 11, marginLeft: 4 }}>Batch</span>
+              <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
+            </button>
+            <TopbarMenu open={showBatchMenu} onClose={() => setShowBatchMenu(false)} width={250}>
+              <TopbarMenuItem
+                icon="📄"
+                title="Content Machine"
+                desc="Guarda como Plantilla + Assets, exporta CSV para generar variantes"
+                onClick={() => { setShowBatchMenu(false); handleContentMachine(); }}
+              />
+              <TopbarMenuItem
+                icon="🎨"
+                title="Brand Guidelines"
+                desc="Toma el frame como logotipo y arma un Style de marca"
+                onClick={() => { setShowBatchMenu(false); handleBrandGuidelinesCapture(); }}
+              />
+              <TopbarMenuItem
+                icon="🧩"
+                title="Design System"
+                desc="Toma el frame como inspiración y arma un Style reusable"
+                onClick={() => { setShowBatchMenu(false); handleDesignSystemCapture(); }}
+              />
+            </TopbarMenu>
+          </div>
         </div>
 
         <div className="editor-v2-topbar-sep" />
@@ -6544,7 +6815,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             style={{ color: "var(--editor-accent, #6c5ce7)" }}
           >
             <IconUpload size={14} />
-            <span style={{ fontSize: 11, marginLeft: 4 }}>Import</span>
+            <span style={{ fontSize: 12, marginLeft: 4 }}>Import</span>
           </button>
 
           {/* Export: format dropdown + scope toggle + export button */}
@@ -6560,20 +6831,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <button
             type="button"
             className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "comments" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "comments") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("comments");
-                setShowRightPanel(true);
-              }
-            }}
+            onClick={() => toggleRightPanel("comments")}
             title="Comentarios"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
             </svg>
-            <span style={{ fontSize: 11, marginLeft: 4 }}>Comentarios</span>
+            <span style={{ fontSize: 12, marginLeft: 4 }}>Comentarios</span>
             {comments.filter(c => c.status === "open").length > 0 && (
               <span style={{ marginLeft: 4, background: "rgba(245,158,11,0.85)", color: "#111", borderRadius: 8, padding: "0 6px", fontSize: 10, fontWeight: 700 }}>
                 {comments.filter(c => c.status === "open").length}
@@ -6581,289 +6845,57 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             )}
           </button>
 
-          {/* Public/private: flips the share link on/off. The Comentar button
-              stays useful either way — it's the guest link that respects it. */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={handleTogglePublic}
-            disabled={publicBusy}
-            title={isPublic ? "Público — toca para hacerlo privado" : "Privado — toca para hacerlo público"}
-            style={{ color: isPublic ? "#34d399" : "#f87171" }}
-          >
-            <span style={{ fontSize: 13, lineHeight: 1 }}>{isPublic ? "◉" : "○"}</span>
-            <span style={{ fontSize: 11, marginLeft: 4 }}>{publicBusy ? "…" : isPublic ? "Público" : "Privado"}</span>
-          </button>
-
-          {/* Share: copies the public /c/:templateId link. A guest (client,
-              teammate, phone) opens it without an account, taps the design to
-              pin comments, and can file them to the Kanban for the AI. */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => {
-              const url = `${window.location.origin}/c/${templateId}`;
-              const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un móvil para recibir feedback.", "success");
-              if (navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(url).then(done).catch(() => {});
-                return;
-              }
-              const ta = document.createElement("textarea");
-              ta.value = url;
-              ta.style.position = "fixed";
-              ta.style.opacity = "0";
-              document.body.appendChild(ta);
-              ta.select();
-              try {
-                document.execCommand("copy");
-                done();
-              } catch { /* clipboard blocked — user can copy from the address bar */ }
-              document.body.removeChild(ta);
-            }}
-            title="Compartir enlace de comentarios móviles"
-          >
-            <IconShare size={14} />
-            <span style={{ fontSize: 11, marginLeft: 4 }}>Compartir</span>
-          </button>
-        </div>
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* ═══ Zona: Automatizaciones (IA + generación en lote) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-automatizaciones" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Image to Design — acts on the selected image, no upload popup.
-              If no Gemini key is set, opens the AI config panel first. */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => {
-              if (!geminiConfigured) { openAiConfigPanel(); return; }
-              handleConvertSelectedImageToDesign();
-            }}
-            disabled={mcpLoading === "imageToDesign"}
-            title="Convert selected image to Design (AI Vision)"
-            style={{ background: "linear-gradient(135deg, rgba(200,184,152,0.15), rgba(168,146,106,0.15))" }}
-          >
-            <span style={{ fontSize: 14 }}>{mcpLoading === "imageToDesign" ? "⏳" : "🪄"}</span>
-          </button>
-
-          {/* Vectorize Image → SVG (Quiver AI) — acts on the selected image,
-              streams the SVG building live, then inserts as a vector layer. */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={() => {
-              if (!quiverConfigured) { openAiConfigPanel(); return; }
-              handleVectorizeSelectedImage();
-            }}
-            disabled={vectorizeLoading}
-            title="Vectorize selected image to SVG (Quiver AI)"
-            style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))" }}
-          >
-            <span style={{ fontSize: 14 }}>{vectorizeLoading ? "⏳" : "✦"}</span>
-          </button>
-
-          {/* Nano Banana — AI image generation/editing. Opens the genImage
-              panel; the Gemini key check happens on Generate (the panel
-              itself hosts the key input, shared with Image to Design). */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "genImage" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "genImage") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("genImage");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Generar imagen con Nano Banana (Gemini)"
-            style={{ background: "linear-gradient(135deg, rgba(251,191,36,0.15), rgba(245,158,11,0.15))" }}
-          >
-            <span style={{ fontSize: 14 }}>{mcpLoading === "genImage" ? "⏳" : "🍌"}</span>
-          </button>
-
-          {/* Layer separation — Seedream 5.0 Pro via WaveSpeedAI. Splits the
-              selected image into editable layers; opens the layerSplit panel
-              (its key check happens on Separar). */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "layerSplit" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "layerSplit") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("layerSplit");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Separar imagen en capas (Seedream 5.0 Pro)"
-            style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(79,70,229,0.15))" }}
-          >
-            <span style={{ fontSize: 14 }}>{splitStatus !== "idle" ? "⏳" : "🧅"}</span>
-          </button>
-
-          {/* Image → video — RunwayML Gen-4. Opens the videoGen panel; the
-              key check happens on Generar (the panel hosts the key input). */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "videoGen" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "videoGen") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("videoGen");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Generar video desde la imagen (RunwayML Gen-4)"
-            style={{ background: "linear-gradient(135deg, rgba(236,72,153,0.15), rgba(168,85,247,0.15))" }}
-          >
-            <span style={{ fontSize: 14 }}>{videoStatus !== "idle" ? "⏳" : "🎬"}</span>
-          </button>
-
-          {/* AI Settings — provider/model/key config without leaving editor */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "ai" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "ai") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("ai");
-                setShowRightPanel(true);
-              }
-            }}
-            title="AI Settings — model & API key"
-          >
-            <span style={{ fontSize: 14 }}>⚙️</span>
-          </button>
-
-          {/* Lint design */}
-          <button
-            type="button"
-            className="editor-v2-topbar-icon-btn"
-            onClick={handleLintDesign}
-            disabled={mcpLoading === "lint"}
-            title="Lint Design — check for issues"
-          >
-            <IconWand size={14} />
-          </button>
-
-          {/* Batchamator — un botón, tres flujos: Content Machine, Brand
-              Guidelines, Design System. Ver handleContentMachine /
-              handleBrandGuidelinesCapture / handleDesignSystemCapture. */}
+          {/* Share ▾ — copy link + visibilidad en un solo popover: la
+              visibilidad es parte de compartir (antes eran dos botones
+              permanentes). A guest (client, teammate, phone) opens the
+              /c/:templateId link without an account, taps the design to pin
+              comments, and can file them to the Kanban for the AI. */}
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              className={`editor-v2-topbar-icon-btn ${(showRightPanel && rightPanelTab === "batch") || showBatchMenu ? "active" : ""}`}
-              onClick={() => setShowBatchMenu(v => !v)}
-              title="Batchamator — Content Machine, Brand Guidelines, Design System"
+              className={`editor-v2-topbar-icon-btn ${showShareMenu ? "active" : ""}`}
+              onClick={() => setShowShareMenu(v => !v)}
+              title="Compartir — copiar enlace y visibilidad (público/privado)"
             >
-              <IconGrid size={14} />
-              <span style={{ fontSize: 9, marginLeft: 1 }}>B</span>
+              <IconShare size={14} />
+              <span style={{ fontSize: 12, marginLeft: 4 }}>Compartir</span>
+              <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
             </button>
-            {showBatchMenu && (
-              <>
-                <div
-                  onClick={() => setShowBatchMenu(false)}
-                  style={{ position: "fixed", inset: 0, zIndex: 999 }}
-                />
-                <div
-                  style={{
-                    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 1000,
-                    background: "var(--glass-bg)", backdropFilter: "blur(20px) saturate(180%)",
-                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    border: "1px solid var(--glass-border)", borderRadius: 10,
-                    padding: 6, width: 240, display: "flex", flexDirection: "column", gap: 2,
-                  }}
-                >
-                  <button
-                    type="button" onClick={handleContentMachine} style={batchMenuItemStyle}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
-                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>📄 Content Machine</div>
-                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Guarda como Plantilla + Assets, exporta CSV para generar variantes</div>
-                  </button>
-                  <button
-                    type="button" onClick={handleBrandGuidelinesCapture} style={batchMenuItemStyle}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
-                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>🎨 Brand Guidelines</div>
-                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Toma el frame como logotipo y arma un Style de marca</div>
-                  </button>
-                  <button
-                    type="button" onClick={handleDesignSystemCapture} style={batchMenuItemStyle}
-                    onMouseOver={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
-                    onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 12.5 }}>🧩 Design System</div>
-                    <div style={{ fontSize: 10.5, color: "#9a9484", marginTop: 1 }}>Toma el frame como inspiración y arma un Style reusable</div>
-                  </button>
-                </div>
-              </>
-            )}
+            <TopbarMenu open={showShareMenu} onClose={() => setShowShareMenu(false)} width={300}>
+              <TopbarMenuItem
+                icon={<IconShare size={14} />}
+                title="Copiar enlace"
+                desc="Feedback desde el móvil, sin cuenta"
+                onClick={() => {
+                  setShowShareMenu(false);
+                  const url = `${window.location.origin}/c/${templateId}`;
+                  const done = () => addToast("Enlace de comentarios copiado. Ábrelo en un móvil para recibir feedback.", "success");
+                  if (navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(url).then(done).catch(() => {});
+                    return;
+                  }
+                  const ta = document.createElement("textarea");
+                  ta.value = url;
+                  ta.style.position = "fixed";
+                  ta.style.opacity = "0";
+                  document.body.appendChild(ta);
+                  ta.select();
+                  try {
+                    document.execCommand("copy");
+                    done();
+                  } catch { /* clipboard blocked — user can copy from the address bar */ }
+                  document.body.removeChild(ta);
+                }}
+              />
+              <TopbarMenuItem
+                icon={<span style={{ color: isPublic ? "#34d399" : "#f87171" }}>{isPublic ? "◉" : "○"}</span>}
+                title={publicBusy ? "Cambiando visibilidad…" : isPublic ? "Público — pasar a privado" : "Privado — pasar a público"}
+                desc="Controla si el enlace compartido abre el diseño"
+                disabled={publicBusy}
+                onClick={() => { setShowShareMenu(false); void handleTogglePublic(); }}
+              />
+            </TopbarMenu>
           </div>
-        </div>
-
-        <div className="editor-v2-topbar-sep" />
-
-        {/* ═══ Zona: Guías del lienzo (visualizadores / toggles) ═══ */}
-        <div className="editor-v2-topbar-group" data-tour="topbar-guias" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "contextual" ? "active" : ""}`}
-            onClick={() => {
-              if (showRightPanel && rightPanelTab === "contextual") {
-                setShowRightPanel(false);
-              } else {
-                setRightPanelTab("contextual");
-                setShowRightPanel(true);
-              }
-            }}
-            title="Toggle Properties"
-          >
-            <IconSliders size={14} />
-          </button>
-          {/* The layers toggle lives in the left toolbar now, with the other
-              tools. Two buttons for one panel meant neither was the one you
-              reached for. */}
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showRulers ? "active" : ""}`}
-            onClick={() => setShowRulers(v => !v)}
-            title="Toggle Rulers (Ctrl+R)"
-          >
-            <IconRuler size={14} />
-          </button>
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showGrid ? "active" : ""}`}
-            onClick={() => setShowGrid(v => !v)}
-            title="Toggle Pixel Grid (Ctrl+')"
-          >
-            <IconGrid size={14} />
-          </button>
-          <button
-            type="button"
-            className={`editor-v2-topbar-icon-btn ${showColumnPanel ? "active" : ""}`}
-            onClick={() => setShowColumnPanel(v => !v)}
-            title="Column Guides — configure layout columns"
-          >
-            <IconColumns size={14} />
-          </button>
-          {guides.length > 0 && (
-            <button
-              type="button"
-              className="editor-v2-topbar-icon-btn"
-              onClick={() => setGuides([])}
-              title="Clear all guides"
-            >
-              <IconEraser size={14} />
-            </button>
-          )}
         </div>
 
         {/* ═══ User Account (fixed in editor — sign out without leaving) ═══ */}
@@ -6885,7 +6917,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               }}>
                 {(user.email || "?")[0].toUpperCase()}
               </span>
-              <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>
+              <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
                 {user.email?.split("@")[0] || "Account"}
               </span>
               <IconChevronDown size={11} />
