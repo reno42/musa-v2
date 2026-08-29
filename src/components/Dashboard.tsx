@@ -415,10 +415,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [autoConfigSaving, setAutoConfigSaving] = useState(false);
   const [autoConfigMsg, setAutoConfigMsg] = useState("");
   // v27: every switch lives in Configuración (single place, per product rule) —
-  // Kanban auto-refresh, usage meter and platform switches join Automatización.
-  const [kanbanConfig, setKanbanConfig] = useState({ autoRefresh: true, pollSeconds: 30 });
-  const [kanbanSaving, setKanbanSaving] = useState(false);
-  const [kanbanMsg, setKanbanMsg] = useState("");
+  // usage meter and platform switches join Automatización. (Kanban auto-refresh
+  // was removed in REQ-024: the board never auto-refreshes anymore.)
   const [usageData, setUsageData] = useState<{ month: string; mcp_calls: number; items_generated: number; quota: number } | null>(null);
   const [platformStatus, setPlatformStatus] = useState<{ canManage: boolean; musa_tick_enabled: boolean; monthly_mcp_quota: number; env_musa_tick_enabled?: boolean; platform_usage?: { month: string; workspaces: number; mcp_calls: number; items_generated: number } | null; plan?: { netlify_monthly_invocations: number; cron_monthly_invocations: number; netlify_monthly_bandwidth_gb: number } } | null>(null);
   const [platformQuota, setPlatformQuota] = useState(5000);
@@ -448,10 +446,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           maxItems: typeof c.auto_process_max_items === "number" ? c.auto_process_max_items : 50,
           tag: c.auto_process_tag || "auto",
           provider: c.batch_llm_provider || "deepseek",
-        });
-        setKanbanConfig({
-          autoRefresh: c.kanban_autorefresh_enabled !== false,
-          pollSeconds: [15, 30, 60, 120].includes(c.kanban_autorefresh_seconds) ? c.kanban_autorefresh_seconds : 30,
         });
       }
       setUsageData(res?.usage ?? null);
@@ -489,25 +483,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       setAutoConfigMsg(e?.message || "No se pudo guardar");
     }
     setAutoConfigSaving(false);
-  };
-
-  const handleSaveKanbanConfig = async () => {
-    if (!activeWorkspaceId) return;
-    setKanbanSaving(true);
-    setKanbanMsg("");
-    try {
-      const res = await mcpCall("task_queue_update_config", {
-        workspaceId: activeWorkspaceId,
-        kanbanAutoRefresh: kanbanConfig.autoRefresh,
-        kanbanPollSeconds: kanbanConfig.pollSeconds,
-      });
-      if (!res?.success) throw new Error("Respuesta inesperada del servidor");
-      setKanbanMsg("✓ Guardado");
-      setTimeout(() => setKanbanMsg(""), 2500);
-    } catch (e: any) {
-      setKanbanMsg(e?.message || "No se pudo guardar");
-    }
-    setKanbanSaving(false);
   };
 
   const handleSavePlatform = async () => {
@@ -2119,49 +2094,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 <button type="button" className="bento-btn bento-btn--primary"
                   onClick={handleSaveAutoConfig} disabled={autoConfigSaving}>
                   {autoConfigSaving ? "Guardando…" : "Guardar automatización"}
-                </button>
-              </div>
-            </div>
-
-            {/* Kanban — auto-refresco configurable (v27) */}
-            <div className="bento-card bento-6">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🎴 Kanban</div>
-                {kanbanMsg && (
-                  <span style={{ fontSize: 11, color: kanbanMsg.startsWith("✓") ? "4ade80" : "#facc15", textAlign: "right", maxWidth: 240 }}>
-                    {kanbanMsg}
-                  </span>
-                )}
-              </div>
-              <div className="bento-sub">
-                El tablero se refresca solo mientras la pestaña está visible (antes: cada 10s
-                incluso en background, quemando ~30 mil llamadas/mes por pestaña estacionada).
-                Apagado = solo refresco manual.
-              </div>
-              <div className="bento-row" style={{ alignItems: "center" }}>
-                <span className="bento-row-label">Auto-refresco</span>
-                <div className="bento-seg">
-                  <button type="button" data-active={!kanbanConfig.autoRefresh}
-                    onClick={() => setKanbanConfig(c => ({ ...c, autoRefresh: false }))}>Apagado</button>
-                  <button type="button" data-active={kanbanConfig.autoRefresh}
-                    onClick={() => setKanbanConfig(c => ({ ...c, autoRefresh: true }))}>Activado</button>
-                </div>
-              </div>
-              <div className="bento-row" style={{ alignItems: "center" }}>
-                <span className="bento-row-label">Intervalo</span>
-                <div className="bento-seg">
-                  {[15, 30, 60, 120].map(s => (
-                    <button key={s} type="button" data-active={kanbanConfig.pollSeconds === s}
-                      onClick={() => setKanbanConfig(c => ({ ...c, pollSeconds: s }))}>
-                      {s >= 60 ? `${s / 60} min` : `${s}s`}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                <button type="button" className="bento-btn bento-btn--primary"
-                  onClick={handleSaveKanbanConfig} disabled={kanbanSaving}>
-                  {kanbanSaving ? "Guardando…" : "Guardar Kanban"}
                 </button>
               </div>
             </div>
