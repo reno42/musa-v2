@@ -7,6 +7,7 @@ import { GoogleFontPicker } from "../components/GoogleFontPicker";
 import { OnboardingTour, type TourAction } from "../components/OnboardingTour";
 import { FileInfoPanel } from "../components/FileInfoPanel";
 import { StyleLibraryPanel } from "../components/StyleLibraryPanel";
+import { DesignSystemPanel } from "../components/DesignSystemPanel";
 import { FloatingToolbar } from "../components/FloatingToolbar";
 import { ExportPanel, type ExportFormat } from "../components/ExportPanel";
 import { TopbarMenu, TopbarMenuItem } from "../components/TopbarMenu";
@@ -4187,6 +4188,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, templateName, addToast]);
 
+  // ── Design System de la marca (v35) ──
+  // The "Design System" buttons (canvas context menu, mobile menu) open the
+  // right-side panel where the user picks the brand, sees the ONE file
+  // everything lands in, and extracts/appends from the selected frames.
+  // The old behavior (silently downloading Design.md + tokens) only survives
+  // as "Exportar copia local" inside the panel and the Export menu.
+  const handleOpenDesignSystemPanel = useCallback(() => {
+    setRightPanelTab("designSystem");
+    setShowRightPanel(true);
+  }, []);
+
   // Every frame's own stylesheet, combined into one downloadable file —
   // whole-template scope (see WHOLE_TEMPLATE_FORMATS), same as JSON/Tokens/
   // Design.md, not the per-frame selection PNG/JPG/SVG/PDF use.
@@ -6456,6 +6468,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   { tab: "history", label: "Historial", desc: "Versiones guardadas del archivo" },
                   { tab: "meta", label: "Info", desc: "Marca, campaña, tags y conexiones del grafo" },
                   { tab: "styleLibrary", label: "Biblioteca", desc: "Estilos (Brand Guidelines), Plantillas y Recursos" },
+                  { tab: "designSystem", label: "Design System", desc: "Archivo DS de la marca: extrae y agrega" },
                   { tab: "contextual", label: "Props", desc: "Propiedades de lo seleccionado" },
                 ] as const).map(({ tab, label, desc }) => (
                   <TopbarMenuItem
@@ -6498,6 +6511,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               >
                 <IconPalette size={14} />
                 <span style={{ fontSize: 11, marginLeft: 4 }}>Biblioteca</span>
+              </button>
+              {/* Design System de la marca: el archivo único donde vive todo
+                  lo extraído/agregado para la marca ("1 marca = 1 DS", v35). */}
+              <button
+                type="button"
+                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "designSystem" ? "active" : ""}`}
+                onClick={() => toggleRightPanel("designSystem")}
+                title="Design System — el archivo de la marca donde se guarda lo extraído"
+              >
+                <IconLayers size={14} />
+                <span style={{ fontSize: 11, marginLeft: 4 }}>Design System</span>
               </button>
               <button
                 type="button"
@@ -7060,10 +7084,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "8px 0" }} />
               
-              <button type="button" className="landing-menu-link" onClick={() => { handleExtractDesignSystem(); setMobileMenuOpen(false); }}
+              <button type="button" className="landing-menu-link" onClick={() => { handleOpenDesignSystemPanel(); setMobileMenuOpen(false); }}
                 style={{ fontSize: 13, padding: "10px 14px" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <IconDownload size={16} /> Extract Design System
+                  <IconLayers size={16} /> Design System de la marca
                 </span>
               </button>
               <button type="button" className="landing-menu-link" onClick={() => { handleConvertSelectedImageToDesign(); setMobileMenuOpen(false); }}
@@ -7672,6 +7696,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <FileInfoPanel
               templateId={templateId}
               onCoverCapture={handleCoverCapture}
+            />
+          )}
+          {rightPanelTab === "designSystem" && (
+            <DesignSystemPanel
+              workspaceId={templateWorkspaceId}
+              templateId={templateId}
+              templateName={templateName}
+              frames={frames.map(f => ({ id: f.id, name: f.name }))}
+              selectedFrameIds={selectedFrameIds}
+              selectedFrameId={selectedFrameId}
+              onToast={(msg, type) => addToast(msg, type || "info")}
+              onOpenTemplate={onOpenTemplate}
             />
           )}
           {rightPanelTab === "styleLibrary" && (
@@ -8814,7 +8850,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onRedo={handleRedo}
             onBatchAMator={() => { setShowRightPanel(true); setRightPanelTab("batch"); }}
             onFrameToTemplate={handleSaveRecipe}
-            onExtractDesignSystem={handleExtractDesignSystem}
+            onExtractDesignSystem={handleOpenDesignSystemPanel}
             onInspect={handleInspectElement}
           />
         </>

@@ -301,9 +301,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   const [deleteConfirmEnabled, setDeleteConfirmEnabled] = useState(() => {
     try { return localStorage.getItem("futuraria-delete-confirm") !== "false"; } catch { return true; }
   });
-  const [autoDesignSystem, setAutoDesignSystem] = useState(() => {
-    try { return localStorage.getItem("futuraria-auto-design-system") !== "false"; } catch { return true; }
-  });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleteInputName, setDeleteInputName] = useState("");
   const [deleteSkipUntil, setDeleteSkipUntil] = useState(0);
@@ -2475,19 +2472,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Auto Design System */}
+            {/* Design System por marca — ya no es opcional */}
             <div className="bento-card bento-4">
-              <div className="bento-title">🎨 Design System automático</div>
+              <div className="bento-title">🎨 Design System por marca</div>
               <div className="bento-sub">
-                {autoDesignSystem
-                  ? "Cada marca nueva crea automáticamente un archivo DesignSystem_ y lo conecta al grafo."
-                  : "Las marcas se crean sin Design System. Puedes crearlo manualmente desde la pestaña Tablas."}
-              </div>
-              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
-                <button type="button" data-active={autoDesignSystem}
-                  onClick={() => { setAutoDesignSystem(true); try { localStorage.setItem("futuraria-auto-design-system", "true"); } catch {} }}>Activado</button>
-                <button type="button" data-active={!autoDesignSystem}
-                  onClick={() => { setAutoDesignSystem(false); try { localStorage.setItem("futuraria-auto-design-system", "false"); } catch {} }}>Desactivado</button>
+                Cada marca tiene UN archivo Design System donde va todo lo que
+                extraigas o agregues. Es fijo: tu IA lee ese archivo al trabajar
+                con la marca, y si una marca aún no lo tiene, el CRM, el editor
+                y el grafo te lo avisan para crearlo con un click.
               </div>
             </div>
 

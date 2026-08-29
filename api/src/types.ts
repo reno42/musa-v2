@@ -194,6 +194,9 @@ export interface BrandGuideline {
   /** Template ID of the brand's Design System file (is_brand_manual=true).
    *  Created automatically when the brand is created. One brand = one DS file. */
   designSystemTemplateId?: string;
+  /** CRM brand (brands.id) that owns this Design System. Linked by ID (not
+   *  by name) since v35, which also enforces one live DS per brand. */
+  crmBrandId?: string;
   /** Soft-delete timestamp. When set, the brand is in the trash. */
   deletedAt?: string;
 }

@@ -61,6 +61,8 @@ interface Row {
 interface Brand {
   id: string;
   name: string;
+  /** v35 — absent when the server predates the DS-per-brand rule. */
+  has_design_system?: boolean;
 }
 
 interface Asset {
@@ -177,6 +179,8 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   const timers = useRef<number[]>([]);
   /** Status of the manual "Create Design System" action. */
   const [dsCreating, setDsCreating] = useState(false);
+  /** brandId → has its DS file. Brands absent from the map are "unknown". */
+  const [brandDsById, setBrandDsById] = useState<Record<string, boolean>>({});
 
   const later = useCallback((fn: () => void, ms: number) => {
     const id = window.setTimeout(fn, ms);
@@ -242,6 +246,11 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
       } catch { /* files and brands are still worth showing */ }
 
       const brandByName = new Map(allBrands.map(b => [b.name.trim().toLowerCase(), b]));
+      // Only brands whose server actually reported DS state go into the map —
+      // an absent key means "unknown", which keeps the legacy button visible.
+      setBrandDsById(Object.fromEntries(allBrands
+        .filter(b => typeof b.has_design_system === "boolean")
+        .map(b => [b.id, b.has_design_system as boolean])));
       for (const asset of assets) {
         // An asset belongs to the brand whose name it is tagged with, the same
         // rule the graph uses. Untagged ones are listed with no brand instead
@@ -289,6 +298,10 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
     [rows, brandFilter],
   );
   const emptyBrandCount = useMemo(() => visible.filter(r => r.brandOnly).length, [visible]);
+  const missingDsCount = useMemo(
+    () => Object.values(brandDsById).filter(hasDs => hasDs === false).length,
+    [brandDsById],
+  );
   const assetCount = useMemo(() => visible.filter(r => r.assetUrl).length, [visible]);
   const externalAssetCount = useMemo(
     () => visible.filter(r => r.assetOrigin === "external").length, [visible],
@@ -457,9 +470,9 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
   }, [selected, rows, load, onRefreshGraph, workspaceId]);
 
   /**
-   * Manually create a Design System file for the selected brand. Used when
-   * auto-creation is disabled, or to add a DS to a brand that predates the
-   * feature.
+   * Manually create a Design System file for the selected brand. Used for
+   * brands that predate the feature or whose DS file creation once failed —
+   * every brand is supposed to have exactly one (v35).
    */
   const createDesignSystem = useCallback(async () => {
     // The button is only enabled when exactly one row is selected, so grab it.
@@ -563,12 +576,19 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
           {assetCount > 0 ? ` · ${assetCount} assets` : ""}
           {externalAssetCount > 0 ? ` (${externalAssetCount} externos)` : ""}
           {emptyBrandCount > 0 ? ` · ${emptyBrandCount} marcas sin archivos` : ""}
+          {missingDsCount > 0 ? ` · ${missingDsCount} sin Design System` : ""}
           {selected.size ? ` · ${selected.size} seleccionadas` : ""}
         </span>
         {(() => {
-          // Enable the DS button only when exactly one row is selected and it
-          // has a brandId to create the DS for.
+          // One brand = one Design System (v35): the button only matters when
+          // the selected row's brand is actually missing its DS file — a brand
+          // known to have one gets no button at all. When the brand list
+          // didn't load, fall back to the legacy always-visible button rather
+          // than hiding the only way to fix a missing DS.
           const sel = rows.find(r => selected.has(r.id));
+          const dsKnown = !!sel && Object.prototype.hasOwnProperty.call(brandDsById, sel.brandId);
+          const needsDs = dsKnown && brandDsById[sel!.brandId] === false;
+          if (dsKnown && !needsDs) return null;
           const canCreateDs = selected.size === 1 && !!sel?.brandId;
           return (
             <button
@@ -576,7 +596,7 @@ export function BrandGraphDataTable({ workspaceId, onOpenTemplate, onRefreshGrap
               onClick={createDesignSystem}
               disabled={!canCreateDs || dsCreating}
               style={{ ...btn, opacity: canCreateDs ? 1 : 0.35, cursor: canCreateDs ? "pointer" : "default" }}
-            >{dsCreating ? "Creando…" : "Crear Design System"}</button>
+            >{dsCreating ? "Creando…" : needsDs ? "Crear Design System (falta)" : "Crear Design System"}</button>
           );
         })()}
         <button

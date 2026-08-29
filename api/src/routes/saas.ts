@@ -8,7 +8,10 @@ import { requireWorkspaceRole } from "../services/tenancy.js";
 import { claimLegacyWorkspacesForInitialUser, ensurePersonalWorkspace } from "../services/legacyOwnership.js";
 import { deliverWorkspaceInvitation, invitationUrl, maskEmail } from "../services/workspaceInvitations.js";
 import { buildDealProgress, buildOfferSuggestions } from "../services/crmInsights.js";
-import { createBrand, findBrandByName } from "../services/brands.js";
+import {
+  createBrand, deleteBrand, ensureBrandDesignSystemTemplate, findBrandByName,
+  getBrandByCrmId, listBrandsByWorkspace, updateBrand,
+} from "../services/brands.js";
 
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const workspaceKeyRoleSchema = z.enum(["editor", "viewer"]);
@@ -183,12 +186,18 @@ accountRoutes.patch("/me", async (req, res) => {
                 name: trimmedName, updated_at: new Date().toISOString(),
               }).eq("workspace_id", wsId).eq("id", existing.id);
             } else {
-              await sb.from("brands").insert({
+              const { data: createdBrand } = await sb.from("brands").insert({
                 id: `brand_${crypto.randomBytes(10).toString("hex")}`,
                 workspace_id: wsId,
                 name: trimmedName,
                 relationship_status: "client",
-              });
+              }).select("id").single();
+              // One brand = one Design System: born here too.
+              if (createdBrand?.id) {
+                try {
+                  await createBrand({ workspaceId: wsId, name: trimmedName, crmBrandId: createdBrand.id });
+                } catch { /* best-effort — profile save must not fail */ }
+              }
             }
           }
         }
@@ -734,18 +743,33 @@ workspaceSaasRoutes.get("/:id/brands", requireWorkspaceRole("viewer"), async (re
     const { data, error } = await sb.from("brands").select("*")
       .eq("workspace_id", req.params.id).order("name");
     if (error) throw error;
-    res.json({ success: true, data: (data || []).map((brand: any) => ({
-      id: brand.id,
-      name: brand.name,
-      relationship_status: brand.relationship_status || "lead",
-      account_health: brand.account_health || "active",
-      crm_priority: brand.crm_priority || "medium",
-      crm_notes: brand.crm_notes || "",
-      last_contacted_at: brand.last_contacted_at || null,
-      next_follow_up_at: brand.next_follow_up_at || null,
-      created_at: brand.created_at,
-      updated_at: brand.updated_at,
-    })) });
+    // One Design System per brand (v35): resolve each brand's DS via the
+    // crm_brand_id link first, falling back to name matching for legacy rows
+    // the backfill hasn't linked yet. has_design_system drives the badge and
+    // the one-click "Crear Design System" affordance in CRM/editor/graph.
+    let guidelines: Awaited<ReturnType<typeof listBrandsByWorkspace>> = [];
+    try { guidelines = await listBrandsByWorkspace(req.params.id); }
+    catch { /* brand_guidelines unavailable — every brand reports without DS */ }
+    const byCrmId = new Map(guidelines.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
+    const byDsName = new Map(guidelines.map(g => [g.name.trim().toLowerCase(), g]));
+    res.json({ success: true, data: (data || []).map((brand: any) => {
+      const ds = byCrmId.get(brand.id) || byDsName.get(String(brand.name).trim().toLowerCase());
+      return {
+        id: brand.id,
+        name: brand.name,
+        relationship_status: brand.relationship_status || "lead",
+        account_health: brand.account_health || "active",
+        crm_priority: brand.crm_priority || "medium",
+        crm_notes: brand.crm_notes || "",
+        last_contacted_at: brand.last_contacted_at || null,
+        next_follow_up_at: brand.next_follow_up_at || null,
+        design_system_template_id: ds?.designSystemTemplateId || null,
+        brand_guideline_id: ds?.id || null,
+        has_design_system: Boolean(ds?.designSystemTemplateId),
+        created_at: brand.created_at,
+        updated_at: brand.updated_at,
+      };
+    }) });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -785,20 +809,21 @@ workspaceSaasRoutes.post("/:id/brands", requireWorkspaceRole("editor"), async (r
     }).select("*").single();
     if (error) throw error;
 
-    // Auto-create the Design System file + brand_guidelines row for this brand,
-    // unless the user opted out via the skipDesignSystem flag.
-    if (!req.body?.skipDesignSystem) {
-      try {
-        await createBrand({
-          workspaceId: req.params.id,
-          name: parsed.name,
-        });
-      } catch (e) {
-        // Best-effort: a name conflict means a brand_guidelines row already
-        // exists for this name, which is fine. Other errors don't fail the
-        // brand creation itself.
-        console.warn("[saas] Auto-DS creation for brand failed:", (e as Error).message);
-      }
+    // Auto-create the Design System file + brand_guidelines row for this brand.
+    // The "one brand = one Design System file" rule (v35) is not optional: the
+    // old skipDesignSystem opt-out (a localStorage flag per browser) created
+    // brands that every AI later found empty, so every brand now gets its file.
+    try {
+      await createBrand({
+        workspaceId: req.params.id,
+        name: parsed.name,
+        crmBrandId: data.id,
+      });
+    } catch (e) {
+      // Best-effort: a name conflict means a brand_guidelines row already
+      // exists for this name, which is fine. Other errors don't fail the
+      // brand creation itself.
+      console.warn("[saas] Auto-DS creation for brand failed:", (e as Error).message);
     }
 
     res.status(201).json({ success: true, data });
@@ -827,6 +852,17 @@ workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor")
         .eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
       await sb.from("design_file_meta").update({ brand: parsed.name, updated_at: new Date().toISOString() })
         .eq("workspace_id", req.params.id).eq("brand_id", req.params.brandId);
+      // Keep the brand's Design System row in sync with the rename. The
+      // crm_brand_id link (v35) doesn't depend on the name, but AI lookups
+      // by name read better when they still match.
+      try {
+        const linked = await getBrandByCrmId(req.params.id, req.params.brandId).catch(() => null);
+        if (linked && linked.name !== parsed.name) {
+          await updateBrand(linked.id, { name: parsed.name });
+        }
+      } catch (dsErr) {
+        console.warn("[saas] Failed to rename linked Design System:", (dsErr as Error).message);
+      }
     }
     res.json({ success: true, data });
   } catch (error: any) {
@@ -837,6 +873,8 @@ workspaceSaasRoutes.patch("/:id/brands/:brandId", requireWorkspaceRole("editor")
 workspaceSaasRoutes.delete("/:id/brands/:brandId", requireWorkspaceRole("editor"), async (req, res) => {
   try {
     const sb = dbOrThrow();
+    const { data: brandRow } = await sb.from("brands").select("id, name")
+      .eq("workspace_id", req.params.id).eq("id", req.params.brandId).maybeSingle();
     // Null out brand references on contacts and design files (don't delete them).
     await sb.from("crm_contacts").update({
       brand_id: null, brand_name: null, updated_at: new Date().toISOString(),
@@ -847,6 +885,15 @@ workspaceSaasRoutes.delete("/:id/brands/:brandId", requireWorkspaceRole("editor"
     const { error } = await sb.from("brands").delete()
       .eq("workspace_id", req.params.id).eq("id", req.params.brandId);
     if (error) throw error;
+    // One brand = one Design System: send the linked DS row + file to the
+    // trash too, so no orphan guideline lingers claiming the brand's name.
+    try {
+      const linked = await getBrandByCrmId(req.params.id, req.params.brandId).catch(() => null)
+        ?? (brandRow ? await findBrandByName(req.params.id, brandRow.name) : null);
+      if (linked) await deleteBrand(linked.id, { cascadeDs: true });
+    } catch (dsErr) {
+      console.warn("[saas] Failed to cascade brand Design System:", (dsErr as Error).message);
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -868,8 +915,10 @@ workspaceSaasRoutes.post("/:id/brands/:brandId/design-system", requireWorkspaceR
       return;
     }
 
-    // If a brand_guidelines row already exists with a DS template, return it.
-    const existing = await findBrandByName(req.params.id, brand.name);
+    // If a Design System row already exists, return it. Resolve by the CRM
+    // link (v35) first, falling back to name matching for legacy rows.
+    const existing = (await getBrandByCrmId(req.params.id, req.params.brandId).catch(() => null))
+      || await findBrandByName(req.params.id, brand.name);
     if (existing?.designSystemTemplateId) {
       res.json({
         success: true,
@@ -878,11 +927,20 @@ workspaceSaasRoutes.post("/:id/brands/:brandId/design-system", requireWorkspaceR
       });
       return;
     }
+    if (existing) {
+      // The brand_guidelines row exists but its DS file doesn't (template
+      // creation once failed, or the row predates v20). Create and link the
+      // missing file instead of failing on the name conflict.
+      const templateId = await ensureBrandDesignSystemTemplate(existing.id);
+      res.status(201).json({ success: true, data: { ...existing, designSystemTemplateId: templateId } });
+      return;
+    }
 
     // Create the brand_guidelines row + Design System template.
     const ds = await createBrand({
       workspaceId: req.params.id,
       name: brand.name,
+      crmBrandId: brand.id,
     });
 
     res.status(201).json({ success: true, data: ds });
@@ -931,6 +989,13 @@ workspaceSaasRoutes.post("/:id/contacts", requireWorkspaceRole("editor"), async 
         if (brandError) throw brandError;
         brandId = createdBrand.id;
         brandName = createdBrand.name;
+        // Same rule as POST /:id/brands: a brand born anywhere (CRM contact
+        // included) gets its Design System file immediately.
+        try {
+          await createBrand({ workspaceId: req.params.id, name: createdBrand.name, crmBrandId: createdBrand.id });
+        } catch (dsErr) {
+          console.warn("[saas] Auto-DS creation for contact brand failed:", (dsErr as Error).message);
+        }
       }
     }
     const { data, error } = await sb.from("crm_contacts").insert({
@@ -1127,27 +1192,39 @@ workspaceSaasRoutes.get("/:id/crm", requireWorkspaceRole("viewer"), async (req, 
     const rawDeals = dealResult.data || [];
     const deliverables = deliverableResult.data || [];
     const links = linkResult.data || [];
+    // One Design System per brand (v35): the CRM shows the "sin Design
+    // System" badge and the one-click create for brands still missing it.
+    let dsRows: Awaited<ReturnType<typeof listBrandsByWorkspace>> = [];
+    try { dsRows = await listBrandsByWorkspace(workspaceId); } catch { /* CRM still renders, just without DS state */ }
+    const dsByCrmId = new Map(dsRows.filter(g => g.crmBrandId).map(g => [g.crmBrandId as string, g]));
+    const dsByName = new Map(dsRows.map(g => [g.name.trim().toLowerCase(), g]));
     const deals = rawDeals.map((deal: any) => ({
       ...deal,
       progress: buildDealProgress(deal, deliverables, links, designs),
     }));
-    const brands = (brandResult.data || []).map((brand: any) => ({
-      ...brand,
-      relationship_status: brand.relationship_status || "lead",
-      account_health: brand.account_health || "active",
-      crm_priority: brand.crm_priority || "medium",
-      crm_notes: brand.crm_notes || "",
-      contact_count: (contactResult.data || []).filter((contact: any) => contact.brand_id === brand.id).length,
-      design_count: designs.filter((design) => design.brand_id === brand.id).length,
-      deal_count: rawDeals.filter((deal: any) => deal.brand_id === brand.id).length,
-      suggestions: buildOfferSuggestions(
-        brand,
-        designs,
-        deliverables
-          .filter((deliverable: any) => rawDeals.some((deal: any) => deal.id === deliverable.deal_id && deal.brand_id === brand.id && deal.stage !== "lost"))
-          .map((deliverable: any) => deliverable.asset_type),
-      ),
-    }));
+    const brands = (brandResult.data || []).map((brand: any) => {
+      const ds = dsByCrmId.get(brand.id) || dsByName.get(String(brand.name).trim().toLowerCase());
+      return {
+        ...brand,
+        relationship_status: brand.relationship_status || "lead",
+        account_health: brand.account_health || "active",
+        crm_priority: brand.crm_priority || "medium",
+        crm_notes: brand.crm_notes || "",
+        contact_count: (contactResult.data || []).filter((contact: any) => contact.brand_id === brand.id).length,
+        design_count: designs.filter((design) => design.brand_id === brand.id).length,
+        deal_count: rawDeals.filter((deal: any) => deal.brand_id === brand.id).length,
+        design_system_template_id: ds?.designSystemTemplateId || null,
+        brand_guideline_id: ds?.id || null,
+        has_design_system: Boolean(ds?.designSystemTemplateId),
+        suggestions: buildOfferSuggestions(
+          brand,
+          designs,
+          deliverables
+            .filter((deliverable: any) => rawDeals.some((deal: any) => deal.id === deliverable.deal_id && deal.brand_id === brand.id && deal.stage !== "lost"))
+            .map((deliverable: any) => deliverable.asset_type),
+        ),
+      };
+    });
     const openDeals = deals.filter((deal: any) => !["delivered", "lost"].includes(deal.stage));
     const pipelineValue = openDeals.reduce((total: number, deal: any) => total + Number(deal.value || 0), 0);
     const weightedValue = openDeals.reduce(

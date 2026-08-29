@@ -25,6 +25,9 @@ export type BrandInput = {
   sourceHash?: string;
   styleFingerprint?: string;
   sourceTemplateIds?: string[];
+  /** CRM brand (brands.id) this Design System belongs to. Linked by ID —
+   *  name matching only survives as a legacy fallback. */
+  crmBrandId?: string;
 };
 
 export type TemplateResolver = (id: string) => Promise<DesignTemplate | null>;
@@ -180,6 +183,7 @@ export async function validateBrandState(
     styleFingerprint: value.styleFingerprint,
     sourceTemplateIds,
     designSystemTemplateId: value.designSystemTemplateId,
+    crmBrandId: value.crmBrandId,
     createdAt: value.createdAt || now,
     updatedAt: now,
   };
@@ -196,6 +200,7 @@ function rowToBrand(row: SupabaseBrandRow): BrandGuideline {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     designSystemTemplateId: r.design_system_template_id || data?.designSystemTemplateId || null,
+    crmBrandId: r.crm_brand_id || data?.crmBrandId || null,
     deletedAt: r.deleted_at || data?.deletedAt || null,
   };
 }
@@ -206,6 +211,7 @@ function brandRow(brand: BrandGuideline) {
     workspace_id: brand.workspaceId,
     name: brand.name,
     data: brand,
+    crm_brand_id: brand.crmBrandId || null,
     updated_at: brand.updatedAt,
   };
 }
@@ -264,10 +270,21 @@ export async function createBrand(params: BrandInput, userId?: string): Promise<
 
   const sb = getSupabase();
   if (sb) {
-    const { data, error } = await sb.from("brand_guidelines")
+    let { data, error } = await sb.from("brand_guidelines")
       .insert(brandRow(candidate))
       .select("*")
       .single();
+    if (error && /crm_brand_id/.test(error.message || "")) {
+      // supabase_migrations_v35.sql hasn't been applied yet — save the brand
+      // without the CRM link instead of failing the whole creation. The
+      // backfill in v35 links it by name later.
+      const row = brandRow(candidate) as Record<string, unknown>;
+      delete row.crm_brand_id;
+      ({ data, error } = await sb.from("brand_guidelines")
+        .insert(row)
+        .select("*")
+        .single());
+    }
     if (error || !data) throw persistenceError("create", error);
     const saved = rowToBrand(data as SupabaseBrandRow);
     memoryStore.set(saved.id, saved);
@@ -334,6 +351,72 @@ export async function findBrandByName(workspaceId: string, name: string): Promis
   return brands.find(brand => styleNameIdentity(brand.name) === identity) || null;
 }
 
+/**
+ * Finds the Design System row linked to a CRM brand by ID (crm_brand_id, v35).
+ * Name matching is only a legacy fallback — this is the authoritative lookup.
+ * Returns null when v35 hasn't been applied yet (column missing) or no row
+ * is linked; callers then fall back to findBrandByName.
+ */
+export async function getBrandByCrmId(workspaceId: string, crmBrandId: string): Promise<BrandGuideline | null> {
+  const cleanWorkspaceId = typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const cleanCrmId = typeof crmBrandId === "string" ? crmBrandId.trim() : "";
+  if (!cleanWorkspaceId || !cleanCrmId) return null;
+  const sb = getSupabase();
+  if (!sb) {
+    return [...memoryStore.values()].find(brand =>
+      brand.workspaceId === cleanWorkspaceId && !brand.deletedAt && brand.crmBrandId === cleanCrmId) || null;
+  }
+  let { data, error } = await sb.from("brand_guidelines")
+    .select("*")
+    .eq("workspace_id", cleanWorkspaceId)
+    .eq("crm_brand_id", cleanCrmId)
+    .is("deleted_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error && /deleted_at/.test(error.message || "")) {
+    // Pre-v20 schema: list without the soft-delete filter.
+    ({ data, error } = await sb.from("brand_guidelines")
+      .select("*")
+      .eq("workspace_id", cleanWorkspaceId)
+      .eq("crm_brand_id", cleanCrmId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle());
+  }
+  if (error) {
+    // Pre-v35 schema: the column itself doesn't exist — caller falls back.
+    if (/crm_brand_id/.test(error.message || "")) return null;
+    throw persistenceError("read", error);
+  }
+  if (!data) return null;
+  const brand = rowToBrand(data as SupabaseBrandRow);
+  memoryStore.set(brand.id, brand);
+  return brand;
+}
+
+/**
+ * Creates the missing Design System template for an existing brand row and
+ * links it. Covers the broken state where the brand_guidelines row exists
+ * but its DS file doesn't (template creation failed at creation time, or the
+ * row predates v20). No-op when the file already exists.
+ */
+export async function ensureBrandDesignSystemTemplate(id: string, userId?: string): Promise<string> {
+  const current = await getBrand(id);
+  if (!current) throw new StyleInvariantError("Brand not found");
+  if (current.designSystemTemplateId) return current.designSystemTemplateId;
+  const dsTpl = await createTemplate(
+    `DesignSystem_${current.name}`,
+    1920, 1080,
+    undefined,
+    userId || "system",
+    current.workspaceId,
+  );
+  await updateTemplate(dsTpl.id, { isBrandManual: true } as any);
+  await updateBrand(id, { designSystemTemplateId: dsTpl.id });
+  return dsTpl.id;
+}
+
 export async function updateBrand(
   id: string,
   updates: Partial<BrandGuideline>,
@@ -350,7 +433,10 @@ export async function updateBrand(
     id: current.id,
     workspaceId: current.workspaceId,
     createdAt: current.createdAt,
-  });
+  }, undefined, { allowEmptySources: true });
+  // allowEmptySources on purpose: brands born via createBrand start with no
+  // sources until something is published into them — validating updates
+  // without this flag made those rows permanently un-editable.
   await assertNameAvailable(candidate.workspaceId, candidate.name, candidate.id);
 
   const sb = getSupabase();

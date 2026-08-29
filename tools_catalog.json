@@ -2691,7 +2691,7 @@
   },
   {
     "name": "get_brand_playbook",
-    "description": "Queryable digest of ONE brand's design logic: design system (color/font tokens + style fingerprint), full file inventory (category, campaign, content kind) and the subset of files that are replicable for another brand. This is the tool for 'revisá toda la lógica que hicimos para la marca X' — get_brand_graph returns the visual tree instead, this returns data a model can act on.",
+    "description": "Queryable digest of ONE brand's design logic: hasDesignSystem (false = the brand has no Design System file yet — tell the user and follow nextAction before designing for it), design system (color/font tokens + style fingerprint), full file inventory (category, campaign, content kind) and the subset of files that are replicable for another brand. This is the tool for 'revisá toda la lógica que hicimos para la marca X' — get_brand_graph returns the visual tree instead, this returns data a model can act on.",
     "inputSchema": {
       "type": "object",
       "properties": {

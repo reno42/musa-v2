@@ -14,6 +14,9 @@ type Brand = {
   contact_count: number;
   design_count: number;
   deal_count: number;
+  design_system_template_id?: string | null;
+  brand_guideline_id?: string | null;
+  has_design_system?: boolean;
   suggestions: Array<{ assetType: string; title: string; reason: string }>;
 };
 
@@ -568,12 +571,11 @@ function AccountsView({
   const createBrand = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      // When the user has disabled auto-DS creation, tell the server to skip it.
-      let skipDesignSystem = false;
-      try { skipDesignSystem = localStorage.getItem("futuraria-auto-design-system") === "false"; } catch {}
+      // Every brand gets its Design System file — the server creates it
+      // unconditionally now ("one brand = one DS file", v35).
       const result = await crmFetch<{ data: Brand }>(`/api/workspaces/${workspaceId}/brands`, {
         method: "POST",
-        body: JSON.stringify({ name: brandName, relationshipStatus, skipDesignSystem }),
+        body: JSON.stringify({ name: brandName, relationshipStatus }),
       });
       setBrandName("");
       setSelectedBrandId(result.data.id);
@@ -615,7 +617,7 @@ function AccountsView({
           {visibleBrands.map((brand) => (
             <button type="button" key={brand.id} className={selectedBrand?.id === brand.id ? "selected" : ""} aria-pressed={selectedBrand?.id === brand.id} onClick={() => setSelectedBrandId(brand.id)}>
               <span className="crm-account-avatar" aria-hidden="true">{brand.name.charAt(0).toLocaleUpperCase()}</span>
-              <span><strong>{brand.name}</strong><small>{brand.relationship_status === "lead" ? "Lead" : brand.account_health === "at_risk" ? "Cliente en fuga" : brand.account_health === "churned" ? "Cliente perdido" : "Cliente"} · {brand.design_count} diseños</small></span>
+              <span><strong>{brand.name}</strong>{brand.has_design_system === false && <small style={{ color: "#fca5a5" }}> · ⚠️ sin Design System</small>}<small>{brand.relationship_status === "lead" ? "Lead" : brand.account_health === "at_risk" ? "Cliente en fuga" : brand.account_health === "churned" ? "Cliente perdido" : "Cliente"} · {brand.design_count} diseños</small></span>
             </button>
           ))}
           {visibleBrands.length === 0 && <p className="workspace-muted">No hay marcas con este filtro.</p>}
@@ -683,6 +685,7 @@ function BrandDetail({
   const [accountHealth, setAccountHealth] = useState(brand.account_health);
   const [priority, setPriority] = useState(brand.crm_priority);
   const [notes, setNotes] = useState(brand.crm_notes || "");
+  const [dsBusy, setDsBusy] = useState(false);
 
   useEffect(() => {
     setRelationshipStatus(brand.relationship_status);
@@ -690,6 +693,15 @@ function BrandDetail({
     setPriority(brand.crm_priority);
     setNotes(brand.crm_notes || "");
   }, [brand]);
+
+  const createDesignSystem = async () => {
+    setDsBusy(true);
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/brands/${brand.id}/design-system`, { method: "POST" });
+      setNotice(`Design System creado para "${brand.name}".`);
+      await reload();
+    } catch (cause: any) { setError(cause.message); } finally { setDsBusy(false); }
+  };
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -706,6 +718,17 @@ function BrandDetail({
   return (
     <section className="workspace-panel crm-brand-detail">
       <header><div><p className="workspace-eyebrow">Cuenta comercial</p><h3>{brand.name}</h3></div><span className={`crm-health ${accountHealth}`}>{accountHealth === "at_risk" ? "En fuga" : accountHealth === "churned" ? "Perdida" : relationshipStatus === "lead" ? "Lead" : "Activa"}</span></header>
+      {brand.has_design_system === false ? (
+        <div role="alert" style={{ border: "1px solid rgba(252,165,165,0.4)", borderRadius: 8, padding: "10px 12px", fontSize: 13, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ flex: 1, minWidth: 200 }}>⚠️ Esta marca aún no tiene archivo Design System — tu IA no tendrá de dónde sacar estilo al diseñar para ella.</span>
+          <button type="button" className="workspace-button" onClick={createDesignSystem} disabled={dsBusy}>{dsBusy ? "Creando…" : "Crear Design System"}</button>
+        </div>
+      ) : brand.design_system_template_id ? (
+        <div style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1 }}>🎨 Design System de la marca listo — todo lo que extraigas va ahí.</span>
+          <button type="button" className="workspace-button" onClick={() => onOpenTemplate?.(brand.design_system_template_id!)}>Abrir archivo</button>
+        </div>
+      ) : null}
       <form className="crm-brand-settings" onSubmit={save}>
         <Field label="Relación"><select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as Brand["relationship_status"])}><option value="lead">Lead</option><option value="client">Cliente</option></select></Field>
         <Field label="Salud"><select value={accountHealth} onChange={(event) => setAccountHealth(event.target.value as Brand["account_health"])}><option value="active">Activa</option><option value="at_risk">En fuga</option><option value="churned">Perdida</option></select></Field>

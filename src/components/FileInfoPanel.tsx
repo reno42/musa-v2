@@ -198,8 +198,8 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
   /** Create a brand from the panel and file this design under it. Goes through
    * the SAME endpoint the CRM uses, so the row is identical everywhere: it
    * appears in the CRM, in the grafo (the API lists every brand, designs or
-   * not) and in every brand dropdown — and it gets its Design System file
-   * unless the user opted out of auto-DS creation. */
+   * not) and in every brand dropdown — and it always gets its Design System
+   * file ("one brand = one DS file", v35 — there is no opt-out anymore). */
   const createBrand = useCallback(async () => {
     const name = newBrandName.trim();
     if (!name || !templateId) return;
@@ -215,12 +215,10 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
     if (!workspaceId) { setBrandError("No se pudo resolver el workspace."); return; }
     setBrandBusy(true);
     try {
-      let skipDesignSystem = false;
-      try { skipDesignSystem = localStorage.getItem("futuraria-auto-design-system") === "false"; } catch {}
       const res = await fetch(`/api/workspaces/${workspaceId}/brands`, {
         method: "POST",
         headers: getApiHeaders(),
-        body: JSON.stringify({ name, relationshipStatus: "lead", skipDesignSystem }),
+        body: JSON.stringify({ name, relationshipStatus: "lead" }),
       });
       const d = await res.json();
       if (!res.ok || !d.success) throw new Error(d.error || "No se pudo crear la marca");

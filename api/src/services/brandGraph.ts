@@ -54,6 +54,9 @@ export interface BrandGraphNode {
   contentKind?: string;
   /** File no brand claimed — orbits the workspace centre on its own. */
   orphan?: boolean;
+  /** Brand nodes only: whether the brand has its Design System file. False
+   *  means the UI shows the "sin Design System" badge + one-click create. */
+  hasDesignSystem?: boolean;
   /** Asset only: where the bytes are, and whose server they sit on. */
   assetUrl?: string;
   assetOrigin?: "bucket" | "external" | "unknown";
@@ -142,7 +145,11 @@ export async function buildBrandGraph(
   try { styles = await listBrandsByWorkspace(workspaceId); }
   catch (e: any) { console.warn("[brandGraph] styles query error:", e?.message); }
   const styleByName = new Map<string, any>();
-  for (const s of styles) styleByName.set(normalizeName(s.name), s);
+  const styleByCrm = new Map<string, any>();
+  for (const s of styles) {
+    styleByName.set(normalizeName(s.name), s);
+    if (s.crmBrandId) styleByCrm.set(s.crmBrandId, s);
+  }
 
   // 2. Fetch all templates + assets + design_file_meta for this workspace
   const [tplResult, assetResult, metaResult] = await Promise.all([
@@ -185,7 +192,9 @@ export async function buildBrandGraph(
 
   for (let i = 0; i < brands.length; i++) {
     const brand = brands[i];
-    const style = styleByName.get(normalizeName(brand.name));
+    // v35: the CRM link is authoritative; the name match only covers rows
+    // the backfill hasn't linked yet.
+    const style = styleByCrm.get(brand.id) || styleByName.get(normalizeName(brand.name));
     const color = brandColor(i, style?.tokensJson);
     // The brand's Design System comes from the style that shares its name.
     const designSystemTemplateId: string | null = style?.designSystemTemplateId || null;
@@ -332,6 +341,7 @@ export async function buildBrandGraph(
       level: 1,
       kind: "brand",
       color,
+      hasDesignSystem: Boolean(designSystemTemplateId),
       children,
     });
   }
@@ -403,6 +413,11 @@ export interface BrandPlaybookItem {
 
 export interface BrandPlaybook {
   brand: { id: string; name: string };
+  /** Whether the brand has its Design System file. When false the AI must
+   *  tell the user and offer to create/extract it before designing — never
+   *  invent a style from a handful of files (that is how bad designs happen
+   *  when there is nothing to pull resources from). */
+  hasDesignSystem: boolean;
   /** The brand's Design System, from the style that shares its name. */
   designSystem: {
     templateId: string | null;
@@ -410,6 +425,11 @@ export interface BrandPlaybook {
     fonts: string[];
     styleFingerprint: string | null;
   } | null;
+  /** Only when hasDesignSystem is false: the exact action that fixes it. */
+  nextAction?: {
+    tool: "create_brand_guideline";
+    hint: string;
+  };
   /** Every file filed under this brand, Design System container included. */
   inventory: BrandPlaybookItem[];
   /** The subset an AI may replicate for another brand: Plantillas + Archivos. */
@@ -483,12 +503,16 @@ export async function buildBrandPlaybook(
     templates.map(t => t.id), brandList, metaByTemplate,
   );
 
-  const style = styles.find(s => normalizeName(s.name) === normalizeName(brand.name)) || null;
+  // v35: the CRM link is authoritative; the name match only covers rows the
+  // backfill hasn't linked yet.
+  const style = styles.find(s => (s.crmBrandId && s.crmBrandId === brand.id)
+    || normalizeName(s.name) === normalizeName(brand.name)) || null;
   const designSystem = style ? {
     templateId: style.designSystemTemplateId || null,
     ...extractTokenDigest(style.tokensJson),
     styleFingerprint: style.styleFingerprint || null,
   } : null;
+  const hasDesignSystem = Boolean(style?.designSystemTemplateId);
 
   const isDsContainer = (tpl: any) => !!(style?.designSystemTemplateId && tpl.is_brand_manual && tpl.id === style.designSystemTemplateId);
   const brandTemplates = templates.filter(t => isDsContainer(t) || ownerByTemplate.get(t.id) === brand.id);
@@ -530,7 +554,14 @@ export async function buildBrandPlaybook(
 
   return {
     brand,
+    hasDesignSystem,
     designSystem,
+    ...(hasDesignSystem ? {} : {
+      nextAction: {
+        tool: "create_brand_guideline" as const,
+        hint: `La marca "${brand.name}" no tiene Design System todavía. Avísale al usuario y ofrécele crearlo (create_brand_guideline, o POST /api/workspaces/:id/brands/${brand.id}/design-system) o extraerlo de sus archivos con generate_design_artifacts(action="publish", brandName="${brand.name}") antes de diseñar para esta marca.`,
+      },
+    }),
     inventory,
     replicable,
     counts: {
