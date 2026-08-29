@@ -1186,13 +1186,9 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       {/* Header — matches landing navbar: brand left, tabs+dropdown centered, search right */}
       <div className="dash-header" style={dashHeaderStyle}>
         <div className="landing-nav-inner" style={{ maxWidth: 1200, width: "100%", position: "relative" }}>
-          {/* Brand — identical to landing */}
+          {/* Brand — identical to landing: "Musa by Futuraria" wordmark, no icon */}
           <div className="landing-brand" style={{ flexShrink: 0 }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <rect x="3" y="3" width="18" height="18" rx="4" />
-              <circle cx="12" cy="12" r="4" />
-            </svg>
-            <span>Futuraria</span>
+            <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
           </div>
 
           {/* Centered: fixed nav tabs */}

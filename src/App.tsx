@@ -82,8 +82,8 @@ function AppStartupScreen(): JSX.Element {
   return (
     <main className="app-startup" aria-busy="true">
       <div className="app-startup-brand" aria-hidden="true">
-        <span className="app-startup-mark">F</span>
-        <span>Futuraria</span>
+        <span className="app-startup-mark">M</span>
+        <span>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
       </div>
       <p className="app-startup-status" role="status">Abriendo tu espacio de trabajo…</p>
     </main>

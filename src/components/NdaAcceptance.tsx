@@ -100,8 +100,8 @@ export function NdaAcceptance({ fullName, email, onAccepted, onSignOut }: NdaAcc
   return (
     <div style={c.screen}>
       <div style={c.brand} aria-hidden="true">
-        <span style={c.brandMark}>F</span>
-        <span style={{ fontWeight: 700, fontSize: 15 }}>Futuraria</span>
+        <span style={c.brandMark}>M</span>
+        <span style={{ fontWeight: 700, fontSize: 15 }}>Musa <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", opacity: 0.55, fontWeight: 500 }}>by Futuraria</span></span>
       </div>
       <div style={c.wrap}>
         <h2 style={c.h2}>Acuerdo de Acceso Alfa</h2>
