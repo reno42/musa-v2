@@ -33,6 +33,7 @@
 | `SKILL.md` | Catálogo completo de MCP tools del editor | Antes de usar tools de diseño |
 | `harness/CHART_RECIPES.md` | Reglas de composición (#8 vertical ≥70%, #9 chart obligatorio) + 6 recetas CSS de charts | Antes de crear cualquier template/deck |
 | `harness/SPEC_CREATE_CHART.md` | Spec de la tool nativa `create_chart` + lint COVERAGE/TYPE_FLOOR | Al implementar features de charts |
+| `harness/AI_TELLS.md` | 55 muletillas de diseño IA (Regla #10 incluida) | Antes de declarar done cualquier template |
 | `supabase_migrations/harness.sql` | Schema del harness (multi-tenant) | Si necesitas entender el modelo de datos |
 
 ## 3. Reglas duras (no negociables)
