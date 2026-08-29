@@ -628,8 +628,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const lastPushTimeRef = useRef(0);
   const [selectedFont, setSelectedFont] = useState("");
   const [showFontPicker, setShowFontPicker] = useState(false);
-  const [editingFrameName, setEditingFrameName] = useState<string | null>(null);
-  const frameNameInputRef = useRef<HTMLInputElement>(null);
   const [editingTemplateName, setEditingTemplateName] = useState<string | null>(null);
   const templateNameInputRef = useRef<HTMLInputElement>(null);
   const [activeAgents, setActiveAgents] = useState<{ agentId: string; sectionId: string; onlineAt: string }[]>([]);
@@ -4254,19 +4252,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, [templateId, selectedFrameId, selectedFrameIds, addToast]);
 
-  // ── Frame rename (double-click in top bar) ──
-  const commitFrameRename = useCallback(() => {
-    if (!selectedFrameId || editingFrameName === null) return;
-    const trimmed = editingFrameName.trim();
-    if (!trimmed) { setEditingFrameName(null); return; }
-    const updated = frames.map(f =>
-      f.id === selectedFrameId ? { ...f, name: trimmed } : f
-    );
-    store.replaceAllWithUndo(updated, "edit");
-    setEditingFrameName(null);
-    autoSave(updated);
-  }, [selectedFrameId, editingFrameName, frames, autoSave]);
-
   // ── Template (workspace) rename ──
   const commitTemplateRename = useCallback(async () => {
     if (!templateId || editingTemplateName === null) return;
@@ -6354,42 +6339,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           >
             {templateName}
           </span>
-        )}
-        {selectedFrame && (
-          editingFrameName !== null ? (
-            <input
-              ref={frameNameInputRef}
-              value={editingFrameName}
-              onChange={e => setEditingFrameName(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter") commitFrameRename();
-                if (e.key === "Escape") { setEditingFrameName(null); }
-              }}
-              onBlur={commitFrameRename}
-              className="editor-v2-frame-info"
-              autoFocus
-              style={{
-                background: "rgba(255,255,255,0.08)",
-                border: "1px solid rgba(200,184,152,0.4)",
-                borderRadius: 4,
-                color: "#c8b898",
-                fontSize: 12,
-                fontFamily: "inherit",
-                padding: "2px 6px",
-                outline: "none",
-                width: 180,
-              }}
-            />
-          ) : (
-            <span
-              className="editor-v2-frame-info"
-              onDoubleClick={() => setEditingFrameName(selectedFrame.name)}
-              title="Double-click to rename"
-              style={{ cursor: "text" }}
-            >
-              {selectedFrame.name} · {selectedFrame.width}×{selectedFrame.height}
-            </span>
-          )
         )}
         {saving && <span className="editor-v2-saving">Saving...</span>}
         {activeAgents.length > 0 && (

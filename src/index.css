@@ -2777,18 +2777,6 @@ html, body, #root { height: 100%; width: 100%; }
   white-space: nowrap;
 }
 
-.editor-v2-frame-info {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: 'SF Mono', monospace;
-  margin-left: 4px;
-  min-width: 0;
-  max-width: clamp(80px, 12vw, 220px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .editor-v2-saving {
   font-size: 10px;
   color: #60a5fa;
@@ -3352,7 +3340,6 @@ html, body, #root { height: 100%; width: 100%; }
   /* ── Editor: topbar compact ── */
   .editor-v2-topbar { padding: 0 8px; gap: 4px; }
   .editor-v2-project-name { font-size: 12px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .editor-v2-frame-info { display: none; }
 
   /* ── Editor: insert toolbar wraps ── */
   .editor-v2-topbar > label.editor-v2-topbar-icon-btn { display: none; }
