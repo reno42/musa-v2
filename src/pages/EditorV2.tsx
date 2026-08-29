@@ -7477,27 +7477,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           <span style={{ fontSize: 8, letterSpacing: 2 }}>TOOLS</span>
         </div>
         <FloatingToolbar
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onZoomFit={handleZoomToFit}
           tool={activeTool}
           onToolChange={setActiveTool}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          multiSelectCount={multiSelectLayerIds.length}
-          onPathfinder={handlePathfinder}
           onIconPicker={rect => {
             if (showIconPicker) { setShowIconPicker(false); return; }
             setIconPickerAnchor(rect);
             setIconInsertError("");
             setShowIconPicker(true);
           }}
-          onGroup={handleGroup}
-          onUngroup={handleUngroup}
-          canGroup={multiSelectLayerIds.length >= 2 || selectedOrphanIds.size >= 2}
-          canUngroup={(!!selectedElement && !!selectedElement.childLayerCount) || selectedOrphanIds.size > 0}
           foregroundColor={foregroundColor}
           backgroundColor={backgroundColor}
           onForegroundColorChange={setForegroundColor}
@@ -8865,6 +8852,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onStackChange={handleStackChange}
             onGroup={handleGroup}
             onUngroup={handleUngroup}
+            onPathfinder={handlePathfinder}
             onUngroupAll={handleUngroupAll}
             onToggleVisibility={handleToggleSelectedVisibility}
             onToggleLock={handleToggleSelectedLock}

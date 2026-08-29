@@ -1,32 +1,24 @@
+// Slim cursor-tool rail: only tools that change what a click does. Everything
+// else lives where it already had a home — Undo/Redo/Group/Ungroup/Pathfinder
+// in the canvas right-click menu plus their shortcuts (Ctrl/⌘+Z, +G, +Alt+U/S/I/E),
+// Zoom and SVG import in the top bar, icon library inside the Shapes flyout.
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { HtmlToolName } from "./InfiniteHtmlCanvas";
 import {
   IconPointer, IconHand, IconRectangle, IconCircleOutline, IconType, IconPen,
   IconFrame,
   IconChevronDown, IconTriangle, IconStar, IconHexagon,
-  IconIntersect, IconShapes,
+  IconShapes,
   IconPenPlus, IconPenMinus, IconPenEdit, IconPencil,
   IconTextPath,
-  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconMaximize, IconEraser,
+  IconEyedropper, IconPaintBucket, IconGradient, IconSwap, IconLayers, IconEraser,
   IconWand,
-  IconZoomIn, IconZoomOut, IconSearch,
 } from "../shared/icons";
 
 interface Props {
   tool: HtmlToolName;
   onToolChange: (t: HtmlToolName) => void;
-  canUndo: boolean;
-  canRedo: boolean;
-  onUndo: () => void;
-  onRedo: () => void;
-  multiSelectCount?: number;
-  onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
-  onSvgImport?: () => void;
   onIconPicker?: (anchorRect: DOMRect) => void;
-  onGroup?: () => void;
-  onUngroup?: () => void;
-  canGroup?: boolean;
-  canUngroup?: boolean;
   // Color tools
   foregroundColor?: string;
   backgroundColor?: string;
@@ -36,10 +28,6 @@ interface Props {
   // Layers panel
   showLayersPanel?: boolean;
   onToggleLayers?: () => void;
-  /** Zoom lives here with the other tools; the top bar keeps the readout. */
-  onZoomIn?: () => void;
-  onZoomOut?: () => void;
-  onZoomFit?: () => void;
   // F4 Borrador: brush size (also [ ] keys in EditorV2)
   brushSize?: number;
   onBrushSizeChange?: (size: number) => void;
@@ -109,18 +97,11 @@ const WAND_TOOL = {
   title: "Varita — clic sobre una imagen la segmenta con SAM (Alt+clic excluye, doble clic o Enter aplica, Esc limpia)",
 };
 
-const zoomBtn: React.CSSProperties = {
-  width: 46, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
-  cursor: "pointer", borderRadius: 6, background: "transparent",
-  border: "1px solid transparent", color: "var(--text-muted, #7a7668)",
-  fontSize: 14, lineHeight: 1, fontFamily: "SF Mono, monospace", padding: 0,
-};
-
 const shortcutLabel: React.CSSProperties = {
   position: "absolute",
-  bottom: 1,
+  bottom: 0,
   right: 2,
-  fontSize: 8,
+  fontSize: 10,
   fontFamily: "SF Mono, monospace",
   color: "var(--text-muted, #7a7668)",
   opacity: 0.6,
@@ -128,18 +109,13 @@ const shortcutLabel: React.CSSProperties = {
 
 export function FloatingToolbar({
   tool, onToolChange,
-  canUndo, canRedo, onUndo, onRedo,
-  multiSelectCount, onPathfinder, onSvgImport,
   onIconPicker,
-  onGroup, onUngroup, canGroup, canUngroup,
   foregroundColor = "#000000", backgroundColor = "#ffffff",
   onForegroundColorChange, onBackgroundColorChange, onSwapColors,
-  showLayersPanel, onToggleLayers, onZoomIn, onZoomOut, onZoomFit,
+  showLayersPanel, onToggleLayers,
   brushSize = 24, onBrushSizeChange,
   wandPrompt = "", onWandPromptChange, onWandPromptRun,
 }: Props) {
-  const [showPathfinder, setShowPathfinder] = useState(false);
-  const [showZoomPopover, setShowZoomPopover] = useState(false);
   const [openFlyout, setOpenFlyout] = useState<"shapes" | "pen" | "text" | "colors" | null>(null);
   const [defaultShape, setDefaultShape] = useState<string>("rect");
   const [defaultPen, setDefaultPen] = useState<string>("pen");
@@ -155,7 +131,6 @@ export function FloatingToolbar({
       const t = e.target as Node;
       if (rootRef.current && !rootRef.current.contains(t)) {
         setOpenFlyout(null);
-        setShowZoomPopover(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -223,48 +198,6 @@ export function FloatingToolbar({
         border: tool === name ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
         color: tool === name ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
         transition: "all 0.15s ease",
-        position: "relative",
-      }}
-    >
-      {icon}
-      <span style={shortcutLabel}>{shortcut}</span>
-    </button>
-  );
-
-  // ── Action button (zoom, undo, etc.) ──
-  const actionBtn = (icon: React.ReactNode, onClick: () => void, title: string, disabled?: boolean) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        width: 46, height: 36,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
-        background: "transparent", border: "1px solid transparent",
-        color: disabled ? "rgba(122,118,104,0.3)" : "var(--text-muted, #7a7668)",
-        transition: "all 0.15s ease", opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      {icon}
-    </button>
-  );
-
-  // ── Action button with a small shortcut label (matches the tool buttons) ──
-  const labeledActionBtn = (icon: React.ReactNode, shortcut: string, title: string, onClick: () => void, disabled?: boolean) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={`${title} (${shortcut})`}
-      style={{
-        width: 46, height: 36,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
-        background: "transparent", border: "1px solid transparent",
-        color: disabled ? "rgba(122,118,104,0.3)" : "var(--text-muted, #7a7668)",
-        transition: "all 0.15s ease", opacity: disabled ? 0.4 : 1,
         position: "relative",
       }}
     >
@@ -444,6 +377,25 @@ export function FloatingToolbar({
             <span style={shortcutLabel}>{item.shortcut}</span>
           </button>
         ))}
+        {/* Icon library rides with the shapes: both INSERT vector artwork.
+           Keeps the rail short without burying the picker deeper than one
+           click (the flyout is already open for shapes anyway). */}
+        {onIconPicker && (
+          <>
+            <div style={{ width: "100%", height: 1, background: "var(--border-color, rgba(255,255,255,0.06))", margin: "3px 0" }} />
+            <button
+              type="button"
+              onClick={(e) => { onIconPicker(e.currentTarget.getBoundingClientRect()); setOpenFlyout(null); }}
+              title="Biblioteca de iconos — clic para abrir, arrastra un icono al lienzo"
+              style={{ ...flyoutItem(false), width: "100%", justifyContent: "flex-start", padding: "0 8px", gap: 8 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.08))"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >
+              <IconShapes size={14} />
+              <span style={{ fontSize: 11, color: "var(--text-main, #c4c0b4)", whiteSpace: "nowrap" }}>Biblioteca de iconos</span>
+            </button>
+          </>
+        )}
       </SplitButton>
 
       {/* ── Text split button + flyout ── */}
@@ -679,8 +631,6 @@ export function FloatingToolbar({
 
       {divider}
 
-      {divider}
-
       {/* ── Layers panel toggle ── */}
       {onToggleLayers && (
         <button
@@ -700,189 +650,6 @@ export function FloatingToolbar({
           <IconLayers size={16} />
         </button>
       )}
-
-      {/* ── Zoom ── */}
-      {onZoomFit && (
-        <>
-          {divider}
-          <div style={{ position: "relative" }}>
-            <button
-              type="button"
-              onClick={() => setShowZoomPopover(v => !v)}
-              title="Zoom"
-              style={{
-                width: 46, height: 36,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: 8, cursor: "pointer",
-                background: showZoomPopover ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-                border: showZoomPopover ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-                color: showZoomPopover ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)",
-                transition: "all 0.15s ease",
-              }}
-            >
-              <IconSearch size={15} />
-            </button>
-            {showZoomPopover && (
-              <>
-                <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setShowZoomPopover(false)} />
-                <div style={{ ...flyoutStyle, minWidth: 150, padding: 6, gap: 0, left: "100%", top: 0, marginLeft: 6 }}>
-                  <div style={{ fontSize: 10, color: "#7a7668", padding: "2px 8px 4px", textTransform: "uppercase", letterSpacing: 1 }}>Zoom</div>
-                  {([
-                    { label: "Acercar", icon: <IconZoomIn size={14} />, shortcut: "Ctrl +", action: onZoomIn },
-                    { label: "Alejar", icon: <IconZoomOut size={14} />, shortcut: "Ctrl −", action: onZoomOut },
-                    { label: "Ajustar", icon: <IconMaximize size={14} />, shortcut: "⇧1", action: onZoomFit },
-                  ] as const).map(({ label, icon, shortcut, action }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => { action?.(); setShowZoomPopover(false); }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        width: "100%", padding: "5px 10px",
-                        background: "transparent", border: "1px solid transparent",
-                        borderRadius: 6, color: "var(--text-main, #c4c0b4)",
-                        cursor: "pointer", fontSize: 12, fontFamily: "inherit",
-                        transition: "all 0.1s",
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-                    >
-                      {icon}
-                      <span>{label}</span>
-                      <span style={{ marginLeft: "auto", fontSize: 9, color: "#7a7668", fontFamily: "monospace" }}>{shortcut}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </>
-      )}
-
-      {divider}
-
-      {/* ── Pathfinder ── */}
-      {onPathfinder && (
-        <>
-          <div style={{ position: "relative" }}>
-            <button
-              type="button"
-              title={`Pathfinder — boolean ops on 2+ selected shapes (${(multiSelectCount || 0)} selected)`}
-              disabled={(multiSelectCount || 0) < 2}
-              onClick={() => setShowPathfinder(!showPathfinder)}
-              style={{
-                width: 46, height: 36,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                borderRadius: 8,
-                cursor: (multiSelectCount || 0) < 2 ? "not-allowed" : "pointer",
-                background: showPathfinder ? "var(--accent-dim, rgba(200,184,152,0.15))" : "transparent",
-                border: showPathfinder ? "1px solid var(--accent, #c8b898)" : "1px solid transparent",
-                color: (multiSelectCount || 0) < 2 ? "rgba(122,118,104,0.3)" : (showPathfinder ? "var(--accent, #c8b898)" : "var(--text-muted, #7a7668)"),
-                opacity: (multiSelectCount || 0) < 2 ? 0.4 : 1,
-                transition: "all 0.15s ease",
-              }}
-            >
-              <IconIntersect size={16} />
-            </button>
-            {showPathfinder && (
-              <>
-                <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setShowPathfinder(false)} />
-                <div style={{ ...flyoutStyle, minWidth: 150, padding: 6, gap: 0 }}>
-                  <div style={{ fontSize: 10, color: "#7a7668", padding: "2px 8px 4px", textTransform: "uppercase", letterSpacing: 1 }}>Pathfinder</div>
-                  {([
-                    { op: "union", label: "Union", icon: "∪" },
-                    { op: "subtract", label: "Subtract", icon: "−" },
-                    { op: "intersect", label: "Intersect", icon: "∩" },
-                    { op: "exclude", label: "Exclude", icon: "⊕" },
-                  ] as const).map(({ op, label, icon }) => (
-                    <button
-                      key={op}
-                      type="button"
-                      disabled={(multiSelectCount || 0) < 2}
-                      onClick={() => { onPathfinder(op); setShowPathfinder(false); }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        width: "100%", padding: "5px 10px",
-                        background: "transparent", border: "1px solid transparent",
-                        borderRadius: 6, color: "var(--text-main, #c4c0b4)",
-                        cursor: (multiSelectCount || 0) >= 2 ? "pointer" : "not-allowed",
-                        fontSize: 12, fontFamily: "inherit", opacity: (multiSelectCount || 0) >= 2 ? 1 : 0.4,
-                        transition: "all 0.1s",
-                      }}
-                      onMouseEnter={(e) => { if ((multiSelectCount || 0) >= 2) (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-dim, rgba(200,184,152,0.1))"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-                    >
-                      <span style={{ width: 18, textAlign: "center", fontSize: 14, fontWeight: 600 }}>{icon}</span>
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-          {divider}
-        </>
-      )}
-
-      {/* ── SVG Import ── */}
-      {onSvgImport && (
-        <>
-          {actionBtn(
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>,
-            onSvgImport, "Import SVG",
-          )}
-          {divider}
-        </>
-      )}
-
-      {/* ── Group / Ungroup ── */}
-      {(onGroup || onUngroup) && <>
-        {onGroup && labeledActionBtn(
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" />
-            <path d="M4 15v3a2 2 0 0 0 2 2h3M15 4h3a2 2 0 0 1 2 2v3" strokeDasharray="2 2" />
-          </svg>,
-          "⌘G", "Group", () => onGroup(), !canGroup,
-        )}
-        {onUngroup && labeledActionBtn(
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="15" width="6" height="6" rx="1" />
-            <path d="M15 6h3M18 6v3M6 15v3M6 18h3" strokeDasharray="2 2" />
-          </svg>,
-          "⇧⌘G", "Ungroup", () => onUngroup(), !canUngroup,
-        )}
-        {divider}
-      </>}
-
-      {/* ── Undo / Redo ── */}
-      {actionBtn(
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1.04-6.83 2.73L3 8v9h9l-3.62-3.62C9.89 12.02 11.12 11.5 12.5 11.5c2.28 0 4.22 1.52 4.84 3.58l2.87-.78C19.36 11.38 16.21 8 12.5 8z"/></svg>,
-        onUndo, "Undo (Ctrl+Z)", !canUndo,
-      )}
-      {actionBtn(
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.16 0-7.74 2.42-9.44 5.93l2.57 1.11C5.9 12.55 8.47 11 11.5 11c2.09 0 3.99.75 5.47 1.98L13 17h9V8l-3.6 2.6z"/></svg>,
-        onRedo, "Redo (Ctrl+Shift+Z)", !canRedo,
-      )}
-
-      {onIconPicker && <>
-        {divider}
-        {/* ── Icons Toggle ── */}
-        <button
-          type="button"
-          onClick={e => onIconPicker(e.currentTarget.getBoundingClientRect())}
-          title="Icons — click to open, drag onto the canvas to place"
-          style={{
-            width: 46, height: 36,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            borderRadius: 8, cursor: "pointer",
-            background: "transparent", border: "1px solid transparent",
-            color: "var(--text-muted, #7a7668)",
-            transition: "all 0.15s ease",
-          }}
-        >
-          <IconShapes size={16} />
-        </button>
-      </>}
 
       {divider}
       {/* ── Foreground / background swatches (at the bottom — last tool in the stack) ── */}

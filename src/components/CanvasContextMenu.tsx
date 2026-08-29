@@ -36,6 +36,8 @@ export interface ContextMenuActions {
   onFlip: (axis: "horizontal" | "vertical") => void;
   onCopyCode: () => void;
   onCopyCss: () => void;
+  /** Boolean ops for 2+ selected shapes (mirrors Ctrl/⌘+Alt+U/S/I/E). */
+  onPathfinder?: (op: "union" | "subtract" | "intersect" | "exclude") => void;
   onUndo: () => void;
   onRedo: () => void;
   onBatchAMator: () => void;
@@ -85,7 +87,7 @@ export function CanvasContextMenu({
   x, y, selectedElement, selectedLayerCount, hasFrameSelection,
   isHidden, isLocked, canUndo, canRedo, hasClipboard, maskTarget, onClose,
   onCopy, onPaste, onPasteAllFrames, onStackChange, onGroup, onUngroup, onUngroupAll,
-  onToggleVisibility, onToggleLock, onFlip, onCopyCode, onCopyCss,
+  onToggleVisibility, onToggleLock, onFlip, onCopyCode, onCopyCss, onPathfinder,
   onUndo, onRedo, onBatchAMator, onFrameToTemplate, onExtractDesignSystem, onInspect,
   onCreateSelection, onInvertSelection, onDeleteExterior, onFillSelection,
 }: Props) {
@@ -141,6 +143,14 @@ export function CanvasContextMenu({
     { label: "Agrupar", hint: "Ctrl+G", disabled: selectedLayerCount < 2, run: onGroup },
     { label: "Desagrupar", disabled: !isGroup, run: onUngroup },
     { label: "Desagrupar todo", disabled: !isGroup, run: onUngroupAll },
+    // Pathfinder used to live in the left toolbar; with 2+ shapes selected
+    // the boolean ops belong next to group/ungroup, not on a permanent rail.
+    ...(onPathfinder ? ([
+      { label: "Unir formas", hint: "Ctrl+Alt+U", disabled: selectedLayerCount < 2, run: () => onPathfinder("union") },
+      { label: "Restar formas", hint: "Ctrl+Alt+S", disabled: selectedLayerCount < 2, run: () => onPathfinder("subtract") },
+      { label: "Intersecar formas", hint: "Ctrl+Alt+I", disabled: selectedLayerCount < 2, run: () => onPathfinder("intersect") },
+      { label: "Excluir formas", hint: "Ctrl+Alt+E", disabled: selectedLayerCount < 2, run: () => onPathfinder("exclude") },
+    ] as MenuEntry[]) : []),
     { separator: true },
     { label: isHidden ? "Show" : "Hide", disabled: !hasElement, run: onToggleVisibility },
     { label: isLocked ? "Unlock" : "Lock", disabled: !hasElement, run: onToggleLock },
@@ -152,8 +162,8 @@ export function CanvasContextMenu({
     { label: "Copiar código (HTML + CSS)", disabled: !hasElement, run: onCopyCode },
     { label: "Copiar CSS", disabled: !hasElement, run: onCopyCss },
     { separator: true },
-    { label: "Undo", hint: "Ctrl+Z", disabled: !canUndo, run: onUndo },
-    { label: "Redo", hint: "Ctrl+Shift+Z", disabled: !canRedo, run: onRedo },
+    { label: "Deshacer", hint: "Ctrl+Z", disabled: !canUndo, run: onUndo },
+    { label: "Rehacer", hint: "Ctrl+Shift+Z", disabled: !canRedo, run: onRedo },
     { separator: true },
     { label: "BatchAMator", run: onBatchAMator },
     { label: "Convertir frame en plantilla", disabled: !hasFrameSelection, run: onFrameToTemplate },

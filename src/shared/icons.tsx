@@ -325,9 +325,9 @@ export const IconCopy = (p: React.ComponentProps<typeof Icon>) => (
   <Icon {...p}><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></Icon>
 );
 
-// ── Frame (artboard) ─────────────────────────────────────
+// ── Frame (artboard) — hash/crop marks: must never read as the rectangle tool ──
 export const IconFrame = (p: React.ComponentProps<typeof Icon>) => (
-  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="3" y2="3" /><line x1="9" y1="3" x2="3" y2="3" /><line x1="21" y1="9" x2="21" y2="3" /><line x1="15" y1="3" x2="21" y2="3" /><line x1="3" y1="15" x2="3" y2="21" /><line x1="9" y1="21" x2="3" y2="21" /><line x1="21" y1="15" x2="21" y2="21" /><line x1="15" y1="21" x2="21" y2="21" /></Icon>
+  <Icon {...p}><line x1="8" y1="3" x2="8" y2="21" /><line x1="16" y1="3" x2="16" y2="21" /><line x1="3" y1="8" x2="21" y2="8" /><line x1="3" y1="16" x2="21" y2="16" /></Icon>
 );
 
 // ── Move (4-way arrows) ──────────────────────────────────
