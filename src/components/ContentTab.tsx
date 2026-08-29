@@ -256,13 +256,16 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
       // ── Portada: brand as the headline, who requested it, the range ──
       const cover = pptx.addSlide();
       cover.background = { color: "0B0D13" };
-      cover.addText("GRILLA DE CONTENIDO", { x: 0.7, y: 1.0, w: 8.6, fontSize: 11, color: "6B7280", charSpacing: 4 });
-      cover.addText(brandName, { x: 0.7, y: 1.4, w: 8.6, fontSize: 44, bold: true, color: "FFFFFF" });
-      cover.addText(`Presentado por ${userName}`, { x: 0.7, y: 2.55, w: 8.6, fontSize: 17, bold: true, color: "A5B4FC" });
-      cover.addText(`${pptFrom || "inicio"}  →  ${pptTo || "hoy"}`, { x: 0.7, y: 3.2, w: 8.6, fontSize: 13, color: "9CA3AF" });
+      // Every text below carries an explicit h: pptxgenjs defaults height
+      // to 0, and cy="0" shapes render as invisible hairlines in several
+      // PowerPoint/Slides renderers (the "empty cover" bug report).
+      cover.addText("GRILLA DE CONTENIDO", { x: 0.7, y: 1.0, w: 8.6, h: 0.35, fontSize: 11, valign: "top", color: "6B7280", charSpacing: 4 });
+      cover.addText(brandName, { x: 0.7, y: 1.4, w: 8.6, h: 0.85, fontSize: 44, valign: "top", bold: true, color: "FFFFFF" });
+      cover.addText(`Presentado por ${userName}`, { x: 0.7, y: 2.55, w: 8.6, h: 0.4, fontSize: 17, valign: "top", bold: true, color: "A5B4FC" });
+      cover.addText(`${pptFrom || "inicio"}  →  ${pptTo || "hoy"}`, { x: 0.7, y: 3.2, w: 8.6, h: 0.35, fontSize: 13, valign: "top", color: "9CA3AF" });
       cover.addText(
         `${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })} · ${pptRows.length} ${pptRows.length === 1 ? "pieza" : "piezas"}`,
-        { x: 0.7, y: 3.65, w: 8.6, fontSize: 11.5, color: "6B7280" },
+        { x: 0.7, y: 3.65, w: 8.6, h: 0.35, fontSize: 11.5, valign: "top", color: "6B7280" },
       );
 
       // Frame → PNG. Templates are read FRESH here (not from the sheet's
@@ -312,7 +315,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         const fecha = r.scheduled_date + (r.scheduled_time ? ` ${r.scheduled_time.slice(0, 5)}` : "");
         const canal = (r.channels || []).join(", ");
         slide.addText([fecha, canal].filter(Boolean).join("   ·   "),
-          { x: 0.5, y: 0.3, w: 9, fontSize: 12, color: "9CA3AF" });
+          { x: 0.5, y: 0.3, w: 9, h: 0.35, fontSize: 12, valign: "top", color: "9CA3AF" });
 
         // Left: the copy. Native text boxes, so it selects and copies in
         // PowerPoint AND Google Slides — an image of text would defeat the
@@ -365,7 +368,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
           : "";
         const designLabel = [tplName, frmName].filter(Boolean).join(" ▸ ");
         if (designLabel) {
-          slide.addText(designLabel, { x: 0.5, y: 5.2, w: 9, fontSize: 9.5, color: "4B5563" });
+          slide.addText(designLabel, { x: 0.5, y: 5.2, w: 9, h: 0.3, fontSize: 9.5, valign: "top", color: "4B5563" });
         }
       }
 

@@ -34,10 +34,25 @@ test("ContentTab renders design text as native boxes and falls back to the baked
 
 test("the cover leads with the brand and the requesting user", () => {
   const tab = read("src/components/ContentTab.tsx");
-  assert.match(tab, /cover\.addText\(brandName, \{ x: 0\.7, y: 1\.4, w: 8\.6, fontSize: 44, bold: true/);
+  assert.match(tab, /cover\.addText\(brandName, \{ x: 0\.7, y: 1\.4, w: 8\.6, h: 0\.85/);
   assert.match(tab, /Presentado por \$\{userName\}/);
   // The file's metadata author is the requester too.
   assert.match(tab, /pptx\.author = String\(userName\)/);
+});
+
+test("every cover, date and footer text carries an explicit height (cy=0 regression guard)", () => {
+  const tab = read("src/components/ContentTab.tsx");
+  // pptxgenjs defaults h to 0 → cy="0" shapes, which several PowerPoint
+  // renderers collapse to invisible hairlines (the "empty cover" bug).
+  const coverBlock = tab.slice(
+    tab.indexOf("Portada: brand as the headline"),
+    tab.indexOf("Frame → PNG."),
+  );
+  const adds = coverBlock.match(/cover\.addText\([^;]+/g) || [];
+  assert.ok(adds.length >= 5, "the five cover texts are present");
+  for (const a of adds) assert.match(a, /h: [0-9.]+/, `cover text without h: ${a.slice(0, 80)}`);
+  assert.match(tab, /\{ x: 0\.5, y: 0\.3, w: 9, h: 0\.35, fontSize: 12, valign: "top"/);
+  assert.match(tab, /\{ x: 0\.5, y: 5\.2, w: 9, h: 0\.3, fontSize: 9\.5, valign: "top"/);
 });
 
 test("the export popup offers editable vs flat design text", () => {
