@@ -15,6 +15,7 @@ import { buildDeckFrames, DECK_FRAME_W, DECK_FRAME_H } from "./deck-generator.mj
 import { buildHtmlCarousel } from "./html-carousel.mjs";
 import { applyBrandCss, applyBrandCssToFrames } from "./brand-css.mjs";
 import { assertHarnessAccess as assertHarnessAccessBase, selectLatestReviewSubmission } from "./harness-access.mjs";
+import { shouldCaptureMethod, summarizeCapturedCall } from "./work-capture.mjs";
 import { assertEditableFrame, buildEditableCanvasLayers, buildEditableFrameLayers } from "./editable-layers.mjs";
 import { alignElements } from "./align-geometry.mjs";
 import { canPaint, isGroupLayer, paintDeclarations } from "../../shared/paintModel.ts";
@@ -4021,6 +4022,18 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: "studio_add_comment",
+    description: "Append a short note to a Kanban card's activity log. Use this for decisions, blockers, or context that the automatic work capture cannot express (e.g. why a design direction was rejected). Shows up in the card's Actividad feed with no status arrow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cardId: { type: "string", description: "Card ID to comment on" },
+        comment: { type: "string", description: "Short note (max 500 chars). What was done or decided, and why. No prompts, no credentials." },
+      },
+      required: ["cardId", "comment"],
+    },
+  },
+  {
     name: "studio_log_agent_time",
     description: "Log time, tokens, and model usage for an agent session on a Kanban task. Accumulates totals on the card and calculates cost from the deterministic ai_model_pricing table. Call this when an agent (leader/implementer/reviewer) finishes work on a task.",
     inputSchema: {
@@ -5231,6 +5244,47 @@ function sanitizeRuntimeMetadata(metadata) {
     safe[key] = typeof value === "string" ? sanitizeRuntimeServerText(value, 200) : value;
   }
   return safe;
+}
+
+// ── REQ-024: server-side auto-capture of agent work (zero tokens) ───────
+// After a successful captured tool call, resolve the account's ONE active
+// Kanban task (hard rule: ≤1 draft/design per account — same query as
+// harness_claim_feature) and append a single sanitized line to its activity
+// log. Bounded and non-fatal: documentation must never fail the tool call,
+// and must never add more than ~3s of tail latency (Promise.race against a
+// serverless timeout that would kill orphaned work anyway).
+const CAPTURE_TIMEOUT_MS = 3000;
+
+async function captureAgentWork(method, params, userId) {
+  if (!shouldCaptureMethod(method)) return;
+  const accountId = UUID_RE.test(userId || "") ? userId : null;
+  if (!accountId) return; // admin/dev tokens carry no account → skip
+  const attempt = async () => {
+    const sb = getSupabaseAdmin();
+    if (!sb) return;
+    const { data: active } = await sb.from("design_kanban_tasks")
+      .select("id, status")
+      .eq("account_id", accountId)
+      .in("status", ["draft", "design"])
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!active) return; // no claimed task → nothing to attribute the work to
+    await sb.from("design_kanban_activity_log").insert({
+      id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+      task_id: active.id,
+      from_status: active.status,
+      to_status: active.status,
+      comment: summarizeCapturedCall(method, params),
+      created_by: "auto",
+    });
+  };
+  try {
+    await Promise.race([
+      attempt(),
+      new Promise((resolve) => setTimeout(resolve, CAPTURE_TIMEOUT_MS)),
+    ]);
+  } catch { /* capture is best-effort by design */ }
 }
 
 async function handleMethod(method, params, userId, auth) {
@@ -14408,9 +14462,9 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
       const { data: cardDetail, error: getErr } = await sbGet.from("design_kanban_tasks").select("*").eq("id", params.cardId).single();
       if (getErr || !cardDetail) throw { code: -32000, message: "Card not found: " + params.cardId };
       // Fetch activity log
-      const { data: activity } = await sbGet.from("design_kanban_activity_log").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
+      const { data: activity } = await sbGet.from("design_kanban_activity_log").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false }).limit(200);
       // Fetch agent time log
-      const { data: agentTime } = await sbGet.from("design_kanban_agent_time").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false });
+      const { data: agentTime } = await sbGet.from("design_kanban_agent_time").select("*").eq("task_id", params.cardId).order("created_at", { ascending: false }).limit(200);
       // Fetch model pricing for cost breakdown
       const { data: pricing } = await sbGet.from("ai_model_pricing").select("*").order("model_name", { ascending: true });
       return {
@@ -14461,6 +14515,26 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         });
       }
       return { success: true, card: updatedCard, cardId: params.cardId };
+    }
+
+    // ── Studio Board: explicit agent/human note in the activity log ──
+    case "studio_add_comment": {
+      const sbCmt = getSupabaseAdmin();
+      if (!sbCmt) throw { code: -32000, message: "Studio Board requires Supabase." };
+      const comment = String(params.comment || "").trim().slice(0, 500);
+      if (!comment) throw { code: -32602, message: "comment is required (non-empty, max 500 chars)." };
+      const { data: cmtCard } = await sbCmt.from("design_kanban_tasks")
+        .select("id, status").eq("id", params.cardId).single();
+      if (!cmtCard) throw { code: -32000, message: "Card not found: " + params.cardId };
+      await sbCmt.from("design_kanban_activity_log").insert({
+        id: "log_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        task_id: cmtCard.id,
+        from_status: cmtCard.status,
+        to_status: cmtCard.status,
+        comment,
+        created_by: "mcp",
+      });
+      return { success: true, cardId: cmtCard.id, comment };
     }
 
     // ── Studio Board: delete card + child logs (CRUD) ──
@@ -16092,6 +16166,7 @@ export const handler = async (event) => {
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(params.name, scopedParams, auth.userId, auth));
+        await captureAgentWork(params.name, scopedParams, auth.userId);
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {
           statusCode: 200, headers,
@@ -16156,6 +16231,7 @@ export const handler = async (event) => {
           : await meterWorkspaceUsage(scopedParams, id, headers);
         if (quotaResponse) return quotaResponse;
         const result = await withRequestAuth(auth, () => handleMethod(method, scopedParams, auth.userId, auth));
+        await captureAgentWork(method, scopedParams, auth.userId);
         const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return {
           statusCode: 200, headers,

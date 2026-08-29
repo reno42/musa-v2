@@ -6697,6 +6697,27 @@
     }
   },
   {
+    "name": "studio_add_comment",
+    "description": "Append a short note to a Kanban card's activity log. Use this for decisions, blockers, or context that the automatic work capture cannot express (e.g. why a design direction was rejected). Shows up in the card's Actividad feed with no status arrow.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Card ID to comment on"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Short note (max 500 chars). What was done or decided, and why. No prompts, no credentials."
+        }
+      },
+      "required": [
+        "cardId",
+        "comment"
+      ]
+    }
+  },
+  {
     "name": "studio_log_agent_time",
     "description": "Log time, tokens, and model usage for an agent session on a Kanban task. Accumulates totals on the card and calculates cost from the deterministic ai_model_pricing table. Call this when an agent (leader/implementer/reviewer) finishes work on a task.",
     "inputSchema": {

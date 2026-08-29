@@ -76,7 +76,10 @@ test("CRM stays focused while workspace administration lives in settings", () =>
 
   assert.match(dashboard, /<WorkspaceConsole[\s\S]*mode="settings"/);
   assert.match(dashboard, /activeTab === "workspace"[\s\S]*<WorkspaceConsole[\s\S]*mode="crm"/);
-  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*\["general", "General"\][\s\S]*\["team", "Equipo"\][\s\S]*\["agents", "API MCP"\][\s\S]*\["account", "Cuenta"\]/);
+  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*\["general", "General"\][\s\S]*\["team", "Equipo"\][\s\S]*\["agents", "API MCP"\]/);
+  // af004b4 merged the Cuenta tab into General — account content lives inside general now.
+  assert.doesNotMatch(workspaceConsole, /\["account", "Cuenta"\]/);
+  assert.match(workspaceConsole, /section === "general"[\s\S]{0,200}<AccountSection/);
   assert.doesNotMatch(workspaceConsole, /\['crm', 'CRM'\]/);
   assert.match(crmWorkspace, />Pipeline<\/button>/);
   assert.match(crmWorkspace, />Marcas y Personas<\/button>/);

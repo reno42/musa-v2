@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/supabase";
 
 type CheckpointJson = Record<string, { passed: boolean; description?: string; notes?: string | null; reviewedAt?: string }>;
@@ -168,11 +168,6 @@ export function KanbanTab({ workspaceId }: Props) {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [batchDryRun, setBatchDryRun] = useState(false);
-  // v27: the auto-refresh poll is configurable from Configuración → Kanban
-  // (task_queue_get_config → kanban_autorefresh_enabled / _seconds). Defaults
-  // keep the board refreshing even when the config is unreadable (pre-v27 DB).
-  const [pollConfig, setPollConfig] = useState({ enabled: true, seconds: 30 });
-  const lastPollRef = useRef(0);
 
   // ── Fetch harness entries for a task's most recent session ──
   const fetchTaskEntries = useCallback(async (taskId: string) => {
@@ -270,49 +265,6 @@ export function KanbanTab({ workspaceId }: Props) {
   }, [workspaceId]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
-
-  // Load the auto-refresh config saved in Configuración → Kanban.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const json = await apiFetch<any>("/mcp", {
-          method: "POST",
-          body: JSON.stringify({ jsonrpc: "2.0", method: "task_queue_get_config", params: { workspaceId }, id: 1 }),
-        });
-        const text = json?.result?.content?.[0]?.text;
-        const data = text ? JSON.parse(text) : json?.result || {};
-        const c = data?.config;
-        if (!cancelled && c) {
-          setPollConfig({
-            enabled: c.kanban_autorefresh_enabled !== false,
-            seconds: [15, 30, 60, 120].includes(c.kanban_autorefresh_seconds) ? c.kanban_autorefresh_seconds : 30,
-          });
-        }
-      } catch { /* unreadable config → defaults (on, 30s) */ }
-    })();
-    return () => { cancelled = true; };
-  }, [workspaceId]);
-
-  // Auto-poll: ONLY while the tab is visible, honoring the interval saved in
-  // Configuración (default 30s — the old blind 10s interval burned ~1,440
-  // /mcp invocations/day per parked tab). Returning to the tab refreshes
-  // immediately (rate-limited to 1 per 10s) so cards feel fresh on return.
-  useEffect(() => {
-    if (!pollConfig.enabled) return;
-    const pollIfVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (Date.now() - lastPollRef.current < 10_000) return;
-      lastPollRef.current = Date.now();
-      fetchTasks(true);
-    };
-    const id = setInterval(pollIfVisible, pollConfig.seconds * 1000);
-    document.addEventListener("visibilitychange", pollIfVisible);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", pollIfVisible);
-    };
-  }, [fetchTasks, pollConfig]);
 
   // ── Move card to any status (drag-and-drop, both directions) ──
   const moveCardToStatus = useCallback(async (cardId: string, targetStatus: string) => {
@@ -1026,11 +978,18 @@ export function KanbanTab({ workspaceId }: Props) {
                 <Section title="Actividad">
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {(sessionEntries[task.id] || []).slice(0, 10).map((log: any, i: number) => (
-                      <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
-                        <strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.from_status || "start"}</strong>
-                        {" → "}<strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.to_status}</strong>
-                        {log.comment && <span style={{ color: "rgba(255,255,255,0.25)" }}> · {log.comment}</span>}
-                      </div>
+                      log.from_status === log.to_status ? (
+                        <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
+                          {log.created_by === "auto" && <span style={{ color: "rgba(255,255,255,0.5)" }}>🤖 </span>}
+                          {log.comment && <span style={{ color: "rgba(255,255,255,0.35)" }}>{log.comment}</span>}
+                        </div>
+                      ) : (
+                        <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.06)" }}>
+                          <strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.from_status || "start"}</strong>
+                          {" → "}<strong style={{ color: "rgba(255,255,255,0.55)" }}>{log.to_status}</strong>
+                          {log.comment && <span style={{ color: "rgba(255,255,255,0.25)" }}> · {log.comment}</span>}
+                        </div>
+                      )
                     ))}
                   </div>
                 </Section>
@@ -1363,12 +1322,19 @@ export function KanbanTab({ workspaceId }: Props) {
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                                   {(sessionEntries[task.id] || []).slice(0, 4).map((log: any, i: number) => (
-                                    <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.08)" }}>
-                                      <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.from_status || "start"}</strong>
-                                      {" → "}
-                                      <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.to_status}</strong>
-                                      {log.comment && <span style={{ color: "rgba(255,255,255,0.3)" }}> · {log.comment}</span>}
-                                    </div>
+                                    log.from_status === log.to_status ? (
+                                      <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.08)" }}>
+                                        {log.created_by === "auto" && <span style={{ color: "rgba(255,255,255,0.5)" }}>🤖 </span>}
+                                        {log.comment && <span style={{ color: "rgba(255,255,255,0.35)" }}>{log.comment}</span>}
+                                      </div>
+                                    ) : (
+                                      <div key={i} style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 8, borderLeft: "2px solid rgba(255,255,255,0.08)" }}>
+                                        <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.from_status || "start"}</strong>
+                                        {" → "}
+                                        <strong style={{ color: "rgba(255,255,255,0.6)" }}>{log.to_status}</strong>
+                                        {log.comment && <span style={{ color: "rgba(255,255,255,0.3)" }}> · {log.comment}</span>}
+                                      </div>
+                                    )
                                   ))}
                                 </div>
                               </div>

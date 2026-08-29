@@ -1028,8 +1028,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   useEffect(() => {
     void loadComments();
-    const t = setInterval(() => void loadComments(), 30_000);
-    return () => clearInterval(t);
   }, [loadComments]);
 
   // ── Comments: load the public/private flag (fail-open until v28) ──
