@@ -325,9 +325,10 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         runs.push({ text: r.copy || "(sin copy todavía)", options: { fontSize: 12.5, color: "E5E7EB" } });
         slide.addText(runs as any, { x: 0.5, y: 1.05, w: 4.6, h: 4.1, valign: "top", shrinkText: true });
 
-        // Right: the frame — art PNG with its text hidden, every text block
-        // re-emitted as a NATIVE text box on top. The words inside the
-        // design select, copy, edit and move like any PowerPoint object.
+        // Right: the frame — art PNG with its text hidden, every design
+        // line re-emitted as a NATIVE one-line text box (wrap off, see
+        // extractFrameTextBlocks). The words select, copy, edit and move
+        // like any PowerPoint object, and nothing is ever re-broken.
         const art = r.template_id && r.frame_id ? await frameToSlideArt(r.template_id, r.frame_id) : null;
         if (art) {
           // Frame pixels → slide inches, once; px→points is ×72.
@@ -346,10 +347,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
               italic: b.italic,
               underline: b.underline ? { style: "sng" } : undefined,
               color: b.color,
-              align: b.align,
               fontFace: b.fontFace || undefined,
-              lineSpacingMultiple: b.lineSpacingMultiple,
               margin: 0,
+              wrap: false,
               isTextBox: true,
             } as any);
           }

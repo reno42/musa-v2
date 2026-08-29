@@ -16,9 +16,12 @@ test("frameCapture exposes the native-text toolkit for the PPT export", () => {
   // The art raster hides the text layer, not the design.
   assert.match(fc, /-webkit-text-fill-color:transparent/);
   // The measurer is a live-layout twin of the raster path: same scoping,
-  // same inlined fonts/images.
+  // same inlined fonts/images. Lines are grouped per character-rect top
+  // and re-measured trimmed, so each PPT box is one visual line.
   assert.match(fc, /extractFrameTextBlocks[\s\S]*mapBodySelectors/);
   assert.match(fc, /extractFrameTextBlocks[\s\S]*inlineGoogleFontCss/);
+  assert.match(fc, /setStart\(node, i\)/);
+  assert.match(fc, /lr\.setStart\(node, from\)/);
 });
 
 test("ContentTab renders design text as native boxes and falls back to the baked PNG", () => {
@@ -30,6 +33,10 @@ test("ContentTab renders design text as native boxes and falls back to the baked
   // Blocks land inside the art region, scaled px→inches; px→points is ×72.
   assert.match(tab, /artX \+ b\.x \* fit/);
   assert.match(tab, /b\.fontSize \* fit \* 72/);
+  // Per-line, wrap off: the browser's breaks are frozen, so a substituted
+  // font can never re-wrap a line down onto its neighbor.
+  assert.match(tab, /wrap: false/);
+  assert.doesNotMatch(tab, /lineSpacingMultiple/);
 });
 
 test("the cover leads with the brand and the requesting user", () => {

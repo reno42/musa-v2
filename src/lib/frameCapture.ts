@@ -268,12 +268,14 @@ export function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, qualit
 export const HIDE_TEXT_CSS =
   "\n#__df_content,#__df_content *{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}";
 
-/** One design text block, in FRAME pixels, ready to become a native
- *  PowerPoint text box (px→inches and px→points are the caller's math). */
+/** One design TEXT LINE, in FRAME pixels, ready to become a native
+ *  PowerPoint text box (px→inches and px→points are the caller's math).
+ *  Per-line, not per-block: PowerPoint re-wraps by its own font metrics,
+ *  so block-sized boxes break at different words and stack onto neighbors. */
 export interface PptTextBlock {
   /** Whitespace-collapsed, text-transform-applied — what PPT should show. */
   text: string;
-  /** Laid-out rect, clamped to the frame bounds. */
+  /** Line ink rect, clamped to the frame bounds. */
   x: number; y: number; w: number; h: number;
   /** CSS px, as painted. */
   fontSize: number;
@@ -281,9 +283,7 @@ export interface PptTextBlock {
   italic: boolean;
   underline: boolean;
   color: string; // #rrggbb
-  align: "left" | "center" | "right";
   fontFace: string; // first family of the computed stack
-  lineSpacingMultiple: number; // computed line-height / font-size
 }
 
 /**
@@ -335,67 +335,86 @@ export async function extractFrameTextBlocks(source: FrameSource): Promise<PptTe
     const win = iframe.contentWindow;
     if (!root || !win) return [];
 
-    // One block per ELEMENT with direct text (not per text node):
-    // <p>Hello <b>world</b></p> yields the p's own text and the b's text
-    // as separate blocks — matching style runs, not re-parsing layout.
-    const byParent = new Map<Element, { rects: DOMRect[]; text: string }>();
+    // One box per VISUAL LINE, not per element-block (see PptTextBlock).
+    // Characters are grouped into lines by their rect tops, each group is
+    // trimmed and re-measured for its exact ink rect, and the PPT side
+    // emits them with wrap:"none" so nothing is ever re-broken.
     const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const blocks: PptTextBlock[] = [];
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const raw = node.textContent || "";
       if (!raw.trim()) continue;
       const parent = node.parentElement;
       if (!parent || /^(script|style|svg)$/i.test(parent.tagName)) continue;
-      const entry = byParent.get(parent) || { rects: [] as DOMRect[], text: "" };
-      entry.text += (entry.text ? " " : "") + raw;
-      const range = doc.createRange();
-      range.selectNodeContents(node);
-      for (const rect of Array.from(range.getClientRects())) entry.rects.push(rect);
-      byParent.set(parent, entry);
-    }
-
-    const blocks: PptTextBlock[] = [];
-    for (const [parent, { rects, text }] of byParent) {
-      if (!rects.length) continue;
       const cs = win.getComputedStyle(parent);
       if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity || "1") === 0) continue;
       if (/rgba\([^)]*,\s*0\)/.test(cs.color)) continue; // invisible ink — the art hides it too
-      let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
-      for (const r of rects) {
-        x = Math.min(x, r.left); y = Math.min(y, r.top);
-        right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
-      }
-      // Clamp to the frame: the live root has overflow:hidden, so anything
-      // past the edges never reached the raster either.
-      x = Math.max(0, x); y = Math.max(0, y);
-      const w = Math.min(right, source.width) - x;
-      const h = Math.min(bottom, source.height) - y;
-      if (w <= 1 || h <= 1) continue;
-
-      let value = text.replace(/\s+/g, " ").trim();
-      if (cs.textTransform === "uppercase") value = value.toUpperCase();
-      else if (cs.textTransform === "lowercase") value = value.toLowerCase();
-      else if (cs.textTransform === "capitalize") value = value.replace(/\b\p{L}/gu, c => c.toUpperCase());
-      if (!value) continue;
 
       const rgb = cs.color.match(/\d+(?:\.\d+)?/g)?.map(Number) || [0, 0, 0];
       const fontSize = parseFloat(cs.fontSize) || 16;
-      const lineHeightPx = parseFloat(cs.lineHeight);
       const weight = cs.fontWeight === "bold" ? 700 : parseInt(cs.fontWeight, 10) || 400;
       const decoration = (cs as CSSStyleDeclaration & { textDecorationLine?: string }).textDecorationLine || cs.textDecoration || "";
+      const fontFace = (cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim();
 
-      blocks.push({
-        text: value,
-        x, y, w, h,
-        fontSize,
-        bold: weight >= 600,
-        italic: cs.fontStyle === "italic" || cs.fontStyle === "oblique",
-        underline: decoration.includes("underline"),
-        color: rgb.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, "0")).join(""),
-        align: cs.textAlign === "center" ? "center" : (cs.textAlign === "right" || cs.textAlign === "end") ? "right" : "left",
-        fontFace: (cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim(),
-        lineSpacingMultiple: Number.isFinite(lineHeightPx) ? Math.min(3, Math.max(0.8, lineHeightPx / fontSize)) : 1.2,
-      });
-      if (blocks.length >= 120) break; // pathological frame — cap the box count
+      interface LineGroup { top: number; from: number; to: number }
+      const groups: LineGroup[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const r = doc.createRange();
+        r.setStart(node, i); r.setEnd(node, i + 1);
+        const rect = r.getBoundingClientRect();
+        // A collapsed char (zero rect) is a space eaten by a wrap — glue
+        // it to the current line so the split points stay word-safe.
+        if (rect.width === 0 && rect.height === 0) {
+          if (groups.length) groups[groups.length - 1].to = i + 1;
+          continue;
+        }
+        const g = groups.find(gr => Math.abs(gr.top - rect.top) <= 2);
+        if (g) g.to = i + 1;
+        else groups.push({ top: rect.top, from: i, to: i + 1 });
+      }
+
+      for (const g of groups) {
+        let from = g.from, to = g.to;
+        while (from < to && /\s/.test(raw[from])) from++;
+        while (to > from && /\s/.test(raw[to - 1])) to--;
+        if (from >= to) continue;
+        // The trimmed span's own rects are the authoritative ink rect —
+        // the group bounds still include the trimmed edge spaces.
+        const lr = doc.createRange();
+        lr.setStart(node, from); lr.setEnd(node, to);
+        const rects = Array.from(lr.getClientRects());
+        if (!rects.length) continue;
+        let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
+        for (const r of rects) {
+          x = Math.min(x, r.left); y = Math.min(y, r.top);
+          right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+        }
+        // Clamp to the frame: the live root has overflow:hidden, so
+        // anything past the edges never reached the raster either.
+        x = Math.max(0, x); y = Math.max(0, y);
+        const w = Math.min(right, source.width) - x;
+        const h = Math.min(bottom, source.height) - y;
+        if (w <= 1 || h <= 1) continue;
+
+        let value = raw.slice(from, to).replace(/\s+/g, " ").trim();
+        if (cs.textTransform === "uppercase") value = value.toUpperCase();
+        else if (cs.textTransform === "lowercase") value = value.toLowerCase();
+        else if (cs.textTransform === "capitalize") value = value.replace(/\b\p{L}/gu, c => c.toUpperCase());
+        if (!value) continue;
+
+        blocks.push({
+          text: value,
+          x, y, w, h,
+          fontSize,
+          bold: weight >= 600,
+          italic: cs.fontStyle === "italic" || cs.fontStyle === "oblique",
+          underline: decoration.includes("underline"),
+          color: rgb.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, "0")).join(""),
+          fontFace,
+        });
+        if (blocks.length >= 200) break; // pathological frame — cap the box count
+      }
+      if (blocks.length >= 200) break;
     }
     return blocks;
   } finally {
