@@ -1,5 +1,7 @@
 import { useState, useCallback } from "react";
 import type { FrameData } from "./DesignFrame";
+import { IconDownload, IconChevronDown } from "../shared/icons";
+import { TopbarMenu, TopbarMenuItem } from "./TopbarMenu";
 
 export type ExportFormat = "png" | "jpg" | "svg" | "pdf" | "json" | "tokens" | "designSystem" | "css";
 
@@ -20,86 +22,81 @@ interface ExportPanelProps {
   onExport: (format: ExportFormat) => void;
 }
 
-/**
- * Export Panel — format dropdown + export button. Compact inline component
- * for the editor toolbar.
- */
+// The 8 formats used to be a native <select> plus a separate Exportar
+// button (~200px of topbar for two controls). Now the format IS the menu
+// entry: one trigger, and clicking a format exports in that format
+// directly — same dropdown pattern as Vista/IA/Compartir.
+const FRAME_FORMATS: Array<{ format: ExportFormat; title: string; desc: string }> = [
+  { format: "png", title: "PNG", desc: "Imagen con transparencia" },
+  { format: "jpg", title: "JPG", desc: "Imagen liviana, sin transparencia" },
+  { format: "svg", title: "SVG", desc: "Vector editable" },
+  { format: "pdf", title: "PDF", desc: "Documento, listo para imprimir" },
+];
+
+const WHOLE_FORMATS: Array<{ format: ExportFormat; title: string; desc: string }> = [
+  { format: "json", title: "JSON (template)", desc: "Backup completo" },
+  { format: "tokens", title: "Design Tokens", desc: "Paleta y tipografía en DTCG" },
+  { format: "designSystem", title: "Design.md", desc: "Guía + tokens + CSS compartido" },
+  { format: "css", title: "CSS", desc: "Hojas de estilo de todos los frames" },
+];
+
 export function ExportPanel({ frames, selectedFrames, onExport }: ExportPanelProps) {
-  const [format, setFormat] = useState<ExportFormat>("png");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const isWholeTemplate = WHOLE_TEMPLATE_FORMATS.has(format);
-  const hasSelection = isWholeTemplate ? frames.length > 0 : selectedFrames.length > 0;
-
-  const handleExport = useCallback(async () => {
-    if (!hasSelection) return;
+  const runExport = useCallback(async (format: ExportFormat) => {
+    const ok = WHOLE_TEMPLATE_FORMATS.has(format)
+      ? frames.length > 0
+      : selectedFrames.length > 0;
+    if (!ok) return;
+    setMenuOpen(false);
     setExporting(true);
     try {
       await onExport(format);
     } finally {
       setExporting(false);
     }
-  }, [format, hasSelection, onExport]);
+  }, [frames.length, selectedFrames.length, onExport]);
 
-  let buttonLabel = "Exportar";
-  if (exporting) buttonLabel = "Exportando...";
-  else if (!isWholeTemplate && selectedFrames.length > 1) buttonLabel = `Exportar (${selectedFrames.length})`;
+  // Same information the old two controls carried: busy state on the
+  // trigger, and the multi-select count (PNG/JPG/SVG/PDF export every
+  // currently selected frame — select 3 of 7 to hand off just those 3).
+  const n = selectedFrames.length;
+  const label = exporting ? "Exportando…" : n > 1 ? `Exportar (${n})` : "Exportar";
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      {/* Format dropdown */}
-      <select
-        value={format}
-        onChange={e => setFormat(e.target.value as ExportFormat)}
-        className="editor-v2-export-select"
-        style={{
-          background: "var(--editor-bg-3, #1e1e2e)",
-          color: "var(--editor-text, #e0e0f0)",
-          border: "1px solid var(--editor-border, #333346)",
-          borderRadius: 6,
-          padding: "4px 8px",
-          fontSize: 12,
-          cursor: "pointer",
-          outline: "none",
-        }}
-      >
-        <option value="png">PNG</option>
-        <option value="jpg">JPG</option>
-        <option value="svg">SVG</option>
-        <option value="pdf">PDF</option>
-        <option value="json">JSON (template)</option>
-        <option value="tokens">Design Tokens</option>
-        <option value="designSystem">Design.md</option>
-        <option value="css">CSS</option>
-      </select>
-
-      {/* Export button — for PNG/JPG/SVG/PDF this exports every currently
-          selected frame (select 3 of 7 to hand off just those 3), so the
-          label surfaces the count once it's more than one. */}
+    <div style={{ position: "relative" }}>
       <button
         type="button"
-        onClick={handleExport}
-        disabled={!hasSelection || exporting}
-        title={!isWholeTemplate && selectedFrames.length === 0 ? "Select a frame to export" : undefined}
-        className="editor-v2-export-btn"
-        style={{
-          background: hasSelection && !exporting
-            ? "var(--editor-accent, #6c5ce7)"
-            : "var(--editor-bg-4, #2a2a3e)",
-          color: hasSelection && !exporting ? "#fff" : "var(--editor-text-dim, #888)",
-          border: "none",
-          borderRadius: 6,
-          padding: "4px 14px",
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: hasSelection && !exporting ? "pointer" : "default",
-          transition: "opacity 0.15s",
-          opacity: exporting ? 0.6 : 1,
-          whiteSpace: "nowrap",
-        }}
+        className={`editor-v2-topbar-icon-btn ${menuOpen ? "active" : ""}`}
+        onClick={() => setMenuOpen(v => !v)}
+        title="Exportar — elige el formato (frames seleccionados o todo el archivo)"
       >
-        {buttonLabel}
+        <IconDownload size={14} />
+        <span style={{ fontSize: 12, marginLeft: 4 }}>{label}</span>
+        <span style={{ marginLeft: 3, display: "flex" }}><IconChevronDown size={11} /></span>
       </button>
+      <TopbarMenu open={menuOpen} onClose={() => setMenuOpen(false)} width={300}>
+        {FRAME_FORMATS.map(({ format, title, desc }) => (
+          <TopbarMenuItem
+            key={format}
+            title={title}
+            desc={n > 0 ? `${desc} · ${n > 1 ? `${n} frames seleccionados` : "el frame seleccionado"}` : "Selecciona un frame primero"}
+            disabled={n === 0 || exporting}
+            onClick={() => { void runExport(format); }}
+          />
+        ))}
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", margin: "3px 4px" }} />
+        {WHOLE_FORMATS.map(({ format, title, desc }) => (
+          <TopbarMenuItem
+            key={format}
+            title={title}
+            desc={`${desc} · todo el archivo`}
+            disabled={frames.length === 0 || exporting}
+            onClick={() => { void runExport(format); }}
+          />
+        ))}
+      </TopbarMenu>
     </div>
   );
 }
