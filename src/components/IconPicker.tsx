@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { apiFetch } from "../lib/supabase";
 import { streamGenerate, type QuiverEvent } from "../lib/quiverStream";
+import { fetchDecryptedKey, saveProviderKeyRemote, deleteProviderKeyRemote } from "../lib/chatHistory";
 
 export interface IconPayload {
   library: string;
@@ -91,10 +92,11 @@ const LIBRARIES: { value: string; label: string; styles: { value: string; label:
   { value: "iconify", label: "Todos", styles: [{ value: "regular", label: "Regular" }] },
 ];
 
-/** Unsplash needs an access key the user supplies themselves (same
- *  bring-your-own-key model the chat already uses for its LLM provider) —
- *  it's their quota and their API terms, so it's stored per-browser and
- *  never travels through our backend. */
+/** Unsplash key lives in the server-side BYOK store (v36) like every other
+ *  provider — Configuración → Claves de IA. The panel decrypts it to memory
+ *  per session and calls Unsplash straight from the browser (their quota,
+ *  their terms). A key left in the old localStorage slot migrates up once
+ *  and is then erased from this browser. */
 const LS_UNSPLASH_KEY = "futuraria-unsplash-key";
 
 /** Relative luminance (0=black, 1=white) — decides whether an icon's own
@@ -124,9 +126,10 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
   const [loading, setLoading] = useState(false);
   const [color, setColor] = useState("#111111");
   const [size, setSize] = useState(48);
-  const [unsplashKey, setUnsplashKey] = useState(() => {
-    try { return localStorage.getItem(LS_UNSPLASH_KEY) || ""; } catch { return ""; }
-  });
+  const [unsplashKey, setUnsplashKey] = useState("");   // decrypted — memory only, never persisted
+  const [unsplashConfigured, setUnsplashConfigured] = useState(false);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyBusy, setKeyBusy] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -140,7 +143,52 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
 
   const libDef = useMemo(() => LIBRARIES.find(l => l.value === library) || LIBRARIES[0], [library]);
 
-  useEffect(() => { try { localStorage.setItem(LS_UNSPLASH_KEY, unsplashKey); } catch { /* private mode */ } }, [unsplashKey]);
+    // ── Unsplash key: server BYOK + one-time migration from localStorage ──
+    useEffect(() => {
+      let cancelled = false;
+      (async () => {
+        let key = await fetchDecryptedKey("unsplash");
+        if (!key) {
+          // Legacy: the key lived in this browser only — migrate it up once.
+          try {
+            const legacy = localStorage.getItem(LS_UNSPLASH_KEY);
+            if (legacy) {
+              await saveProviderKeyRemote("unsplash", legacy);
+              localStorage.removeItem(LS_UNSPLASH_KEY);
+              key = legacy;
+            }
+          } catch { /* migration is best-effort */ }
+        }
+        if (!cancelled && key) { setUnsplashKey(key); setUnsplashConfigured(true); }
+      })();
+      return () => { cancelled = true; };
+    }, []);
+  
+    const handleSaveUnsplashKey = async () => {
+      const v = keyDraft.trim();
+      if (!v) return;
+      setKeyBusy(true);
+      setPhotoError("");
+      try {
+        await saveProviderKeyRemote("unsplash", v);
+        setUnsplashKey(v);
+        setUnsplashConfigured(true);
+        setKeyDraft("");
+      } catch (e: any) {
+        setPhotoError(e?.message || "No se pudo guardar la clave.");
+      }
+      setKeyBusy(false);
+    };
+  
+    const handleRemoveUnsplashKey = async () => {
+      setKeyBusy(true);
+      try { await deleteProviderKeyRemote("unsplash"); } catch { /* already gone */ }
+      setUnsplashKey("");
+      setUnsplashConfigured(false);
+      setKeyDraft("");
+      setPhotos([]);
+      setKeyBusy(false);
+    };
 
   // Style must stay valid for whichever library is active (Lucide/Marcas
   // only have one; Tabler uses outline/filled, not Phosphor's 6 weights).
@@ -518,7 +566,7 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: 12, gap: 10 }}>
-            {!unsplashKey ? (
+            {!unsplashConfigured ? (
               <div style={{ fontSize: 11.5, color: "#999", lineHeight: 1.6 }}>
                 <p style={{ margin: "0 0 8px" }}>
                   Las fotos vienen de <strong style={{ color: "#c8b898" }}>Unsplash</strong>, que pide tu propia API key (gratis).
@@ -529,12 +577,29 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
                   <li>Copia el <em>Access Key</em> y pégalo aquí abajo.</li>
                 </ol>
               </div>
-            ) : null}
-            <input
-              type="password" placeholder="Unsplash Access Key" value={unsplashKey} onChange={e => setUnsplashKey(e.target.value)}
-              style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none" }}
-            />
-            {unsplashKey && (
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#8a9a7b" }}>
+                <span>✓ Clave configurada — cifrada con tu cuenta, disponible en cualquier dispositivo.</span>
+                <button type="button" onClick={() => void handleRemoveUnsplashKey()} disabled={keyBusy}
+                  style={{ marginLeft: "auto", padding: "3px 10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#999", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                  Quitar
+                </button>
+              </div>
+            )}
+            {!unsplashConfigured && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="password" placeholder="Unsplash Access Key" value={keyDraft} onChange={e => setKeyDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") void handleSaveUnsplashKey(); }}
+                  style={{ flex: 1, padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 12, fontFamily: "inherit", outline: "none" }}
+                />
+                <button type="button" onClick={() => void handleSaveUnsplashKey()} disabled={!keyDraft.trim() || keyBusy}
+                  style={{ padding: "8px 14px", background: "rgba(200,184,152,0.15)", border: "1px solid rgba(200,184,152,0.4)", borderRadius: 8, color: "#c8b898", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  {keyBusy ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+            )}
+            {unsplashConfigured && (
               <input
                 type="text" placeholder="Buscar fotos…" value={search} onChange={e => setSearch(e.target.value)}
                 style={{ padding: "8px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#ccc", fontSize: 13, fontFamily: "inherit", outline: "none" }}
@@ -546,7 +611,7 @@ export function IconPicker({ anchorRect, onClose, onInsertIcon, onInsertIllustra
               </div>
             )}
             <div style={{ flex: 1, overflowY: "auto", minHeight: 160 }}>
-              {!unsplashKey ? null : loading ? (
+              {!unsplashConfigured ? null : loading ? (
                 <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Cargando…</div>
               ) : photos.length === 0 ? (
                 <div style={{ textAlign: "center", color: "#555", padding: 40, fontSize: 12 }}>Sin resultados</div>

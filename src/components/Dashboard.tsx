@@ -19,10 +19,11 @@ import { readAppRoute, workspaceTabUrl, isWorkspaceTab, DEFAULT_WORKSPACE_TAB, t
   DEFAULT_DESIGN_PANE, isDesignPane, type DesignPane,
   DEFAULT_AGENT_PANE, isAgentPane, type AgentPane,
 } from "../lib/appRoute";
-import { getApiHeaders, getApiKey, setApiKey, clearApiKey, hasApiKey } from "../lib/apiKey";
+import { getApiHeaders } from "../lib/apiKey";
 import { OnboardingTour, isOnboardingEnabled, setOnboardingEnabled, restartOnboarding, type TourAction } from "./OnboardingTour";
-import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
+import { CHAT_PROVIDERS, getProvider, NANO_BANANA_MODELS } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
+import { saveUserPrefs } from "../lib/userPrefs";
 import { WorkspaceConsole } from "./WorkspaceConsole";
 import { useAuth } from "../lib/auth";
 import { browserSupabase } from "../lib/supabaseClient";
@@ -95,7 +96,6 @@ async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<T>
    Shows cached templates instantly on dashboard return,
    then silently refreshes from the server in background. */
 const TEMPLATE_CACHE_KEY = "futuraria-tpl-cache-v1";
-const API_KEY_BANNER_DISMISSED_KEY = "futuraria-api-key-banner-dismissed";
 
 function readTemplateCache(): Template[] {
   try {
@@ -331,9 +331,31 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     return m;
   }, [workspaces]);
 
-  // ── Security / API Key ──
-  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
-  const [apiKeyValue, setApiKeyValue] = useState(() => getApiKey());
+  // ── Team (Settings → Workspace card, absorbed from the old Equipo tab) ──
+  interface TeamInvitation { id: string; email: string; role: string; status: string; workspaceName?: string; invitedBy?: string; }
+  const [wsInvitations, setWsInvitations] = useState<TeamInvitation[]>([]);
+  const [incomingInvites, setIncomingInvites] = useState<TeamInvitation[]>([]);
+  const [teamEmail, setTeamEmail] = useState("");
+  const [teamRole, setTeamRole] = useState("editor");
+  const [teamMsg, setTeamMsg] = useState("");
+
+  // ── Chat agent roles — server-persisted via user prefs (v36) so the
+  // setup follows the account to any device. ChatFAB stays the quick
+  // access; this card is the same data, one source of truth. ──
+  const CHAT_ROLE_DEFAULTS: Record<string, { provider: string; model: string }> = {
+    leader: { provider: "deepseek", model: "deepseek-v4-pro" },
+    implementer: { provider: "deepseek", model: "deepseek-v4-pro" },
+    reviewer: { provider: "deepseek", model: "deepseek-v4-pro" },
+  };
+  const [chatRoles, setChatRoles] = useState<Record<string, { provider: string; model: string }>>(CHAT_ROLE_DEFAULTS);
+  const [chatRolesSaved, setChatRolesSaved] = useState<Record<string, { provider: string; model: string }>>(CHAT_ROLE_DEFAULTS);
+  const [chatRolesMsg, setChatRolesMsg] = useState("");
+  const chatRolesDirty = JSON.stringify(chatRoles) !== JSON.stringify(chatRolesSaved);
+  // Default image-gen model — localStorage is the fast path the editor
+  // reads; prefs mirrors it so a new device starts sensible.
+  const [nbModel, setNbModel] = useState(() => {
+    try { return localStorage.getItem("futuraria-nanobanana-model") || NANO_BANANA_MODELS[0].id; } catch { return NANO_BANANA_MODELS[0].id; }
+  });
 
   // ── Account profile + workspace access (Settings → "Tus datos") ──
   interface ProfileForm {
@@ -364,6 +386,19 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       setProfileSaved(form);
       setAccessPlan(d.access_plan === "corporate" ? "corporate" : "friends_family");
       setNdaAcceptedAt(typeof d.nda_accepted_at === "string" ? d.nda_accepted_at : null);
+      // prefs (v36) — non-secret preferences that follow the account.
+      const prefs = d.prefs && typeof d.prefs === "object" && !Array.isArray(d.prefs) ? d.prefs as Record<string, any> : {};
+      const roles = prefs.chatRoles && typeof prefs.chatRoles === "object"
+        ? { ...CHAT_ROLE_DEFAULTS, ...(prefs.chatRoles as Record<string, any>) }
+        : CHAT_ROLE_DEFAULTS;
+      setChatRoles(roles);
+      setChatRolesSaved(roles);
+      try {
+        if (typeof prefs.nanoBananaModel === "string" && prefs.nanoBananaModel && !localStorage.getItem("futuraria-nanobanana-model")) {
+          localStorage.setItem("futuraria-nanobanana-model", prefs.nanoBananaModel);
+          setNbModel(prefs.nanoBananaModel);
+        }
+      } catch { /* private mode */ }
     } catch { /* signed out or server without Supabase — card just stays empty */ }
   }, []);
 
@@ -501,22 +536,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     setPlatformSaving(false);
   };
 
-  // ── Server-side BYOK key management (replaces localStorage) ──
+  // ── Server-side BYOK key management ──
   // Keys are encrypted server-side. The browser only knows whether a key
   // is configured and which model is selected — never the actual value.
-  const geminiProvider = getProvider("google")!;
-  const quiverProvider = getProvider("quiver")!;
+  // Every provider (chat LLMs, image, video, layer split, photos) renders
+  // through the same generic handlers below: one card per provider in the
+  // Settings → Claves section, no duplicated key inputs anywhere else.
   const [keyStatuses, setKeyStatuses] = useState<KeyStatusMap>({});
-  const [geminiDraft, setGeminiDraft] = useState("");
-  const [quiverDraft, setQuiverDraft] = useState("");
-  const [editingGemini, setEditingGemini] = useState(false);
-  const [editingQuiver, setEditingQuiver] = useState(false);
   const [keySaving, setKeySaving] = useState(false);
-
-  const geminiConfigured = !!keyStatuses["google"]?.configured;
-  const geminiModel = keyStatuses["google"]?.model || geminiProvider.models[0];
-  const quiverConfigured = !!keyStatuses["quiver"]?.configured;
-  const quiverModel = keyStatuses["quiver"]?.model || quiverProvider.models[0];
 
   const refreshKeyStatuses = useCallback(async () => {
     try {
@@ -534,122 +561,31 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     return () => window.removeEventListener("futuraria:auth-token", handler);
   }, [refreshKeyStatuses]);
 
-  const handleSaveGeminiKey = async (value: string) => {
+  /** Save (or, with an empty value, delete) any provider's key. */
+  const handleSaveProviderKey = async (providerId: string, value: string) => {
     const v = value.trim();
     setKeySaving(true);
     try {
-      if (v) {
-        await saveProviderKey("google", v, geminiModel);
-      } else {
-        await deleteProviderKey("google");
-      }
+      if (v) await saveProviderKey(providerId, v);
+      else await deleteProviderKey(providerId);
       await refreshKeyStatuses();
-      setEditingGemini(false);
-      setGeminiDraft("");
-      addToast(v ? "Gemini key saved (encrypted server-side)." : "Gemini key removed.", v ? "success" : "info");
+      addToast(v ? "Clave guardada (cifrada en el servidor)." : "Clave eliminada.", v ? "success" : "info");
     } catch (err: any) {
-      addToast(`Save failed: ${err.message}`, "error");
+      addToast(`Error: ${err.message}`, "error");
     }
     setKeySaving(false);
   };
 
-  const handleSaveGeminiModel = async (m: string) => {
-    setKeySaving(true);
+  /** Model-only update — keeps the stored key untouched. */
+  const handleProviderModel = async (providerId: string, model: string) => {
     try {
-      if (geminiConfigured) {
-        await saveProviderKey("google", "", m);
-      }
+      await saveProviderKey(providerId, "", model);
       await refreshKeyStatuses();
     } catch { /* model save is best-effort */ }
-    setKeySaving(false);
   };
 
-  const handleSaveQuiverKey = async (value: string) => {
-    const v = value.trim();
-    setKeySaving(true);
-    try {
-      if (v) {
-        await saveProviderKey("quiver", v, quiverModel);
-      } else {
-        await deleteProviderKey("quiver");
-      }
-      await refreshKeyStatuses();
-      setEditingQuiver(false);
-      setQuiverDraft("");
-      addToast(v ? "Quiver key saved (encrypted server-side)." : "Quiver key removed.", v ? "success" : "info");
-    } catch (err: any) {
-      addToast(`Save failed: ${err.message}`, "error");
-    }
-    setKeySaving(false);
-  };
-  const [apiKeyRotating, setApiKeyRotating] = useState(false);
-  const [apiKeyBannerDismissed, setApiKeyBannerDismissed] = useState(() => {
-    try { return localStorage.getItem(API_KEY_BANNER_DISMISSED_KEY) === "true"; } catch { return false; }
-  });
   const [sessions, setSessions] = useState<Array<{ key_label: string; client_info: string; user_agent: string; ip: string; first_seen: string; last_seen: string; request_count: number }>>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
-
-  const handleSaveApiKey = () => {
-    if (apiKeyValue.trim()) {
-      setApiKey(apiKeyValue.trim());
-      setShowApiKeyInput(false);
-      addToast("API key saved.", "success");
-    }
-  };
-
-  const handleRemoveApiKey = () => {
-    clearApiKey();
-    setApiKeyValue("");
-    addToast("API key removed.", "info");
-  };
-
-  const dismissApiKeyBanner = () => {
-    setApiKeyBannerDismissed(true);
-    try { localStorage.setItem(API_KEY_BANNER_DISMISSED_KEY, "true"); } catch {}
-  };
-
-  const handleGenerateKey = async () => {
-    if (!activeWorkspaceId) return;
-    setApiKeyRotating(true);
-    try {
-      const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
-        `/workspaces/${activeWorkspaceId}/api-keys`,
-        { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
-      );
-      if (res.success && res.data?.key) {
-        setApiKey(res.data.key);
-        setApiKeyValue(res.data.key);
-        setShowApiKeyInput(false);
-        addToast(`Key generated: ${res.data.key_prefix}`, "success");
-      } else {
-        throw new Error("No key in response");
-      }
-    } catch (err: any) {
-      addToast(`Generate failed: ${err.message}. Sign in required.`, "info");
-    }
-    setApiKeyRotating(false);
-  };
-
-  const handleRotateKey = async () => {
-    if (!activeWorkspaceId) return;
-    setApiKeyRotating(true);
-    try {
-      const res = await apiFetch<{ success: boolean; data: { key: string; label: string; key_prefix: string } }>(
-        `/workspaces/${activeWorkspaceId}/api-keys`,
-        { method: "POST", body: JSON.stringify({ label: "ren-browser" }) },
-      );
-      if (res.success && res.data?.key) {
-        setApiKey(res.data.key);
-        setApiKeyValue(res.data.key);
-        addToast(`Key rotated: ${res.data.key_prefix}`, "success");
-      } else {
-        throw new Error("No key in response");
-      }
-    } catch (err: any) {
-      addToast(`Rotate failed: ${err.message}. Sign in required.`, "info");
-    }
-    setApiKeyRotating(false);
-  };
 
   const loadSessions = async () => {
     setSessionsLoading(true);
@@ -660,6 +596,162 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       setSessions([]);
     } catch { setSessions([]); }
     setSessionsLoading(false);
+  };
+
+  // ── Account: cambiar correo / contraseña (absorbed from AccountSection) ──
+  const [newEmail, setNewEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountMsg, setAccountMsg] = useState("");
+
+  const handleChangeEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!browserSupabase) return;
+    setAccountBusy(true); setAccountMsg("");
+    const { error } = await browserSupabase.auth.updateUser({ email: newEmail.trim() });
+    if (error) setAccountMsg(error.message);
+    else {
+      setNewEmail("");
+      setAccountMsg("✓ Revisa tu correo actual y el nuevo para confirmar el cambio.");
+    }
+    setAccountBusy(false);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!browserSupabase || !user?.email) return;
+    if (newPassword !== passwordConfirmation) { setAccountMsg("Las contraseñas nuevas no coinciden."); return; }
+    setAccountBusy(true); setAccountMsg("");
+    const { error: signInError } = await browserSupabase.auth.signInWithPassword({ email: user.email, password: currentPassword });
+    if (signInError) {
+      setAccountMsg("La contraseña actual no es correcta.");
+      setAccountBusy(false);
+      return;
+    }
+    const { error } = await browserSupabase.auth.updateUser({ password: newPassword });
+    if (error) setAccountMsg(error.message);
+    else {
+      setCurrentPassword(""); setNewPassword(""); setPasswordConfirmation("");
+      setAccountMsg("✓ Contraseña actualizada.");
+    }
+    setAccountBusy(false);
+  };
+
+  // ── Invitaciones: recibidas (cuenta) y emitidas (workspace, tarjeta Equipo) ──
+  const loadIncomingInvites = useCallback(async () => {
+    try {
+      const res = await apiFetch<{ data?: TeamInvitation[] }>("/account/invitations");
+      setIncomingInvites(res?.data || []);
+    } catch { setIncomingInvites([]); }
+  }, []);
+
+  const loadInvitations = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+    try {
+      const res = await apiFetch<{ data?: TeamInvitation[] }>(`/workspaces/${activeWorkspaceId}/invitations`);
+      setWsInvitations(res?.data || []);
+    } catch { setWsInvitations([]); }
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (activeTab !== "configuracion") return;
+    void loadIncomingInvites();
+    void loadInvitations();
+  }, [activeTab, loadIncomingInvites, loadInvitations]);
+
+  const respondIncoming = async (inv: TeamInvitation, decision: "accept" | "decline") => {
+    try {
+      await apiFetch(`/account/invitations/${inv.id}/${decision}`, { method: "POST", body: "{}" });
+      if (decision === "accept") { window.location.replace("/#workspace"); return; }
+      setTeamMsg(`✓ Invitación a ${inv.workspaceName || "workspace"} rechazada`);
+      void loadIncomingInvites();
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo responder la invitación"); }
+  };
+
+  // ── Equipo: invitar, roles y revocar — solo owner/admin (same as the old Equipo tab) ──
+  const canManageTeam = (() => {
+    const r = members.find(m => m.id === user?.id)?.role;
+    return r === "owner" || r === "admin";
+  })();
+
+  const inviteMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeWorkspaceId) return;
+    setTeamMsg("");
+    try {
+      const res = await apiFetch<any>(`/workspaces/${activeWorkspaceId}/invitations`, {
+        method: "POST", body: JSON.stringify({ email: teamEmail, role: teamRole }),
+      });
+      const link: string | undefined = res?.data?.inviteLink;
+      if (link && navigator.clipboard) { try { await navigator.clipboard.writeText(link); } catch { /* portapapeles bloqueado */ } }
+      setTeamEmail("");
+      setTeamMsg(res?.data?.emailSent ? "✓ Invitación enviada por correo" : "✓ Invitación creada — enlace copiado al portapapeles");
+      await loadMembers(activeWorkspaceId);
+      void loadInvitations();
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo invitar"); }
+  };
+
+  const resendInvitation = async (inv: TeamInvitation) => {
+    if (!activeWorkspaceId) return;
+    setTeamMsg("");
+    try {
+      const res = await apiFetch<any>(`/workspaces/${activeWorkspaceId}/invitations/${inv.id}/resend`, { method: "POST", body: "{}" });
+      const link: string | undefined = res?.data?.inviteLink;
+      if (link && navigator.clipboard) { try { await navigator.clipboard.writeText(link); } catch { /* portapapeles bloqueado */ } }
+      setTeamMsg(res?.data?.emailSent ? `✓ Reenviada a ${inv.email}` : "✓ Invitación renovada — enlace copiado");
+      void loadInvitations();
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo reenviar"); }
+  };
+
+  const revokeInvitation = async (inv: TeamInvitation) => {
+    if (!activeWorkspaceId) return;
+    setTeamMsg("");
+    try {
+      await apiFetch(`/workspaces/${activeWorkspaceId}/invitations/${inv.id}`, { method: "DELETE" });
+      setTeamMsg(`✓ Invitación a ${inv.email} revocada`);
+      void loadInvitations();
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo revocar"); }
+  };
+
+  const updateMemberRole = async (userId: string, role: string) => {
+    if (!activeWorkspaceId) return;
+    try {
+      await apiFetch(`/workspaces/${activeWorkspaceId}/members/${userId}`, { method: "PATCH", body: JSON.stringify({ role }) });
+      await loadMembers(activeWorkspaceId);
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo cambiar el rol"); }
+  };
+
+  const removeMember = async (m: { id: string; email?: string; display_name?: string }) => {
+    if (!activeWorkspaceId) return;
+    setTeamMsg("");
+    try {
+      await apiFetch(`/workspaces/${activeWorkspaceId}/members/${m.id}`, { method: "DELETE" });
+      setTeamMsg("✓ Acceso quitado");
+      await loadMembers(activeWorkspaceId);
+    } catch (err: any) { setTeamMsg(err?.message || "No se pudo quitar"); }
+  };
+
+  // ── Roles de agentes del chat + modelo de imagen por defecto (prefs v36) ──
+  const handleSaveChatRoles = async () => {
+    setChatRolesMsg("");
+    try {
+      await saveUserPrefs({ chatRoles });
+      setChatRolesSaved(chatRoles);
+      setChatRolesMsg("✓ Guardado — te sigue a cualquier dispositivo");
+    } catch (e: any) {
+      setChatRolesMsg(e?.message?.includes("PROFILE_MIGRATION_REQUIRED") || e?.message?.includes("409")
+        ? "Falta correr supabase_migrations_v36.sql (prefs) en Supabase."
+        : (e?.message || "No se pudo guardar"));
+    }
+    setTimeout(() => setChatRolesMsg(""), 3500);
+  };
+
+  const handleNbModelChange = (model: string) => {
+    setNbModel(model);
+    try { localStorage.setItem("futuraria-nanobanana-model", model); } catch { /* modo privado */ }
+    saveUserPrefs({ nanoBananaModel: model }).catch(() => { /* best-effort */ });
   };
 
   const setLoading = useCallback((v: boolean) => {
@@ -1427,48 +1519,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         />
       </div>
 
-      {/* ── API Key Banner (shown when no key configured) ── */}
-      {!hasApiKey() && !apiKeyBannerDismissed && (
-        <aside aria-label="Aviso sobre la API key" style={{
-          margin: "0 20px", padding: "12px 18px", borderRadius: 12,
-          background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)",
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 16 }}>🔑</span>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>¿Usarás IA o MCP?</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Esta API key es opcional para navegar el CRM. Solo la necesitas para herramientas MCP, generación con IA y acciones que usen tu clave.</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => setActiveTab("configuracion")}
-              style={{
-                borderRadius: 100, padding: "8px 18px", fontSize: 12, fontWeight: 500,
-                border: "none", cursor: "pointer", whiteSpace: "nowrap",
-                background: "rgba(234,179,8,0.15)", color: "#facc15",
-              }}
-            >
-              Configurar
-            </button>
-            <button
-              type="button"
-              aria-label="Ocultar aviso de API key"
-              title="Ocultar aviso"
-              onClick={dismissApiKeyBanner}
-              style={{
-                width: 32, height: 32, borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)",
-                background: "transparent", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 18, lineHeight: 1,
-              }}
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-          </div>
-        </aside>
-      )}
-
       {/* ── Diseño Tab (sub-tabs: Archivos / Grafo / Tablas) ── */}
       {activeTab === "diseno" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -1916,14 +1966,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         // realtime comes from browser-side VITE_* vars. Previous check only looked at VITE_*.
         const dataConnected = storageHealth?.supabase ?? false;
         const dataMode = storageHealth?.mode ?? "unknown";
-        const handleDownloadSkill = async () => {
-          try {
-            const res = await fetch("/SKILL.md");
-            const text = await res.text();
-            const blob = new Blob([text], { type: "text/markdown" });
-            downloadBlob(blob, "SKILL.md");
-          } catch { alert("Could not download SKILL.md"); }
-        };
 
         return (
         <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", width: "100%" }}>
@@ -1932,8 +1974,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             Configuración
           </h2>
 
-          {/* ═══════════ 1 · TUS DATOS ═══════════ */}
-          <h3 className="bento-section-title">Tus datos</h3>
+          {/* ═══════════ 1 · TU CUENTA ═══════════ */}
+          <h3 className="bento-section-title">👤 Tu cuenta</h3>
+          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+            Tus datos personales y tu acceso. Te siguen a ti, no al workspace.
+          </p>
           <div className="bento-grid">
 
             {/* Perfil — editable */}
@@ -1986,40 +2031,42 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Workspace */}
-            <div className="bento-card bento-5">
-              <div className="bento-title">🏢 Espacio de trabajo</div>
-              <div>
-                <div className="bento-row">
-                  <span className="bento-row-label">Nombre</span>
-                  <span className="bento-row-value">
-                    {workspaces.find(w => w.id === activeWorkspaceId)?.name || "—"}
-                  </span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">ID</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                    <code style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {activeWorkspaceId || "—"}
-                    </code>
-                    <button type="button" className="bento-btn" style={{ padding: "4px 10px", fontSize: 11 }}
-                      onClick={() => { navigator.clipboard?.writeText(activeWorkspaceId || ""); addToast("ID copiado", "success"); }}>
-                      Copiar
-                    </button>
-                  </span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">Archivos</span>
-                  <span className="bento-row-value">{templates.length} · {totalFrames} frames</span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">Key Visuals · Marcas</span>
-                  <span className="bento-row-value">{recipes.length} · {brands.length}</span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">Tokens (est.)</span>
-                  <span className="bento-row-value">~{estimatedTokens.toLocaleString()}</span>
-                </div>
+            {/* Correo y contraseña — absorbed from the old AccountSection */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">🔒 Correo y contraseña</div>
+              <div className="bento-sub">Tu sesión y tu acceso. El correo se confirma desde tu bandeja.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                <form className="workspace-form-row" onSubmit={handleChangeEmail} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div className="bento-field" style={{ flex: 1, minWidth: 150 }}>
+                    <label htmlFor="acc-email">Cambiar correo</label>
+                    <input id="acc-email" type="email" autoComplete="email" className="bento-input"
+                      value={newEmail} onChange={e => setNewEmail(e.target.value)} required />
+                  </div>
+                  <button type="submit" className="bento-btn" disabled={accountBusy || !browserSupabase}>Solicitar cambio</button>
+                </form>
+                <form onSubmit={handleChangePassword} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div className="bento-field" style={{ flex: 1, minWidth: 130 }}>
+                    <label htmlFor="acc-cur">Contraseña actual</label>
+                    <input id="acc-cur" type="password" autoComplete="current-password" className="bento-input"
+                      value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required />
+                  </div>
+                  <div className="bento-field" style={{ flex: 1, minWidth: 130 }}>
+                    <label htmlFor="acc-new">Nueva</label>
+                    <input id="acc-new" type="password" minLength={10} autoComplete="new-password" className="bento-input"
+                      value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
+                  </div>
+                  <div className="bento-field" style={{ flex: 1, minWidth: 130 }}>
+                    <label htmlFor="acc-conf">Confirmar</label>
+                    <input id="acc-conf" type="password" minLength={10} autoComplete="new-password" className="bento-input"
+                      value={passwordConfirmation} onChange={e => setPasswordConfirmation(e.target.value)} required />
+                  </div>
+                  <button type="submit" className="bento-btn" disabled={accountBusy || !browserSupabase}>Actualizar</button>
+                </form>
+              </div>
+              <div className="bento-sub" style={{ marginTop: 6, minHeight: 14 }}>
+                {accountMsg.startsWith("✓") ?
+                  <span style={{ color: "#4ade80" }}>{accountMsg}</span>
+                  : <span style={{ color: "#facc15" }}>{accountMsg}</span>}
               </div>
             </div>
 
@@ -2044,8 +2091,510 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Automatización — Musa Daily Batch */}
+            {/* Invitaciones recibidas — absorbed from the old AccountSection */}
             <div className="bento-card bento-6">
+              <div className="bento-title">📬 Invitaciones recibidas</div>
+              {incomingInvites.length === 0 ? (
+                <div className="bento-sub">No tienes invitaciones pendientes.</div>
+              ) : (
+                <div>
+                  {incomingInvites.map(inv => (
+                    <div key={inv.id} className="bento-row">
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span className="bento-row-value">{inv.workspaceName || "Workspace"}</span>
+                        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>
+                          {inv.invitedBy ? `${inv.invitedBy} · ` : ""}acceso {inv.role}
+                        </span>
+                      </span>
+                      <span style={{ display: "flex", gap: 5 }}>
+                        <button type="button" className="bento-btn" onClick={() => void respondIncoming(inv, "accept")}>Aceptar</button>
+                        <button type="button" className="bento-btn bento-btn--danger" onClick={() => void respondIncoming(inv, "decline")}>Rechazar</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {teamMsg && (
+                <div className="bento-sub" style={{ color: teamMsg.startsWith("✓") ? "#4ade80" : "#facc15" }}>{teamMsg}</div>
+              )}
+            </div>
+
+            {/* Dispositivos / sesiones */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">💻 Dispositivos y sesiones</div>
+              {sessionsLoading ? (
+                <div className="bento-sub">Cargando…</div>
+              ) : sessions.length === 0 ? (
+                <div className="bento-sub">
+                  Todavía no hay registro de sesiones. Aparecen aquí cuando un cliente MCP o un
+                  navegador se conecta usando tu API key.
+                </div>
+              ) : (
+                <div>
+                  {sessions.map((s, i) => (
+                    <div key={i} className="bento-row">
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span className="bento-row-value" title={s.user_agent}>
+                          {s.client_info || s.user_agent?.slice(0, 32) || "Desconocido"}
+                        </span>
+                        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>
+                          {new Date(s.last_seen).toLocaleString()} · {s.request_count} req
+                        </span>
+                      </span>
+                      <span className="bento-pill bento-pill--off">{s.key_label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* ═══════════ 2 · WORKSPACE ═══════════ */}
+          <h3 className="bento-section-title">🏢 Workspace</h3>
+          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+            El espacio de trabajo activo: qué contiene y quién puede entrar.
+          </p>
+          <div className="bento-grid">
+
+            {/* Espacio de trabajo — stats del workspace activo */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">🗂 Espacio de trabajo</div>
+              <div className="bento-row">
+                <span className="bento-row-label">Archivos</span>
+                <span className="bento-row-value">{templates.length}</span>
+              </div>
+              <div className="bento-row">
+                <span className="bento-row-label">Frames</span>
+                <span className="bento-row-value">{totalFrames}</span>
+              </div>
+              <div className="bento-row">
+                <span className="bento-row-label">Recetas</span>
+                <span className="bento-row-value">{recipes.length}</span>
+              </div>
+              <div className="bento-row">
+                <span className="bento-row-label">Tokens estimados del grafo</span>
+                <span className="bento-row-value">≈ {estimatedTokens.toLocaleString()}</span>
+              </div>
+              <div className="bento-sub">Lo que ven tus invitados depende del rol que les diste abajo.</div>
+            </div>
+
+            {/* Equipo — absorbed from the old Equipo tab */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">👥 Equipo</div>
+              {canManageTeam && (
+                <form onSubmit={inviteMember} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
+                  <div className="bento-field" style={{ flex: 1, minWidth: 150 }}>
+                    <label htmlFor="team-email">Invitar por correo</label>
+                    <input id="team-email" type="email" autoComplete="email" className="bento-input"
+                      value={teamEmail} onChange={e => setTeamEmail(e.target.value)} placeholder="persona@estudio.com" required />
+                  </div>
+                  <div className="bento-field" style={{ minWidth: 110 }}>
+                    <label htmlFor="team-role">Rol</label>
+                    <select id="team-role" className="bento-input" value={teamRole} onChange={e => setTeamRole(e.target.value)}>
+                      <option value="admin">Admin</option>
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  </div>
+                  <button type="submit" className="bento-btn bento-btn--primary">Invitar</button>
+                </form>
+              )}
+              {members.length === 0 ? (
+                <div className="bento-sub">Todavía no hay miembros en este workspace.</div>
+              ) : (
+                <div>
+                  {members.map(m => (
+                    <div key={m.id} className="bento-row">
+                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                        <span className="bento-row-value">{m.display_name || m.email || m.id}</span>
+                        {m.display_name && m.email && (
+                          <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{m.email}</span>
+                        )}
+                      </span>
+                      {m.role === "owner" || !canManageTeam ? (
+                        <span className={`bento-pill ${m.role === "owner" ? "bento-pill--ok" : "bento-pill--off"}`}>
+                          {m.role || "member"}
+                        </span>
+                      ) : (
+                        <span style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                          <select className="bento-input" style={{ padding: "3px 8px", fontSize: 11, cursor: "pointer" }}
+                            aria-label={`Rol de ${m.display_name || m.email}`} value={m.role || "viewer"}
+                            onChange={e => void updateMemberRole(m.id, e.target.value)}>
+                            <option value="admin">admin</option>
+                            <option value="editor">editor</option>
+                            <option value="viewer">viewer</option>
+                          </select>
+                          <button type="button" className="bento-btn bento-btn--danger" onClick={() => void removeMember(m)}>Quitar</button>
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {canManageTeam && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="bento-row-label" style={{ marginBottom: 6 }}>Invitaciones pendientes</div>
+                  {wsInvitations.length === 0 ? (
+                    <div className="bento-sub">No hay invitaciones pendientes.</div>
+                  ) : (
+                    <div>
+                      {wsInvitations.map(inv => (
+                        <div key={inv.id} className="bento-row">
+                          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                            <span className="bento-row-value">{inv.email}</span>
+                            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{inv.role} · {inv.status}</span>
+                          </span>
+                          {inv.status === "pending" && (
+                            <span style={{ display: "flex", gap: 5 }}>
+                              <button type="button" className="bento-btn" onClick={() => void resendInvitation(inv)}>Reenviar</button>
+                              <button type="button" className="bento-btn bento-btn--danger" onClick={() => void revokeInvitation(inv)}>Revocar</button>
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {teamMsg && (
+                <div className="bento-sub" style={{ color: teamMsg.startsWith("✓") ? "#4ade80" : "#facc15" }}>{teamMsg}</div>
+              )}
+            </div>
+          </div>
+
+          {/* ═══════════ 3 · CLAVES DE IA Y CONEXIONES ═══════════ */}
+          <h3 className="bento-section-title">🔑 Claves de IA y conexiones</h3>
+          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+            Una sola caja fuerte: todas tus claves van cifradas al servidor y se usan en el editor, el chat y los iconos. Nunca se vuelven a mostrar.
+          </p>
+          <div className="bento-grid">
+
+            {/* Chat — una fila por proveedor */}
+            <div className="bento-card bento-7">
+              <div className="bento-title">💬 Chat de IA</div>
+              <div className="bento-sub">
+                El chat (🤖) usa la clave del proveedor que tengas configurada. Con varias configuradas,
+                cada agente elige modelo distinto en la tarjeta «Roles». Gemini también aparece abajo con sus usos de editor.
+              </div>
+              {CHAT_PROVIDERS.map(p => (
+                <ProviderKeyRow key={p.id} providerId={p.id} label={p.label} statuses={keyStatuses} saving={keySaving}
+                  onSave={handleSaveProviderKey} />
+              ))}
+            </div>
+
+            {/* Roles de los agentes — prefs v36, sigue tu cuenta */}
+            <div className="bento-card bento-5">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🎭 Roles de los agentes</div>
+                {chatRolesMsg && (
+                  <span style={{ fontSize: 11, color: chatRolesMsg.startsWith("✓") ? "#4ade80" : "#facc15", textAlign: "right", maxWidth: 200 }}>
+                    {chatRolesMsg}
+                  </span>
+                )}
+              </div>
+              <div className="bento-sub">
+                Qué modelo usa cada agente del chat. Se guarda en tu cuenta, no en este navegador.
+              </div>
+              {(["leader", "implementer", "reviewer"] as const).map(role => {
+                const chosen = chatRoles[role] || CHAT_ROLE_DEFAULTS[role];
+                const models = getProvider(chosen.provider)?.models || [];
+                return (
+                  <div key={role} style={{ display: "grid", gridTemplateColumns: "86px 1fr 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.7)" }}>
+                      {role === "leader" ? "Líder" : role === "implementer" ? "Hacedor" : "Revisor"}
+                    </span>
+                    <select className="bento-input" style={{ cursor: "pointer" }} value={chosen.provider}
+                      onChange={e => setChatRoles(r => ({ ...r, [role]: { provider: e.target.value, model: getProvider(e.target.value)?.models[0] || "" } }))}>
+                      {CHAT_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                    <select className="bento-input" style={{ cursor: "pointer" }} value={chosen.model}
+                      onChange={e => setChatRoles(r => ({ ...r, [role]: { ...chosen, model: e.target.value } }))}>
+                      {models.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button type="button" className="bento-btn bento-btn--primary"
+                  onClick={handleSaveChatRoles} disabled={!chatRolesDirty}>
+                  {chatRolesDirty ? "Guardar roles" : "Guardado"}
+                </button>
+              </div>
+            </div>
+
+            {/* Gemini — imagen a diseño + nano banana + chat con visión */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🧠 Google Gemini</div>
+                <span className={`bento-pill ${keyStatuses.google?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {keyStatuses.google?.configured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">
+                La usan <strong>🪄 Convertir imagen a diseño</strong>, la generación 🍌 y el chat con visión.
+                No sirve una key de DeepSeek/OpenAI aquí.
+              </div>
+              <ProviderKeyRow providerId="google" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo visión</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={keyStatuses.google?.model || getProvider("google")!.models[0]}
+                  onChange={e => void handleProviderModel("google", e.target.value)}>
+                  {getProvider("google")!.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo 🍌 por defecto</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={nbModel} onChange={e => handleNbModelChange(e.target.value)}>
+                  {NANO_BANANA_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
+            </div>
+
+            {/* Quiver — vectorización SVG */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">✦ Quiver AI</div>
+                <span className={`bento-pill ${keyStatuses.quiver?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {keyStatuses.quiver?.configured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">
+                Vectoriza imagen a SVG y genera SVG desde texto (pestaña IA del panel de iconos).
+              </div>
+              <ProviderKeyRow providerId="quiver" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={keyStatuses.quiver?.model || getProvider("quiver")!.models[0]}
+                  onChange={e => void handleProviderModel("quiver", e.target.value)}>
+                  {getProvider("quiver")!.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
+            </div>
+
+            {/* Runway — imagen a video */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🎬 Video (RunwayML)</div>
+                <span className={`bento-pill ${keyStatuses.runway?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {keyStatuses.runway?.configured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">Genera video a partir de una imagen en el panel Video del editor.</div>
+              <ProviderKeyRow providerId="runway" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={keyStatuses.runway?.model || getProvider("runway")!.models[0]}
+                  onChange={e => void handleProviderModel("runway", e.target.value)}>
+                  {getProvider("runway")!.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <a href="https://runwayml.com" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
+            </div>
+
+            {/* WaveSpeed — separación de capas */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🧅 Capas (WaveSpeedAI)</div>
+                <span className={`bento-pill ${keyStatuses.wavespeed?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {keyStatuses.wavespeed?.configured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">Separa una imagen en capas editables con 🧅 en el editor.</div>
+              <ProviderKeyRow providerId="wavespeed" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
+                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
+                  value={keyStatuses.wavespeed?.model || getProvider("wavespeed")!.models[0]}
+                  onChange={e => void handleProviderModel("wavespeed", e.target.value)}>
+                  {getProvider("wavespeed")!.models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Unsplash — fotos de stock */}
+            <div className="bento-card bento-6">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="bento-title">🖼 Fotos (Unsplash)</div>
+                <span className={`bento-pill ${keyStatuses.unsplash?.configured ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {keyStatuses.unsplash?.configured ? "Configurada" : "Falta"}
+                </span>
+              </div>
+              <div className="bento-sub">
+                Fotos de stock en el panel de iconos (pestaña Fotos). Antes vivía en este navegador;
+                ahora viaja cifrada con el resto y te sigue a cualquier dispositivo.
+              </div>
+              <ProviderKeyRow providerId="unsplash" statuses={keyStatuses} saving={keySaving} onSave={handleSaveProviderKey} />
+              <a href="https://unsplash.com/developers" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
+            </div>
+
+            {/* Dónde se usa cada clave — nota de orientación */}
+            <div className="bento-card bento-12 bento-card--accent">
+              <div className="bento-title">🧭 ¿Qué hace cada clave?</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Chat y roles</strong><br />
+                  El chat usa la clave del proveedor configurado; en «Roles» eliges modelo por agente.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Editor</strong><br />
+                  🪄 imagen a diseño y 🍌 usan Gemini; vectorizar usa Quiver; 🎬 video usa Runway; 🧅 capas usa WaveSpeed.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Iconos</strong><br />
+                  La pestaña Fotos busca en Unsplash; la pestaña IA vectoriza con Quiver.
+                </div>
+                <div className="bento-sub">
+                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Agentes MCP</strong><br />
+                  Los clientes MCP se conectan a <code style={{ fontSize: 10.5 }}>/mcp</code> con tu sesión.
+                  Claves de agentes y SKILL.md viven en la pestaña «Agentes &amp; MCP».
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ═══════════ 4 · PREFERENCIAS ═══════════ */}
+          <h3 className="bento-section-title">⚙️ Preferencias</h3>
+          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+            Cómo se comporta Futuraria en este navegador.
+          </p>
+          <div className="bento-grid">
+
+            {/* Vista */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">🎴 Vista de archivos</div>
+              <div className="bento-sub">
+                {cardMode === "grid" ? "Cuadrícula" : "Cover Flow (slider en perspectiva)"} · {cardColumns} por fila
+              </div>
+              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
+                <button type="button" data-active={cardMode === "grid"} onClick={() => handleCardModeChange("grid")}>Cuadrícula</button>
+                <button type="button" data-active={cardMode === "flow"} onClick={() => handleCardModeChange("flow")}>Flow</button>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
+                Columnas
+                <input type="range" min={2} max={6} value={cardColumns}
+                  onChange={e => handleColumnsChange(Number(e.target.value))}
+                  style={{ flex: 1, accentColor: "#818cf8" }} />
+                <span style={{ minWidth: 14, textAlign: "right" }}>{cardColumns}</span>
+              </label>
+            </div>
+
+            {/* Tour */}
+            <div className="bento-card bento-6">
+              <div className="bento-title">🧭 Tour guiado</div>
+              <div className="bento-sub">Recorrido paso a paso: templates, editor, IA y grafo.</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <div className="bento-seg">
+                  <button type="button" data-active={tourEnabled}
+                    onClick={() => { setOnboardingEnabled(true); setTourEnabled(true); }}>Activado</button>
+                  <button type="button" data-active={!tourEnabled}
+                    onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
+                </div>
+                <button type="button" className="bento-btn"
+                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("diseno"); }}>Reiniciar</button>
+              </div>
+            </div>
+
+            {/* Borrado */}
+            <div className="bento-card bento-4">
+              <div className="bento-title">🗑 Al borrar</div>
+              <div className="bento-sub">
+                {deleteMode === "soft" ? "Va a la papelera, recuperable desde Storage." : "Se borra de la base de datos, sin vuelta atrás."}
+              </div>
+              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
+                <button type="button" data-active={deleteMode === "soft"}
+                  onClick={() => { setDeleteMode("soft"); try { localStorage.setItem("futuraria-delete-mode", "soft"); } catch {} }}>Papelera</button>
+                <button type="button" data-active={deleteMode === "hard"}
+                  onClick={() => { setDeleteMode("hard"); try { localStorage.setItem("futuraria-delete-mode", "hard"); } catch {} }}>Permanente</button>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
+                <input
+                  type="checkbox" checked={deleteConfirmEnabled}
+                  onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
+                  style={{ accentColor: "#818cf8" }}
+                />
+                Pedir confirmación escribiendo el nombre
+              </label>
+            </div>
+
+            {/* Miniaturas */}
+            <div className="bento-card bento-5">
+              <div className="bento-title">📸 Miniaturas</div>
+              <div className="bento-sub">
+                {snapshotProgress.running
+                  ? `Capturando ${snapshotProgress.done}/${snapshotProgress.total}…`
+                  : `${templates.filter(t => t.thumbnail).length} de ${templates.length} archivos tienen miniatura.`}
+              </div>
+              {snapshotProgress.running && (
+                <div style={{ height: 4, borderRadius: 100, background: "rgba(255,255,255,0.07)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 100, background: "linear-gradient(90deg,#818cf8,#a78bfa)", width: `${Math.round((snapshotProgress.done / snapshotProgress.total) * 100)}%`, transition: "width 0.3s ease" }} />
+                </div>
+              )}
+              <button type="button" className="bento-btn bento-btn--primary" style={{ alignSelf: "flex-start" }}
+                onClick={handleSnapshotAll} disabled={snapshotProgress.running}>
+                {snapshotProgress.running ? "Capturando…" : "Capturar todas"}
+              </button>
+            </div>
+
+          </div>
+
+          {/* ═══════════ 5 · USO Y ESTADO ═══════════ */}
+          <h3 className="bento-section-title">📊 Uso y estado</h3>
+          <p style={{ margin: "-14px 0 14px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+            Cuota del espacio, automatización de Musa y salud de la plataforma.
+          </p>
+          <div className="bento-grid">
+
+            {/* Límites y consumo — contador v28 (tu espacio + plan de la plataforma) */}
+            <div className="bento-card bento-7">
+              <div className="bento-title">📊 Límites y consumo</div>
+              {usageData ? (
+                <>
+                  <div className="bento-sub">
+                    Tu espacio en {usageData.month} · cuota {usageData.quota === 0 ? "∞ (sin límite)" : `${usageData.quota.toLocaleString()}/mes`}
+                    {usageData.quota > 0 && ` · a este ritmo cerrás el mes en ≈ ${monthProjection(usageData.month, usageData.mcp_calls).toLocaleString()} (${pct(monthProjection(usageData.month, usageData.mcp_calls), usageData.quota)}%)`}
+                  </div>
+                  <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
+                    <div style={{
+                      width: `${usageData.quota === 0 ? 4 : Math.min(100, (usageData.mcp_calls / usageData.quota) * 100)}%`,
+                      height: "100%", borderRadius: 100,
+                      background: usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.85
+                        ? "#f87171"
+                        : usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.6 ? "#fbbf24" : "#6366f1",
+                      transition: "width 0.3s ease",
+                    }} />
+                  </div>
+                  <div className="bento-row">
+                    <span className="bento-row-label">Llamadas MCP (tu espacio)</span>
+                    <span className="bento-row-value">
+                      {usageData.mcp_calls.toLocaleString()}{usageData.quota > 0 ? ` / ${usageData.quota.toLocaleString()}` : ""}
+                    </span>
+                  </div>
+                  <div className="bento-row">
+                    <span className="bento-row-label">Items generados</span>
+                    <span className="bento-row-value">{(usageData.items_generated || 0).toLocaleString()}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="bento-sub">
+                  Contador no disponible. Corré <code>supabase_migrations_v27.sql</code> en Supabase
+                  para activar la telemetría de uso y la cuota mensual.
+                </div>
+              )}
+            </div>
+
+            {/* Automatización — Musa Daily Batch */}
+            <div className="bento-card bento-5">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div className="bento-title">🤖 Automatización</div>
                 {autoConfigMsg && (
@@ -2091,84 +2640,34 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </div>
 
-            {/* Límites y consumo — contador v28 (tu espacio + plan de la plataforma) */}
-            <div className="bento-card bento-6">
-              <div className="bento-title">📊 Límites y consumo</div>
-              {usageData ? (
-                <>
-                  <div className="bento-sub">
-                    Tu espacio en {usageData.month} · cuota {usageData.quota === 0 ? "∞ (sin límite)" : `${usageData.quota.toLocaleString()}/mes`}
-                    {usageData.quota > 0 && ` · a este ritmo cerrás el mes en ≈ ${monthProjection(usageData.month, usageData.mcp_calls).toLocaleString()} (${pct(monthProjection(usageData.month, usageData.mcp_calls), usageData.quota)}%)`}
-                  </div>
-                  <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
-                    <div style={{
-                      width: `${usageData.quota === 0 ? 4 : Math.min(100, (usageData.mcp_calls / usageData.quota) * 100)}%`,
-                      height: "100%", borderRadius: 100,
-                      background: usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.85
-                        ? "#f87171"
-                        : usageData.quota > 0 && usageData.mcp_calls / usageData.quota > 0.6 ? "#fbbf24" : "#6366f1",
-                      transition: "width 0.3s ease",
-                    }} />
-                  </div>
-                  <div className="bento-row">
-                    <span className="bento-row-label">Llamadas MCP (tu espacio)</span>
-                    <span className="bento-row-value">
-                      {usageData.mcp_calls.toLocaleString()}{usageData.quota > 0 ? ` / ${usageData.quota.toLocaleString()}` : ""}
-                    </span>
-                  </div>
-                  <div className="bento-row">
-                    <span className="bento-row-label">Items generados</span>
-                    <span className="bento-row-value">{(usageData.items_generated || 0).toLocaleString()}</span>
-                  </div>
-                  {platformStatus?.canManage && (() => {
-                    const plat = platformStatus?.platform_usage;
-                    const plan = platformStatus?.plan;
-                    if (!plat || !plan) return (
-                      <div className="bento-sub" style={{ marginTop: 14 }}>
-                        Totales de plataforma no disponibles todavía (requiere la telemetría v27 midiendo uso).
-                      </div>
-                    );
-                    const platUsed = plat.mcp_calls + plan.cron_monthly_invocations;
-                    const platProj = monthProjection(plat.month, platUsed);
-                    return (
-                      <>
-                        <div className="bento-sub" style={{ marginTop: 14 }}>
-                          Plataforma · {plat.workspaces} espacio{plat.workspaces === 1 ? "" : "s"} con uso este mes · plan Netlify free (incluye ~{plan.cron_monthly_invocations.toLocaleString()} del cron fijo)
-                        </div>
-                        <div style={{ height: 8, borderRadius: 100, background: "rgba(255,255,255,0.06)", overflow: "hidden", margin: "10px 0 8px" }}>
-                          <div style={{
-                            width: `${Math.min(100, (platUsed / plan.netlify_monthly_invocations) * 100)}%`,
-                            height: "100%", borderRadius: 100,
-                            background: platProj / plan.netlify_monthly_invocations > 0.8 ? "#f87171" : "#6366f1",
-                            transition: "width 0.3s ease",
-                          }} />
-                        </div>
-                        <div className="bento-row">
-                          <span className="bento-row-label">Invocaciones del mes (todas las cuentas)</span>
-                          <span className="bento-row-value">{platUsed.toLocaleString()} / {plan.netlify_monthly_invocations.toLocaleString()}</span>
-                        </div>
-                        <div className="bento-row">
-                          <span className="bento-row-label">Proyección a fin de mes</span>
-                          <span className="bento-row-value">≈ {platProj.toLocaleString()} ({pct(platProj, plan.netlify_monthly_invocations)}%)</span>
-                        </div>
-                        <div className="bento-sub" style={{ fontSize: 10, opacity: 0.75 }}>
-                          Mide llamadas MCP (desde v27) + cron fijo. Ancho de banda y créditos, en el dashboard de Netlify.
-                        </div>
-                      </>
-                    );
-                  })()}
-                </>
-              ) : (
-                <div className="bento-sub">
-                  Contador no disponible. Corré <code>supabase_migrations_v27.sql</code> en Supabase
-                  para activar la telemetría de uso y la cuota mensual.
+            {/* Estado de conexión */}
+            <div className="bento-card bento-7">
+              <div className="bento-title">🔌 Estado del sistema</div>
+              <div>
+                <div className="bento-row">
+                  <span className="bento-row-label">
+                    🗄️ Datos · {dataConnected ? "Supabase" : dataMode === "unknown" ? "verificando" : "sólo memoria"}
+                  </span>
+                  <span className={`bento-pill ${dataConnected ? "bento-pill--ok" : dataMode === "unknown" ? "bento-pill--off" : "bento-pill--warn"}`}>
+                    {dataConnected ? "Conectado" : dataMode === "unknown" ? "…" : "Sin persistir"}
+                  </span>
                 </div>
-              )}
+                <div className="bento-row">
+                  <span className="bento-row-label">🔄 Colaboración en tiempo real</span>
+                  <span className={`bento-pill ${storageHealth?.realtime ? "bento-pill--ok" : "bento-pill--off"}`}>
+                    {storageHealth?.realtime ? "Activa" : "Inactiva"}
+                  </span>
+                </div>
+                <div className="bento-row">
+                  <span className="bento-row-label">🤖 API MCP · /mcp</span>
+                  <span className="bento-pill bento-pill--ok">Activa</span>
+                </div>
+              </div>
             </div>
 
             {/* Plataforma — switches globales, solo dueños (v27) */}
             {platformStatus?.canManage && (
-              <div className="bento-card bento-6">
+              <div className="bento-card bento-5">
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div className="bento-title">🛠️ Plataforma</div>
                   {platformMsg && (
@@ -2205,363 +2704,6 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 </div>
               </div>
             )}
-
-            {/* Quién tiene acceso */}
-            <div className="bento-card bento-6">
-              <div className="bento-title">👥 Quién tiene acceso</div>
-              {members.length === 0 ? (
-                <div className="bento-sub">
-                  Solo tú. Cuando invites a alguien al espacio de trabajo, aparece aquí con su rol.
-                </div>
-              ) : (
-                <div>
-                  {members.map(m => (
-                    <div key={m.id} className="bento-row">
-                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                        <span className="bento-row-value">{m.display_name || m.email || m.id}</span>
-                        {m.display_name && m.email && (
-                          <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>{m.email}</span>
-                        )}
-                      </span>
-                      <span className={`bento-pill ${m.role === "owner" ? "bento-pill--ok" : "bento-pill--off"}`}>
-                        {m.role || "member"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Dispositivos / sesiones */}
-            <div className="bento-card bento-6">
-              <div className="bento-title">💻 Dispositivos y sesiones</div>
-              {sessionsLoading ? (
-                <div className="bento-sub">Cargando…</div>
-              ) : sessions.length === 0 ? (
-                <div className="bento-sub">
-                  Todavía no hay registro de sesiones. Aparecen aquí cuando un cliente MCP o un
-                  navegador se conecta usando tu API key.
-                </div>
-              ) : (
-                <div>
-                  {sessions.map((s, i) => (
-                    <div key={i} className="bento-row">
-                      <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                        <span className="bento-row-value" title={s.user_agent}>
-                          {s.client_info || s.user_agent?.slice(0, 32) || "Desconocido"}
-                        </span>
-                        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.4)" }}>
-                          {new Date(s.last_seen).toLocaleString()} · {s.request_count} req
-                        </span>
-                      </span>
-                      <span className="bento-pill bento-pill--off">{s.key_label}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ═══════════ 2 · TUS LLAVES ═══════════ */}
-          <h3 className="bento-section-title">Tus claves</h3>
-          <div className="bento-grid">
-
-            {/* API key de Futuraria */}
-            <div className="bento-card bento-4 bento-card--accent">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🔑 API de Futuraria</div>
-                <span className={`bento-pill ${hasApiKey() ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {hasApiKey() ? "Activa" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                Es la clave de <strong>esta</strong> app. La usan los clientes MCP (Claude Code, Hermes,
-                OpenClaw) y las herramientas de diseño.
-              </div>
-              {showApiKeyInput || !hasApiKey() ? (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <input
-                    className="bento-input" style={{ flex: 1, minWidth: 140 }}
-                    value={apiKeyValue}
-                    onChange={e => setApiKeyValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") handleSaveApiKey(); if (e.key === "Escape") setShowApiKeyInput(false); }}
-                    placeholder="fdr_…"
-                  />
-                  <button type="button" className="bento-btn bento-btn--primary" onClick={handleSaveApiKey} disabled={!apiKeyValue.trim()}>Guardar</button>
-                  {!hasApiKey() && (
-                    <button type="button" className="bento-btn" onClick={handleGenerateKey} disabled={apiKeyRotating}>
-                      {apiKeyRotating ? "Generando…" : "Generar"}
-                    </button>
-                  )}
-                  {hasApiKey() && (
-                    <button type="button" className="bento-btn" onClick={() => { setShowApiKeyInput(false); setApiKeyValue(getApiKey()); }}>Cancelar</button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <code style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
-                    {getApiKey().slice(0, 6)}…{getApiKey().slice(-4)}
-                  </code>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <button type="button" className="bento-btn" onClick={() => setShowApiKeyInput(true)}>Cambiar</button>
-                    <button type="button" className="bento-btn" onClick={handleRotateKey} disabled={apiKeyRotating}>
-                      {apiKeyRotating ? "Rotando…" : "Rotar"}
-                    </button>
-                    <button type="button" className="bento-btn bento-btn--danger" onClick={handleRemoveApiKey}>Borrar</button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Gemini */}
-            <div className="bento-card bento-4">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">🧠 Google Gemini</div>
-                <span className={`bento-pill ${geminiConfigured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {geminiConfigured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                Se usa en <strong>🪄 Convertir imagen a diseño</strong>. Cifrada en el servidor.
-                No sirve una key de DeepSeek/OpenAI aquí.
-              </div>
-              {editingGemini || !geminiConfigured ? (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <input
-                    type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
-                    value={geminiDraft}
-                    onChange={e => setGeminiDraft(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter" && geminiDraft.trim()) handleSaveGeminiKey(geminiDraft);
-                      if (e.key === "Escape") { setEditingGemini(false); setGeminiDraft(""); }
-                    }}
-                    placeholder="AIza…"
-                  />
-                  <button type="button" className="bento-btn bento-btn--primary"
-                    onClick={() => handleSaveGeminiKey(geminiDraft)} disabled={!geminiDraft.trim() || keySaving}>Guardar</button>
-                  {geminiConfigured && (
-                    <button type="button" className="bento-btn" onClick={() => { setEditingGemini(false); setGeminiDraft(""); }}>Cancelar</button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <button type="button" className="bento-btn" onClick={() => { setGeminiDraft(""); setEditingGemini(true); }}>Cambiar</button>
-                    <button type="button" className="bento-btn bento-btn--danger" onClick={() => handleSaveGeminiKey("")}>Borrar</button>
-                  </div>
-                </div>
-              )}
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={geminiModel} onChange={e => handleSaveGeminiModel(e.target.value)}>
-                  {geminiProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key gratis ↗</a>
-            </div>
-
-            {/* Quiver */}
-            <div className="bento-card bento-4">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="bento-title">✦ Quiver AI</div>
-                <span className={`bento-pill ${quiverConfigured ? "bento-pill--ok" : "bento-pill--warn"}`}>
-                  {quiverConfigured ? "Configurada" : "Falta"}
-                </span>
-              </div>
-              <div className="bento-sub">
-                Se usa para <strong>vectorizar imagen a SVG</strong> y generar SVG desde texto
-                (pestaña IA del panel de iconos). Cifrada en el servidor.
-              </div>
-              {editingQuiver || !quiverConfigured ? (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <input
-                    type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
-                    value={quiverDraft}
-                    onChange={e => setQuiverDraft(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter" && quiverDraft.trim()) handleSaveQuiverKey(quiverDraft);
-                      if (e.key === "Escape") { setEditingQuiver(false); setQuiverDraft(""); }
-                    }}
-                    placeholder="qv_…"
-                  />
-                  <button type="button" className="bento-btn bento-btn--primary"
-                    onClick={() => handleSaveQuiverKey(quiverDraft)} disabled={!quiverDraft.trim() || keySaving}>Guardar</button>
-                  {quiverConfigured && (
-                    <button type="button" className="bento-btn" onClick={() => { setEditingQuiver(false); setQuiverDraft(""); }}>Cancelar</button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <button type="button" className="bento-btn" onClick={() => { setQuiverDraft(""); setEditingQuiver(true); }}>Cambiar</button>
-                    <button type="button" className="bento-btn bento-btn--danger" onClick={() => handleSaveQuiverKey("")}>Borrar</button>
-                  </div>
-                </div>
-              )}
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>Modelo</span>
-                <select className="bento-input" style={{ flex: 1, cursor: "pointer" }}
-                  value={quiverModel}
-                  onChange={e => { if (quiverConfigured) saveProviderKey("quiver", "", e.target.value).then(refreshKeyStatuses).catch(() => {}); }}>
-                  {quiverProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <a href="https://quiver.ai" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: "#818cf8", textDecoration: "none" }}>Obtener key ↗</a>
-            </div>
-
-            {/* Dónde vive cada clave */}
-            <div className="bento-card bento-12">
-              <div className="bento-title">🗂 Dónde vive cada clave</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12 }}>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Gemini · Quiver</strong><br />
-                  Aquí arriba. Cifradas en el servidor, nunca visibles en el navegador.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Proveedor del chat</strong><br />
-                  Dentro del propio chat (⚙ Configuración). Puede ser DeepSeek, OpenAI, Anthropic
-                  u OpenRouter — cada uno con su modelo.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>Unsplash</strong><br />
-                  En el panel de iconos → pestaña Fotos. Guardada en este navegador.
-                </div>
-                <div className="bento-sub">
-                  <strong style={{ color: "rgba(255,255,255,0.8)" }}>MCP</strong><br />
-                  Los clientes MCP se conectan a <code style={{ fontSize: 10.5 }}>/mcp</code> con la
-                  API de Futuraria. No necesitan clave propia.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ═══════════ 3 · PREFERENCIAS ═══════════ */}
-          <h3 className="bento-section-title">Preferencias</h3>
-          <div className="bento-grid">
-
-            {/* Vista */}
-            <div className="bento-card bento-4">
-              <div className="bento-title">🎴 Vista de archivos</div>
-              <div className="bento-sub">
-                {cardMode === "grid" ? "Cuadrícula" : "Cover Flow (slider en perspectiva)"}
-              </div>
-              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
-                <button type="button" data-active={cardMode === "grid"} onClick={() => handleCardModeChange("grid")}>Cuadrícula</button>
-                <button type="button" data-active={cardMode === "flow"} onClick={() => handleCardModeChange("flow")}>Flow</button>
-              </div>
-            </div>
-
-            {/* Tour */}
-            <div className="bento-card bento-4">
-              <div className="bento-title">🧭 Tour guiado</div>
-              <div className="bento-sub">Recorrido paso a paso: templates, editor, IA y grafo.</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <div className="bento-seg">
-                  <button type="button" data-active={tourEnabled}
-                    onClick={() => { setOnboardingEnabled(true); setTourEnabled(true); }}>Activado</button>
-                  <button type="button" data-active={!tourEnabled}
-                    onClick={() => { setOnboardingEnabled(false); setTourEnabled(false); }}>Desactivado</button>
-                </div>
-                <button type="button" className="bento-btn"
-                  onClick={() => { restartOnboarding(); setTourEnabled(true); setActiveTab("diseno"); }}>Reiniciar</button>
-              </div>
-            </div>
-
-            {/* Design System por marca — ya no es opcional */}
-            <div className="bento-card bento-4">
-              <div className="bento-title">🎨 Design System por marca</div>
-              <div className="bento-sub">
-                Cada marca tiene UN archivo Design System donde va todo lo que
-                extraigas o agregues. Es fijo: tu IA lee ese archivo al trabajar
-                con la marca, y si una marca aún no lo tiene, el CRM, el editor
-                y el grafo te lo avisan para crearlo con un click.
-              </div>
-            </div>
-
-            {/* Borrado */}
-            <div className="bento-card bento-4">
-              <div className="bento-title">🗑 Al borrar</div>
-              <div className="bento-sub">
-                {deleteMode === "soft" ? "Va a la papelera, recuperable desde Storage." : "Se borra de la base de datos, sin vuelta atrás."}
-              </div>
-              <div className="bento-seg" style={{ alignSelf: "flex-start" }}>
-                <button type="button" data-active={deleteMode === "soft"}
-                  onClick={() => { setDeleteMode("soft"); try { localStorage.setItem("futuraria-delete-mode", "soft"); } catch {} }}>Papelera</button>
-                <button type="button" data-active={deleteMode === "hard"}
-                  onClick={() => { setDeleteMode("hard"); try { localStorage.setItem("futuraria-delete-mode", "hard"); } catch {} }}>Permanente</button>
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
-                <input
-                  type="checkbox" checked={deleteConfirmEnabled}
-                  onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
-                  style={{ accentColor: "#818cf8" }}
-                />
-                Pedir confirmación escribiendo el nombre
-              </label>
-            </div>
-
-            {/* Miniaturas */}
-            <div className="bento-card bento-5">
-              <div className="bento-title">📸 Miniaturas</div>
-              <div className="bento-sub">
-                {snapshotProgress.running
-                  ? `Capturando ${snapshotProgress.done}/${snapshotProgress.total}…`
-                  : `${templates.filter(t => t.thumbnail).length} de ${templates.length} archivos tienen miniatura.`}
-              </div>
-              {snapshotProgress.running && (
-                <div style={{ height: 4, borderRadius: 100, background: "rgba(255,255,255,0.07)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", borderRadius: 100, background: "linear-gradient(90deg,#818cf8,#a78bfa)", width: `${Math.round((snapshotProgress.done / snapshotProgress.total) * 100)}%`, transition: "width 0.3s ease" }} />
-                </div>
-              )}
-              <button type="button" className="bento-btn bento-btn--primary" style={{ alignSelf: "flex-start" }}
-                onClick={handleSnapshotAll} disabled={snapshotProgress.running}>
-                {snapshotProgress.running ? "Capturando…" : "Capturar todas"}
-              </button>
-            </div>
-
-            {/* Estado de conexión */}
-            <div className="bento-card bento-7">
-              <div className="bento-title">🔌 Estado del sistema</div>
-              <div>
-                <div className="bento-row">
-                  <span className="bento-row-label">
-                    🗄️ Datos · {dataConnected ? "Supabase" : dataMode === "unknown" ? "verificando" : "sólo memoria"}
-                  </span>
-                  <span className={`bento-pill ${dataConnected ? "bento-pill--ok" : dataMode === "unknown" ? "bento-pill--off" : "bento-pill--warn"}`}>
-                    {dataConnected ? "Conectado" : dataMode === "unknown" ? "…" : "Sin persistir"}
-                  </span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">🔄 Colaboración en tiempo real</span>
-                  <span className={`bento-pill ${storageHealth?.realtime ? "bento-pill--ok" : "bento-pill--off"}`}>
-                    {storageHealth?.realtime ? "Activa" : "Inactiva"}
-                  </span>
-                </div>
-                <div className="bento-row">
-                  <span className="bento-row-label">🤖 API MCP · /mcp</span>
-                  <span className="bento-pill bento-pill--ok">Activa</span>
-                </div>
-              </div>
-            </div>
-
-            {/* SKILL.md */}
-            <div className="bento-card bento-12">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="bento-title">📄 SKILL.md — onboarding para agentes</div>
-                  <div className="bento-sub" style={{ marginTop: 4 }}>
-                    Dáselo a cualquier agente de IA: le enseña las herramientas de Futuraria, la
-                    estructura del proyecto y las convenciones de diseño, para que diseñe junto a ti.
-                  </div>
-                </div>
-                <button type="button" className="bento-btn bento-btn--primary" onClick={handleDownloadSkill}>Descargar</button>
-              </div>
-            </div>
           </div>
         </div>
         );
@@ -2671,6 +2813,65 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         }}
       />
     </motion.div>
+  );
+}
+
+/**
+ * One password input row for a BYOK provider (Dashboard settings).
+ * The browser never sees the stored value — only whether it is configured.
+ * Saving with an empty value deletes the key.
+ */
+function ProviderKeyRow({ providerId, label, statuses, saving, onSave }: {
+  providerId: string;
+  label?: string;
+  statuses: KeyStatusMap;
+  saving: boolean;
+  onSave: (providerId: string, value: string) => void;
+}) {
+  const provider = getProvider(providerId);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (!provider) return null;
+  const configured = !!statuses[providerId]?.configured;
+  const showInput = editing || !configured;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+      {label && (
+        <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.7)", minWidth: 96 }}>
+          {label}
+        </span>
+      )}
+      <span className={`bento-pill ${configured ? "bento-pill--ok" : "bento-pill--warn"}`} style={{ flexShrink: 0 }}>
+        {configured ? "Configurada" : "Falta"}
+      </span>
+      {showInput ? (
+        <>
+          <input
+            type="password" className="bento-input" style={{ flex: 1, minWidth: 140 }}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && draft.trim()) { onSave(providerId, draft); setEditing(false); setDraft(""); }
+              if (e.key === "Escape") { setEditing(false); setDraft(""); }
+            }}
+            placeholder={provider.keyPrefix ? `${provider.keyPrefix}…` : "Pega tu key…"}
+          />
+          <button type="button" className="bento-btn bento-btn--primary"
+            onClick={() => { onSave(providerId, draft); setEditing(false); setDraft(""); }}
+            disabled={!draft.trim() || saving}>Guardar</button>
+          {configured && (
+            <button type="button" className="bento-btn"
+              onClick={() => { setEditing(false); setDraft(""); }}>Cancelar</button>
+          )}
+        </>
+      ) : (
+        <>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🔒 Cifrada en el servidor</span>
+          <button type="button" className="bento-btn" onClick={() => setEditing(true)}>Cambiar</button>
+          <button type="button" className="bento-btn bento-btn--danger" onClick={() => onSave(providerId, "")}>Borrar</button>
+        </>
+      )}
+    </div>
   );
 }
 

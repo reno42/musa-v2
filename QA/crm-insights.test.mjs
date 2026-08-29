@@ -76,23 +76,26 @@ test("CRM stays focused while workspace administration lives in settings", () =>
 
   assert.match(dashboard, /<WorkspaceConsole[\s\S]*mode="settings"/);
   assert.match(dashboard, /activeTab === "workspace"[\s\S]*<WorkspaceConsole[\s\S]*mode="crm"/);
-  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*\["general", "General"\][\s\S]*\["team", "Equipo"\][\s\S]*\["agents", "API MCP"\]/);
-  // af004b4 merged the Cuenta tab into General — account content lives inside general now.
+  // v36 collapsed the console to two tabs — account/team moved into the
+  // Dashboard General section as cards.
+  assert.match(workspaceConsole, /SETTINGS_SECTIONS[\s\S]*\["general", "General"\][\s\S]*\["agents", "Agentes & MCP"\]/);
   assert.doesNotMatch(workspaceConsole, /\["account", "Cuenta"\]/);
-  assert.match(workspaceConsole, /section === "general"[\s\S]{0,200}<AccountSection/);
+  assert.doesNotMatch(workspaceConsole, /\["team", "Equipo"\]/);
+  assert.match(workspaceConsole, /section === "general" && <>\{children\}<\/>/);
   assert.doesNotMatch(workspaceConsole, /\['crm', 'CRM'\]/);
   assert.match(crmWorkspace, />Pipeline<\/button>/);
   assert.match(crmWorkspace, />Marcas y Personas<\/button>/);
 });
 
-test("the optional API key notice can be dismissed and CRM omits the workspace title", () => {
+test("the fdr_ key surface is gone and CRM omits the workspace title", () => {
   const dashboard = readFileSync(new URL("../src/components/Dashboard.tsx", import.meta.url), "utf8");
   const workspaceConsole = readFileSync(new URL("../src/components/WorkspaceConsole.tsx", import.meta.url), "utf8");
 
-  assert.match(dashboard, /API_KEY_BANNER_DISMISSED_KEY/);
-  assert.match(dashboard, /!hasApiKey\(\) && !apiKeyBannerDismissed/);
-  assert.match(dashboard, /aria-label="Ocultar aviso de API key"/);
-  assert.match(dashboard, /localStorage\.setItem\(API_KEY_BANNER_DISMISSED_KEY, "true"\)/);
+  // v36 removed the browser-local fdr_ key surface (banner included) — the
+  // server vault is the only one and the Bearer JWT alone authenticates.
+  assert.doesNotMatch(dashboard, /futuraria-api-key/);
+  assert.doesNotMatch(dashboard, /hasApiKey|handleGenerateKey|handleRotateKey|API_KEY_BANNER_DISMISSED_KEY/);
+  assert.match(dashboard, /function ProviderKeyRow/);
   assert.match(workspaceConsole, /\{mode === "settings" && <header className="workspace-console-header">/);
   assert.match(workspaceConsole, /aria-label=\{mode === "crm" \? "CRM" : undefined\}/);
 });

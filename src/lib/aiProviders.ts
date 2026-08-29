@@ -84,6 +84,18 @@ export const AI_PROVIDERS: AIProvider[] = [
     ],
   },
   {
+    // Photo search for the editor's icon panel. The key lives in the same
+    // server-side store; the panel decrypts it to memory per session and
+    // calls Unsplash straight from the browser (see IconPicker.tsx) — same
+    // direct-call pattern the chat uses for its LLM providers.
+    id: "unsplash",
+    label: "Unsplash",
+    keyPrefix: "",
+    keySlot: "futuraria-unsplash-key",
+    modelSlot: "futuraria-unsplash-model",
+    models: [],
+  },
+  {
     id: "openai",
     label: "OpenAI",
     keyPrefix: "sk-",
@@ -186,3 +198,13 @@ export const CHAT_PROVIDERS: ChatProviderCompat[] = [
     models: full.models,
   };
 });
+
+// ── Nano Banana image-gen models (editor 🍌) ──
+// Curated image-output Gemini models. { id, label } so the UI can show a
+// friendly name while storing the real model id (prefs nanoBananaModel).
+export const NANO_BANANA_MODELS = [
+  { id: "gemini-3.1-flash-image", label: "Nano Banana 2 — rápido y equilibrado" },
+  { id: "gemini-3.1-flash-lite-image", label: "Nano Banana 2 Lite — ultra rápido" },
+  { id: "gemini-3-pro-image", label: "Nano Banana Pro — máxima calidad" },
+  { id: "gemini-2.5-flash-image", label: "Nano Banana (2.5) — generación previa" },
+];

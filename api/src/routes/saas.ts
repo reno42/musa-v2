@@ -97,7 +97,10 @@ accountRoutes.post("/bootstrap", async (req, res) => {
  *  same family) and v30 (NDA gate + locked access plan). Selected separately
  *  from the base ones so an un-migrated database still returns a usable
  *  profile instead of failing the whole request on an unknown column. */
-const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, nda_accepted_at, access_plan";
+// prefs (v36) is a JSONB object of non-secret user preferences that must
+// follow the account across devices (chat role config, default models).
+// Secrets never go here — those live encrypted in user_api_keys.
+const PROFILE_EXTRA_COLUMNS = "first_name, last_name, phone, website, brand_name, onboarding_completed, nda_accepted_at, access_plan, prefs";
 const PROFILE_BASE_COLUMNS = "id, email, display_name, avatar_url";
 
 /** True when the Supabase error indicates a missing column (migration not run).
@@ -141,7 +144,7 @@ accountRoutes.patch("/me", async (req, res) => {
     // list: the plan is assigned once on the NDA wall and locked afterwards.
     // They only change through POST /account/nda-acceptance.
     const allowed = ["display_name", "first_name", "last_name", "phone", "website", "brand_name"] as const;
-    const patch: Record<string, string | null | boolean> = {};
+    const patch: Record<string, string | null | boolean | Record<string, unknown>> = {};
     for (const field of allowed) {
       if (field in req.body) {
         const raw = req.body[field];
@@ -152,6 +155,29 @@ accountRoutes.patch("/me", async (req, res) => {
     if ("onboarding_completed" in req.body) {
       patch.onboarding_completed = Boolean(req.body.onboarding_completed);
     }
+    // prefs (v36) merges shallowly: each top-level key replaces the whole
+    // previous value, so a caller saving chatRoles can't half-overwrite
+    // another caller's nanoBananaModel. Rejected shapes fail loudly instead
+    // of silently storing junk.
+    if ("prefs" in req.body) {
+      const incoming = req.body.prefs;
+      if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming)) {
+        return res.status(400).json({ success: false, error: "prefs must be a plain object" });
+      }
+      const { data: current } = await sb
+        .from("user_profiles")
+        .select("prefs")
+        .eq("id", req.auth!.userId)
+        .maybeSingle();
+      const base = current?.prefs && typeof current.prefs === "object" && !Array.isArray(current.prefs)
+        ? current.prefs as Record<string, unknown>
+        : {};
+      const merged = { ...base, ...(incoming as Record<string, unknown>) };
+      if (JSON.stringify(merged).length > 16_384) {
+        return res.status(400).json({ success: false, error: "prefs too large (16KB limit)" });
+      }
+      patch.prefs = merged;
+    }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ success: false, error: "No recognised profile fields to update" });
     }
@@ -159,10 +185,13 @@ accountRoutes.patch("/me", async (req, res) => {
     const { error } = await sb.from("user_profiles").update(patch).eq("id", req.auth!.userId);
     if (error) {
       if (isMissingColumnError(error)) {
+        const needsV36 = "prefs" in patch;
         return res.status(409).json({
           success: false,
           error: "PROFILE_MIGRATION_REQUIRED",
-          detail: "Ejecuta supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
+          detail: needsV36
+            ? "Ejecuta supabase_migrations_v36.sql (preferencias) — y v16 si aún no corrió — en el SQL editor de Supabase."
+            : "Ejecuta supabase_migrations_v16.sql en el SQL editor de Supabase para habilitar estos campos.",
         });
       }
       throw error;

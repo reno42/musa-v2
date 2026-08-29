@@ -41,6 +41,7 @@ import { getApiHeaders } from "../lib/apiKey";
 import { mcpCall } from "../lib/mcpClient";
 import { AI_PROVIDERS, getProvider } from "../lib/aiProviders";
 import { fetchKeyStatuses, saveProviderKey, deleteProviderKey, type KeyStatusMap } from "../lib/userKeys";
+import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { streamVectorize, type QuiverEvent } from "../lib/quiverStream";
 import { subscribeTemplate, broadcastChange, subscribePresence } from "../lib/supabaseRealtime";
 import {
@@ -4660,6 +4661,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [nbModel, setNbModel] = useState<string>(
     () => localStorage.getItem(NANO_BANANA_MODEL_SLOT) || NANO_BANANA_MODELS[0].id,
   );
+  // v36: the 🍌 model follows the account (same pref the Dashboard saves).
+  // localStorage stays the fast path — the server only fills a blank device.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const prefs = await fetchUserPrefs();
+        if (cancelled) return;
+        const server = typeof prefs.nanoBananaModel === "string" ? prefs.nanoBananaModel : "";
+        if (!server) return;
+        try {
+          if (localStorage.getItem(NANO_BANANA_MODEL_SLOT)) return;
+          localStorage.setItem(NANO_BANANA_MODEL_SLOT, server);
+        } catch { /* private mode */ }
+        setNbModel(server);
+      } catch { /* guest or offline */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // With an image selected it uses that image as the editing reference plus
   // the prompt as instructions; with nothing selected it generates from
@@ -8011,6 +8031,63 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 </div>
               </div>
 
+              {/* ── RunwayML (video generation) ── */}
+              <div>
+                <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Generar Video (RunwayML)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Modelo</label>
+                    <select
+                      value={videoModel}
+                      onChange={e => {
+                        setVideoModel(e.target.value);
+                        localStorage.setItem(VIDEO_GEN_MODEL_SLOT, e.target.value);
+                        if (runwayConfigured) {
+                          saveProviderKey("runway", "", e.target.value).then(refreshKeyStatuses).catch(() => {});
+                        }
+                      }}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                    >
+                      {VIDEO_GEN_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>API Key</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        type="password"
+                        value={runwayKeyDraft}
+                        onChange={e => setRunwayKeyDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && runwayKeyDraft.trim()) handleSaveRunwayKey(runwayKeyDraft.trim());
+                          if (e.key === "Escape") setRunwayKeyDraft("");
+                        }}
+                        placeholder="API key de dev.runwayml.com"
+                        style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!runwayKeyDraft.trim() || keySaving}
+                        onClick={() => handleSaveRunwayKey(runwayKeyDraft.trim())}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: runwayKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: runwayKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: runwayKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                    {runwayConfigured ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · solo para video</span>
+                        <button type="button" onClick={() => handleSaveRunwayKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
+                      </div>
+                    ) : (
+                      <a href="https://dev.runwayml.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
+                        Obtener key ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div style={{ height: 1, background: "rgba(255,255,255,0.06)" }} />
 
               {/* ── Chat LLM (all providers) ── */}
@@ -8074,6 +8151,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     onChange={e => {
                       setNbModel(e.target.value);
                       localStorage.setItem(NANO_BANANA_MODEL_SLOT, e.target.value);
+                      saveUserPrefs({ nanoBananaModel: e.target.value }).catch(() => { /* best-effort */ });
                     }}
                     style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
                   >
@@ -8084,40 +8162,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   </div>
                 </div>
 
-                {/* API key — same BYOK store as the AI Settings tab */}
-                <div>
-                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (Google Gemini)</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="password"
-                      value={geminiKeyDraft}
-                      onChange={e => setGeminiKeyDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter" && geminiKeyDraft.trim()) handleSaveGeminiKey(geminiKeyDraft.trim());
-                        if (e.key === "Escape") setGeminiKeyDraft("");
-                      }}
-                      placeholder="AIza... (Google Gemini API key)"
-                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
-                    />
-                    <button
-                      type="button"
-                      disabled={!geminiKeyDraft.trim() || keySaving}
-                      onClick={() => handleSaveGeminiKey(geminiKeyDraft.trim())}
-                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: geminiKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: geminiKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: geminiKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
-                    >
-                      Guardar
-                    </button>
-                  </div>
-                  {geminiConfigured ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · compartida con Image to Design</span>
-                      <button type="button" onClick={() => handleSaveGeminiKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
-                    </div>
-                  ) : (
-                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
-                      Obtener key gratis ↗
-                    </a>
-                  )}
+                {/* Key status — the editable surface lives in Ajustes de IA */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderRadius: 8, background: geminiConfigured ? "rgba(52,211,153,0.05)" : "rgba(251,191,36,0.05)", border: `1px solid ${geminiConfigured ? "rgba(52,211,153,0.22)" : "rgba(251,191,36,0.28)"}` }}>
+                  <span style={{ fontSize: 11, color: geminiConfigured ? "#6ee7b7" : "#fbbf24" }}>
+                    {geminiConfigured ? "✓ Clave de Gemini configurada" : "Falta tu clave de Gemini"}
+                  </span>
+                  <button type="button" onClick={openAiConfigPanel} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 500, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", background: "rgba(255,255,255,0.05)", color: "#c8b898", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 }}>
+                    Abrir Ajustes de IA
+                  </button>
                 </div>
 
                 {/* Generate */}
@@ -8220,40 +8272,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   Cada separación consume créditos de tu cuenta WaveSpeed (~$0.77 en 1k/1.5k, ~$1.53 en 2k) y tarda 1-2 min. Las capas quedan como imágenes propias en tu biblioteca.
                 </div>
 
-                {/* WaveSpeed API key — same BYOK store as the AI Settings tab */}
-                <div>
-                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (WaveSpeedAI)</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="password"
-                      value={wavespeedKeyDraft}
-                      onChange={e => setWavespeedKeyDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter" && wavespeedKeyDraft.trim()) handleSaveWavespeedKey(wavespeedKeyDraft.trim());
-                        if (e.key === "Escape") setWavespeedKeyDraft("");
-                      }}
-                      placeholder="API key de wavespeed.ai/accesskey"
-                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
-                    />
-                    <button
-                      type="button"
-                      disabled={!wavespeedKeyDraft.trim() || keySaving}
-                      onClick={() => handleSaveWavespeedKey(wavespeedKeyDraft.trim())}
-                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: wavespeedKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: wavespeedKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: wavespeedKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
-                    >
-                      Guardar
-                    </button>
-                  </div>
-                  {wavespeedConfigured ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · distinta a la de Gemini</span>
-                      <button type="button" onClick={() => handleSaveWavespeedKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
-                    </div>
-                  ) : (
-                    <a href="https://wavespeed.ai/accesskey" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#818cf8", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
-                      Obtener key ↗
-                    </a>
-                  )}
+                {/* Key status — the editable surface lives in Ajustes de IA */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderRadius: 8, background: wavespeedConfigured ? "rgba(52,211,153,0.05)" : "rgba(251,191,36,0.05)", border: `1px solid ${wavespeedConfigured ? "rgba(52,211,153,0.22)" : "rgba(251,191,36,0.28)"}` }}>
+                  <span style={{ fontSize: 11, color: wavespeedConfigured ? "#6ee7b7" : "#fbbf24" }}>
+                    {wavespeedConfigured ? "✓ Clave de WaveSpeed configurada" : "Falta tu clave de WaveSpeed"}
+                  </span>
+                  <button type="button" onClick={openAiConfigPanel} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 500, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", background: "rgba(255,255,255,0.05)", color: "#c8b898", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 }}>
+                    Abrir Ajustes de IA
+                  </button>
                 </div>
 
                 {/* Live progress: countdown to the median ETA + spaced real
@@ -8398,40 +8424,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   Runway cobra por segundo: Gen-4 Turbo ~$0.05/s y Gen-4.5 ~$0.10/s (máximo 10s por generación — para piezas más largas, generá escenas separadas). Tarda 1-3 min y el mp4 queda guardado en tu biblioteca.
                 </div>
 
-                {/* Runway API key — same BYOK store as the AI Settings tab */}
-                <div>
-                  <div style={{ fontSize: 10, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key (RunwayML)</div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="password"
-                      value={runwayKeyDraft}
-                      onChange={e => setRunwayKeyDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter" && runwayKeyDraft.trim()) handleSaveRunwayKey(runwayKeyDraft.trim());
-                        if (e.key === "Escape") setRunwayKeyDraft("");
-                      }}
-                      placeholder="API key de dev.runwayml.com"
-                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 12, fontFamily: "monospace", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" }}
-                    />
-                    <button
-                      type="button"
-                      disabled={!runwayKeyDraft.trim() || keySaving}
-                      onClick={() => handleSaveRunwayKey(runwayKeyDraft.trim())}
-                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 500, border: "none", borderRadius: 4, cursor: runwayKeyDraft.trim() && !keySaving ? "pointer" : "not-allowed", background: runwayKeyDraft.trim() && !keySaving ? "rgba(200,184,152,0.2)" : "rgba(255,255,255,0.03)", color: runwayKeyDraft.trim() && !keySaving ? "#c8b898" : "#555", whiteSpace: "nowrap", fontFamily: "inherit" }}
-                    >
-                      Guardar
-                    </button>
-                  </div>
-                  {runwayConfigured ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>🔒 Cifrada en servidor · solo para video</span>
-                      <button type="button" onClick={() => handleSaveRunwayKey("")} style={{ fontSize: 11, border: "none", background: "transparent", color: "#f87171", cursor: "pointer", padding: 0 }}>Eliminar</button>
-                    </div>
-                  ) : (
-                    <a href="https://dev.runwayml.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#f9a8d4", textDecoration: "none", display: "inline-block", marginTop: 4 }}>
-                      Obtener key ↗
-                    </a>
-                  )}
+                {/* Key status — the editable surface lives in Ajustes de IA */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderRadius: 8, background: runwayConfigured ? "rgba(52,211,153,0.05)" : "rgba(251,191,36,0.05)", border: `1px solid ${runwayConfigured ? "rgba(52,211,153,0.22)" : "rgba(251,191,36,0.28)"}` }}>
+                  <span style={{ fontSize: 11, color: runwayConfigured ? "#6ee7b7" : "#fbbf24" }}>
+                    {runwayConfigured ? "✓ Clave de Runway configurada" : "Falta tu clave de Runway"}
+                  </span>
+                  <button type="button" onClick={openAiConfigPanel} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 500, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", background: "rgba(255,255,255,0.05)", color: "#c8b898", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 }}>
+                    Abrir Ajustes de IA
+                  </button>
                 </div>
 
                 {/* Live progress: countdown to the median ETA + spaced real

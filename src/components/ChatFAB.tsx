@@ -5,6 +5,7 @@ import {
 } from "../lib/chatHistory";
 import { mcpCall } from "../lib/mcpClient";
 import { CHAT_PROVIDERS as PROVIDERS } from "../lib/aiProviders";
+import { fetchUserPrefs, saveUserPrefs } from "../lib/userPrefs";
 import { GovernancePanel, type GovernanceSession } from "./GovernancePanel";
 import {
   MAX_SUBAGENT_ROUNDS,
@@ -1966,6 +1967,8 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const [expandedStepGroups, setExpandedStepGroups] = useState<Set<number>>(new Set());
   // ── Multi-model per role: each role can use a different provider+model ──
   const [roleConfig, setRoleConfig] = useState<RoleConfigMap>(() => loadRoleConfig());
+  /** Flips true once account prefs arrive; gates the server write below. */
+  const roleConfigHydratedRef = useRef(false);
   /** Which providers the account has a key for — last four only. */
   const [storedKeys, setStoredKeys] = useState<StoredKey[]>([]);
   /** What is being typed right now, before it is sent. Never persisted. */
@@ -1995,8 +1998,44 @@ export function ChatFAB({ workspaceId, templateId, externalOpen, onOpenChange, h
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Persist settings
-  useEffect(() => { saveRoleConfig(roleConfig); }, [roleConfig]);
+  // Persist settings — localStorage is the fast path; account prefs (v36) are
+  // the durable copy that follows the user across devices. The server write
+  // only starts once hydration below has run, so the pre-hydration LS copy
+  // can never clobber the account value.
+  useEffect(() => {
+    saveRoleConfig(roleConfig);
+    if (!roleConfigHydratedRef.current) return;
+    void saveUserPrefs({ chatRoles: roleConfig }).catch(() => { /* offline/guest */ });
+  }, [roleConfig]);
+  // ── Hydrate roleConfig from account prefs (same pref the Dashboard saves) ──
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const prefs = await fetchUserPrefs();
+        if (cancelled) return;
+        roleConfigHydratedRef.current = true;
+        const server = prefs.chatRoles;
+        if (!server || typeof server !== "object") return;
+        const s = server as Partial<Record<AgentRole, Partial<RoleConfig>>>;
+        setRoleConfig({
+          leader: {
+            provider: s.leader?.provider || DEFAULT_ROLE_CONFIG.leader.provider,
+            model: s.leader?.model || DEFAULT_ROLE_CONFIG.leader.model,
+          },
+          implementer: {
+            provider: s.implementer?.provider || DEFAULT_ROLE_CONFIG.implementer.provider,
+            model: s.implementer?.model || DEFAULT_ROLE_CONFIG.implementer.model,
+          },
+          reviewer: {
+            provider: s.reviewer?.provider || DEFAULT_ROLE_CONFIG.reviewer.provider,
+            model: s.reviewer?.model || DEFAULT_ROLE_CONFIG.reviewer.model,
+          },
+        });
+      } catch { /* guest or offline — the LS copy remains the source of truth */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   // ── Keys live on the server ──
   // Anything this browser is still holding is moved up and then erased. The
   // erase is the point: until the local copy is gone the key is still readable
