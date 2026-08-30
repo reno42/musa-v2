@@ -101,39 +101,68 @@ export function sanitizeGoogleFontUrl(url: string): string {
   return url.split(":ital,wght@0,300..800;1,300..800").join("");
 }
 
+/**
+ * Render-time rewrite: css2 through our own origin.
+ *
+ * The persisted css and the exports keep the canonical fonts.googleapis.com
+ * URLs, but every RENDER fetch (shadow-DOM links, the picker's document
+ * loader, the raster inliner) goes through /api/fonts/css2 — same-origin —
+ * because some browsers never complete the direct request: filters,
+ * HTTPS-scanning antivirus and privacy extensions close the connection
+ * before Google answers (net::ERR_CONNECTION_CLOSED in the wild), and when
+ * the stylesheet never arrives the design silently collapses to its serif
+ * fallback. The API re-serves css2 and its gstatic font files with the same
+ * bytes, so rendering no longer depends on the browser reaching Google.
+ */
+export function proxiedFontCssUrl(url: string): string {
+  const canonical = sanitizeGoogleFontUrl(url);
+  const prefix = "https://fonts.googleapis.com/css2?";
+  if (canonical.startsWith(prefix)) return "/api/fonts/css2?" + canonical.slice(prefix.length);
+  return canonical;
+}
+
+/** link.href is always the browser-normalized absolute form, while the
+ *  proxy rewrite produces a relative path — normalize before comparing or
+ *  assigning so live-update dedup stays stable across re-renders. */
+function absoluteFontUrl(href: string): string {
+  return new URL(href, document.baseURI).href;
+}
+
 export function loadGoogleFontInDocument(family: string, variants: string[] = []): void {
-  const href = googleFontHref(family, variants);
+  const href = proxiedFontCssUrl(googleFontHref(family, variants));
   if (!href) return;
+  const resolved = absoluteFontUrl(href);
   const id = `gf-${requestableFamily(family).replace(/\s+/g, "-").toLowerCase()}`;
   const existing = document.getElementById(id) as HTMLLinkElement | null;
   // Same family, wider axes (e.g. bold added later): refreshing the href
   // re-fetches the stylesheet. Returning early here would freeze the family
   // at whatever weights it was first picked with.
   if (existing) {
-    if (existing.href !== href) existing.href = href;
+    if (existing.href !== resolved) existing.href = resolved;
     return;
   }
   const link = document.createElement("link");
   link.id = id;
   link.rel = "stylesheet";
-  link.href = href;
+  link.href = resolved;
   document.head.appendChild(link);
 }
 
 export function injectGoogleFontIntoFrames(family: string, variants: string[] = []): void {
-  const href = googleFontHref(family, variants);
+  const href = proxiedFontCssUrl(googleFontHref(family, variants));
   if (!href) return;
+  const resolved = absoluteFontUrl(href);
   for (const frame of document.querySelectorAll("[data-frame-id]")) {
     const host = [...frame.querySelectorAll("*")].find(element => (element as HTMLElement).shadowRoot) as HTMLElement | undefined;
     const shadow = host?.shadowRoot;
     if (!shadow) continue;
-    const existing = [...shadow.querySelectorAll("link")].find(link => (link as HTMLLinkElement).href === href);
+    const existing = [...shadow.querySelectorAll("link")].find(link => (link as HTMLLinkElement).href === resolved);
     if (existing) continue;
     // An older, narrower link for the same family stays: font-face
     // declarations merge across stylesheets, and the fuller one wins.
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = href;
+    link.href = resolved;
     shadow.insertBefore(link, shadow.firstChild);
   }
 }

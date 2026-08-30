@@ -9,7 +9,7 @@ import {
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
 import { mapBodySelectors } from "../lib/frameCapture";
-import { sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { proxiedFontCssUrl } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
@@ -3090,7 +3090,10 @@ function extractFontImports(css: string): string[] {
   const re = /@import\s+url\(['"]?(https?:\/\/[^'"]+)['"]?\)/g;
   const hrefs: string[] = [];
   let m;
-  while ((m = re.exec(css)) !== null) hrefs.push(sanitizeGoogleFontUrl(m[1]));
+  // Canonical Google URLs go in, same-origin proxy URLs come out — kept
+  // absolute so the live-update dedup compares them against link.href
+  // (which the browser always normalizes against the document base).
+  while ((m = re.exec(css)) !== null) hrefs.push(new URL(proxiedFontCssUrl(m[1]), document.baseURI).href);
   return hrefs;
 }
 

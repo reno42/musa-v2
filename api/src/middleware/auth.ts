@@ -34,7 +34,11 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // no API key. Writes stay protected by the global rateLimit plus the
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
-  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare) {
+  // Google Fonts same-origin proxy: shadow-DOM <link> tags carry no auth
+  // headers. Safe to expose — the route only re-serves Google's public
+  // catalog through a strict parameter/path allowlist.
+  const publicFontProxy = req.path === "/api/fonts/css2" || req.path.startsWith("/api/fonts/gstatic/");
+  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || publicFontProxy) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

@@ -43,7 +43,7 @@ interface FrameDom {
   zoom: number;
 }
 
-import { sanitizeGoogleFontUrl } from "./googleFonts.ts";
+import { proxiedFontCssUrl } from "./googleFonts.ts";
 
 const fontCssCache = new Map<string, string>();
 
@@ -103,7 +103,7 @@ export async function renderAgentFrame(frameId: string, scale = 0.5): Promise<st
   if (!dom) throw new Error(`Frame not found: ${frameId}`);
 
   const rawCss = dom.shadow.querySelector("style")?.textContent || "";
-  const importUrls = [...rawCss.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)].map(m => sanitizeGoogleFontUrl(m[1]));
+  const importUrls = [...rawCss.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)].map(m => proxiedFontCssUrl(m[1]));
   const fontCss = await inlineFontCss(importUrls);
   const css = rawCss
     .replace(/@import\s+url\([^)]*\)[^;]*;/g, "")
