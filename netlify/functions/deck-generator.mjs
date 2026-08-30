@@ -66,7 +66,12 @@ export function inkFor(background) {
 
 function googleFontsImport(families) {
   const unique = [...new Set(families.filter(Boolean))];
-  const parts = unique.map(name => `family=${name.trim().replace(/\s+/g, "+")}:ital,wght@0,300..800;1,300..800`);
+  // Bare family=Name is the only always-valid css2 form. The previously
+  // hardcoded ital+wght axis (weights 300 through 800, upright and italic)
+  // returns HTTP 400 for families that lack those axes — Space Grotesk has
+  // no italic and stops at 700 — so the stylesheet never arrived and decks
+  // collapsed to serif on every reload.
+  const parts = unique.map(name => `family=${name.trim().replace(/\s+/g, "+")}`);
   return `@import url('https://fonts.googleapis.com/css2?${parts.join("&")}&display=swap');`;
 }
 

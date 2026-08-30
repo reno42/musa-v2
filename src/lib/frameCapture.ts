@@ -43,6 +43,8 @@
  * given to Google Fonts, for the same underlying reason.
  */
 
+import { sanitizeGoogleFontUrl } from "./googleFonts.ts";
+
 /** Remap `body`/`html` selectors to `#__df_content` — identical to the live
  *  editor's scoping (src/components/DesignFrame.tsx), so exported markup
  *  receives exactly the styles the user sees on screen. */
@@ -239,7 +241,7 @@ export function buildFrameSvgMarkup(
  */
 export async function rasterizeFrame(source: FrameSource, scale = 2): Promise<HTMLCanvasElement> {
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
-    .map(m => m[1])
+    .map(m => sanitizeGoogleFontUrl(m[1]))
     .filter(url => url.includes("fonts.googleapis.com"));
   const [{ html, css: withImages }, fontCss] = await Promise.all([
     inlineFrameImages(source.html, source.css),
@@ -316,7 +318,7 @@ export interface PptTextBlock {
  */
 export async function extractFrameTextBlocks(source: FrameSource): Promise<PptTextBlock[]> {
   const importUrls = [...source.css.matchAll(/@import\s+url\(['"]?([^'")]+)['"]?\)/g)]
-    .map(m => m[1])
+    .map(m => sanitizeGoogleFontUrl(m[1]))
     .filter(url => url.includes("fonts.googleapis.com"));
   const [{ html, css: withImages }, fontCss] = await Promise.all([
     inlineFrameImages(source.html, source.css),

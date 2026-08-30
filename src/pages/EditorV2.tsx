@@ -92,7 +92,7 @@ import {
   type LayerStackEdge,
   type LayerStackPlacement,
 } from "../lib/htmlMutations";
-import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
+import { ensureGoogleFontImport, injectGoogleFontIntoFrames, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import {
   persistDesignClipboard,
@@ -3756,7 +3756,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       // majority of designs) produced a file that failed to parse: "This
       // page contains the following errors: error … EntityRef: expecting
       // ';'". escXml turns it into the required `&amp;`.
-      fontLinks.push(`<link rel="stylesheet" href="${escXml(fm[1])}"/>`);
+      fontLinks.push(`<link rel="stylesheet" href="${escXml(sanitizeGoogleFontUrl(fm[1]))}"/>`);
     }
 
     // Matches the balanced url(...) first, THEN the statement-ending `;` —

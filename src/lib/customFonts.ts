@@ -70,7 +70,7 @@ const loadedFonts = new Set<string>();
 export async function loadCustomFontInDocument(font: CustomFont): Promise<void> {
   if (loadedFonts.has(font.id)) return;
   registerCustomFontFamily(font.familyName);
-  const face = new FontFace(font.familyName, `url(${font.publicUrl})`);
+  const face = new FontFace(font.familyName, `url(${font.publicUrl})`, { display: "swap" });
   await face.load();
   document.fonts.add(face);
   loadedFonts.add(font.id);
@@ -86,7 +86,7 @@ const CSS_FORMAT: Record<CustomFont["format"], string> = {
 
 export function customFontFaceCss(font: CustomFont): string {
   const safeFamily = font.familyName.replace(/['\\]/g, "");
-  return `@font-face{font-family:'${safeFamily}';src:url(${font.publicUrl}) format('${CSS_FORMAT[font.format]}')}`;
+  return `@font-face{font-family:'${safeFamily}';src:url(${font.publicUrl}) format('${CSS_FORMAT[font.format]}');font-display:swap}`;
 }
 
 /** Live frames render in shadow roots, which the persisted css only reaches

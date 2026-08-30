@@ -89,6 +89,18 @@ export function ensureGoogleFontImport(css: string, family: string, variants: st
     : `${wanted}\n${css}`;
 }
 
+/**
+ * The deck generator (netlify/functions/deck-generator.mjs) used to hardcode
+ * a wide ital+wght axis onto every family. css2 answers HTTP 400 for families
+ * that lack those axes — Space Grotesk has no italic and stops at 700 — so
+ * the stylesheet never arrives and any fresh page load collapses the design
+ * to its serif fallback. Stripping the axis leaves `family=<Name>` — the one
+ * form css2 always serves, with the family's own default/range.
+ */
+export function sanitizeGoogleFontUrl(url: string): string {
+  return url.split(":ital,wght@0,300..800;1,300..800").join("");
+}
+
 export function loadGoogleFontInDocument(family: string, variants: string[] = []): void {
   const href = googleFontHref(family, variants);
   if (!href) return;
