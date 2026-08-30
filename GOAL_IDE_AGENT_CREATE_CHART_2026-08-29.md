@@ -33,6 +33,7 @@ Post-mortem del deck seed 2026-08-29: las IAs generaban slides con 45–55% de c
 | G4 | lint_design: COVERAGE (<70% zona) · TYPE_FLOOR (<20px en canvas ≥1080) · CHART_MISSING (regex título numérico sin chart) | P1 |
 | G5 | Paleta: leer brand tokens del frame si existen, si no default Futuraria | P2 |
 | G6 | lint_design AI-TELLS (basado en `harness/AI_TELLS.md`): BORDER_LEFT_ACCENT (`border-left` con color de acento ≥3px en cards/quotes) · EMOJI_ICON (🚀💡✨ en labels) · PILL_RADIUS abusivo (>5 elementos `border-radius:999px`) · BUZZWORDS (regex "seamless\|delve\|leverage\|unlock\|empower\|cutting-edge") · GRADIENT_CTA (linear-gradient en botones) | P1 |
+| G7 | lint_design LAYOUT_MONOTONY (Regla #12 VARIETY_FLOOR): si ≥3 frames consecutivos de un deck ≥8 slides comparten el mismo esqueleto (grid-template-columns/rows idéntico tras normalizar en la primera fila de contenido), flag WARN "monotonía defensiva". Excepción: chrome compartido (header/folio) NO cuenta como esqueleto — comparar la zona de cuerpo | P2 |
 
 ## 🗺️ RUTAS
 
@@ -62,4 +63,5 @@ Post-mortem del deck seed 2026-08-29: las IAs generaban slides con 45–55% de c
 - [ ] lint_design sobre deck v1 (tpl_419198f1) → COVERAGE falla; sobre v2 (tpl_8e2c338b) → pasa
 - [ ] lint AI-TELLS: CSS con `border-left:4px solid #d2ff02` → BORDER_LEFT_ACCENT FAIL; mismo frame sin eso → PASS
 - [ ] lint BUZZWORDS sobre un HTML con "Seamless experience" → FAIL con match señalado
+- [ ] lint LAYOUT_MONOTONY: deck v4 Swiss (tpl_dc2d5681) tras normalizar skeletons → WARN monotonía defensiva; deck v3 (tpl_5a5de21b) → PASS
 - [ ] Kanban card_mtewcpgf_doib6k → done tras review
