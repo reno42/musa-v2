@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, type FormEvent } from "react";
+import { initializeBrowserSupabase } from "../lib/supabaseClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { LANDING_FEATURES } from "./landing/FeatureDemos";
 import { HarnessShowcase, AudienceShowcase } from "./landing/MusaHero";
@@ -58,6 +59,142 @@ function LogoChip({ brand }: { brand: BrandLogo }) {
       )}
       <span className="landing-logo-name">{brand.name}</span>
     </span>
+  );
+}
+
+/* Logo de agente para el marquee: grande, sin caja — solo icono + nombre. */
+function MarqueeLogo({ brand }: { brand: BrandLogo }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <span className="landing-marquee-item" title={brand.name}>
+      {imgFailed ? (
+        <span className="landing-logo-fallback">{brand.name.slice(0, 2)}</span>
+      ) : (
+        <img
+          src={`/logos/${brand.id}.png`}
+          alt={brand.name}
+          loading="lazy"
+          onError={() => setImgFailed(true)}
+        />
+      )}
+      <span className="landing-marquee-name">{brand.name}</span>
+    </span>
+  );
+}
+
+/** Carrusel perpetuo de agentes: la lista va duplicada y el track se anima
+ * hasta -50% (exactamente una copia) — loop perfecto sin saltos. */
+function AgentMarquee() {
+  const renderGroup = (hidden: boolean) => (
+    <div className="landing-marquee-group" aria-hidden={hidden || undefined}>
+      {AGENT_LOGOS.map(b => <MarqueeLogo key={b.id} brand={b} />)}
+    </div>
+  );
+  return (
+    <div className="landing-marquee">
+      <div className="landing-marquee-track">
+        {renderGroup(false)}
+        {renderGroup(true)}
+      </div>
+    </div>
+  );
+}
+
+type WaitlistStatus = "idle" | "sending" | "done" | "duplicate" | "error";
+
+/** Lista de espera pública: inserta en waitlist_entries con el cliente browser
+ * (RLS: solo INSERT anónimo). Honeypot "website" atrapa bots con éxito falso. */
+function WaitlistForm() {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [company, setCompany] = useState("");
+  const [honey, setHoney] = useState("");
+  const [status, setStatus] = useState<WaitlistStatus>("idle");
+
+  const handleSubmit = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+    if (status === "sending") return;
+    const cleanEmail = email.trim().toLowerCase();
+    if (!name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setStatus("error");
+      return;
+    }
+    if (honey) { setStatus("done"); return; } // bot — no escribimos nada a la DB
+    setStatus("sending");
+    try {
+      const { client } = await initializeBrowserSupabase();
+      if (!client) throw new Error("supabase-not-configured");
+      const { error } = await client.from("waitlist_entries").insert({
+        name: name.trim().slice(0, 120),
+        email: cleanEmail.slice(0, 254),
+        company: company.trim().slice(0, 160) || null,
+      });
+      if (error) {
+        if (error.code === "23505") { setStatus("duplicate"); return; } // correo repetido
+        throw error;
+      }
+      setStatus("done");
+    } catch (err) {
+      console.error("[waitlist] insert failed", err);
+      setStatus("error");
+    }
+  }, [name, email, company, honey, status]);
+
+  if (status === "done" || status === "duplicate") {
+    return (
+      <div className="landing-waitlist-success liquid-glass">
+        <strong>{status === "duplicate" ? "Ya estabas en la lista." : "Estás dentro."}</strong>{" "}
+        Te avisamos en {email.trim()} en cuanto toque tu turno.
+      </div>
+    );
+  }
+
+  return (
+    <form className="landing-waitlist-form" onSubmit={handleSubmit} noValidate>
+      <input
+        placeholder="Tu nombre"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        maxLength={120}
+        required
+        aria-label="Tu nombre"
+      />
+      <input
+        type="email"
+        placeholder="Correo"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        maxLength={254}
+        required
+        aria-label="Correo"
+      />
+      <input
+        placeholder="Nombre de tu empresa"
+        value={company}
+        onChange={e => setCompany(e.target.value)}
+        maxLength={160}
+        aria-label="Nombre de tu empresa"
+      />
+      {/* Honeypot anti-bots: campo invisible; si lo rellena, falso éxito sin INSERT */}
+      <input
+        type="text"
+        name="website"
+        tabIndex={-1}
+        autoComplete="off"
+        value={honey}
+        onChange={e => setHoney(e.target.value)}
+        style={{ display: "none" }}
+        aria-hidden="true"
+      />
+      <button type="submit" className="landing-waitlist-submit" disabled={status === "sending"}>
+        {status === "sending" ? "Enviando…" : "Unirme a la lista"}
+      </button>
+      {status === "error" && (
+        <div className="landing-waitlist-error">
+          No pudimos registrarte — revisa los datos e intenta de nuevo.
+        </div>
+      )}
+    </form>
   );
 }
 
@@ -425,17 +562,11 @@ export function Landing({ onEnter }: LandingProps) {
       </div>
       </section>
 
-      {/* ═══════════════════ LOGOS: AGENTES + INTEGRACIONES ═══════════════════ */}
-      <section className="landing-logos" aria-label="Agentes e integraciones">
+      {/* ═══════════════════ AGENTES: CARRUSEL PERPETUO ═══════════════════ */}
+      <section className="landing-logos" aria-label="Agentes compatibles vía MCP">
         <div className="landing-section-inner">
-          <div className="landing-logos-row">
-            <span className="landing-logos-label">Tu agente, vía MCP — el que ya usas</span>
-            {AGENT_LOGOS.map(b => <LogoChip key={b.id} brand={b} />)}
-          </div>
-          <div className="landing-logos-row">
-            <span className="landing-logos-label">Integraciones nativas</span>
-            {PROVIDER_LOGOS.map(b => <LogoChip key={b.id} brand={b} />)}
-          </div>
+          <span className="landing-logos-label">Tu agente, vía MCP — el que ya usas</span>
+          <AgentMarquee />
         </div>
       </section>
 
@@ -577,6 +708,31 @@ export function Landing({ onEnter }: LandingProps) {
             Supabase desde{" "}
             <a href="https://github.com/reno42/design" target="_blank" rel="noopener noreferrer">GitHub</a>.
           </p>
+        </div>
+      </section>
+
+      {/* ═══════════════════ INTEGRACIONES NATIVAS (pre-footer) ═══════════════════ */}
+      <section className="landing-logos landing-logos--prefooter" aria-label="Integraciones nativas">
+        <div className="landing-section-inner">
+          <span className="landing-logos-label">Integraciones nativas</span>
+          <div className="landing-logos-row">
+            {PROVIDER_LOGOS.map(b => <LogoChip key={b.id} brand={b} />)}
+          </div>
+        </div>
+      </section>
+
+      {/* ═══════════════════════════ WAITLIST ═══════════════════════════ */}
+      <section id="waitlist" className="landing-section landing-section--alt">
+        <div className="landing-section-inner">
+          <div className="landing-section-badge">Waiting List</div>
+          <h2 className="landing-section-title font-instrument">
+            Entra a la lista de espera.
+          </h2>
+          <p className="landing-section-text">
+            Estamos abriendo Musa por oleadas. Deja tu nombre, correo y empresa y te
+            avisamos en cuanto toque tu turno — sin sorteo, por orden de llegada.
+          </p>
+          <WaitlistForm />
         </div>
       </section>
 

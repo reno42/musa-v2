@@ -4559,6 +4559,113 @@ html, body, #root { height: 100%; width: 100%; }
   flex: none;
 }
 .landing-logo-name { font-size: 12px; color: rgba(255, 255, 255, 0.6); white-space: nowrap; }
+
+/* ── Marquee perpetuo de agentes: logos grandes, sin caja. Dos copias de la
+ * lista en el track; translateX(-50%) = exactamente una copia → loop perfecto.
+ * El mask hace fade en los bordes; hover pausa y revela el color real. ── */
+.landing-marquee {
+  overflow: hidden;
+  margin-top: 16px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+}
+.landing-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: landing-marquee-scroll 38s linear infinite;
+}
+.landing-marquee:hover .landing-marquee-track { animation-play-state: paused; }
+.landing-marquee-group {
+  display: flex;
+  align-items: center;
+  gap: 52px;
+  padding-right: 52px;
+}
+.landing-marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  cursor: default;
+}
+.landing-marquee-item img {
+  height: 32px;
+  width: auto;
+  max-width: 140px;
+  object-fit: contain;
+  filter: grayscale(1) brightness(1.45);
+  opacity: 0.8;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+.landing-marquee-item:hover img { filter: none; opacity: 1; }
+.landing-marquee-item .landing-logo-fallback { width: 32px; height: 32px; font-size: 11px; border-radius: 7px; }
+.landing-marquee-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  transition: color 0.25s ease;
+}
+.landing-marquee-item:hover .landing-marquee-name { color: rgba(255, 255, 255, 0.92); }
+@keyframes landing-marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-marquee-track { animation: none; }
+}
+
+/* ── Integraciones pre-footer + lista de espera ── */
+.landing-logos--prefooter { padding: 10px 0 56px; }
+.landing-waitlist-form {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.landing-waitlist-form input {
+  width: 240px;
+  max-width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #ffffff;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.landing-waitlist-form input::placeholder { color: rgba(255, 255, 255, 0.35); }
+.landing-waitlist-form input:focus {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(255, 255, 255, 0.06);
+}
+.landing-waitlist-submit {
+  padding: 12px 26px;
+  border-radius: 12px;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  background: rgba(139, 92, 246, 0.18);
+  color: #ddd6fe;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.landing-waitlist-submit:hover { background: rgba(139, 92, 246, 0.3); transform: translateY(-1px); }
+.landing-waitlist-submit:disabled { opacity: 0.6; cursor: wait; transform: none; }
+.landing-waitlist-error { width: 100%; text-align: center; font-size: 12px; color: #fca5a5; }
+.landing-waitlist-success {
+  margin: 28px auto 0;
+  max-width: 460px;
+  padding: 18px 22px;
+  border-radius: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+.landing-waitlist-success strong { color: #c4b5fd; }
 .landing-download-row {
   margin-top: 16px;
   display: flex;
