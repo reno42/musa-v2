@@ -1540,11 +1540,16 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       <div data-tour="templates-grid" style={{
         flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
         background: "#06080d",
+        // Flow mode: flex column so the cover stage sizes itself to the height
+        // that actually remains after the filter bar — no overflow, no scroll.
+        display: cardMode === "flow" ? "flex" : undefined,
+        flexDirection: "column",
       }}>
         {/* ── Filter bar: brand dropdown · date range · zoom slider ── */}
         <div style={{
           display: "flex", alignItems: "center", gap: 12, marginBottom: 18,
           flexWrap: "wrap", padding: "0 0 10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
+          flexShrink: 0,
         }}>
           {/* Brand dropdown */}
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>
@@ -1832,7 +1837,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             </button>
           </div>
         ) : cardMode === "flow" ? (
-          <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+          <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
             <CoverFlow
               items={templates.map(t => ({
                 id: t.id,
