@@ -62,6 +62,27 @@ test("css2 wire form keeps axis punctuation raw and a 400 heals with a bare-fami
   assert.match(adapter, /searchParams\.append/);
 });
 
+test("the wire form to the proxy percent-encodes css2 axis specials", async () => {
+  const { proxiedFontCssUrl } = await import("../src/lib/googleFonts.ts");
+  // Netlify's gateway splits query params on ';' too — a raw semicolon never
+  // survives the trip (family=Roboto:wght@400;700 arrived as a family plus a
+  // bogus "700" key and 400ed at validation, before any upstream fetch).
+  const tuple = "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap";
+  assert.equal(proxiedFontCssUrl(tuple), "/api/fonts/css2?family=Roboto%3Awght%40400%3B700&display=swap");
+  // Bare families keep the wire form they always had.
+  const bare = "https://fonts.googleapis.com/css2?family=Nunito+Sans&display=swap";
+  assert.equal(proxiedFontCssUrl(bare), "/api/fonts/css2?family=Nunito+Sans&display=swap");
+});
+
+test("the Netlify adapter rebuilds the query from rawUrl, splitting ONLY on '&'", () => {
+  const adapter = read("netlify/functions/api.mjs");
+  assert.match(adapter, /event\.rawUrl/);
+  assert.match(adapter, /rawQuery\.split\("&"\)/);
+  assert.match(adapter, /decodeParam/);
+  // Fallback: an undecoded multiValue '+' must not be re-encoded as %2B.
+  assert.match(adapter, /replace\(\/\\\+\/g, " "\)/);
+});
+
 test("the load diagnostic logs the persisted import URLs verbatim", () => {
   // Family names alone hid this bug for a whole day — a poisoned
   // `:ital@0;1` import reads as a clean "Instrument Serif" in the log.
@@ -94,7 +115,7 @@ test("zero direct-to-Google fetches remain: shell, previews and failure reportin
   // fonts.googleapis.com <link> in index.html died on restrictive networks
   // in silence (and showed up direct in the resource timing capture).
   const shell = read("index.html");
-  assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif:ital@0;1&display=swap"/);
+  assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif%3Aital%400%3B1&display=swap"/);
   assert.doesNotMatch(shell, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
   // HtmlCanvas srcdoc: proxied <link>s in the head, inert @imports stripped,
   // CSP without Google hosts.

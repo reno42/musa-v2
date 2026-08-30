@@ -32,12 +32,31 @@ function createRequest(event) {
   const { path, httpMethod, headers, queryStringParameters } = event;
 
   const url = new URL(path, "http://localhost");
-  // Repeated params (a css2 sheet asks family= per font) collapse to their
-  // last value in queryStringParameters — multiValue keeps every repetition,
-  // so multi-family imports survive the trip to Express whole.
-  if (event.multiValueQueryStringParameters) {
+  // Netlify's gateway splits query params on ';' as well as '&', which
+  // dismembers css2 axis tuples (family=Roboto:wght@400;700 arrives as a
+  // family plus a bogus "700" key the API rightly rejects). rawUrl is the
+  // untouched wire form: rebuild the query splitting ONLY on '&'.
+  const decodeParam = (s) => {
+    try { return decodeURIComponent(s.replace(/\+/g, " ")); } catch { return s; }
+  };
+  const rawQuery = typeof event.rawUrl === "string" && event.rawUrl.includes("?")
+    ? event.rawUrl.slice(event.rawUrl.indexOf("?") + 1)
+    : null;
+  if (rawQuery) {
+    for (const pair of rawQuery.split("&")) {
+      if (!pair) continue;
+      const eq = pair.indexOf("=");
+      url.searchParams.append(
+        decodeParam(eq === -1 ? pair : pair.slice(0, eq)),
+        decodeParam(eq === -1 ? "" : pair.slice(eq + 1)),
+      );
+    }
+  } else if (event.multiValueQueryStringParameters) {
+    // Fallback: multiValue keeps every repetition (multi-family css2 sheets),
+    // but its values may arrive undecoded — normalize '+' so it is not
+    // re-encoded as %2B inside family names.
     for (const [k, values] of Object.entries(event.multiValueQueryStringParameters)) {
-      for (const v of values || []) url.searchParams.append(k, v);
+      for (const v of values || []) url.searchParams.append(k, String(v).replace(/\+/g, " "));
     }
   } else if (queryStringParameters) {
     for (const [k, v] of Object.entries(queryStringParameters)) {

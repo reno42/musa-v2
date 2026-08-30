@@ -117,7 +117,18 @@ export function sanitizeGoogleFontUrl(url: string): string {
 export function proxiedFontCssUrl(url: string): string {
   const canonical = sanitizeGoogleFontUrl(url);
   const prefix = "https://fonts.googleapis.com/css2?";
-  if (canonical.startsWith(prefix)) return "/api/fonts/css2?" + canonical.slice(prefix.length);
+  if (canonical.startsWith(prefix)) {
+    // css2 axis tuples carry raw ';', ':', '@', ',' — the Netlify gateway
+    // splits query params on ';' too, so a raw semicolon never reaches the
+    // API intact. Percent-encode the specials; both sides decode identically
+    // ('%' and '+' are left alone: they are already wire-legal here).
+    const query = canonical.slice(prefix.length)
+      .replace(/;/g, "%3B")
+      .replace(/:/g, "%3A")
+      .replace(/@/g, "%40")
+      .replace(/,/g, "%2C");
+    return "/api/fonts/css2?" + query;
+  }
   return canonical;
 }
 
