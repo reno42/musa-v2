@@ -127,7 +127,13 @@ export function GoogleFontPicker({ value, onChange }: Props) {
   };
 
   const selectCustom = async (f: CustomFont) => {
-    try { await loadCustomFontInDocument(f); } catch { /* already registered or cached — the css still applies */ }
+    try {
+      await loadCustomFontInDocument(f);
+    } catch (err: any) {
+      // The css still applies, but a face that failed (bucket down, corrupt
+      // file) renders text as fallback — say so instead of swallowing it.
+      setCustomError(err?.message || `No se pudo cargar «${f.familyName}»`);
+    }
     onChange(f.familyName, { custom: f });
     setOpen(false);
     setSearch("");

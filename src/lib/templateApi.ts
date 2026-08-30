@@ -28,17 +28,19 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
     const hasContent = (d: any) =>
       Boolean(d?.html) || Boolean(d?.css) || (d?.frames?.length > 0) || (d?.canvasObjects?.length > 0);
 
-    // If localStorage has a newer version with content, prefer it
-    // Grace window: server clock is typically 200-800ms ahead of client clock.
-    // Treat timestamps within 5s of each other as equal — prefer localStorage
-    // in that case because it has the user's most recent edits.
+    // If localStorage has a newer-or-equal version with content, prefer it.
+    // Strictly newer-or-equal — NO ±grace window. The old |diff| < 5s clause
+    // let a fossil draft from a previous session shadow newer server data (an
+    // MCP write, another device's save): the user saw LOCAL state as if it
+    // were the cloud's, and a later autosave persisted the stale content back
+    // over the server. Equal timestamps still prefer local, so a read during
+    // the ~2s PUT window doesn't flicker back to pre-save content.
     if (localData && apiData) {
       const apiUpdated = (apiData as any).metadata?.updatedAt || "";
       const localUpdated = localData.updatedAt || "";
       const apiMs = new Date(apiUpdated).getTime() || 0;
       const localMs = new Date(localUpdated).getTime() || 0;
-      const GRACE_MS = 5000;
-      const localIsNewer = (localMs > apiMs) || (Math.abs(localMs - apiMs) < GRACE_MS);
+      const localIsNewer = localMs >= apiMs;
       if (localIsNewer && hasContent(localData)) {
         return {
           ...apiData,
@@ -50,6 +52,11 @@ export async function getTemplate(id: string): Promise<TemplateFull | null> {
           variables: localData.variables || (apiData as any).variables,
           name: localData.name || apiData.name,
         } as TemplateFull;
+      } else if (hasContent(localData)) {
+        // Server is strictly newer: the draft is superseded. It stays on disk
+        // (it may be the only copy of a failed-PUT save) but the cloud wins,
+        // and the next successful save replaces the fossil.
+        console.warn(`[templateApi] draft local (${localUpdated}) más viejo que el servidor (${apiUpdated}) — manda la nube`);
       }
     }
 

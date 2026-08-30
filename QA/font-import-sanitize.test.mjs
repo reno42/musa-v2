@@ -24,7 +24,10 @@ test("sanitizeGoogleFontUrl strips the deck axis signature", async () => {
 
 test("every css2 consumer routes rendering through the same-origin proxy", () => {
   const frame = read("src/components/DesignFrame.tsx");
-  assert.match(frame, /hrefs\.push\(new URL\(proxiedFontCssUrl\(m\[1\]\), document\.baseURI\)\.href\)/);
+  // Extraction now lives in lib/googleFonts (extractFontCssLinks), shared
+  // with HtmlCanvas — DesignFrame only calls it.
+  assert.match(frame, /extractFontCssLinks\(frame\.css\)/);
+  assert.doesNotMatch(frame, /fonts\.googleapis\.com/);
   const capture = read("src/lib/frameCapture.ts");
   assert.match(capture, /\.map\(m => proxiedFontCssUrl\(m\[1\]\)\)/);
   const agent = read("src/lib/agentBridge.ts");

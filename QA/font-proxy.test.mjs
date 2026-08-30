@@ -51,9 +51,43 @@ test("css2 and gstatic are public — <link> tags cannot carry auth headers", ()
 test("the loaders render through the proxy while persistence stays canonical", () => {
   const fonts = read("src/lib/googleFonts.ts");
   assert.match(fonts, /export function proxiedFontCssUrl/);
+  assert.match(fonts, /export function extractFontCssLinks/);
   assert.match(fonts, /proxiedFontCssUrl\(googleFontHref\(family, variants\)\)/);
   // ensureGoogleFontImport — what gets PERSISTED — keeps the canonical host.
   assert.match(fonts, /wanted = `@import url\('\$\{href\}'\);`/);
   const gen = read("netlify/functions/deck-generator.mjs");
   assert.doesNotMatch(gen, /api\/fonts/);
+});
+
+test("zero direct-to-Google fetches remain: shell, previews and failure reporting", () => {
+  // The app shell's brand font rides the proxy too — the old direct
+  // fonts.googleapis.com <link> in index.html died on restrictive networks
+  // in silence (and showed up direct in the resource timing capture).
+  const shell = read("index.html");
+  assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif:ital@0;1&display=swap"/);
+  assert.doesNotMatch(shell, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
+  // HtmlCanvas srcdoc: proxied <link>s in the head, inert @imports stripped,
+  // CSP without Google hosts.
+  const canvas = read("src/components/HtmlCanvas.tsx");
+  assert.match(canvas, /extractFontCssLinks\(css\)/);
+  assert.match(canvas, /cssWithoutImports = css\.replace\(\/@import/);
+  assert.doesNotMatch(canvas, /fonts\.googleapis\.com/);
+  // Every font <link> is watched — a dead stylesheet speaks up (console +
+  // editor toast) instead of silently collapsing to the fallback font.
+  const fonts = read("src/lib/googleFonts.ts");
+  assert.match(fonts, /export function watchFontLink/);
+  assert.match(fonts, /link\.onerror = /);
+  assert.match(fonts, /export function onFontLoadFailure/);
+  const frame = read("src/components/DesignFrame.tsx");
+  assert.match(frame, /watchFontLink\(link\)/);
+  const editor = read("src/pages/EditorV2.tsx");
+  assert.match(editor, /onFontLoadFailure\(/);
+  assert.match(editor, /addToast\(`No se pudo cargar la fuente/);
+});
+
+test("the localStorage draft never shadows newer server data", () => {
+  const api = read("src/lib/templateApi.ts");
+  assert.match(api, /localIsNewer = localMs >= apiMs/);
+  assert.doesNotMatch(api, /Math\.abs\(localMs - apiMs\)/);
+  assert.doesNotMatch(api, /GRACE_MS/);
 });

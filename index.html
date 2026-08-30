@@ -6,9 +6,10 @@
     <meta name="referrer" content="no-referrer" />
     <title>Musa by Futuraria — Diseña con tu IA, MCP-first</title>
     <meta name="description" content="Tu workspace de diseño MCP-first: editor visual en tiempo real, 148+ herramientas MCP, batch, Kanban de tareas y second brain de marcas. Conecta Claude, Codex, Hermes, OpenClaw o Kimi y diseña a la vez con tu equipo. Tu data, en tu cuenta." />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <!-- Brand font of the app shell (Dashboard/CoverFlow titles) — served
+         through the same-origin proxy like every other render fetch, so the
+         UI chrome never depends on the browser reaching Google either. -->
+    <link href="/api/fonts/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
     <link rel="alternate" type="application/json" href="/.well-known/mcp.json" title="MCP Discovery" />
     <meta name="mcp-endpoint" content="/mcp" />
     <meta name="mcp-auth" content="x-api-key header required for tools/call" />

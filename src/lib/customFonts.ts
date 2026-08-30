@@ -71,7 +71,13 @@ export async function loadCustomFontInDocument(font: CustomFont): Promise<void> 
   if (loadedFonts.has(font.id)) return;
   registerCustomFontFamily(font.familyName);
   const face = new FontFace(font.familyName, `url(${font.publicUrl})`, { display: "swap" });
-  await face.load();
+  // A dead bucket URL rejects into whatever catch is nearest — historically
+  // the picker's swallow — and the family silently rendered as fallback.
+  try {
+    await face.load();
+  } catch {
+    throw new Error(`No se pudo cargar «${font.familyName}» desde el almacenamiento`);
+  }
   document.fonts.add(face);
   loadedFonts.add(font.id);
 }

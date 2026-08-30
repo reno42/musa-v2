@@ -128,6 +128,41 @@ function absoluteFontUrl(href: string): string {
   return new URL(href, document.baseURI).href;
 }
 
+/**
+ * Every @import url(...) in css — Google Fonts, Phosphor icons, any CDN — as
+ * absolute, same-origin-proxied hrefs ready for <link rel="stylesheet">.
+ * DesignFrame and the HtmlCanvas srcdoc share this, so a css2 URL can never
+ * reach the network un-proxied through a second implementation.
+ */
+export function extractFontCssLinks(css: string): string[] {
+  const re = /@import\s+url\(['"]?(https?:\/\/[^'"]+)['"]?\)/g;
+  const hrefs: string[] = [];
+  let m;
+  while ((m = re.exec(css)) !== null) hrefs.push(new URL(proxiedFontCssUrl(m[1]), document.baseURI).href);
+  return hrefs;
+}
+
+/** A font stylesheet that never arrived used to fail in total silence — the
+ *  design just collapsed to its serif fallback with zero console output.
+ *  Every font <link> is watched and reports through here: console.warn
+ *  always, plus the editor toast while onFontLoadFailure is wired. */
+export interface FontLoadFailure { family: string; href: string }
+
+let fontFailureListener: ((failure: FontLoadFailure) => void) | null = null;
+
+export function onFontLoadFailure(listener: ((failure: FontLoadFailure) => void) | null): void {
+  fontFailureListener = listener;
+}
+
+/** Attach to every font <link> so a dead stylesheet speaks up. */
+export function watchFontLink(link: HTMLLinkElement): void {
+  link.onerror = () => {
+    const family = decodeURIComponent((link.href.match(/family=([^&]+)/)?.[1] || "").replace(/\+/g, " ")) || "desconocida";
+    console.warn(`[fonts] No se pudo cargar la hoja de la fuente "${family}" (${link.href})`);
+    fontFailureListener?.({ family, href: link.href });
+  };
+}
+
 export function loadGoogleFontInDocument(family: string, variants: string[] = []): void {
   const href = proxiedFontCssUrl(googleFontHref(family, variants));
   if (!href) return;
@@ -145,6 +180,7 @@ export function loadGoogleFontInDocument(family: string, variants: string[] = []
   link.id = id;
   link.rel = "stylesheet";
   link.href = resolved;
+  watchFontLink(link);
   document.head.appendChild(link);
 }
 
@@ -163,6 +199,7 @@ export function injectGoogleFontIntoFrames(family: string, variants: string[] = 
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = resolved;
+    watchFontLink(link);
     shadow.insertBefore(link, shadow.firstChild);
   }
 }
