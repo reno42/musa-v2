@@ -127,7 +127,10 @@ export function proxiedFontCssUrl(url: string): string {
       .replace(/:/g, "%3A")
       .replace(/@/g, "%40")
       .replace(/,/g, "%2C");
-    return "/api/fonts/css2?" + query;
+    // fv (font generation) re-keys every stylesheet URL when the embedded
+    // gstatic generation changes — edge-cached css2 bodies up to 7 days old
+    // would keep handing out the previous generation's font-file URLs.
+    return "/api/fonts/css2?" + query + "&fv=2";
   }
   return canonical;
 }
@@ -171,12 +174,22 @@ const PREINSTALLED_FAMILIES = new Set([
 ]);
 
 export function extractReferencedFontFamilies(css: string): string[] {
+  const source = String(css || "");
+  // Families with an @font-face declared in this very css are self-hosted
+  // (user uploads persist their @font-face here): their bytes come from that
+  // src, never from Google — asking would 400 and spam the failure toast.
+  const selfHosted = new Set<string>();
+  for (const face of source.matchAll(/@font-face\s*\{[^}]*\}/g)) {
+    for (const fam of face[0].matchAll(/font-family\s*:\s*(['"]?)([^;}'"]+)\1/g)) {
+      selfHosted.add(fam[2].trim().toLowerCase());
+    }
+  }
   const families = new Set<string>();
-  for (const m of String(css || "").matchAll(/font-family\s*:\s*([^;}]+)/g)) {
+  for (const m of source.matchAll(/font-family\s*:\s*([^;}]+)/g)) {
     const value = m[1].replace(/!important/gi, "");
     for (const part of splitStack(value)) {
       const family = primaryFamily(part);
-      if (family && needsWebfont(part) && !PREINSTALLED_FAMILIES.has(family.toLowerCase())) {
+      if (family && needsWebfont(part) && !selfHosted.has(family.toLowerCase()) && !PREINSTALLED_FAMILIES.has(family.toLowerCase())) {
         families.add(family);
       }
     }

@@ -90,6 +90,11 @@ function requestOrigin(req: Request): string {
 googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response) => {
   const entries: [string, string][] = [];
   for (const [key, raw] of Object.entries(req.query)) {
+    // `fv` is this pipeline's own stylesheet generation: appended by
+    // proxiedFontCssUrl so a bump re-keys every browser/edge-cached css2
+    // entry, whose embedded font-file URLs point at the previous gstatic
+    // generation. Never forwarded to Google.
+    if (key === "fv") continue;
     if (!ALLOWED_CSS2_PARAMS.has(key)) {
       res.status(400).set("Cache-Control", "no-store").json({ success: false, error: `Unsupported css2 parameter: ${key}` });
       return;
@@ -149,7 +154,10 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
   // needs a second, direct connection to Google either.
   const body = (await upstream.text()).replaceAll(
     "https://fonts.gstatic.com",
-    `${requestOrigin(req)}/api/fonts/gstatic`,
+    // The `/v1` generation segment: bumping it re-keys every font-file URL
+    // (browser and edge caches alike, both serving immutable entries that
+    // would otherwise outlive any fix) without touching Google's real paths.
+    `${requestOrigin(req)}/api/fonts/gstatic/v1`,
   );
 
   if (css2Cache.size >= CSS2_CACHE_MAX) {
@@ -164,7 +172,10 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
 }));
 
 googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Response) => {
-  const path = (req.params as Record<string, string>)["0"];
+  let path = (req.params as Record<string, string>)["0"] || "";
+  // Optional generation prefix (…/gstatic/v1/s/…) from the css2 rewrite:
+  // strip it before validating — it exists only to re-key cache entries.
+  path = path.replace(/^v\d+\//, "");
   if (!path || !GSTATIC_FILE.test(path)) {
     res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Not a Google Fonts static file path" });
     return;
@@ -172,7 +183,13 @@ googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Res
 
   let upstream: Awaited<ReturnType<typeof fetch>>;
   try {
-    upstream = await fetch(UPSTREAM_GSTATIC + path, { headers: { "user-agent": BROWSER_UA } });
+    // `accept-encoding: identity` — a compressed hop (br/zstd) between Google
+    // and the runtime is how a glyph file arrives as non-font bytes: the
+    // browser's OTS then rejects it ("Failed to convert WOFF 2.0 font to
+    // SFNT") and the design collapses to the fallback font.
+    upstream = await fetch(UPSTREAM_GSTATIC + path, {
+      headers: { "user-agent": BROWSER_UA, "accept-encoding": "identity" },
+    });
   } catch {
     res.status(502).set("Cache-Control", "no-store").json({ success: false, error: "Google Fonts static host unreachable" });
     return;
@@ -183,8 +200,15 @@ googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Res
     return;
   }
 
+  const ext = path.slice(path.lastIndexOf(".") + 1);
   // Versioned glyph files never change — the browser caches them forever.
-  res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  // `private` keeps every shared cache (Netlify's edge included) out of the
+  // binary path: a poisoned immutable edge entry survives any deploy, while
+  // the function itself serves the same valid wOF2 bytes every time. MIME
+  // comes from the extension (never a passthrough) and nosniff keeps
+  // intermediaries from re-interpreting the binary as text.
+  res.setHeader("Content-Type", `font/${ext}`);
+  res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   res.send(Buffer.from(await upstream.arrayBuffer()));
 }));

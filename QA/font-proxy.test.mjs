@@ -16,10 +16,10 @@ const read = (p) => readFileSync(resolve(root, p), "utf-8");
 test("proxiedFontCssUrl rewrites css2 to same-origin and leaves everything else", async () => {
   const { proxiedFontCssUrl } = await import("../src/lib/googleFonts.ts");
   const canonical = "https://fonts.googleapis.com/css2?family=Nunito+Sans&display=swap";
-  assert.equal(proxiedFontCssUrl(canonical), "/api/fonts/css2?family=Nunito+Sans&display=swap");
+  assert.equal(proxiedFontCssUrl(canonical), "/api/fonts/css2?family=Nunito+Sans&display=swap&fv=2");
   // The deck-axis signature is stripped AND proxied in one hop.
   const broken = "https://fonts.googleapis.com/css2?family=Space+Grotesk:ital,wght@0,300..800;1,300..800&display=swap";
-  assert.equal(proxiedFontCssUrl(broken), "/api/fonts/css2?family=Space+Grotesk&display=swap");
+  assert.equal(proxiedFontCssUrl(broken), "/api/fonts/css2?family=Space+Grotesk&display=swap&fv=2");
   // Non-Google @imports (icon CDNs) pass through untouched.
   const icons = "https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css";
   assert.equal(proxiedFontCssUrl(icons), icons);
@@ -34,6 +34,14 @@ test("the proxy route is strict: allowlisted params, versioned gstatic files, ca
   assert.match(route, /GSTATIC_FILE = \/\^s/);
   assert.match(route, /woff2\|woff\|ttf\|otf/);
   assert.match(route, /"https:\/\/fonts\.gstatic\.com",/);
+  // Glyph files travel uncompressed and carry an explicit MIME: a compressed
+  // hop between Google and the runtime is how a woff2 arrives as non-font
+  // bytes ("OTS parsing error"), and immutable SHARED caching froze the
+  // poison — so gstatic responses are browser-private now.
+  assert.match(route, /"accept-encoding": "identity"/);
+  assert.match(route, /gstatic\/v1/);
+  assert.match(route, /private, max-age=31536000, immutable/);
+  assert.match(route, /X-Content-Type-Options/);
   assert.match(route, /x-forwarded-proto/);
   assert.match(route, /"user-agent": BROWSER_UA/);
   assert.match(route, /max-age=31536000, immutable/);
@@ -68,10 +76,10 @@ test("the wire form to the proxy percent-encodes css2 axis specials", async () =
   // survives the trip (family=Roboto:wght@400;700 arrived as a family plus a
   // bogus "700" key and 400ed at validation, before any upstream fetch).
   const tuple = "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap";
-  assert.equal(proxiedFontCssUrl(tuple), "/api/fonts/css2?family=Roboto%3Awght%40400%3B700&display=swap");
+  assert.equal(proxiedFontCssUrl(tuple), "/api/fonts/css2?family=Roboto%3Awght%40400%3B700&display=swap&fv=2");
   // Bare families keep the wire form they always had.
   const bare = "https://fonts.googleapis.com/css2?family=Nunito+Sans&display=swap";
-  assert.equal(proxiedFontCssUrl(bare), "/api/fonts/css2?family=Nunito+Sans&display=swap");
+  assert.equal(proxiedFontCssUrl(bare), "/api/fonts/css2?family=Nunito+Sans&display=swap&fv=2");
 });
 
 test("the Netlify adapter rebuilds the query from rawUrl, splitting ONLY on '&'", () => {
@@ -96,6 +104,10 @@ test("families referenced in font-family declarations load even without an impor
     "span { font-family: Nunito; }",
   ].join("\n");
   assert.deepEqual(extractReferencedFontFamilies(css), ["Nunito Sans", "Matcha Mint", "Nunito"]);
+  // Self-hosted families (a persisted @font-face) render from their own src —
+  // asking Google for a user upload 400s and spams the load-failure toast.
+  const selfHosted = "@font-face { font-family: 'Matcha Mint'; src: url(https://example.supabase.co/storage/v1/object/public/custom-fonts/u/f.woff2); } p { font-family: 'Matcha Mint', sans-serif; }";
+  assert.deepEqual(extractReferencedFontFamilies(selfHosted), []);
   // System stacks and generics never go to a webfont host.
   assert.deepEqual(extractReferencedFontFamilies("a { font-family: Helvetica, Arial, sans-serif; }"), []);
   // The renderers inject the union (imports + referenced), not imports alone.
@@ -141,7 +153,7 @@ test("zero direct-to-Google fetches remain: shell, previews and failure reportin
   // fonts.googleapis.com <link> in index.html died on restrictive networks
   // in silence (and showed up direct in the resource timing capture).
   const shell = read("index.html");
-  assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif%3Aital%400%3B1&display=swap"/);
+  assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif%3Aital%400%3B1&display=swap&fv=2"/);
   assert.doesNotMatch(shell, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
   // HtmlCanvas srcdoc: proxied <link>s in the head (imports PLUS every
   // family the rules reference), inert @imports stripped, CSP without Google
