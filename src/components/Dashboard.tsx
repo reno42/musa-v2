@@ -1538,7 +1538,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Sub-tab content */}
           {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
-        flex: 1, overflowY: cardMode === "flow" ? "hidden" : "auto", padding: "16px 20px 20px 20px",
+        flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
         background: "#06080d",
       }}>
         {/* ── Filter bar: brand dropdown · date range · zoom slider ── */}

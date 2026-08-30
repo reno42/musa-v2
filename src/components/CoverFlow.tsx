@@ -59,6 +59,10 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
   const stageRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef(new Map<number, HTMLDivElement>());
   const [center, setCenter] = useState(0);
+  // Measured stage height → the whole geometry scales to the available space
+  // instead of overflowing it: full cards visible at any window size.
+  const [stageH, setStageH] = useState(flexible ? 0 : height);
+  const scaleRef = useRef(1);
 
   // Motion state lives in refs — the rAF loop reads/writes without re-rendering.
   const posRef = useRef(0);
@@ -77,13 +81,14 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
 
   /** Apply the coverflow transform for card index i at continuous position p. */
   const applyTransform = useCallback((el: HTMLDivElement, i: number, p: number) => {
+    const s = scaleRef.current;
     const d = i - p;
     const ad = Math.abs(d);
     const sign = d < 0 ? -1 : 1;
-    const x = ad <= 1 ? d * CENTER_SPACING : sign * (CENTER_SPACING + (ad - 1) * SIDE_SPACING);
+    const x = ad <= 1 ? d * CENTER_SPACING * s : sign * (CENTER_SPACING + (ad - 1) * SIDE_SPACING) * s;
     const rot = -clamp(d, -1, 1) * SIDE_ANGLE;
-    const z = ad <= 1 ? CENTER_POP_Z - ad * (CENTER_POP_Z - SIDE_Z) : SIDE_Z;
-    const scale = 1 - Math.min(ad, 1) * 0.16;
+    const z = ad <= 1 ? (CENTER_POP_Z - ad * (CENTER_POP_Z - SIDE_Z)) * s : SIDE_Z * s;
+    const scale = (1 - Math.min(ad, 1) * 0.16) * s;
     const fadeStart = WINDOW - 1.5;
     const opacity = ad <= fadeStart ? 1 : clamp(1 - (ad - fadeStart) / 1.5, 0, 1);
     el.style.transform = `translate(-50%, -50%) translate3d(${x}px, 0, ${z}px) rotateY(${rot}deg) scale(${scale})`;
@@ -135,6 +140,17 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
     onIndexChangeRef.current?.(0);
   }, [itemsLen]);
 
+  // Track the stage height so the geometry shrinks with the available space.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const measure = () => setStageH(stage.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, [flexible, height]);
+
   // ── Pointer drag (mouse / touch / pen unified) ──
   useEffect(() => {
     const stage = stageRef.current;
@@ -173,10 +189,10 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
       if (Math.abs(dx) > 5) moved = true;
       const now = performance.now();
       const dt = Math.max(1, now - lastT);
-      velocity = 0.8 * velocity + 0.2 * (-(ev.clientX - lastX) / DRAG_PX_PER_INDEX / dt);
+      velocity = 0.8 * velocity + 0.2 * (-(ev.clientX - lastX) / (DRAG_PX_PER_INDEX * scaleRef.current) / dt);
       lastX = ev.clientX; lastT = now;
       // Direct manipulation: the flow tracks the finger 1:1 while dragging.
-      const p = clamp(startPos - dx / DRAG_PX_PER_INDEX, -0.49, lenRef.current - 0.51);
+      const p = clamp(startPos - dx / (DRAG_PX_PER_INDEX * scaleRef.current), -0.49, lenRef.current - 0.51);
       posRef.current = p;
       targetRef.current = p;
     };
@@ -227,7 +243,7 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
       ev.preventDefault();
       const unit = ev.deltaMode === 1 ? 16 : 1; // lines → px
       const raw = (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY) * unit;
-      targetRef.current = clamp(targetRef.current + raw / 220, 0, lenRef.current - 1);
+      targetRef.current = clamp(targetRef.current + raw / (220 * scaleRef.current), 0, lenRef.current - 1);
       window.clearTimeout(snapTimer);
       snapTimer = window.setTimeout(() => {
         targetRef.current = clamp(Math.round(targetRef.current), 0, lenRef.current - 1);
@@ -267,6 +283,13 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
     };
     return () => { delete (window as any).__coverFlowProbe; };
   }, []);
+
+  // Content scale: the half-card above the 45% anchor must fit with 8px of
+  // breathing room. Scale 1 at the designed height, proportionally smaller on
+  // short stages — everything stays visible, nothing needs scrolling.
+  const availH = stageH || height;
+  const s = clamp((0.45 * availH - 8) / (CARD_H / 2), 0.35, 1);
+  scaleRef.current = s;
 
   if (itemsLen === 0) return null;
 
@@ -317,7 +340,7 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
             }}
             style={{
               position: "absolute", left: "50%", top: "45%",
-              width: CARD_W, height: CARD_H,
+              width: CARD_W * s, height: CARD_H * s,
               willChange: "transform, opacity",
               transformStyle: "preserve-3d",
               cursor: "pointer",
@@ -336,7 +359,7 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible
                   justifyContent: "center", padding: 16, boxSizing: "border-box", textAlign: "center",
                   background: `linear-gradient(160deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.01) 60%), ${item.background || "#0d0d1a"}`,
                 }}>
-                  <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 15, fontFamily: "'Instrument Serif', serif", lineHeight: 1.4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.35)", fontSize: Math.max(11, 15 * s), fontFamily: "'Instrument Serif', serif", lineHeight: 1.4 }}>
                     {item.name}
                   </span>
                 </div>
