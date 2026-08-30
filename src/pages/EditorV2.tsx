@@ -817,15 +817,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         if (fontFamilies.length > 0) {
           console.info(`[fonts] el css pide: ${fontFamilies.join(", ")} — inyectadas como links same-origin (api/fonts/css2)`);
         }
-        // Family names alone hide the axis tuples — a poisoned
-        // `:ital@0;1` riding in a pasted import reads as a clean
-        // "Instrument Serif" above. The verbatim URLs are what the proxy
-        // will actually be asked for; log them too.
-        const fontImports = [...new Set(fontSources
-          .flatMap((f: any) => [...String(f.css || "").matchAll(/@import\s+url\(['"]?([^'")]+)/g)].map((m: RegExpMatchArray) => m[1])))];
-        if (fontImports.length > 0) {
-          console.info(`[fonts] imports persistidos:\n${fontImports.join("\n")}`);
-        }
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
         // is a valid zero-frame file (REQ-022) — loading it must not resurrect

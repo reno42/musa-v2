@@ -45,37 +45,6 @@ const CSS2_CACHE_MAX = 300;
  *  every editor load re-requests the same families across sessions. */
 const css2Cache = new Map<string, { body: string; at: number }>();
 
-/** Re-emit a VALIDATED css2 value in css2's own wire form: spaces as `+`,
- * axis punctuation (:@;,) left raw. URLSearchParams percent-encodes :@; and
- * the serverless runtime re-encodes the outgoing %3B once more, so Google
- * reads a literal "%3B" inside the family name and answers 400 — that is
- * how every multi-value axis tuple (…@0;1, …@400;700) died in production
- * while single-value tuples (…@0, …@400) passed. Raw specials are legal in
- * a query and are exactly what css2 expects. */
-function encodeCss2Value(value: string): string {
-  return encodeURIComponent(value)
-    .replace(/%20/g, "+")
-    .replace(/%3A/g, ":")
-    .replace(/%40/g, "@")
-    .replace(/%3B/g, ";")
-    .replace(/%2C/g, ",");
-}
-
-function buildCss2Query(entries: [string, string][]): string {
-  return entries.map(([key, value]) => `${key}=${encodeCss2Value(value)}`).join("&");
-}
-
-/** css2 answers are User-Agent-sniffed: the modern UA buys woff2 @font-face
- *  rules (with unicode-range splits) instead of legacy TTF. Null means the
- *  upstream never answered (network), not that it answered badly. */
-async function fetchCss2(query: string): Promise<Awaited<ReturnType<typeof fetch>> | null> {
-  try {
-    return await fetch(`${UPSTREAM_CSS2}?${query}`, { headers: { "user-agent": BROWSER_UA } });
-  } catch {
-    return null;
-  }
-}
-
 export const googleFontProxyRoutes = Router();
 
 /** The public origin of THIS deployment, so the css body can hand back
@@ -88,13 +57,8 @@ function requestOrigin(req: Request): string {
 }
 
 googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response) => {
-  const entries: [string, string][] = [];
+  const params = new URLSearchParams();
   for (const [key, raw] of Object.entries(req.query)) {
-    // `fv` is this pipeline's own stylesheet generation: appended by
-    // proxiedFontCssUrl so a bump re-keys every browser/edge-cached css2
-    // entry, whose embedded font-file URLs point at the previous gstatic
-    // generation. Never forwarded to Google.
-    if (key === "fv") continue;
     if (!ALLOWED_CSS2_PARAMS.has(key)) {
       res.status(400).set("Cache-Control", "no-store").json({ success: false, error: `Unsupported css2 parameter: ${key}` });
       return;
@@ -104,10 +68,10 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
         res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Malformed css2 parameter value" });
         return;
       }
-      entries.push([key, value]);
+      params.append(key, value);
     }
   }
-  const query = buildCss2Query(entries);
+  const query = params.toString();
   if (!query) {
     res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Missing css2 query (family=...)" });
     return;
@@ -121,23 +85,12 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
     return;
   }
 
-  let upstream = await fetchCss2(query);
-
-  // A 400 names a css2-syntax problem with THIS url — a runtime re-encoding
-  // the axis tuple, or a family without the requested axis. `family=Name`
-  // with the axes stripped is the one form css2 always serves, so one retry
-  // heals the stylesheet (at the cost of the default weight set) instead of
-  // collapsing the whole design to its fallback font.
-  if (upstream !== null && upstream.status === 400) {
-    const bare = buildCss2Query(entries.map(([key, value]) =>
-      [key, key === "family" ? value.split(":")[0] : value] as [string, string]));
-    if (bare !== query) {
-      const retry = await fetchCss2(bare);
-      if (retry !== null && retry.ok) upstream = retry;
-    }
-  }
-
-  if (upstream === null) {
+  // css2 answers are User-Agent-sniffed: the modern UA buys woff2 @font-face
+  // rules (with unicode-range splits) instead of legacy TTF.
+  let upstream: Awaited<ReturnType<typeof fetch>>;
+  try {
+    upstream = await fetch(`${UPSTREAM_CSS2}?${query}`, { headers: { "user-agent": BROWSER_UA } });
+  } catch {
     res.status(502).set("Cache-Control", "no-store").json({ success: false, error: "Google Fonts css2 unreachable" });
     return;
   }
@@ -154,10 +107,7 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
   // needs a second, direct connection to Google either.
   const body = (await upstream.text()).replaceAll(
     "https://fonts.gstatic.com",
-    // The `/v1` generation segment: bumping it re-keys every font-file URL
-    // (browser and edge caches alike, both serving immutable entries that
-    // would otherwise outlive any fix) without touching Google's real paths.
-    `${requestOrigin(req)}/api/fonts/gstatic/v1`,
+    `${requestOrigin(req)}/api/fonts/gstatic`,
   );
 
   if (css2Cache.size >= CSS2_CACHE_MAX) {
@@ -172,10 +122,7 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
 }));
 
 googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Response) => {
-  let path = (req.params as Record<string, string>)["0"] || "";
-  // Optional generation prefix (…/gstatic/v1/s/…) from the css2 rewrite:
-  // strip it before validating — it exists only to re-key cache entries.
-  path = path.replace(/^v\d+\//, "");
+  const path = (req.params as Record<string, string>)["0"];
   if (!path || !GSTATIC_FILE.test(path)) {
     res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Not a Google Fonts static file path" });
     return;
@@ -183,13 +130,7 @@ googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Res
 
   let upstream: Awaited<ReturnType<typeof fetch>>;
   try {
-    // `accept-encoding: identity` — a compressed hop (br/zstd) between Google
-    // and the runtime is how a glyph file arrives as non-font bytes: the
-    // browser's OTS then rejects it ("Failed to convert WOFF 2.0 font to
-    // SFNT") and the design collapses to the fallback font.
-    upstream = await fetch(UPSTREAM_GSTATIC + path, {
-      headers: { "user-agent": BROWSER_UA, "accept-encoding": "identity" },
-    });
+    upstream = await fetch(UPSTREAM_GSTATIC + path, { headers: { "user-agent": BROWSER_UA } });
   } catch {
     res.status(502).set("Cache-Control", "no-store").json({ success: false, error: "Google Fonts static host unreachable" });
     return;
@@ -200,15 +141,8 @@ googleFontProxyRoutes.get("/gstatic/*", asyncRoute(async (req: Request, res: Res
     return;
   }
 
-  const ext = path.slice(path.lastIndexOf(".") + 1);
   // Versioned glyph files never change — the browser caches them forever.
-  // `private` keeps every shared cache (Netlify's edge included) out of the
-  // binary path: a poisoned immutable edge entry survives any deploy, while
-  // the function itself serves the same valid wOF2 bytes every time. MIME
-  // comes from the extension (never a passthrough) and nosniff keeps
-  // intermediaries from re-interpreting the binary as text.
-  res.setHeader("Content-Type", `font/${ext}`);
-  res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
-  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.send(Buffer.from(await upstream.arrayBuffer()));
 }));

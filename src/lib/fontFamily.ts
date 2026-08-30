@@ -59,10 +59,8 @@ function normalizeFamily(name: string): string {
   return isBareIdentifier(bare) ? bare : `"${bare}"`;
 }
 
-/** Splits a stack on its top-level commas, ignoring commas inside quotes.
- * Exported for render-time font loaders that must check EVERY family in a
- * declaration, not just the first one. */
-export function splitStack(value: string): string[] {
+/** Splits a stack on its top-level commas, ignoring commas inside quotes. */
+function splitStack(value: string): string[] {
   const parts: string[] = [];
   let current = "";
   let quote: string | null = null;
