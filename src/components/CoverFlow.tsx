@@ -34,6 +34,9 @@ interface Props {
   onIndexChange?: (index: number) => void;
   /** Stage height in px (default 380). */
   height?: number;
+  /** Fill the parent flex column instead of a fixed px height — the flow
+      then always fits the viewport, whatever its size. */
+  flexible?: boolean;
 }
 
 // ── Geometry (iPod feel) ──
@@ -52,7 +55,7 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props) {
+export function CoverFlow({ items, onOpen, onIndexChange, height = 380, flexible = false }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef(new Map<number, HTMLDivElement>());
   const [center, setCenter] = useState(0);
@@ -148,6 +151,9 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
     let lastX = 0, lastT = 0, velocity = 0; // index units per ms
 
     const onPointerDown = (ev: PointerEvent) => {
+      // The side arrows are stage children: capturing the pointer here would
+      // retarget their click to the stage and the buttons would never fire.
+      if ((ev.target as HTMLElement | null)?.closest("button")) return;
       if (ev.button !== undefined && ev.button !== 0 && ev.pointerType === "mouse") return;
       draggingRef.current = true;
       moved = false;
@@ -283,7 +289,11 @@ export function CoverFlow({ items, onOpen, onIndexChange, height = 380 }: Props)
     <div
       ref={stageRef}
       style={{
-        position: "relative", height, flexShrink: 0,
+        position: "relative",
+        height: flexible ? undefined : height,
+        flex: flexible ? "1 1 0" : undefined,
+        minHeight: flexible ? 160 : undefined,
+        flexShrink: flexible ? undefined : 0,
         perspective: 1100, perspectiveOrigin: "50% 45%",
         overflow: "hidden", cursor: "grab",
         touchAction: "pan-y",

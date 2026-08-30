@@ -1113,9 +1113,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             title="Double-click to rename"
           >{t.name}</div>
         )}
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 6 }}>Edited {new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
-        {/* Dropdown actions: Duplicate / Delete / Info */}
-        <div style={{ position: "relative", display: "inline-block" }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>Edited {new Date(t.metadata.updatedAt).toLocaleDateString()}</div>
+        {/* Date + actions share one line so the meta block stays inside the
+            viewport at any height — no scroll needed to reach the menu. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div style={{ position: "relative", display: "inline-block" }}>
           <button
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
@@ -1141,6 +1143,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               </div>
             </>
           )}
+        </div>
         </div>
       </>
     );
@@ -1535,7 +1538,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           {/* Sub-tab content */}
           {designSubTab === "files" ? (
       <div data-tour="templates-grid" style={{
-        flex: 1, overflowY: "auto", padding: "16px 20px 20px 20px",
+        flex: 1, overflowY: cardMode === "flow" ? "hidden" : "auto", padding: "16px 20px 20px 20px",
         background: "#06080d",
       }}>
         {/* ── Filter bar: brand dropdown · date range · zoom slider ── */}
@@ -1842,10 +1845,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 if (t) onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug });
               }}
               onIndexChange={setFlowIndex}
-              height={400}
+              flexible
             />
             {templates[Math.min(flowIndex, templates.length - 1)] && (
-              <div style={{ width: 260, margin: "10px auto 0", textAlign: "center" }}>
+              <div style={{ width: 300, margin: "8px auto 4px", textAlign: "center", flexShrink: 0 }}>
                 {renderFlowMeta(templates[Math.min(flowIndex, templates.length - 1)])}
               </div>
             )}
