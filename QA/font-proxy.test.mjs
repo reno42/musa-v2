@@ -40,6 +40,36 @@ test("the proxy route is strict: allowlisted params, versioned gstatic files, ca
   assert.match(route, /Cache-Control", "no-store/);
 });
 
+test("css2 wire form keeps axis punctuation raw and a 400 heals with a bare-family retry", () => {
+  const route = read("api/src/routes/googleFontsProxy.ts");
+  // URLSearchParams percent-encodes :@; and the serverless runtime re-encodes
+  // the outgoing %3B, so Google reads a literal "%3B" inside the family name
+  // and 400s every multi-value tuple (…@0;1, …@400;700) in production while
+  // single-value tuples pass. The wire form must keep the specials raw.
+  assert.match(route, /function encodeCss2Value/);
+  assert.match(route, /replace\(\/%3B\/g, ";"\)/);
+  assert.match(route, /replace\(\/%3A\/g, ":"\)/);
+  assert.match(route, /function buildCss2Query/);
+  // On a 400 the proxy retries once with `family=Name` (axes stripped) — the
+  // one form css2 always serves — instead of collapsing the design to the
+  // fallback font. The healed sheet is cached under the ORIGINAL query.
+  assert.match(route, /upstream\.status === 400/);
+  assert.match(route, /value\.split\(":"\)\[0\]/);
+  // Multi-family css2 sheets need every family= repetition — the collapsed
+  // single-value form silently dropped fonts in production.
+  const adapter = read("netlify/functions/api.mjs");
+  assert.match(adapter, /multiValueQueryStringParameters/);
+  assert.match(adapter, /searchParams\.append/);
+});
+
+test("the load diagnostic logs the persisted import URLs verbatim", () => {
+  // Family names alone hid this bug for a whole day — a poisoned
+  // `:ital@0;1` import reads as a clean "Instrument Serif" in the log.
+  const editor = read("src/pages/EditorV2.tsx");
+  assert.match(editor, /imports persistidos/);
+  assert.match(editor, /@import\\s\+url/);
+});
+
 test("css2 and gstatic are public — <link> tags cannot carry auth headers", () => {
   const auth = read("api/src/middleware/auth.ts");
   assert.match(auth, /"\/api\/fonts\/css2"/);

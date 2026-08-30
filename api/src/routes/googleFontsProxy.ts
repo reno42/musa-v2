@@ -45,6 +45,37 @@ const CSS2_CACHE_MAX = 300;
  *  every editor load re-requests the same families across sessions. */
 const css2Cache = new Map<string, { body: string; at: number }>();
 
+/** Re-emit a VALIDATED css2 value in css2's own wire form: spaces as `+`,
+ * axis punctuation (:@;,) left raw. URLSearchParams percent-encodes :@; and
+ * the serverless runtime re-encodes the outgoing %3B once more, so Google
+ * reads a literal "%3B" inside the family name and answers 400 — that is
+ * how every multi-value axis tuple (…@0;1, …@400;700) died in production
+ * while single-value tuples (…@0, …@400) passed. Raw specials are legal in
+ * a query and are exactly what css2 expects. */
+function encodeCss2Value(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/%20/g, "+")
+    .replace(/%3A/g, ":")
+    .replace(/%40/g, "@")
+    .replace(/%3B/g, ";")
+    .replace(/%2C/g, ",");
+}
+
+function buildCss2Query(entries: [string, string][]): string {
+  return entries.map(([key, value]) => `${key}=${encodeCss2Value(value)}`).join("&");
+}
+
+/** css2 answers are User-Agent-sniffed: the modern UA buys woff2 @font-face
+ *  rules (with unicode-range splits) instead of legacy TTF. Null means the
+ *  upstream never answered (network), not that it answered badly. */
+async function fetchCss2(query: string): Promise<Awaited<ReturnType<typeof fetch>> | null> {
+  try {
+    return await fetch(`${UPSTREAM_CSS2}?${query}`, { headers: { "user-agent": BROWSER_UA } });
+  } catch {
+    return null;
+  }
+}
+
 export const googleFontProxyRoutes = Router();
 
 /** The public origin of THIS deployment, so the css body can hand back
@@ -57,7 +88,7 @@ function requestOrigin(req: Request): string {
 }
 
 googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response) => {
-  const params = new URLSearchParams();
+  const entries: [string, string][] = [];
   for (const [key, raw] of Object.entries(req.query)) {
     if (!ALLOWED_CSS2_PARAMS.has(key)) {
       res.status(400).set("Cache-Control", "no-store").json({ success: false, error: `Unsupported css2 parameter: ${key}` });
@@ -68,10 +99,10 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
         res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Malformed css2 parameter value" });
         return;
       }
-      params.append(key, value);
+      entries.push([key, value]);
     }
   }
-  const query = params.toString();
+  const query = buildCss2Query(entries);
   if (!query) {
     res.status(400).set("Cache-Control", "no-store").json({ success: false, error: "Missing css2 query (family=...)" });
     return;
@@ -85,12 +116,23 @@ googleFontProxyRoutes.get("/css2", asyncRoute(async (req: Request, res: Response
     return;
   }
 
-  // css2 answers are User-Agent-sniffed: the modern UA buys woff2 @font-face
-  // rules (with unicode-range splits) instead of legacy TTF.
-  let upstream: Awaited<ReturnType<typeof fetch>>;
-  try {
-    upstream = await fetch(`${UPSTREAM_CSS2}?${query}`, { headers: { "user-agent": BROWSER_UA } });
-  } catch {
+  let upstream = await fetchCss2(query);
+
+  // A 400 names a css2-syntax problem with THIS url — a runtime re-encoding
+  // the axis tuple, or a family without the requested axis. `family=Name`
+  // with the axes stripped is the one form css2 always serves, so one retry
+  // heals the stylesheet (at the cost of the default weight set) instead of
+  // collapsing the whole design to its fallback font.
+  if (upstream !== null && upstream.status === 400) {
+    const bare = buildCss2Query(entries.map(([key, value]) =>
+      [key, key === "family" ? value.split(":")[0] : value] as [string, string]));
+    if (bare !== query) {
+      const retry = await fetchCss2(bare);
+      if (retry !== null && retry.ok) upstream = retry;
+    }
+  }
+
+  if (upstream === null) {
     res.status(502).set("Cache-Control", "no-store").json({ success: false, error: "Google Fonts css2 unreachable" });
     return;
   }

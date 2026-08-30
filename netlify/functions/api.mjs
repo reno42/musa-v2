@@ -32,7 +32,14 @@ function createRequest(event) {
   const { path, httpMethod, headers, queryStringParameters } = event;
 
   const url = new URL(path, "http://localhost");
-  if (queryStringParameters) {
+  // Repeated params (a css2 sheet asks family= per font) collapse to their
+  // last value in queryStringParameters — multiValue keeps every repetition,
+  // so multi-family imports survive the trip to Express whole.
+  if (event.multiValueQueryStringParameters) {
+    for (const [k, values] of Object.entries(event.multiValueQueryStringParameters)) {
+      for (const v of values || []) url.searchParams.append(k, v);
+    }
+  } else if (queryStringParameters) {
     for (const [k, v] of Object.entries(queryStringParameters)) {
       url.searchParams.set(k, v);
     }
