@@ -64,4 +64,5 @@ Post-mortem del deck seed 2026-08-29: las IAs generaban slides con 45–55% de c
 - [ ] lint AI-TELLS: CSS con `border-left:4px solid #d2ff02` → BORDER_LEFT_ACCENT FAIL; mismo frame sin eso → PASS
 - [ ] lint BUZZWORDS sobre un HTML con "Seamless experience" → FAIL con match señalado
 - [ ] lint LAYOUT_MONOTONY: deck v4 Swiss (tpl_dc2d5681) tras normalizar skeletons → WARN monotonía defensiva; deck v3 (tpl_5a5de21b) → PASS
+- [ ] lint CHROME_OVERFLOW (G8): frame con root element 1920×1080 dentro de content 1728×760 sin neutralizar → FAIL; v5 (tpl_a8265257) neutralizado → PASS
 - [ ] Kanban card_mtewcpgf_doib6k → done tras review
