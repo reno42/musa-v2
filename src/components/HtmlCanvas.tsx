@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
-import { extractFontCssLinks } from "../lib/googleFonts";
+import { fontLinksForCss } from "../lib/googleFonts";
 
 interface HtmlCanvasProps {
   html: string;
@@ -22,7 +22,9 @@ function buildSrcDoc(html: string, css: string, width: number, height: number): 
   // Font imports become same-origin <link>s in the head. Inside the <style>
   // below, the @import would sit after the html/body reset rule and the CSS
   // parser drops it silently — the preview lost its fonts with zero noise.
-  const fontLinks = extractFontCssLinks(css)
+  // fontLinksForCss also covers families the rules reference whose import is
+  // missing — those rendered as the fallback font just as silently.
+  const fontLinks = fontLinksForCss(css)
     .map(href => `<link rel="stylesheet" href="${href.replace(/&/g, "&amp;")}">`)
     .join("\n");
   const cssWithoutImports = css.replace(/@import\s+url\(['"]?https?:\/\/[^'"]+['"]?\)[^;]*;/g, "");

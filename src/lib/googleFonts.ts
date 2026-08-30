@@ -1,6 +1,6 @@
 // Explicit extension so this stays runnable under `node --test`, which does
 // not resolve extensionless relative imports the way the bundler does.
-import { needsWebfont, primaryFamily } from "./fontFamily.ts";
+import { needsWebfont, primaryFamily, splitStack } from "./fontFamily.ts";
 
 /**
  * A whole fallback stack used to reach here, and its commas were encoded into
@@ -150,6 +150,58 @@ export function extractFontCssLinks(css: string): string[] {
   const hrefs: string[] = [];
   let m;
   while ((m = re.exec(css)) !== null) hrefs.push(new URL(proxiedFontCssUrl(m[1]), document.baseURI).href);
+  return hrefs;
+}
+
+/**
+ * Families the css rules actually reference in `font-family:` declarations.
+ * A rule can name a font whose @import was never added — or was swapped away
+ * by a later pick — and an unmatched font-family is a silent fallback, not an
+ * error: the text renders generic forever while every console stays green.
+ */
+
+/** Machine-installed fonts no webfont host serves (the classic web-safe set
+ * plus the platform UI fonts). Referencing them is normal — fetching them
+ * would 400 and spam the load-failure toast. Matched case-insensitively. */
+const PREINSTALLED_FAMILIES = new Set([
+  "-apple-system", "blinkmacsystemfont", "sf pro display", "sf pro text", "sf mono",
+  "segoe ui", "segoe ui symbol", "segoe ui emoji", "tahoma", "verdana",
+  "arial", "helvetica", "helvetica neue", "times new roman", "courier new",
+  "georgia", "impact", "comic sans ms", "trebuchet ms", "calibri",
+]);
+
+export function extractReferencedFontFamilies(css: string): string[] {
+  const families = new Set<string>();
+  for (const m of String(css || "").matchAll(/font-family\s*:\s*([^;}]+)/g)) {
+    const value = m[1].replace(/!important/gi, "");
+    for (const part of splitStack(value)) {
+      const family = primaryFamily(part);
+      if (family && needsWebfont(part) && !PREINSTALLED_FAMILIES.has(family.toLowerCase())) {
+        families.add(family);
+      }
+    }
+  }
+  return [...families];
+}
+
+/**
+ * Every same-origin stylesheet href a frame needs: the @import links PLUS one
+ * css2 link per family the rules reference that no import covers anymore.
+ * This is what the renderers inject — `font-family: "Nunito Sans"` next to a
+ * lone `family=Nunito` import used to collapse to the fallback font on every
+ * reload. Families already covered by an import don't double-fetch.
+ */
+export function fontLinksForCss(css: string): string[] {
+  const importHrefs = extractFontCssLinks(css);
+  const covered = new Set(importHrefs.flatMap(href =>
+    [...new URL(href, document.baseURI).searchParams.getAll("family")]
+      .map(family => family.trim().toLowerCase())));
+  const hrefs = [...importHrefs];
+  for (const family of extractReferencedFontFamilies(css)) {
+    if (covered.has(family.trim().toLowerCase())) continue;
+    const href = proxiedFontCssUrl(googleFontHref(family));
+    if (href) hrefs.push(new URL(href, document.baseURI).href);
+  }
   return hrefs;
 }
 

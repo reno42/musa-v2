@@ -83,6 +83,32 @@ test("the Netlify adapter rebuilds the query from rawUrl, splitting ONLY on '&'"
   assert.match(adapter, /replace\(\/\\\+\/g, " "\)/);
 });
 
+test("families referenced in font-family declarations load even without an import", async () => {
+  const { extractReferencedFontFamilies } = await import("../src/lib/googleFonts.ts");
+  // Production shape (tpl_11cbed9a): a later pick swapped the import to
+  // Nunito while the text kept `"Nunito Sans"` — the lone import rendered,
+  // everything else fell back to the generic font in total silence.
+  const css = [
+    "@import url('https://fonts.googleapis.com/css2?family=Nunito&display=swap');",
+    "h1 { font-family: \"Nunito Sans\" !important; }",
+    "p { font-family: 'Matcha Mint', sans-serif; }",
+    "body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }",
+    "span { font-family: Nunito; }",
+  ].join("\n");
+  assert.deepEqual(extractReferencedFontFamilies(css), ["Nunito Sans", "Matcha Mint", "Nunito"]);
+  // System stacks and generics never go to a webfont host.
+  assert.deepEqual(extractReferencedFontFamilies("a { font-family: Helvetica, Arial, sans-serif; }"), []);
+  // The renderers inject the union (imports + referenced), not imports alone.
+  const fonts = read("src/lib/googleFonts.ts");
+  assert.match(fonts, /export function fontLinksForCss/);
+  const frame = read("src/components/DesignFrame.tsx");
+  assert.match(frame, /fontLinksForCss\(frame\.css\)/);
+  assert.doesNotMatch(frame, /extractFontCssLinks/);
+  const canvas = read("src/components/HtmlCanvas.tsx");
+  assert.match(canvas, /fontLinksForCss\(css\)/);
+  assert.doesNotMatch(canvas, /extractFontCssLinks/);
+});
+
 test("the load diagnostic logs the persisted import URLs verbatim", () => {
   // Family names alone hid this bug for a whole day — a poisoned
   // `:ital@0;1` import reads as a clean "Instrument Serif" in the log.
@@ -117,10 +143,11 @@ test("zero direct-to-Google fetches remain: shell, previews and failure reportin
   const shell = read("index.html");
   assert.match(shell, /href="\/api\/fonts\/css2\?family=Instrument\+Serif%3Aital%400%3B1&display=swap"/);
   assert.doesNotMatch(shell, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
-  // HtmlCanvas srcdoc: proxied <link>s in the head, inert @imports stripped,
-  // CSP without Google hosts.
+  // HtmlCanvas srcdoc: proxied <link>s in the head (imports PLUS every
+  // family the rules reference), inert @imports stripped, CSP without Google
+  // hosts.
   const canvas = read("src/components/HtmlCanvas.tsx");
-  assert.match(canvas, /extractFontCssLinks\(css\)/);
+  assert.match(canvas, /fontLinksForCss\(css\)/);
   assert.match(canvas, /cssWithoutImports = css\.replace\(\/@import/);
   assert.doesNotMatch(canvas, /fonts\.googleapis\.com/);
   // Every font <link> is watched — a dead stylesheet speaks up (console +

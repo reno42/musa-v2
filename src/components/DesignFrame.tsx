@@ -9,7 +9,7 @@ import {
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
 import { mapBodySelectors } from "../lib/frameCapture";
-import { extractFontCssLinks, watchFontLink } from "../lib/googleFonts";
+import { fontLinksForCss, watchFontLink } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
@@ -383,8 +383,10 @@ export function DesignFrame({
     const shadow = el.attachShadow({ mode: "open" });
     shadowRef.current = shadow;
 
-    // Google Fonts extraction: find @import url(...) in CSS
-    const fontLinks = extractFontCssLinks(frame.css);
+    // Google Fonts extraction: @import links PLUS every family the rules
+    // reference — a `font-family:` naming a font whose import is gone renders
+    // as the silent fallback, so the referenced set is load-bearing too.
+    const fontLinks = fontLinksForCss(frame.css);
 
     // Inject font links
     for (const href of fontLinks) {
@@ -506,7 +508,7 @@ export function DesignFrame({
     if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
-    const newHrefs = extractFontCssLinks(frame.css);
+    const newHrefs = fontLinksForCss(frame.css);
     existingLinks.forEach(l => { if (!newHrefs.includes((l as HTMLLinkElement).href)) l.remove(); });
     for (const href of newHrefs) {
       if (![...shadow.querySelectorAll("link")].some(l => (l as HTMLLinkElement).href === href)) {
