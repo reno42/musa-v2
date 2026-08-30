@@ -92,7 +92,7 @@ import {
   type LayerStackEdge,
   type LayerStackPlacement,
 } from "../lib/htmlMutations";
-import { ensureGoogleFontImport, injectGoogleFontIntoFrames, onFontLoadFailure, sanitizeGoogleFontUrl } from "../lib/googleFonts";
+import { ensureGoogleFontImport, injectGoogleFontIntoFrames, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import {
   persistDesignClipboard,
@@ -781,15 +781,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setBackgroundColor(fg);
   }, [foregroundColor, backgroundColor]);
 
-  // Font stylesheets that never arrive used to fail in total silence — the
-  // design just collapsed to its fallback. Every font <link> now reports
-  // through reportFontLoadFailure; surface it here as an editor toast.
-  useEffect(() => {
-    onFontLoadFailure(({ family }) =>
-      addToast(`No se pudo cargar la fuente «${family}». Revisa tu conexión o inténtalo de nuevo.`, "error"));
-    return () => onFontLoadFailure(null);
-  }, [addToast]);
-
   // ── Load template → parse into frames ──
   useEffect(() => {
     let cancelled = false;
@@ -806,17 +797,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         }
         setTemplateName(t.name || "Untitled");
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
-
-        // One-line font diagnostic: the families the persisted css asks for.
-        // Turns "the fonts vanished" reports into a single screenshot — the
-        // injected <link>s show in the Network tab as api/fonts/css2.
-        const fontSources: any[] = t.frames && Array.isArray(t.frames) ? t.frames : [{ css: t.css }];
-        const fontFamilies = [...new Set(fontSources
-          .flatMap((f: any) => [...String(f.css || "").matchAll(/family=([^&'")]+)/g)])
-          .map((m: RegExpMatchArray) => decodeURIComponent(m[1].replace(/\+/g, " "))))];
-        if (fontFamilies.length > 0) {
-          console.info(`[fonts] el css pide: ${fontFamilies.join(", ")} — inyectadas como links same-origin (api/fonts/css2)`);
-        }
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
         // is a valid zero-frame file (REQ-022) — loading it must not resurrect

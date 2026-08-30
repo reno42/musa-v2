@@ -37,7 +37,6 @@ import { getPublicSupabaseConfig, getSupabase, getSupabaseAdmin, getSupabaseAuth
 import { enforceWorkspaceKeyScope, requireResourceAccess, requireTemplateAccess } from "./services/tenancy.js";
 import { buildCatalog, licensedNote } from "./services/fontCatalog.js";
 import { customFontRoutes } from "./routes/customFonts.js";
-import { googleFontProxyRoutes } from "./routes/googleFontsProxy.js";
 import { asyncRoute } from "./middleware/asyncRoute.js";
 import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 
@@ -168,12 +167,6 @@ app.use("/api/meta", designMetaRoutes);
 app.use("/api/storage", storageRoutes);
 app.use("/api/segment", segmentationRoutes);
 app.use("/api/fonts/custom", customFontRoutes);
-
-// ── Google Fonts same-origin proxy ──
-// GET /api/fonts/css2?family=… re-serves css2 with its gstatic font files
-// rewritten to /api/fonts/gstatic/*, so rendering never depends on the
-// browser completing a direct connection to Google (blocked in the wild).
-app.use("/api/fonts", googleFontProxyRoutes);
 
 // ── Google Fonts Catalog ──
 // Global endpoint: search/browse the WHOLE Google Fonts library by name or

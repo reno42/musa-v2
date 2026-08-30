@@ -22,20 +22,15 @@ test("sanitizeGoogleFontUrl strips the deck axis signature", async () => {
   assert.equal(sanitizeGoogleFontUrl(fine), fine);
 });
 
-test("every css2 consumer routes rendering through the same-origin proxy", () => {
+test("every css2 consumer normalizes the URL before loading it", () => {
   const frame = read("src/components/DesignFrame.tsx");
-  // Extraction now lives in lib/googleFonts (extractFontCssLinks), shared
-  // with HtmlCanvas — DesignFrame only calls it.
-  assert.match(frame, /extractFontCssLinks\(frame\.css\)/);
-  assert.doesNotMatch(frame, /fonts\.googleapis\.com/);
+  assert.match(frame, /hrefs\.push\(sanitizeGoogleFontUrl\(m\[1\]\)\)/);
   const capture = read("src/lib/frameCapture.ts");
-  assert.match(capture, /\.map\(m => proxiedFontCssUrl\(m\[1\]\)\)/);
+  assert.match(capture, /\.map\(m => sanitizeGoogleFontUrl\(m\[1\]\)\)/);
   const agent = read("src/lib/agentBridge.ts");
-  assert.match(agent, /\.map\(m => proxiedFontCssUrl\(m\[1\]\)\)/);
+  assert.match(agent, /\.map\(m => sanitizeGoogleFontUrl\(m\[1\]\)\)/);
   const editor = read("src/pages/EditorV2.tsx");
-  // SVG export is a portable artifact — it keeps the canonical Google URL.
   assert.match(editor, /escXml\(sanitizeGoogleFontUrl\(fm\[1\]\)\)/);
-  assert.doesNotMatch(editor, /proxiedFontCssUrl/);
 });
 
 test("new decks never write the broken axis again", () => {

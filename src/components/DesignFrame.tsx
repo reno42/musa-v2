@@ -9,7 +9,7 @@ import {
 } from "../lib/cssMutations";
 import { createLayerId, duplicateLayerInHtml, ensureLayerIds } from "../lib/htmlMutations";
 import { mapBodySelectors } from "../lib/frameCapture";
-import { extractFontCssLinks, watchFontLink } from "../lib/googleFonts";
+import { sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
 import {
@@ -384,14 +384,13 @@ export function DesignFrame({
     shadowRef.current = shadow;
 
     // Google Fonts extraction: find @import url(...) in CSS
-    const fontLinks = extractFontCssLinks(frame.css);
+    const fontLinks = extractFontImports(frame.css);
 
     // Inject font links
     for (const href of fontLinks) {
       const link = document.createElement("link");
       link.rel = "stylesheet";
       link.href = href;
-      watchFontLink(link);
       shadow.appendChild(link);
     }
 
@@ -506,14 +505,13 @@ export function DesignFrame({
     if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(frame.css)}`;
     // Update font imports
     const existingLinks = shadow.querySelectorAll("link");
-    const newHrefs = extractFontCssLinks(frame.css);
+    const newHrefs = extractFontImports(frame.css);
     existingLinks.forEach(l => { if (!newHrefs.includes((l as HTMLLinkElement).href)) l.remove(); });
     for (const href of newHrefs) {
       if (![...shadow.querySelectorAll("link")].some(l => (l as HTMLLinkElement).href === href)) {
         const link = document.createElement("link");
         link.rel = "stylesheet";
         link.href = href;
-        watchFontLink(link);
         shadow.insertBefore(link, shadow.firstChild);
       }
     }
@@ -3086,6 +3084,16 @@ function importantProperties(properties: Record<string, string>): Record<string,
  *   html body { }            — descendant (whitespace-preceded)
  *   body.dark { }            — compound class with dot
  */
+function extractFontImports(css: string): string[] {
+  // Extract ALL @import url(...) from CSS — Google Fonts, Phosphor Icons, any CDN.
+  // Each becomes a <link rel="stylesheet"> injected into the Shadow DOM.
+  const re = /@import\s+url\(['"]?(https?:\/\/[^'"]+)['"]?\)/g;
+  const hrefs: string[] = [];
+  let m;
+  while ((m = re.exec(css)) !== null) hrefs.push(sanitizeGoogleFontUrl(m[1]));
+  return hrefs;
+}
+
 function updateCssRule(css: string, selector: string, props: Record<string, string>): string {
   return mutateCssProperties(css, selector, props);
 }

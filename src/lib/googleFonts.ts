@@ -101,105 +101,39 @@ export function sanitizeGoogleFontUrl(url: string): string {
   return url.split(":ital,wght@0,300..800;1,300..800").join("");
 }
 
-/**
- * Render-time rewrite: css2 through our own origin.
- *
- * The persisted css and the exports keep the canonical fonts.googleapis.com
- * URLs, but every RENDER fetch (shadow-DOM links, the picker's document
- * loader, the raster inliner) goes through /api/fonts/css2 — same-origin —
- * because some browsers never complete the direct request: filters,
- * HTTPS-scanning antivirus and privacy extensions close the connection
- * before Google answers (net::ERR_CONNECTION_CLOSED in the wild), and when
- * the stylesheet never arrives the design silently collapses to its serif
- * fallback. The API re-serves css2 and its gstatic font files with the same
- * bytes, so rendering no longer depends on the browser reaching Google.
- */
-export function proxiedFontCssUrl(url: string): string {
-  const canonical = sanitizeGoogleFontUrl(url);
-  const prefix = "https://fonts.googleapis.com/css2?";
-  if (canonical.startsWith(prefix)) return "/api/fonts/css2?" + canonical.slice(prefix.length);
-  return canonical;
-}
-
-/** link.href is always the browser-normalized absolute form, while the
- *  proxy rewrite produces a relative path — normalize before comparing or
- *  assigning so live-update dedup stays stable across re-renders. */
-function absoluteFontUrl(href: string): string {
-  return new URL(href, document.baseURI).href;
-}
-
-/**
- * Every @import url(...) in css — Google Fonts, Phosphor icons, any CDN — as
- * absolute, same-origin-proxied hrefs ready for <link rel="stylesheet">.
- * DesignFrame and the HtmlCanvas srcdoc share this, so a css2 URL can never
- * reach the network un-proxied through a second implementation.
- */
-export function extractFontCssLinks(css: string): string[] {
-  const re = /@import\s+url\(['"]?(https?:\/\/[^'"]+)['"]?\)/g;
-  const hrefs: string[] = [];
-  let m;
-  while ((m = re.exec(css)) !== null) hrefs.push(new URL(proxiedFontCssUrl(m[1]), document.baseURI).href);
-  return hrefs;
-}
-
-/** A font stylesheet that never arrived used to fail in total silence — the
- *  design just collapsed to its serif fallback with zero console output.
- *  Every font <link> is watched and reports through here: console.warn
- *  always, plus the editor toast while onFontLoadFailure is wired. */
-export interface FontLoadFailure { family: string; href: string }
-
-let fontFailureListener: ((failure: FontLoadFailure) => void) | null = null;
-
-export function onFontLoadFailure(listener: ((failure: FontLoadFailure) => void) | null): void {
-  fontFailureListener = listener;
-}
-
-/** Attach to every font <link> so a dead stylesheet speaks up. */
-export function watchFontLink(link: HTMLLinkElement): void {
-  link.onerror = () => {
-    const family = decodeURIComponent((link.href.match(/family=([^&]+)/)?.[1] || "").replace(/\+/g, " ")) || "desconocida";
-    console.warn(`[fonts] No se pudo cargar la hoja de la fuente "${family}" (${link.href})`);
-    fontFailureListener?.({ family, href: link.href });
-  };
-}
-
 export function loadGoogleFontInDocument(family: string, variants: string[] = []): void {
-  const href = proxiedFontCssUrl(googleFontHref(family, variants));
+  const href = googleFontHref(family, variants);
   if (!href) return;
-  const resolved = absoluteFontUrl(href);
   const id = `gf-${requestableFamily(family).replace(/\s+/g, "-").toLowerCase()}`;
   const existing = document.getElementById(id) as HTMLLinkElement | null;
   // Same family, wider axes (e.g. bold added later): refreshing the href
   // re-fetches the stylesheet. Returning early here would freeze the family
   // at whatever weights it was first picked with.
   if (existing) {
-    if (existing.href !== resolved) existing.href = resolved;
+    if (existing.href !== href) existing.href = href;
     return;
   }
   const link = document.createElement("link");
   link.id = id;
   link.rel = "stylesheet";
-  link.href = resolved;
-  watchFontLink(link);
+  link.href = href;
   document.head.appendChild(link);
 }
 
 export function injectGoogleFontIntoFrames(family: string, variants: string[] = []): void {
-  const href = proxiedFontCssUrl(googleFontHref(family, variants));
+  const href = googleFontHref(family, variants);
   if (!href) return;
-  const resolved = absoluteFontUrl(href);
   for (const frame of document.querySelectorAll("[data-frame-id]")) {
     const host = [...frame.querySelectorAll("*")].find(element => (element as HTMLElement).shadowRoot) as HTMLElement | undefined;
     const shadow = host?.shadowRoot;
     if (!shadow) continue;
-    const existing = [...shadow.querySelectorAll("link")].find(link => (link as HTMLLinkElement).href === resolved);
+    const existing = [...shadow.querySelectorAll("link")].find(link => (link as HTMLLinkElement).href === href);
     if (existing) continue;
     // An older, narrower link for the same family stays: font-face
     // declarations merge across stylesheets, and the fuller one wins.
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = resolved;
-    watchFontLink(link);
+    link.href = href;
     shadow.insertBefore(link, shadow.firstChild);
   }
 }

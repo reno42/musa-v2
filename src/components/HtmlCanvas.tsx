@@ -1,5 +1,4 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
-import { extractFontCssLinks } from "../lib/googleFonts";
 
 interface HtmlCanvasProps {
   html: string;
@@ -10,29 +9,19 @@ interface HtmlCanvasProps {
   onSelectElement?: (layerId: string) => void;
 }
 
-/** CSP meta tag blocking scripts, allowing inline styles + same-origin fonts.
- *  No Google hosts: font stylesheets and files arrive via /api/fonts/* like
- *  every other render fetch. */
+/** CSP meta tag blocking scripts, allowing inline styles + external fonts */
 function buildCspMeta(): string {
-  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'; img-src 'self' https: data:; font-src 'self' data:">`;
+  return `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'none'; img-src 'self' https: data:; font-src 'self' https://fonts.gstatic.com">`;
 }
 
 /** Assembles complete HTML document for srcDoc */
 function buildSrcDoc(html: string, css: string, width: number, height: number): string {
-  // Font imports become same-origin <link>s in the head. Inside the <style>
-  // below, the @import would sit after the html/body reset rule and the CSS
-  // parser drops it silently — the preview lost its fonts with zero noise.
-  const fontLinks = extractFontCssLinks(css)
-    .map(href => `<link rel="stylesheet" href="${href.replace(/&/g, "&amp;")}">`)
-    .join("\n");
-  const cssWithoutImports = css.replace(/@import\s+url\(['"]?https?:\/\/[^'"]+['"]?\)[^;]*;/g, "");
   return `<!DOCTYPE html>
 <html>
 <head>${buildCspMeta()}
-${fontLinks}
 <style>
   html, body { margin: 0; padding: 0; width: ${width}px; height: ${height}px; overflow: hidden; }
-  ${cssWithoutImports}
+  ${css}
 </style>
 </head>
 <body>
