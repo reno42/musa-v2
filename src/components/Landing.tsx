@@ -7,6 +7,60 @@ interface LandingProps {
   onEnter: () => void;
 }
 
+/* ── Logos de agentes MCP + integraciones nativas. Cada PNG vive en
+ * public/logos/<id>.png: reemplazar el archivo actualiza la landing sin
+ * tocar código. Si un PNG falta o falla, el chip cae a un monograma. ── */
+interface BrandLogo {
+  id: string;
+  name: string;
+}
+
+const AGENT_LOGOS: BrandLogo[] = [
+  { id: "claude", name: "Claude" },
+  { id: "chatgpt", name: "ChatGPT" },
+  { id: "codex", name: "Codex" },
+  { id: "cursor", name: "Cursor" },
+  { id: "copilot", name: "Copilot" },
+  { id: "windsurf", name: "Windsurf" },
+  { id: "gemini-cli", name: "Gemini CLI" },
+  { id: "kimi", name: "Kimi" },
+  { id: "qoder", name: "Qoder" },
+  { id: "openclaw", name: "OpenClaw" },
+  { id: "zed", name: "Zed" },
+  { id: "hermes", name: "Hermes" },
+];
+
+const PROVIDER_LOGOS: BrandLogo[] = [
+  { id: "gemini", name: "Gemini" },
+  { id: "deepseek", name: "DeepSeek" },
+  { id: "openrouter", name: "OpenRouter" },
+  { id: "runway", name: "Runway" },
+  { id: "wavespeed", name: "WaveSpeedAI" },
+  { id: "quiver", name: "Quiver" },
+  { id: "unsplash", name: "Unsplash" },
+];
+
+function LogoChip({ brand }: { brand: BrandLogo }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <span className="landing-logo-chip" title={brand.name}>
+      {imgFailed ? (
+        <span className="landing-logo-fallback">{brand.name.slice(0, 2)}</span>
+      ) : (
+        <span className="landing-logo-icon">
+          <img
+            src={`/logos/${brand.id}.png`}
+            alt={brand.name}
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        </span>
+      )}
+      <span className="landing-logo-name">{brand.name}</span>
+    </span>
+  );
+}
+
 /** Prompts de conexión para IAs: ahora viven en Configuración → API MCP
  * (src/components/AiConnectPrompts.tsx, junto a la creación de claves). */
 export function Landing({ onEnter }: LandingProps) {
@@ -369,6 +423,20 @@ export function Landing({ onEnter }: LandingProps) {
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </div>
+      </section>
+
+      {/* ═══════════════════ LOGOS: AGENTES + INTEGRACIONES ═══════════════════ */}
+      <section className="landing-logos" aria-label="Agentes e integraciones">
+        <div className="landing-section-inner">
+          <div className="landing-logos-row">
+            <span className="landing-logos-label">Tu agente, vía MCP — el que ya usas</span>
+            {AGENT_LOGOS.map(b => <LogoChip key={b.id} brand={b} />)}
+          </div>
+          <div className="landing-logos-row">
+            <span className="landing-logos-label">Integraciones nativas</span>
+            {PROVIDER_LOGOS.map(b => <LogoChip key={b.id} brand={b} />)}
+          </div>
+        </div>
       </section>
 
       {/* ═══════════════════════════ ¿QUÉ ES MUSA? (ARNÉS) ═══════════════════════════════ */}

@@ -4485,6 +4485,80 @@ html, body, #root { height: 100%; width: 100%; }
 .landing-connect-note code { color: #a5f3fc; background: rgba(255, 255, 255, 0.05); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; }
 .landing-selfhost { margin-top: 20px; text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.4); }
 .landing-selfhost a { color: rgba(167, 139, 250, 0.8); }
+
+/* ═══════════════════════ LOGOS: AGENTES + INTEGRACIONES ═══════════════════════
+ * Tira justo debajo del hero. Los PNG viven en public/logos/<id>.png —
+ * reemplazar el archivo actualiza la landing sin tocar código. Los dark logos
+ * (Copilot, ChatGPT) leen sobre un tile blanco; el hover revela el color real. */
+.landing-logos { padding: 44px 0 10px; position: relative; z-index: 5; }
+.landing-logos-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.landing-logos-label {
+  width: 100%;
+  text-align: center;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.3);
+}
+.landing-logo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px 7px 9px;
+  border-radius: 100px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: border-color 0.25s ease, background 0.25s ease, transform 0.25s ease;
+}
+.landing-logo-chip:hover {
+  border-color: rgba(167, 139, 250, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+.landing-logo-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.landing-logo-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: grayscale(1);
+  transition: filter 0.25s ease;
+}
+.landing-logo-chip:hover .landing-logo-icon img { filter: none; }
+.landing-logo-fallback {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(167, 139, 250, 0.18);
+  flex: none;
+}
+.landing-logo-name { font-size: 12px; color: rgba(255, 255, 255, 0.6); white-space: nowrap; }
 .landing-download-row {
   margin-top: 16px;
   display: flex;
