@@ -1165,8 +1165,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       key={t.id}
       className="dash-card"
       style={{ ...cardStyle }}
-      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.2)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.3)"; }}
-      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; (e.currentTarget as HTMLElement).style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.2)"; }}
+      onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
+      onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.1)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 10px rgba(0,0,0,0.35)"; el.style.transform = ""; }}
       onClick={() => onSelectTemplate(t.id, { wsSlug: wsSlugMap.get(t.workspaceId), tplSlug: t.slug })}
     >
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14 }}>
@@ -1201,12 +1201,13 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           </div>
         </div>
       </div>
-      <div className="dash-card-actions" style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 3, display: "flex", borderTop: "1px solid rgba(255, 255, 255, 0.02)", fontSize: 12, justifyContent: "center", alignItems: "center", padding: "4px 0" }}>
+      {/* Actions float in the top-right corner, above the cover */}
+      <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
         <div style={{ position: "relative", display: "inline-block" }}>
           <button
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
-            style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 12px", color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 700, letterSpacing: 2, lineHeight: 1.2, flex: "none", cursor: "pointer", fontFamily: "inherit", margin: "4px 0" }}
+            style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 700, letterSpacing: 2, lineHeight: 1.2, flex: "none", cursor: "pointer", fontFamily: "inherit" }}
             title="Acciones (duplicar, eliminar, info)"
             aria-label={`Acciones de ${t.name}`}
           >
@@ -1216,10 +1217,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={e => { e.stopPropagation(); setActionDropdownId(null); }} />
               {/* Solid dark panel — liquid-glass over light covers left the
-                  white menu text on a whitish surface. */}
+                  white menu text on a whitish surface. Opens downward from
+                  the top-right anchor (the card clips nothing: it fits). */}
               <div style={{
-                position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginBottom: 4,
+                position: "absolute", top: "100%", right: 0,
+                minWidth: 130, borderRadius: 10, padding: 4, zIndex: 100, marginTop: 4,
                 display: "flex", flexDirection: "column",
                 background: "rgba(10,12,18,0.97)", border: "1px solid rgba(255,255,255,0.14)",
                 boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
@@ -1577,8 +1579,11 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             📖 Brand Manuals
           </label>
 
-          {/* Date range */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {/* Date range — hidden for now per product call. State and the
+              grid filtering logic stay intact; flip this condition to bring
+              the inputs straight back. */}
+          {false && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <input
               type="date"
               value={dateFrom}
@@ -1604,7 +1609,8 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 outline: "none", width: 120,
               }}
             />
-          </div>
+            </div>
+          )}
 
           <div style={{ flex: 1 }} />
 
@@ -1760,24 +1766,47 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <span aria-hidden="true" style={{ fontSize: 14, lineHeight: 1 }}>+</span> Nuevo archivo
           </button>
 
-          {/* Zoom slider */}
-          <label style={{
-            display: "flex", alignItems: "center", gap: 8, fontSize: 11,
-            color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
-          }}>
-            Vista: {cardColumns} col
-            <input
-              type="range"
-              min={2} max={6} step={1}
-              value={cardColumns}
-              onChange={e => handleColumnsChange(parseInt(e.target.value))}
-              title={`${cardColumns} columnas por fila`}
-              style={{ accentColor: "#6366f1", width: 80 }}
-            />
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'SF Mono', monospace" }}>
-              {cardColumns <= 3 ? "🔍" : cardColumns >= 5 ? "🔎" : "▪"}
-            </span>
-          </label>
+          {/* Viewer switch — lives here now (same state and persistence as
+              Configuración → Preferencias → Vista de archivos). */}
+          <div role="group" aria-label="Modo de vista de archivos" style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.12)", flexShrink: 0 }}>
+            <button type="button" onClick={() => handleCardModeChange("grid")} title="Tarjetas en cuadrícula"
+              style={{ padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", border: "none",
+                background: cardMode === "grid" ? "rgba(99,102,241,0.35)" : "transparent",
+                color: cardMode === "grid" ? "#fff" : "rgba(255,255,255,0.5)",
+                fontWeight: cardMode === "grid" ? 600 : 400, transition: "all 0.15s" }}>
+              Cuadrícula
+            </button>
+            <button type="button" onClick={() => handleCardModeChange("flow")} title="Visor iPod (Cover Flow)"
+              style={{ padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+                borderLeft: "1px solid rgba(255,255,255,0.12)",
+                background: cardMode === "flow" ? "rgba(99,102,241,0.35)" : "transparent",
+                color: cardMode === "flow" ? "#fff" : "rgba(255,255,255,0.5)",
+                fontWeight: cardMode === "flow" ? 600 : 400, transition: "all 0.15s" }}>
+              Flow
+            </button>
+          </div>
+
+          {/* Column slider — only meaningful in the grid: CoverFlow has no
+              rows, so the control disappears with it. */}
+          {cardMode === "grid" && (
+            <label style={{
+              display: "flex", alignItems: "center", gap: 8, fontSize: 11,
+              color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
+            }}>
+              Vista: {cardColumns} col
+              <input
+                type="range"
+                min={2} max={6} step={1}
+                value={cardColumns}
+                onChange={e => handleColumnsChange(parseInt(e.target.value))}
+                title={`${cardColumns} columnas por fila`}
+                style={{ accentColor: "#6366f1", width: 80 }}
+              />
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'SF Mono', monospace" }}>
+                {cardColumns <= 3 ? "🔍" : cardColumns >= 5 ? "🔎" : "▪"}
+              </span>
+            </label>
+          )}
         </div>
 
         {loading ? (
@@ -2940,7 +2969,7 @@ const cardContentStyle: React.CSSProperties = {
 
 const cardInfoPanel: React.CSSProperties = {
   marginTop: "auto",
-  borderRadius: "0 0 10px 10px", padding: 0,
+  borderRadius: "0 0 10px 10px", padding: "8px 12px",
   background: "rgba(0, 0, 0, 0.4)",
   border: "1px solid rgba(255, 255, 255, 0.06)",
 };
