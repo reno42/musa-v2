@@ -115,6 +115,12 @@ Principio: **cada capa es independiente** — si la IA olvida la regla (Capa 4),
 - [ ] lint OVERFLOW sobre el caso anterior → error con px; sobre v5 neutralizado → PASS
 - [ ] copy largo en slot chico (simulado con data-slot) → OVERFLOW lo detecta por scrollHeight
 
+**escritura segura (G10 — ver `harness/QA_OVERFLOW_2026-08-30.md`):**
+- [ ] set_css con CSS truncado (553 chars, llaves desbalanceadas) → RECHAZADO con error de parse
+- [ ] set_css con basura (runs de dígitos >25) → RECHAZADO
+- [ ] set_css batch: 11 frames con el mismo chrome → 1 llamada atómica
+- [ ] PUT /api/templates/:id/frames/:frameId → responde en prod (hoy 404) o se documenta el backend real
+
 **cierre:**
 - [ ] Kanban card_mtewcpgf_doib6k → done tras review MANUAL (el auto-reviewer del batch ya marcó done falso una vez evaluando un slide que describía la spec; no repetir)
 - [ ] README de harness/ actualizado con estado
