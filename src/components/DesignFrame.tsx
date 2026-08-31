@@ -40,6 +40,7 @@ import {
   getHandleAt,
   getSegmentAt,
   getVertexAt,
+  radiusFromHorizontalDrag,
   updateCornerRadius,
 } from "../lib/shapeHandles";
 import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
@@ -226,9 +227,6 @@ interface RadiusDragOptions {
   index: number;
   baseRadii: number[];
   maxRadius: number;
-  corner: { x: number; y: number };
-  /** Unit vector from the corner toward the shape center (drag axis). */
-  axis: { x: number; y: number };
   rest: { x: number; y: number };
   /** Overlay px → local units (path shapes scale to viewBox units). */
   scale?: number;
@@ -944,7 +942,7 @@ export function DesignFrame({
 
   // ── F4: shape vertex interactions ──
   // A1 — hover a selected shape: circles at each vertex; grab one and drag
-  //   horizontally (left = rounder, right = sharper) to round ALL corners.
+  //   horizontally (left = sharper, right = rounder) to round ALL corners.
   // A2 — double-click a shape: editable-vertices mode (drag individual
   //   vertices with smart guides, click a segment midpoint to insert).
   const vertexEditModeRef = useRef<{ layerId: string } | null>(null);
@@ -1118,8 +1116,7 @@ export function DesignFrame({
     ];
     const perCorner = event.altKey;
     const scale = options.scale ?? 1;
-    const [p0x, p0y] = project(event.clientX, event.clientY);
-    const dist0 = (p0x - options.corner.x) * options.axis.x + (p0y - options.corner.y) * options.axis.y;
+    const [p0x] = project(event.clientX, event.clientY);
     let current = options.baseRadii[options.index] ?? 0;
     let pending: number | null = null;
     let rafId = 0;
@@ -1153,9 +1150,8 @@ export function DesignFrame({
       options.apply(updateCornerRadius(options.baseRadii, perCorner ? options.index : null, radius), perCorner);
     };
     const onMove = (moveEvent: MouseEvent) => {
-      const [mx, my] = project(moveEvent.clientX, moveEvent.clientY);
-      const dist = (mx - options.corner.x) * options.axis.x + (my - options.corner.y) * options.axis.y;
-      current = Math.max(0, Math.min(options.maxRadius, (options.baseRadii[options.index] ?? 0) + (dist - dist0) * scale));
+      const [mx] = project(moveEvent.clientX, moveEvent.clientY);
+      current = radiusFromHorizontalDrag(options.baseRadii[options.index] ?? 0, mx - p0x, options.maxRadius, scale);
       pending = current;
       if (rafId) return;
       rafId = requestAnimationFrame(() => {
@@ -1181,7 +1177,7 @@ export function DesignFrame({
 
   /**
    * F4 A1: corner widgets on a path shape (parametric star/polygon or
-   * recovered corners). Drag toward the center rounds; Alt drags one corner.
+   * recovered corners). Drag right to round, left to sharpen; Alt drags one corner.
    */
   function renderRadiusHandles(
     geom: NonNullable<ReturnType<typeof resolveShapeGeometry>>,
@@ -1227,7 +1223,7 @@ export function DesignFrame({
       const ux = center.x - cornerX;
       const uy = center.y - cornerY;
       const uLen = Math.hypot(ux, uy) || 1;
-      return { corner: { x: cornerX, y: cornerY }, axis: { x: ux / uLen, y: uy / uLen }, rest: { x: cornerX + (ux / uLen) * INSET, y: cornerY + (uy / uLen) * INSET } };
+      return { corner: { x: cornerX, y: cornerY }, rest: { x: cornerX + (ux / uLen) * INSET, y: cornerY + (uy / uLen) * INSET } };
     });
 
     const showLabelAt = (cx: number, cy: number, text: string) => {
@@ -1239,7 +1235,7 @@ export function DesignFrame({
     const currentRadius = () =>
       geom.uniform || (geom.radii.length ? geom.radii.reduce((a, b) => a + b, 0) / geom.radii.length : 0);
 
-    restPositions.forEach(({ corner, axis, rest }, index) => {
+    restPositions.forEach(({ rest }, index) => {
       const handleCircle = createHandleCircle(rest, index);
       handleCircle.addEventListener("mouseenter", () => {
         if (radiusDragRef.current) return;
@@ -1261,8 +1257,6 @@ export function DesignFrame({
           index,
           baseRadii: geom.radii,
           maxRadius: maxRadiusLocal,
-          corner,
-          axis,
           rest,
           scale: toLocal,
           apply: (radii, perCorner) => {
@@ -1319,7 +1313,7 @@ export function DesignFrame({
       const ux = center.x - corner.x;
       const uy = center.y - corner.y;
       const uLen = Math.hypot(ux, uy) || 1;
-      return { corner, axis: { x: ux / uLen, y: uy / uLen }, rest: { x: corner.x + (ux / uLen) * INSET, y: corner.y + (uy / uLen) * INSET } };
+      return { corner, rest: { x: corner.x + (ux / uLen) * INSET, y: corner.y + (uy / uLen) * INSET } };
     });
 
     const showLabelAt = (cx: number, cy: number, text: string) => {
@@ -1329,7 +1323,7 @@ export function DesignFrame({
       radiusLabel.style.top = `${cy - 14}px`;
     };
 
-    geometry.forEach(({ corner, axis, rest }, index) => {
+    geometry.forEach(({ rest }, index) => {
       const handleCircle = createHandleCircle(rest, index);
       handleCircle.addEventListener("mouseenter", () => {
         if (radiusDragRef.current) return;
@@ -1350,8 +1344,6 @@ export function DesignFrame({
           index,
           baseRadii,
           maxRadius,
-          corner,
-          axis,
           rest,
           apply: (radii) => {
             const elStyle = (layerEl as HTMLElement).style;
@@ -1604,8 +1596,7 @@ export function DesignFrame({
     const targetPath = (isPathEl ? el : pathEl) as Element | null;
     const pathData = targetPath?.getAttribute("d");
 
-    // Corner widgets for the selected shape are rendered by the shared
-    // renderRadiusHandles / renderCssRadiusHandles below (F4 A1).
+    // Radius widgets are intentionally absent until the selected shape is hovered.
 
     // If this is an SVG path, render point editing overlay — but only in
     // explicit vertex-edit mode (F4 A2: entered by double-clicking the shape).
@@ -2002,10 +1993,8 @@ export function DesignFrame({
         document.addEventListener("mouseup", onRotUp);
       });
 
-      // ── F4 A1: corner widgets on the selected shape (hover not required).
-      // Parametric path shapes get radius handles; free-form paths (no corner
-      // model) get a read-only vertex network; CSS rects get border-radius
-      // handles. ──
+      // Free-form paths get a read-only vertex network. Radius widgets for
+      // parametric paths and CSS rectangles are added only on selected hover.
       if (targetPath && pathData) {
         const freePoints = cornersFromShapePath(pathData) === null ? parsePathData(pathData) : null;
         if (freePoints) {
@@ -2037,12 +2026,7 @@ export function DesignFrame({
             svgLeft: svgRect ? (svgRect.left - cRect.left) / z : x,
             svgTop: svgRect ? (svgRect.top - cRect.top) / z : y,
           }, isPathClosed(pathData), false);
-        } else {
-          const shapeGeometry = resolveShapeGeometry(targetPath);
-          if (shapeGeometry) renderRadiusHandles(shapeGeometry, el, x, y, w, h);
         }
-      } else if (el.tagName.toLowerCase() === "div" && el.getAttribute("data-layer-kind") === "shape") {
-        renderCssRadiusHandles(el, x, y, w, h);
       }
     }
 
@@ -2215,38 +2199,45 @@ export function DesignFrame({
       overlay.appendChild(preview);
       hoverPreviewRef.current = preview;
 
-      // ── F4 A1: hovering an UNSELECTED shape also shows its corner widgets ──
       hoverTargetRef.current = el;
+    }
+
+    function showSelectedRadiusHandles(el: Element) {
+      hideHoverPreview();
+      hoverTargetRef.current = el;
+      const cRect = content.getBoundingClientRect();
+      const elRect = getVisualRect(el);
+      const z = zoomRef.current || 1;
+      const x = (elRect.left - cRect.left) / z;
+      const y = (elRect.top - cRect.top) / z;
+      const w = elRect.width / z;
+      const h = elRect.height / z;
       const path = el.tagName.toLowerCase() === "path" ? el : el.querySelector?.("path");
       const d = path?.getAttribute("d");
       if (path && d && cornersFromShapePath(d) !== null) {
         const geom = resolveShapeGeometry(el);
         if (geom) {
-          renderRadiusHandles(geom, el, (elRect.left - cRect.left) / z, (elRect.top - cRect.top) / z, elRect.width / z, elRect.height / z);
+          renderRadiusHandles(geom, el, x, y, w, h);
           hoverRadiusRef.current = true;
         }
       } else if (el.tagName.toLowerCase() === "div" && el.getAttribute("data-layer-kind") === "shape") {
-        renderCssRadiusHandles(el, (elRect.left - cRect.left) / z, (elRect.top - cRect.top) / z, elRect.width / z, elRect.height / z);
+        renderCssRadiusHandles(el, x, y, w, h);
         hoverRadiusRef.current = true;
       }
     }
 
     function hideHoverPreview() {
-      const wasHoverTarget = hoverTargetRef.current;
       if (hoverPreviewRef.current) {
         hoverPreviewRef.current.remove();
         hoverPreviewRef.current = null;
       }
       hoverTargetRef.current = null;
-      // Handles shown for a hovered UNSELECTED shape leave with the preview;
-      // the selected shape's own handles persist (guard with radiusDragRef).
+      // Hover-owned radius handles leave without disturbing the selection UI.
       if (hoverRadiusRef.current) {
         hoverRadiusRef.current = false;
         if (!radiusDragRef.current) {
           overlay.querySelector("[data-radius-overlay]")?.remove();
           overlay.querySelector("[data-radius-label]")?.remove();
-          // Restore the selected shape's handles if the hover displaced them.
-          if (selectedRef.current && selectedRef.current !== wasHoverTarget) refreshOverlay(selectedRef.current);
         }
       }
     }
@@ -2284,10 +2275,8 @@ export function DesignFrame({
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
         if (hit && hit !== selectedRef.current) {
           showHoverPreview(hit);
-        } else if (hit === selectedRef.current) {
-          // Back over the selected shape: drop the hover preview (and any
-          // hover-owned handles) without touching the selection.
-          hideHoverPreview();
+        } else if (hit && hit === selectedRef.current) {
+          if (hoverTargetRef.current !== hit || !hoverRadiusRef.current) showSelectedRadiusHandles(hit);
         } else if (!hit) {
           hideHoverPreview();
         }
@@ -2295,7 +2284,9 @@ export function DesignFrame({
     });
 
     // ── Hide hover preview when mouse leaves the frame ──
-    content.addEventListener("mouseleave", () => {
+    content.addEventListener("mouseleave", (event: Event) => {
+      const relatedTarget = (event as MouseEvent).relatedTarget;
+      if (relatedTarget instanceof Node && overlay.contains(relatedTarget)) return;
       hideHoverPreview();
     });
 

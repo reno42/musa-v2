@@ -1605,7 +1605,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const oname = nameMap[type] || type;
     if (type === "rect") {
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n}`;
+      css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 0;\n}`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${orphanId}" data-layer-name="${oname}" data-layer-kind="shape"></div>`;
       css = `[data-layer-id="${orphanId}"] {\n  position: absolute;\n  left: 0;\n  top: 0;\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #EF4444;\n  border-radius: 50%;\n}`;
@@ -2258,8 +2258,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     let css: string;
     const defaultSize = type === "polygon" ? 120 : (type === "star" ? 130 : 150);
     if (type === "rect") {
-      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape" style="width:200px;height:150px;background-color:#3B82F6;border-radius:8px;position:absolute;left:${x}px;top:${y}px;"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape" style="width:200px;height:150px;background-color:#3B82F6;border-radius:0;position:absolute;left:${x}px;top:${y}px;"></div>`;
+      css = `[data-layer-id="${layerId}"] {\n  width: 200px;\n  height: 150px;\n  background-color: #3B82F6;\n  border-radius: 0;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape" style="width:150px;height:150px;background-color:#EF4444;border-radius:50%;position:absolute;left:${x}px;top:${y}px;"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: 150px;\n  height: 150px;\n  background-color: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
@@ -2301,7 +2301,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     let css: string;
     if (type === "rect") {
       html = `<div data-layer-id="${layerId}" data-layer-name="Rectangle" data-layer-kind="shape"></div>`;
-      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 8px;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
+      css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #3B82F6;\n  border-radius: 0;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;
     } else if (type === "circle") {
       html = `<div data-layer-id="${layerId}" data-layer-name="Circle" data-layer-kind="shape"></div>`;
       css = `[data-layer-id="${layerId}"] {\n  width: ${w}px;\n  height: ${h}px;\n  background-color: #EF4444;\n  border-radius: 50%;\n  position: absolute;\n  left: ${x}px;\n  top: ${y}px;\n}\n`;

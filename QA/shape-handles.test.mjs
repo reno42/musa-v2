@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   bboxCorners,
@@ -6,6 +7,7 @@ import {
   getSegmentAt,
   getVertexAt,
   hitTestHandle,
+  radiusFromHorizontalDrag,
   updateCornerRadius,
 } from "../src/lib/shapeHandles.ts";
 import { verticesToPath } from "../src/lib/shapePaths.ts";
@@ -212,6 +214,26 @@ test("updateCornerRadius output feeds verticesToPath (per-corner radii)", () => 
   assert.ok(flat.length > 0);
   assert.notEqual(singleCorner, flat); // one rounded corner changes the path
   assert.ok(singleCorner.includes("Q") || singleCorner.includes("A")); // arc/quad for the rounded corner
+});
+
+test("horizontal radius drag decreases left and increases right", () => {
+  assert.equal(radiusFromHorizontalDrag(8, -20, 50), 0);
+  assert.equal(radiusFromHorizontalDrag(8, 12, 50), 20);
+  assert.equal(radiusFromHorizontalDrag(8, 100, 50), 50);
+  assert.equal(radiusFromHorizontalDrag(8, 6, 50, 2), 20);
+});
+
+test("rectangle creation is sharp by default and radius handles require selected hover", () => {
+  const editor = readFileSync(new URL("../src/pages/EditorV2.tsx", import.meta.url), "utf8");
+  const frame = readFileSync(new URL("../src/components/DesignFrame.tsx", import.meta.url), "utf8");
+  const refreshStart = frame.indexOf("function refreshOverlay");
+  const selectionOverlay = frame.slice(refreshStart, frame.indexOf("const handles:", refreshStart));
+
+  assert.doesNotMatch(editor, /background-color: #3B82F6;\\n  border-radius: 8px/);
+  assert.doesNotMatch(editor, /background-color:#3B82F6;border-radius:8px/);
+  assert.doesNotMatch(selectionOverlay, /renderRadiusHandles\(|renderCssRadiusHandles\(/);
+  assert.match(frame, /hit === selectedRef\.current[\s\S]*showSelectedRadiusHandles\(hit\)/);
+  assert.match(frame, /overlay\.contains\(relatedTarget\)/);
 });
 
 // ── shapePaths API regression: verticesToPath still accepts a scalar ──

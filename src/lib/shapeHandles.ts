@@ -143,3 +143,13 @@ export function updateCornerRadius(radii: readonly number[], index: number | nul
   if (index === null) return radii.map(() => next);
   return radii.map((radius, position) => (position === index ? next : radius));
 }
+
+/** Resolve a radius from a horizontal drag: left decreases, right increases. */
+export function radiusFromHorizontalDrag(
+  baseRadius: number,
+  horizontalDelta: number,
+  maxRadius: number,
+  scale = 1,
+): number {
+  return Math.max(0, Math.min(maxRadius, baseRadius + horizontalDelta * scale));
+}
