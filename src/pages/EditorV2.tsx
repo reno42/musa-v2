@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
-import { localDayKey, previewReminderStorageKey, shouldShowPreviewReminder } from "../lib/previewReminder";
+import { PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -551,12 +551,34 @@ function detectMaskTarget(event: MouseEvent): ContextMenuMaskTarget | null {
   };
 }
 
-function PreviewReminderPopover({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
+function PreviewReminderPopover({
+  onOpen,
+  onDismiss,
+}: {
+  onOpen: () => void;
+  onDismiss: (days?: PreviewSnoozeDays) => Promise<void>;
+}) {
+  const [snoozeEnabled, setSnoozeEnabled] = useState(false);
+  const [snoozeDays, setSnoozeDays] = useState<PreviewSnoozeDays>(1);
+  const [savingSnooze, setSavingSnooze] = useState(false);
+  const [snoozeError, setSnoozeError] = useState("");
+
+  const dismiss = async () => {
+    setSavingSnooze(true);
+    setSnoozeError("");
+    try {
+      await onDismiss(snoozeEnabled ? snoozeDays : undefined);
+    } catch {
+      setSnoozeError("No pudimos guardar el recordatorio. Inténtalo otra vez.");
+      setSavingSnooze(false);
+    }
+  };
+
   return (
     <div
       id="preview-reminder"
-      role="status"
-      aria-live="polite"
+      role="region"
+      aria-labelledby="preview-reminder-title"
       style={{
         position: "absolute",
         top: "calc(100% + 10px)",
@@ -571,15 +593,40 @@ function PreviewReminderPopover({ onOpen, onDismiss }: { onOpen: () => void; onD
         color: "#e8e5dc",
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 5 }}>Tu preview tiene cambios pendientes</div>
+      <div id="preview-reminder-title" style={{ fontSize: 13, fontWeight: 650, marginBottom: 5 }}>Tu preview tiene cambios pendientes</div>
       <p style={{ margin: 0, color: "#aaa69a", fontSize: 12, lineHeight: 1.5 }}>
         El diseño cambió desde la última captura. Puedes actualizarlo desde Information.
       </p>
+      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, color: "#d2cec3", fontSize: 11, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={snoozeEnabled}
+            onChange={event => setSnoozeEnabled(event.target.checked)}
+          />
+          No volver a recordarme temporalmente
+        </label>
+        <label htmlFor="preview-snooze-days" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: "#aaa69a", fontSize: 11 }}>
+          Recordarme después de
+          <select
+            id="preview-snooze-days"
+            value={snoozeDays}
+            disabled={!snoozeEnabled || savingSnooze}
+            onChange={event => setSnoozeDays(Number(event.target.value) as PreviewSnoozeDays)}
+            style={{ background: "#202020", color: "#e8e5dc", border: "1px solid rgba(255,255,255,0.16)", borderRadius: 5, padding: "3px 6px" }}
+          >
+            {PREVIEW_SNOOZE_DAYS.map(days => (
+              <option key={days} value={days}>{days} {days === 1 ? "día" : "días"}</option>
+            ))}
+          </select>
+        </label>
+        {snoozeError && <div role="alert" style={{ marginTop: 8, color: "#fca5a5", fontSize: 11 }}>{snoozeError}</div>}
+      </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <button type="button" className="editor-v2-topbar-btn" onClick={onDismiss}>
-          Ahora no
+        <button type="button" className="editor-v2-topbar-btn" onClick={() => void dismiss()} disabled={savingSnooze}>
+          {savingSnooze ? "Guardando…" : "Ahora no"}
         </button>
-        <button type="button" className="editor-v2-topbar-btn" onClick={onOpen} style={{ color: "#c8b898", borderColor: "rgba(200,184,152,0.45)" }}>
+        <button type="button" className="editor-v2-topbar-btn" onClick={onOpen} disabled={savingSnooze} style={{ color: "#c8b898", borderColor: "rgba(200,184,152,0.45)" }}>
           Abrir Information
         </button>
       </div>
@@ -698,14 +745,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showMorePanels, setShowMorePanels] = useState(false);
   const [designUpdatedAt, setDesignUpdatedAt] = useState<string | null>(null);
   const [coverCapturedAt, setCoverCapturedAt] = useState<string | null>(null);
+  const [previewSnoozedUntil, setPreviewSnoozedUntil] = useState<string | null>(null);
   const [previewMetaLoaded, setPreviewMetaLoaded] = useState(false);
   const [showPreviewReminder, setShowPreviewReminder] = useState(false);
+  const [reminderDismissedThisVisit, setReminderDismissedThisVisit] = useState(false);
   const [emphasizePreviewCapture, setEmphasizePreviewCapture] = useState(false);
   const toggleRightPanel = (tab: string) => {
     if (showRightPanel && rightPanelTab === tab) setShowRightPanel(false);
     else { setRightPanelTab(tab); setShowRightPanel(true); }
   };
   const openPreviewCaptureGuide = useCallback(() => {
+    setReminderDismissedThisVisit(true);
     setShowPreviewReminder(false);
     setShowMorePanels(false);
     setRightPanelTab("meta");
@@ -714,6 +764,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, []);
   const handleCoverUpdated = useCallback((capturedAt: string) => {
     setCoverCapturedAt(capturedAt);
+    setPreviewSnoozedUntil(null);
     setShowPreviewReminder(false);
     setEmphasizePreviewCapture(false);
   }, []);
@@ -841,7 +892,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           return;
         }
         setTemplateName(t.name || "Untitled");
-        setDesignUpdatedAt(t.metadata?.updatedAt || null);
+        setDesignUpdatedAt(t.metadata?.contentUpdatedAt || t.metadata?.updatedAt || null);
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
@@ -908,6 +959,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   useEffect(() => {
     let cancelled = false;
+    setReminderDismissedThisVisit(false);
+    setShowPreviewReminder(false);
     setPreviewMetaLoaded(false);
     fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() })
       .then(response => {
@@ -915,26 +968,38 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         return response.json();
       })
       .then(result => {
-        if (!cancelled) setCoverCapturedAt(result?.data?.cover_captured_at || null);
+        if (cancelled) return;
+        setCoverCapturedAt(result?.data?.cover_captured_at || null);
+        setPreviewSnoozedUntil(result?.data?.preview_snoozed_until || null);
+        if (result?.data?.content_updated_at) setDesignUpdatedAt(result.data.content_updated_at);
+        setPreviewMetaLoaded(true);
       })
       .catch(() => {
-        if (!cancelled) setCoverCapturedAt(null);
-      })
-      .finally(() => {
-        if (!cancelled) setPreviewMetaLoaded(true);
+        if (!cancelled) setPreviewMetaLoaded(false);
       });
     return () => { cancelled = true; };
   }, [templateId]);
 
   useEffect(() => {
-    if (!previewMetaLoaded || !designUpdatedAt) return;
-    const key = previewReminderStorageKey(templateId, user?.id);
-    let lastShownDay: string | null = null;
-    try { lastShownDay = window.localStorage.getItem(key); } catch {}
-    if (!shouldShowPreviewReminder({ designUpdatedAt, coverCapturedAt, lastShownDay })) return;
-    setShowPreviewReminder(true);
-    try { window.localStorage.setItem(key, localDayKey()); } catch {}
-  }, [previewMetaLoaded, designUpdatedAt, coverCapturedAt, templateId, user?.id]);
+    if (!previewMetaLoaded || !designUpdatedAt || reminderDismissedThisVisit) return;
+    setShowPreviewReminder(shouldShowPreviewReminder({
+      designUpdatedAt,
+      coverCapturedAt,
+      snoozedUntil: previewSnoozedUntil,
+    }));
+  }, [previewMetaLoaded, designUpdatedAt, coverCapturedAt, previewSnoozedUntil, reminderDismissedThisVisit]);
+
+  const dismissPreviewReminder = useCallback(async (days?: PreviewSnoozeDays) => {
+    if (days) {
+      const result = await apiFetch<any>(`/api/meta/${templateId}/preview-reminder`, {
+        method: "PUT",
+        body: JSON.stringify({ days }),
+      });
+      setPreviewSnoozedUntil(result.data.snoozed_until);
+    }
+    setReminderDismissedThisVisit(true);
+    setShowPreviewReminder(false);
+  }, [templateId]);
 
   // ── Auto-save (immediate localStorage, debounced API sync) ──
   const autoSave = useCallback((updatedFrames: FrameData[]) => {
@@ -984,7 +1049,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
           isDirtyRef.current = false;
-          setDesignUpdatedAt(new Date().toISOString());
           break;
         } catch (err) {
           console.error(`[SAVE] API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
@@ -6564,7 +6628,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <span style={{ fontSize: 11, marginLeft: 4 }}>Paneles</span>
               </button>
               {showPreviewReminder && (
-                <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={() => setShowPreviewReminder(false)} />
+                <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={dismissPreviewReminder} />
               )}
               <TopbarMenu open={showMorePanels} onClose={() => setShowMorePanels(false)} width={250}>
                 {([
@@ -6607,7 +6671,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   <span style={{ fontSize: 11, marginLeft: 4 }}>Info</span>
                 </button>
                 {showPreviewReminder && (
-                  <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={() => setShowPreviewReminder(false)} />
+                  <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={dismissPreviewReminder} />
                 )}
               </div>
               {/* Biblioteca: Estilos (Brand Guidelines), Plantillas (Key

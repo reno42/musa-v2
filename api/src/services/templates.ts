@@ -16,6 +16,7 @@ type SupabaseTplRow = {
   user_id: string;
   created_at: string;
   updated_at: string;
+  content_updated_at?: string | null;
 };
 
 function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
@@ -31,6 +32,7 @@ function rowToTemplate(row: SupabaseTplRow): DesignTemplate {
       ...data.metadata,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      contentUpdatedAt: row.content_updated_at || row.updated_at,
     },
   };
 }
@@ -160,7 +162,7 @@ async function getFromSupabase(id: string): Promise<DesignTemplate | null> {
   }
 }
 
-async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<boolean> {
+async function upsertSupabase(tpl: DesignTemplate, userId: string, contentChanged = false): Promise<boolean> {
   const sb = getSupabase();
   if (!sb) return false;
   try {
@@ -180,6 +182,7 @@ async function upsertSupabase(tpl: DesignTemplate, userId: string): Promise<bool
       data,
       updated_at: new Date().toISOString(),
     };
+    if (contentChanged) row.content_updated_at = row.updated_at;
     // Only include user_id if it's a valid UUID (column type is uuid with FK to auth.users)
     if (UUID_RE.test(userId)) {
       row.user_id = userId;
@@ -369,7 +372,7 @@ export async function createTemplate(
   _canvas: CanvasData | undefined, userId: string, workspaceId: string
 ): Promise<DesignTemplate> {
   const tpl = store.createTemplate({ workspaceId, name, width, height, userId });
-  const persisted = await upsertSupabase(tpl, userId);
+  const persisted = await upsertSupabase(tpl, userId, true);
   if (getSupabase() && !persisted) {
     store.purgeTemplate(tpl.id);
     throw new Error("Template could not be persisted");
@@ -498,6 +501,8 @@ export async function updateTemplate(
   }
 
   applyGroupPaintRule(updates);
+  const contentChanged = ["frames", "html", "css", "canvas", "canvasObjects", "objects", "width", "height"]
+    .some(key => Object.prototype.hasOwnProperty.call(updates, key));
 
   let tpl = store.updateTemplate(id, updates);
   if (!tpl) {
@@ -512,7 +517,11 @@ export async function updateTemplate(
   if (tpl) {
     // Auto-generate thumbnail from first frame if missing (pipeline)
     ensureThumbnail(tpl);
-    const persisted = await upsertSupabase(tpl, updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default");
+    const persisted = await upsertSupabase(
+      tpl,
+      updates.userId || (tpl as any).metadata?.createdBy || "dev_user_default",
+      contentChanged,
+    );
     // Only treat a failed upsert as fatal when Supabase IS configured — local
     // dev runs memory-only by design, and failing here made every PUT answer
     // 404 "Template not found" for a template that exists.
@@ -592,7 +601,7 @@ export async function duplicateTemplate(
   }));
 
   store.updateTemplate(copy.id, copy);
-  await upsertSupabase(copy, uid);
+  await upsertSupabase(copy, uid, true);
   return copy;
 }
 

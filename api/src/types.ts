@@ -163,6 +163,7 @@ export interface VariableStore {
 export interface TemplateMetadata {
   createdAt: string;
   updatedAt: string;
+  contentUpdatedAt?: string;
   createdBy?: string;
   designArtifactsGeneratedAt?: string;
   deletedAt?: string;

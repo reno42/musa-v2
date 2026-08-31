@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import { getSupabase, removeStalePreviewFiles } from "../services/supabase.js";
 import { store } from "../services/store.js";
 import { canAccessWorkspace, listAccessibleWorkspaceIds } from "../services/tenancy.js";
+import { isPreviewSnoozeDays } from "../../../shared/previewReminder.ts";
 
 export const designMetaRoutes = Router();
 
@@ -59,13 +60,57 @@ designMetaRoutes.get("/:templateId", async (req, res) => {
       const meta = store.getMeta?.(req.params.templateId) ?? null;
       return res.json({ success: true, data: meta });
     }
-    const { data, error } = await sb
-      .from("design_file_meta")
-      .select("*")
-      .eq("template_id", req.params.templateId)
-      .maybeSingle();
+    const userId = req.auth?.authType === "user" ? req.auth.userId : null;
+    const [metaResult, templateResult, reminderResult] = await Promise.all([
+      sb.from("design_file_meta").select("*").eq("template_id", req.params.templateId).maybeSingle(),
+      sb.from("templates").select("content_updated_at, updated_at").eq("id", req.params.templateId).single(),
+      userId
+        ? sb.from("preview_reminder_preferences")
+            .select("snoozed_until, snooze_days")
+            .eq("user_id", userId)
+            .eq("template_id", req.params.templateId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (metaResult.error) throw metaResult.error;
+    if (templateResult.error) throw templateResult.error;
+    if (reminderResult.error) throw reminderResult.error;
+    res.json({
+      success: true,
+      data: {
+        ...rowToMeta(metaResult.data || {}),
+        content_updated_at: templateResult.data.content_updated_at || templateResult.data.updated_at,
+        preview_snoozed_until: reminderResult.data?.snoozed_until || null,
+        preview_snooze_days: reminderResult.data?.snooze_days || null,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** PUT /api/meta/:templateId/preview-reminder — snooze for this user and file. */
+designMetaRoutes.put("/:templateId/preview-reminder", async (req, res) => {
+  try {
+    if (req.auth?.authType !== "user" || !req.auth.userId) {
+      return res.status(403).json({ success: false, error: "A signed-in user session is required" });
+    }
+    const days = Number(req.body.days);
+    if (!isPreviewSnoozeDays(days)) {
+      return res.status(400).json({ success: false, error: "days must be one of 1, 2, 3, 5, 20, 30" });
+    }
+    const sb = getSupabase();
+    if (!sb) return res.status(503).json({ success: false, error: "Supabase not connected" });
+    const snoozedUntil = new Date(Date.now() + days * 86_400_000).toISOString();
+    const { error } = await sb.from("preview_reminder_preferences").upsert({
+      user_id: req.auth.userId,
+      template_id: req.params.templateId,
+      snoozed_until: snoozedUntil,
+      snooze_days: days,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,template_id" });
     if (error) throw error;
-    res.json({ success: true, data: data ? rowToMeta(data) : null });
+    res.json({ success: true, data: { snoozed_until: snoozedUntil, snooze_days: days } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -472,6 +517,12 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
       cover_source: coverSource,
       updated_at: capturedAt,
     }, { onConflict: "template_id" });
+    if (req.auth?.authType === "user" && req.auth.userId) {
+      await sb.from("preview_reminder_preferences")
+        .delete()
+        .eq("user_id", req.auth.userId)
+        .eq("template_id", templateId);
+    }
 
     res.json({ success: true, data: { cover_image_url: coverUrl, cover_captured_at: capturedAt, cover_source: coverSource } });
   } catch (err: any) {
