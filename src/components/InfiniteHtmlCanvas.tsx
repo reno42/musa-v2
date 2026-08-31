@@ -91,6 +91,8 @@ interface InfiniteHtmlCanvasProps {
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => void;
   onEditPathPoints?: (frameId: string, layerId: string, newPathD: string) => void;
+  /** F4 A2: global vertex-edit mode entered/exited for a layer in a frame. */
+  onVertexEditModeChange?: (frameId: string, layerId: string | null) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
   // ── F4 Borrador ──
@@ -176,7 +178,7 @@ export function InfiniteHtmlCanvas({
   onZoomChange, onFrameMove, onMultiFrameMove, onDuplicateFrames, onRenameFrame,
   onElementSelect, onLayerEscape, onRequestLayerSelect, onFrameCssChange, onFrameHtmlChange,
   layerSelectionRequest, selectedElement, selectedLayerIds = [], onLayerSelectionChange,
-  onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
   onBrushStroke, brushSize = 24,
   onWandSegment, wandLoading = null,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
@@ -1139,6 +1141,7 @@ export function InfiniteHtmlCanvas({
               onAddPenPath={onAddPenPath}
               onAddTextPath={onAddTextPath}
               onEditPathPoints={(layerId, newPathD) => onEditPathPoints?.(frame.id, layerId, newPathD)}
+              onVertexEditModeChange={(layerId) => onVertexEditModeChange?.(frame.id, layerId)}
               onElementDelete={onElementDelete}
               onElementDuplicate={onElementDuplicate}
               onBrushStroke={(imageLayerId, stroke) => onBrushStroke?.(frame.id, imageLayerId, stroke)}

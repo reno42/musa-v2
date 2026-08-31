@@ -578,6 +578,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [templateName, setTemplateName] = useState("New Design");
   const [templateWorkspaceId, setTemplateWorkspaceId] = useState("default");
   const [activeTool, setActiveTool] = useState<HtmlToolName>("select");
+  // F4 A2: layer currently in vertex-edit mode (drives the topbar chip).
+  const [vertexEditModeLayer, setVertexEditModeLayer] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState(24); // F4 Borrador diameter in px
   const [wandBusy, setWandBusy] = useState<string | null>(null); // F2 Varita: image being segmented (inline loader)
   const [wandPrompt, setWandPrompt] = useState(""); // F2b CLIPSeg text prompt ("la persona")
@@ -6447,6 +6449,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           </span>
         )}
         <div style={{ flex: 1 }} />
+        {vertexEditModeLayer && (
+          <span
+            title={`Editing vertices of layer ${vertexEditModeLayer}`}
+            style={{
+              display: "inline-flex", alignItems: "center",
+              padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
+              background: "rgba(139,92,246,0.18)", border: "1px solid rgba(139,92,246,0.45)",
+              color: "#d8c9ff", whiteSpace: "nowrap",
+            }}
+          >
+            Editing vertices — Enter/Esc to finish
+          </span>
+        )}
 
         {/* ═══ Zona: Documento (zoom + guardado de versión) ═══ */}
         <div className="editor-v2-topbar-group" data-tour="topbar-documento" style={{ display: "flex", alignItems: "center", gap: "var(--tb-inner-gap, 6px)" }}>
@@ -7388,6 +7403,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onAddTextPath={handleAddTextPath}
             onAddTextBox={handleAddTextBox}
             onEditPathPoints={handleEditPathPoints}
+            onVertexEditModeChange={(_frameId, layerId) => setVertexEditModeLayer(layerId)}
             onElementDelete={handleDeleteElement}
             onElementDuplicate={handleDuplicateElement}
             onBrushStroke={(frameId, imageLayerId, stroke) => handleBrushStroke(frameId, imageLayerId, stroke)}

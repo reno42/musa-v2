@@ -32,9 +32,16 @@ import {
   cornersFromShapePath,
   parametricVertices,
   parseVertexRadiiAttr,
+  serializeVertexRadiiAttr,
   verticesToPath,
   type ShapeVertex,
 } from "../lib/shapePaths";
+import {
+  bboxCorners,
+  getHandleAt,
+  getVertexAt,
+  updateCornerRadius,
+} from "../lib/shapeHandles";
 import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { createFrameAnimator, type FrameAnimator } from "../lib/animationEngine";
@@ -166,6 +173,9 @@ interface DesignFrameProps {
   onAddPenPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, closed?: boolean) => void;
   onAddTextPath?: (pathData: string, bounds: { x: number; y: number; width: number; height: number }, clickX: number, clickY: number, startOffset: number, originalViewBox?: string) => void;
   onEditPathPoints?: (layerId: string, newPathD: string) => void;
+  /** F4 A2: the frame reports entering/leaving vertex-edit mode so the app
+   *  can reflect the mode in its chrome (e.g. an "Editing vertices" chip). */
+  onVertexEditModeChange?: (layerId: string | null) => void;
   onElementDelete?: (layerId: string) => void;
   onElementDuplicate?: (layerId: string) => void;
   // ── F4 Borrador ──
@@ -199,6 +209,32 @@ interface DesignFrameProps {
 const SEL = "#3B82F6";
 const HANDLE = 7;
 type ResizeDirection = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+/** SVG viewBox → overlay-space mapping for the vertex network. */
+interface VectorMapping {
+  vbX: number;
+  vbY: number;
+  svgScaleX: number;
+  svgScaleY: number;
+  svgLeft: number;
+  svgTop: number;
+}
+
+/** Shared corner-radius drag parameters (path shapes and CSS divs). */
+interface RadiusDragOptions {
+  layerEl: Element;
+  index: number;
+  baseRadii: number[];
+  maxRadius: number;
+  corner: { x: number; y: number };
+  /** Unit vector from the corner toward the shape center (drag axis). */
+  axis: { x: number; y: number };
+  rest: { x: number; y: number };
+  /** Overlay px → local units (path shapes scale to viewBox units). */
+  scale?: number;
+  apply: (radii: number[], perCorner: boolean) => void;
+  commit: (radii: number[], perCorner: boolean, value: number) => void;
+}
 
 const TRACKED_PROPS = [
   // Typography
@@ -242,7 +278,7 @@ const TRACKED_PROPS = [
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
-  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onElementDelete, onElementDuplicate,
+  activeTool, onAddPrimitive, onDrawShape, onTextChange, onAddTextBox, onAddPenPath, onAddTextPath, onEditPathPoints, onVertexEditModeChange, onElementDelete, onElementDuplicate,
     onBrushStroke, brushSize = 24,
     onWandSegment, wandLoading = null,
   contentMode, inMultiSelect, isRenaming, renameValue, onLabelMouseDown, onLabelDoubleClick, onRenameChange, onRenameCommit, onRenameCancel, onEnterContentMode,
@@ -283,6 +319,17 @@ export function DesignFrame({
   onElementDuplicateRef.current = onElementDuplicate;
   const onEditPathPointsRef = useRef(onEditPathPoints);
   onEditPathPointsRef.current = onEditPathPoints;
+    const onVertexEditModeChangeRef = useRef(onVertexEditModeChange);
+    onVertexEditModeChangeRef.current = onVertexEditModeChange;
+
+  // F4 A2: switching away from select/hand exits vertex-edit mode so the
+  // overlay never survives a tool change.
+  useEffect(() => {
+    if (activeTool && activeTool !== "select" && activeTool !== "hand" && vertexEditModeRef.current) {
+      exitVertexEditModeRef.current?.();
+      if (selectedRef.current) refreshOverlay(selectedRef.current);
+    }
+  }, [activeTool]);
   const onBrushStrokeRef = useRef(onBrushStroke);
   onBrushStrokeRef.current = onBrushStroke;
   const brushSizeRef = useRef(brushSize);
@@ -819,6 +866,10 @@ export function DesignFrame({
       // Selection moved to another layer — leave vertex-edit mode.
       exitVertexEditModeRef.current?.();
     }
+    // Any radius handles now belong to the SELECTED shape (rendered by
+    // refreshOverlay), not to the hover preview.
+    hoverRadiusRef.current = false;
+    hoverTargetRef.current = null;
     selectedRef.current = element;
     selectedSourceRef.current = source;
     refreshOverlay(element);
@@ -888,6 +939,7 @@ export function DesignFrame({
     vertexEditModeRef.current = null;
     exitVertexEditModeRef.current?.();
     exitVertexEditModeRef.current = null;
+    selectedVerticesRef.current = new Set();
   }
 
   // ── F4: shape vertex interactions ──
@@ -897,10 +949,17 @@ export function DesignFrame({
   //   vertices with smart guides, click a segment midpoint to insert).
   const vertexEditModeRef = useRef<{ layerId: string } | null>(null);
   const exitVertexEditModeRef = useRef<(() => void) | null>(null);
-  const shapeHoverRef = useRef<Element | null>(null);
-  const hoverHookRef = useRef<Element | null>(null);
-  const hoverDetachRef = useRef<(() => void) | null>(null);
   const radiusDragRef = useRef(false);
+  // F4 A2: selected vertex indexes (Shift multi-select), the path element
+  // being edited and its screen-space vertex positions (hit tests).
+  const selectedVerticesRef = useRef<Set<number>>(new Set());
+  const vertexPathElRef = useRef<Element | null>(null);
+  const vertexScreenPointsRef = useRef<{ x: number; y: number }[]>([]);
+  // Hover-preview ownership: which element owns the current preview, and
+  // whether the radius handles on screen belong to an UNSELECTED hovered
+  // shape (they must leave with the preview, unlike the selected shape's).
+  const hoverTargetRef = useRef<Element | null>(null);
+  const hoverRadiusRef = useRef(false);
 
   function closestLayerId(start: Element | null): string {
     for (let node: Element | null = start; node; node = node.parentElement) {
@@ -913,18 +972,493 @@ export function DesignFrame({
   function enterVertexEditMode(element: Element): void {
     const layerId = element.getAttribute("data-layer-id") || "";
     vertexEditModeRef.current = { layerId };
+    selectedVerticesRef.current = new Set();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      exitVertexEditModeRef.current?.();
+      // Escape — or Enter while no anchor has focus (anchors keep Enter for
+      // the accessible smooth/corner toggle) — leaves vertex-edit mode.
+      const focused = shadowRef.current?.activeElement ?? null;
+      const isExitKey = event.key === "Escape"
+        || (event.key === "Enter" && !focused?.hasAttribute?.("data-pe-point"));
+      if (isExitKey) {
+        exitVertexEditModeRef.current?.();
+        if (selectedRef.current) refreshOverlay(selectedRef.current);
+        return;
+      }
+      // ── F4 A2: Delete/Backspace removes the selected vertices. With no
+      // vertex selection the event falls through (the app deletes the layer).
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      const editData = pointEditPathRef.current;
+      const pathEl = vertexPathElRef.current;
+      if (!editData || !pathEl) return;
+      const selected = [...selectedVerticesRef.current].sort((a, b) => b - a);
+      if (selected.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (editData.points.length - selected.length < 3) {
+        showTransientHint("Minimum 3 points");
+        return;
+      }
+      let next = editData.points;
+      for (const index of selected) next = deletePathPoint(next, index);
+      editData.points = next;
+      selectedVerticesRef.current = new Set();
+      const newD = serializePathData(next, editData.closed);
+      pathEl.setAttribute("d", newD);
+      pathEl.closest("svg")?.setAttribute("data-shape-custom", "1");
+      if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newD);
       if (selectedRef.current) refreshOverlay(selectedRef.current);
     };
     exitVertexEditModeRef.current = () => {
       document.removeEventListener("keydown", onKey);
       vertexEditModeRef.current = null;
+      selectedVerticesRef.current = new Set();
+      vertexPathElRef.current = null;
       exitVertexEditModeRef.current = null;
+      onVertexEditModeChangeRef.current?.(null);
     };
     document.addEventListener("keydown", onKey);
+    onVertexEditModeChangeRef.current?.(layerId);
     selectElement(element);
+  }
+
+  /** Short-lived overlay chip (e.g. the < 3 points warning). */
+  function showTransientHint(text: string): void {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    overlay.querySelector("[data-transient-hint]")?.remove();
+    const hint = document.createElement("div");
+    hint.setAttribute("data-transient-hint", "");
+    Object.assign(hint.style, {
+      position: "absolute", left: "50%", top: "12px", transform: "translateX(-50%)",
+      padding: "4px 10px", borderRadius: "6px",
+      background: "rgba(239,68,68,0.92)", color: "#ffffff",
+      fontSize: "11px", fontWeight: "600", fontFamily: "system-ui, sans-serif",
+      pointerEvents: "none", whiteSpace: "nowrap", zIndex: "10002",
+    });
+    hint.textContent = text;
+    overlay.appendChild(hint);
+    window.setTimeout(() => hint.remove(), 1400);
+  }
+
+  /** Create (or replace) the corner-handle SVG + radius tooltip. */
+  function createRadiusOverlay(): { svg: SVGSVGElement; label: HTMLElement } | null {
+    const overlay = overlayRef.current;
+    if (!overlay) return null;
+    overlay.querySelector("[data-radius-overlay]")?.remove();
+    overlay.querySelector("[data-radius-label]")?.remove();
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "100%");
+    Object.assign(svg.style, {
+      position: "absolute", top: "0", left: "0",
+      width: "100%", height: "100%",
+      pointerEvents: "none", zIndex: "10001",
+      overflow: "visible",
+    });
+    svg.setAttribute("data-radius-overlay", "");
+    overlay.appendChild(svg);
+    const label = document.createElement("div");
+    label.setAttribute("data-radius-label", "");
+    Object.assign(label.style, {
+      position: "absolute",
+      display: "none",
+      padding: "3px 8px",
+      borderRadius: "4px",
+      background: "#0F111A",
+      border: "1px solid rgba(59,130,246,0.55)",
+      color: "#ffffff",
+      fontSize: "11px",
+      fontWeight: "600",
+      fontFamily: "system-ui, sans-serif",
+      pointerEvents: "none",
+      whiteSpace: "nowrap",
+      zIndex: "10002",
+    });
+    overlay.appendChild(label);
+    return { svg, label };
+  }
+
+  /** One corner handle: 10px visual, grab cursor, auto pointer events. */
+  function createHandleCircle(rest: { x: number; y: number }, index: number): SVGCircleElement {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", `${rest.x}`);
+    circle.setAttribute("cy", `${rest.y}`);
+    circle.setAttribute("r", "5");
+    circle.setAttribute("fill", "#ffffff");
+    circle.setAttribute("stroke", "#3B82F6");
+    circle.setAttribute("stroke-width", "2");
+    circle.setAttribute("data-radius-handle", `${index}`);
+    circle.style.cursor = "grab";
+    circle.style.pointerEvents = "auto";
+    return circle;
+  }
+
+  /**
+   * Shared corner-radius drag: Alt drags a single corner, plain drag rounds
+   * all of them. rAF-throttled; commits through the caller's callbacks.
+   */
+  function startRadiusDrag(options: RadiusDragOptions, event: MouseEvent): void {
+    const overlay = overlayRef.current;
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!overlay || !content) return;
+    const z = zoomRef.current || 1;
+    const cRect = content.getBoundingClientRect();
+    const project = (clientX: number, clientY: number): [number, number] => [
+      (clientX - cRect.left) / z,
+      (clientY - cRect.top) / z,
+    ];
+    const perCorner = event.altKey;
+    const scale = options.scale ?? 1;
+    const [p0x, p0y] = project(event.clientX, event.clientY);
+    const dist0 = (p0x - options.corner.x) * options.axis.x + (p0y - options.corner.y) * options.axis.y;
+    let current = options.baseRadii[options.index] ?? 0;
+    let pending: number | null = null;
+    let rafId = 0;
+    radiusDragRef.current = true;
+
+    const getLabel = (): HTMLElement => {
+      let label = overlay.querySelector("[data-radius-label]") as HTMLElement | null;
+      if (!label) {
+        label = document.createElement("div");
+        label.setAttribute("data-radius-label", "");
+        Object.assign(label.style, {
+          position: "absolute", display: "none",
+          padding: "3px 8px", borderRadius: "4px",
+          background: "#0F111A", border: "1px solid rgba(59,130,246,0.55)",
+          color: "#ffffff", fontSize: "11px", fontWeight: "600",
+          fontFamily: "system-ui, sans-serif", pointerEvents: "none",
+          whiteSpace: "nowrap", zIndex: "10002",
+        });
+        overlay.appendChild(label);
+      }
+      return label;
+    };
+    const showLabelAt = (cx: number, cy: number, text: string) => {
+      const label = getLabel();
+      label.textContent = text;
+      label.style.display = "block";
+      label.style.left = `${cx + 12}px`;
+      label.style.top = `${cy - 14}px`;
+    };
+    const applyRadius = (radius: number) => {
+      options.apply(updateCornerRadius(options.baseRadii, perCorner ? options.index : null, radius), perCorner);
+    };
+    const onMove = (moveEvent: MouseEvent) => {
+      const [mx, my] = project(moveEvent.clientX, moveEvent.clientY);
+      const dist = (mx - options.corner.x) * options.axis.x + (my - options.corner.y) * options.axis.y;
+      current = Math.max(0, Math.min(options.maxRadius, (options.baseRadii[options.index] ?? 0) + (dist - dist0) * scale));
+      pending = current;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (pending == null) return;
+        applyRadius(pending);
+        showLabelAt(options.rest.x, options.rest.y, `Radius ${Math.round(pending)}`);
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      if (pending != null) applyRadius(pending);
+      radiusDragRef.current = false;
+      const label = overlay.querySelector("[data-radius-label]");
+      if (label) (label as HTMLElement).style.display = "none";
+      options.commit(updateCornerRadius(options.baseRadii, perCorner ? options.index : null, current), perCorner, current);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  /**
+   * F4 A1: corner widgets on a path shape (parametric star/polygon or
+   * recovered corners). Drag toward the center rounds; Alt drags one corner.
+   */
+  function renderRadiusHandles(
+    geom: NonNullable<ReturnType<typeof resolveShapeGeometry>>,
+    layerEl: Element,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): void {
+    const overlay = overlayRef.current;
+    const content = shadowRef.current?.getElementById("__df_content");
+    const created = createRadiusOverlay();
+    if (!overlay || !content || !created) return;
+    const { svg: radiusSvg, label: radiusLabel } = created;
+
+    // Map each path vertex to overlay space by normalizing it against the
+    // shape's own bounds (avoids viewBox maths entirely): the layer rect
+    // (x, y, w, h) is the shape bounds as painted, so nx/ny ∈ [0,1] land
+    // exactly on the painted corners.
+    const xs = geom.vertices.map(v => v.x);
+    const ys = geom.vertices.map(v => v.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const vw = Math.max(...xs) - minX || 1;
+    const vh = Math.max(...ys) - minY || 1;
+    // Overlay px → path-local px (path coordinates may differ from painted px).
+    const toLocal = w > 0 ? vw / w : 1;
+    const maxRadiusLocal = Math.min(vw, vh) / 2;
+    const center = { x: x + w / 2, y: y + h / 2 };
+    const INSET = 12; // rest distance from the corner, toward the center
+    const z = zoomRef.current || 1;
+    const cRect = content.getBoundingClientRect();
+    const project = (clientX: number, clientY: number): [number, number] => [
+      (clientX - cRect.left) / z,
+      (clientY - cRect.top) / z,
+    ];
+
+    const restPositions = geom.vertices.map(vertex => {
+      const nx = (vertex.x - minX) / vw;
+      const ny = (vertex.y - minY) / vh;
+      const cornerX = x + nx * w;
+      const cornerY = y + ny * h;
+      const ux = center.x - cornerX;
+      const uy = center.y - cornerY;
+      const uLen = Math.hypot(ux, uy) || 1;
+      return { corner: { x: cornerX, y: cornerY }, axis: { x: ux / uLen, y: uy / uLen }, rest: { x: cornerX + (ux / uLen) * INSET, y: cornerY + (uy / uLen) * INSET } };
+    });
+
+    const showLabelAt = (cx: number, cy: number, text: string) => {
+      radiusLabel.textContent = text;
+      radiusLabel.style.display = "block";
+      radiusLabel.style.left = `${cx + 12}px`;
+      radiusLabel.style.top = `${cy - 14}px`;
+    };
+    const currentRadius = () =>
+      geom.uniform || (geom.radii.length ? geom.radii.reduce((a, b) => a + b, 0) / geom.radii.length : 0);
+
+    restPositions.forEach(({ corner, axis, rest }, index) => {
+      const handleCircle = createHandleCircle(rest, index);
+      handleCircle.addEventListener("mouseenter", () => {
+        if (radiusDragRef.current) return;
+        showLabelAt(rest.x, rest.y, `Radius ${Math.round(currentRadius())}`);
+      });
+      handleCircle.addEventListener("mouseleave", () => {
+        if (radiusDragRef.current) return;
+        radiusLabel.style.display = "none";
+      });
+      handleCircle.addEventListener("mousedown", (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        const [mx, my] = project(event.clientX, event.clientY);
+        if (getHandleAt(mx, my, restPositions.map(p => p.rest), 12) !== index) return;
+        // A handle on a hovered-but-unselected shape selects it first.
+        if (selectedRef.current !== layerEl) selectElement(layerEl);
+        startRadiusDrag({
+          layerEl,
+          index,
+          baseRadii: geom.radii,
+          maxRadius: maxRadiusLocal,
+          corner,
+          axis,
+          rest,
+          scale: toLocal,
+          apply: (radii, perCorner) => {
+            geom.path.setAttribute("d", verticesToPath(geom.vertices, radii));
+            window.dispatchEvent(new CustomEvent("musa:shape-radius-live", {
+              detail: { layerId: geom.layerId, uniform: perCorner ? geom.uniform : radii[0], radii },
+            }));
+          },
+          commit: (radii, perCorner, value) => {
+            if (perCorner) {
+              geom.holder.setAttribute("data-vr", serializeVertexRadiiAttr(radii));
+            } else {
+              geom.holder.setAttribute("data-shape-corner-radius", `${Math.round(value * 10) / 10}`);
+              geom.holder.removeAttribute("data-vr");
+            }
+            emitFrameChange(cssRef.current, content.innerHTML);
+            emitElementSelection(layerEl, selectedSourceRef.current || layerEl);
+          },
+        }, event);
+      });
+      radiusSvg.appendChild(handleCircle);
+    });
+  }
+
+  /**
+   * F4 A1 for CSS rectangles (div data-layer-kind="shape"): the same 4
+   * corner widgets drive border-radius instead of a path's d attribute.
+   * Circles (border-radius in %) get no widgets.
+   */
+  function renderCssRadiusHandles(layerEl: Element, x: number, y: number, w: number, h: number): void {
+    const overlay = overlayRef.current;
+    const content = shadowRef.current?.getElementById("__df_content");
+    const created = createRadiusOverlay();
+    if (!overlay || !content || !created) return;
+    const { svg: radiusSvg, label: radiusLabel } = created;
+
+    const computed = layerEl.ownerDocument.defaultView!.getComputedStyle(layerEl);
+    const cornerProps = ["border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius"] as const;
+    const cornerValues = cornerProps.map(prop => computed.getPropertyValue(prop));
+    if (cornerValues.some(value => value.includes("%"))) return; // circle/ellipse
+
+    const baseRadii = cornerValues.map(value => parseFloat(value) || 0);
+    const corners = bboxCorners(x, y, w, h);
+    const center = { x: x + w / 2, y: y + h / 2 };
+    const maxRadius = Math.min(w, h) / 2;
+    const INSET = 12;
+    const z = zoomRef.current || 1;
+    const cRect = content.getBoundingClientRect();
+    const project = (clientX: number, clientY: number): [number, number] => [
+      (clientX - cRect.left) / z,
+      (clientY - cRect.top) / z,
+    ];
+    const geometry = corners.map(corner => {
+      const ux = center.x - corner.x;
+      const uy = center.y - corner.y;
+      const uLen = Math.hypot(ux, uy) || 1;
+      return { corner, axis: { x: ux / uLen, y: uy / uLen }, rest: { x: corner.x + (ux / uLen) * INSET, y: corner.y + (uy / uLen) * INSET } };
+    });
+
+    const showLabelAt = (cx: number, cy: number, text: string) => {
+      radiusLabel.textContent = text;
+      radiusLabel.style.display = "block";
+      radiusLabel.style.left = `${cx + 12}px`;
+      radiusLabel.style.top = `${cy - 14}px`;
+    };
+
+    geometry.forEach(({ corner, axis, rest }, index) => {
+      const handleCircle = createHandleCircle(rest, index);
+      handleCircle.addEventListener("mouseenter", () => {
+        if (radiusDragRef.current) return;
+        showLabelAt(rest.x, rest.y, `Radius ${Math.round(baseRadii[index])}`);
+      });
+      handleCircle.addEventListener("mouseleave", () => {
+        if (radiusDragRef.current) return;
+        radiusLabel.style.display = "none";
+      });
+      handleCircle.addEventListener("mousedown", (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        const [mx, my] = project(event.clientX, event.clientY);
+        if (getHandleAt(mx, my, geometry.map(g => g.rest), 12) !== index) return;
+        if (selectedRef.current !== layerEl) selectElement(layerEl);
+        startRadiusDrag({
+          layerEl,
+          index,
+          baseRadii,
+          maxRadius,
+          corner,
+          axis,
+          rest,
+          apply: (radii) => {
+            const elStyle = (layerEl as HTMLElement).style;
+            elStyle.setProperty("border-top-left-radius", `${radii[0]}px`);
+            elStyle.setProperty("border-top-right-radius", `${radii[1]}px`);
+            elStyle.setProperty("border-bottom-left-radius", `${radii[2]}px`);
+            elStyle.setProperty("border-bottom-right-radius", `${radii[3]}px`);
+          },
+          commit: (radii, perCorner) => {
+            const selector = getSelector(layerEl);
+            const props: Record<string, string> = perCorner
+              ? {
+                  "border-top-left-radius": `${radii[0]}px`,
+                  "border-top-right-radius": `${radii[1]}px`,
+                  "border-bottom-left-radius": `${radii[2]}px`,
+                  "border-bottom-right-radius": `${radii[3]}px`,
+                }
+              : { "border-radius": `${radii[0]}px` };
+            const updatedCss = updateCssRule(cssRef.current, selector, props);
+            const elStyle = (layerEl as HTMLElement).style;
+            elStyle.borderRadius = "";
+            elStyle.removeProperty("border-top-left-radius");
+            elStyle.removeProperty("border-top-right-radius");
+            elStyle.removeProperty("border-bottom-left-radius");
+            elStyle.removeProperty("border-bottom-right-radius");
+            emitFrameChange(updatedCss, content.innerHTML);
+            emitElementSelection(layerEl, selectedSourceRef.current || layerEl);
+          },
+        }, event);
+      });
+      radiusSvg.appendChild(handleCircle);
+    });
+  }
+
+  /**
+   * The editable anchor network: anchor circles, Bézier control lines +
+   * handles, and — in interactive mode — 12px transparent hit circles
+   * (Fitts) plus the selection highlight for multi-selected vertices.
+   */
+  function renderVectorNetwork(editSvg: SVGElement, points: PathPoint[], mapping: VectorMapping, interactive: boolean): void {
+    const screenPoints: { x: number; y: number }[] = [];
+    for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
+      const point = points[pointIndex];
+      const px = (point.x - mapping.vbX) * mapping.svgScaleX + mapping.svgLeft;
+      const py = (point.y - mapping.vbY) * mapping.svgScaleY + mapping.svgTop;
+      screenPoints.push({ x: px, y: py });
+      const selected = interactive && selectedVerticesRef.current.has(pointIndex);
+
+      const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      anchor.setAttribute("cx", `${px}`);
+      anchor.setAttribute("cy", `${py}`);
+      anchor.setAttribute("r", selected ? "6" : point.type === "smooth" ? "5" : "4");
+      anchor.setAttribute("fill", selected ? "#ffffff" : pointIndex === 0 ? "#10B981" : point.type === "smooth" ? "#A78BFA" : "#3B82F6");
+      anchor.setAttribute("stroke", selected ? "#3B82F6" : "#fff");
+      anchor.setAttribute("stroke-width", selected ? "2" : "1.5");
+      if (interactive) {
+        anchor.style.cursor = "move";
+        anchor.style.pointerEvents = "auto";
+        anchor.setAttribute("data-pe-point", `${pointIndex}`);
+        anchor.setAttribute("data-pe-handle", "anchor");
+        anchor.setAttribute("tabindex", "0");
+        anchor.setAttribute("role", "button");
+        anchor.setAttribute("aria-label", `Anchor ${pointIndex + 1}: ${point.type === "smooth" ? "curved" : "corner"}`);
+      }
+      editSvg.appendChild(anchor);
+
+      for (const handleName of ["cpIn", "cpOut"] as const) {
+        const handle = point[handleName];
+        if (!handle) continue;
+        const handleX = (handle.x - mapping.vbX) * mapping.svgScaleX + mapping.svgLeft;
+        const handleY = (handle.y - mapping.vbY) * mapping.svgScaleY + mapping.svgTop;
+        const color = handleName === "cpIn" ? "#F59E0B" : "#8B5CF6";
+
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", `${px}`); line.setAttribute("y1", `${py}`);
+        line.setAttribute("x2", `${handleX}`); line.setAttribute("y2", `${handleY}`);
+        line.setAttribute("stroke", color); line.setAttribute("stroke-width", "1");
+        line.setAttribute("opacity", "0.55"); line.style.pointerEvents = "none";
+        editSvg.appendChild(line);
+
+        const control = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        control.setAttribute("cx", `${handleX}`); control.setAttribute("cy", `${handleY}`);
+        control.setAttribute("r", "3.5"); control.setAttribute("fill", color);
+        control.setAttribute("stroke", "#fff"); control.setAttribute("stroke-width", "1");
+        if (interactive) {
+          control.style.cursor = "move";
+          control.style.pointerEvents = "auto";
+          control.setAttribute("data-pe-point", `${pointIndex}`);
+          control.setAttribute("data-pe-handle", handleName);
+          control.setAttribute("aria-label", `${handleName === "cpIn" ? "Incoming" : "Outgoing"} handle for anchor ${pointIndex + 1}`);
+        }
+        editSvg.appendChild(control);
+        if (interactive) {
+          editSvg.appendChild(makeVertexHitCircle(handleX, handleY, pointIndex, handleName));
+        }
+      }
+      if (interactive) {
+        editSvg.appendChild(makeVertexHitCircle(px, py, pointIndex, "anchor"));
+      }
+    }
+    if (interactive) vertexScreenPointsRef.current = screenPoints;
+  }
+
+  /** Invisible 12px hit circle (Fitts) that carries the same data attrs. */
+  function makeVertexHitCircle(cx: number, cy: number, pointIndex: number, handle: "anchor" | "cpIn" | "cpOut"): SVGCircleElement {
+    const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    hit.setAttribute("cx", `${cx}`);
+    hit.setAttribute("cy", `${cy}`);
+    hit.setAttribute("r", "6");
+    hit.setAttribute("fill", "transparent");
+    hit.setAttribute("stroke", "none");
+    hit.style.cursor = "move";
+    hit.style.pointerEvents = "auto";
+    hit.setAttribute("data-pe-point", `${pointIndex}`);
+    hit.setAttribute("data-pe-handle", handle);
+    return hit;
   }
 
   /** Double-click target → the shape/path layer whose vertices are editable. */
@@ -1006,147 +1540,8 @@ export function DesignFrame({
     const targetPath = (isPathEl ? el : pathEl) as Element | null;
     const pathData = targetPath?.getAttribute("d");
 
-    // ── F4 A1: Figma-style corner widgets. While the shape is hovered, a
-    // circle sits inside every corner; press one and drag toward the center
-    // to round, away from it to sharpen down to radius 0. ──
-    const renderRadiusHandles = (geom: NonNullable<ReturnType<typeof resolveShapeGeometry>>) => {
-      overlay.querySelector("[data-radius-overlay]")?.remove();
-      overlay.querySelector("[data-radius-label]")?.remove();
-
-      const radiusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      radiusSvg.setAttribute("width", "100%");
-      radiusSvg.setAttribute("height", "100%");
-      Object.assign(radiusSvg.style, {
-        position: "absolute", top: "0", left: "0",
-        width: "100%", height: "100%",
-        pointerEvents: "none", zIndex: "10001",
-        overflow: "visible",
-      });
-      radiusSvg.setAttribute("data-radius-overlay", "");
-      overlay.appendChild(radiusSvg);
-
-      const radiusLabel = document.createElement("div");
-      radiusLabel.setAttribute("data-radius-label", "");
-      Object.assign(radiusLabel.style, {
-        position: "absolute",
-        display: "none",
-        padding: "3px 8px",
-        borderRadius: "4px",
-        background: "#0F111A",
-        border: "1px solid rgba(59,130,246,0.55)",
-        color: "#ffffff",
-        fontSize: "11px",
-        fontWeight: "600",
-        fontFamily: "system-ui, sans-serif",
-        pointerEvents: "none",
-        whiteSpace: "nowrap",
-        zIndex: "10002",
-      });
-      overlay.appendChild(radiusLabel);
-
-      // Map each path vertex to overlay space by normalizing it against the
-      // shape's own bounds (avoids viewBox maths entirely): the layer rect
-      // (x, y, w, h) is the shape bounds as painted, so nx/ny ∈ [0,1] land
-      // exactly on the painted corners.
-      const xs = geom.vertices.map(v => v.x);
-      const ys = geom.vertices.map(v => v.y);
-      const minX = Math.min(...xs);
-      const minY = Math.min(...ys);
-      const vw = Math.max(...xs) - minX || 1;
-      const vh = Math.max(...ys) - minY || 1;
-      // Overlay px → path-local px (path coordinates may differ from painted px).
-      const toLocal = w > 0 ? vw / w : 1;
-      const maxRadiusLocal = Math.min(vw, vh) / 2;
-      const center = { x: x + w / 2, y: y + h / 2 };
-      const INSET = 12; // rest distance from the corner, toward the center
-
-      const showLabelAt = (cx: number, cy: number, text: string) => {
-        radiusLabel.textContent = text;
-        radiusLabel.style.display = "block";
-        radiusLabel.style.left = `${cx + 12}px`;
-        radiusLabel.style.top = `${cy - 14}px`;
-      };
-
-      geom.vertices.forEach((vertex, index) => {
-        const nx = (vertex.x - minX) / vw;
-        const ny = (vertex.y - minY) / vh;
-        const cornerX = x + nx * w;
-        const cornerY = y + ny * h;
-        const ux = center.x - cornerX;
-        const uy = center.y - cornerY;
-        const uLen = Math.hypot(ux, uy) || 1;
-        const dx = ux / uLen, dy = uy / uLen;
-        const restX = cornerX + dx * INSET;
-        const restY = cornerY + dy * INSET;
-
-        const handleCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        handleCircle.setAttribute("cx", `${restX}`);
-        handleCircle.setAttribute("cy", `${restY}`);
-        handleCircle.setAttribute("r", "5");
-        handleCircle.setAttribute("fill", "#ffffff");
-        handleCircle.setAttribute("stroke", "#3B82F6");
-        handleCircle.setAttribute("stroke-width", "2");
-        handleCircle.setAttribute("data-radius-handle", `${index}`);
-        handleCircle.style.cursor = "pointer";
-        handleCircle.style.pointerEvents = "auto";
-
-        const currentRadius = () =>
-          geom.uniform || (geom.radii.length ? geom.radii.reduce((a, b) => a + b, 0) / geom.radii.length : 0);
-
-        handleCircle.addEventListener("mouseenter", () => {
-          if (radiusDragRef.current) return;
-          showLabelAt(restX, restY, `Radius ${Math.round(currentRadius())}`);
-        });
-        handleCircle.addEventListener("mouseleave", () => {
-          if (radiusDragRef.current) return;
-          radiusLabel.style.display = "none";
-        });
-
-        handleCircle.addEventListener("mousedown", (event) => {
-          event.stopPropagation();
-          event.preventDefault();
-          radiusDragRef.current = true;
-          const baseRadius = currentRadius();
-          // Pointer position in overlay space (same space as x/y/w/h).
-          const project = (clientX: number, clientY: number): [number, number] => [
-            (clientX - cRect.left) / z,
-            (clientY - cRect.top) / z,
-          ];
-          const [p0x, p0y] = project(event.clientX, event.clientY);
-          // Signed distance along the corner→center axis: dragging inward
-          // (toward the center) grows the radius; outward past the corner
-          // reaches exactly 0.
-          const dist0 = (p0x - cornerX) * dx + (p0y - cornerY) * dy;
-          let current = baseRadius;
-          const applyRadius = (r: number) => {
-            geom.path.setAttribute("d", verticesToPath(geom.vertices, r));
-            window.dispatchEvent(new CustomEvent("musa:shape-radius-live", {
-              detail: { layerId: geom.layerId, uniform: r, radii: geom.vertices.map(() => r) },
-            }));
-          };
-          const onRadiusMove = (moveEvent: MouseEvent) => {
-            const [mx, my] = project(moveEvent.clientX, moveEvent.clientY);
-            const dist = (mx - cornerX) * dx + (my - cornerY) * dy;
-            current = Math.max(0, Math.min(maxRadiusLocal, baseRadius + (dist - dist0) * toLocal));
-            applyRadius(current);
-            showLabelAt(restX, restY, `Radius ${Math.round(current)}`);
-          };
-          const onRadiusUp = () => {
-            document.removeEventListener("mousemove", onRadiusMove);
-            document.removeEventListener("mouseup", onRadiusUp);
-            radiusDragRef.current = false;
-            radiusLabel.style.display = "none";
-            geom.holder.setAttribute("data-shape-corner-radius", `${Math.round(current * 10) / 10}`);
-            geom.holder.removeAttribute("data-vr");
-            emitFrameChange(cssRef.current, content.innerHTML);
-            emitElementSelection(el, selectedSourceRef.current || el);
-          };
-          document.addEventListener("mousemove", onRadiusMove);
-          document.addEventListener("mouseup", onRadiusUp);
-        });
-        radiusSvg.appendChild(handleCircle);
-      });
-    };
+    // Corner widgets for the selected shape are rendered by the shared
+    // renderRadiusHandles / renderCssRadiusHandles below (F4 A1).
 
     // Selection border (always show)
     const box = document.createElement("div");
@@ -1202,54 +1597,9 @@ export function DesignFrame({
       const svgScaleX = svgRect && vbWidth ? (svgRect.width / z) / vbWidth : 1;
       const svgScaleY = svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1;
 
-      // Render anchor points and control handles
-      for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
-        const point = points[pointIndex];
-        const px = (point.x - vbX) * svgScaleX + svgLeft;
-        const py = (point.y - vbY) * svgScaleY + svgTop;
-
-        // Anchor point
-        const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        anchor.setAttribute("cx", `${px}`);
-        anchor.setAttribute("cy", `${py}`);
-        anchor.setAttribute("r", point.type === "smooth" ? "5" : "4");
-        anchor.setAttribute("fill", pointIndex === 0 ? "#10B981" : point.type === "smooth" ? "#A78BFA" : "#3B82F6");
-        anchor.setAttribute("stroke", "#fff");
-        anchor.setAttribute("stroke-width", "1.5");
-        anchor.style.cursor = "move";
-        anchor.style.pointerEvents = "auto";
-        anchor.setAttribute("data-pe-point", `${pointIndex}`);
-        anchor.setAttribute("data-pe-handle", "anchor");
-        anchor.setAttribute("tabindex", "0");
-        anchor.setAttribute("role", "button");
-        anchor.setAttribute("aria-label", `Anchor ${pointIndex + 1}: ${point.type === "smooth" ? "curved" : "corner"}`);
-        editSvg.appendChild(anchor);
-
-        for (const handleName of ["cpIn", "cpOut"] as const) {
-          const handle = point[handleName];
-          if (!handle) continue;
-          const handleX = (handle.x - vbX) * svgScaleX + svgLeft;
-          const handleY = (handle.y - vbY) * svgScaleY + svgTop;
-          const color = handleName === "cpIn" ? "#F59E0B" : "#8B5CF6";
-
-          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-          line.setAttribute("x1", `${px}`); line.setAttribute("y1", `${py}`);
-          line.setAttribute("x2", `${handleX}`); line.setAttribute("y2", `${handleY}`);
-          line.setAttribute("stroke", color); line.setAttribute("stroke-width", "1");
-          line.setAttribute("opacity", "0.55"); line.style.pointerEvents = "none";
-          editSvg.appendChild(line);
-
-          const control = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          control.setAttribute("cx", `${handleX}`); control.setAttribute("cy", `${handleY}`);
-          control.setAttribute("r", "3.5"); control.setAttribute("fill", color);
-          control.setAttribute("stroke", "#fff"); control.setAttribute("stroke-width", "1");
-          control.style.cursor = "move"; control.style.pointerEvents = "auto";
-          control.setAttribute("data-pe-point", `${pointIndex}`);
-          control.setAttribute("data-pe-handle", handleName);
-          control.setAttribute("aria-label", `${handleName === "cpIn" ? "Incoming" : "Outgoing"} handle for anchor ${pointIndex + 1}`);
-          editSvg.appendChild(control);
-        }
-      }
+      vertexPathElRef.current = targetPath;
+      const mapping: VectorMapping = { vbX, vbY, svgScaleX, svgScaleY, svgLeft, svgTop };
+      renderVectorNetwork(editSvg, points, mapping, true);
 
       // ── F4 A2: segment-midpoint handles — click to insert a new vertex ──
       if (closed && points.length >= 2) {
@@ -1270,6 +1620,16 @@ export function DesignFrame({
           midDot.setAttribute("data-pe-mid", `${midpointIndex}`);
           midDot.setAttribute("aria-label", `Insert vertex on segment ${midpointIndex + 1}`);
           editSvg.appendChild(midDot);
+          // Fitts: a transparent 12px hit circle over the 7px dot.
+          const midHit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          midHit.setAttribute("cx", `${mx}`);
+          midHit.setAttribute("cy", `${my}`);
+          midHit.setAttribute("r", "6");
+          midHit.setAttribute("fill", "transparent");
+          midHit.style.cursor = "copy";
+          midHit.style.pointerEvents = "auto";
+          midHit.setAttribute("data-pe-mid", `${midpointIndex}`);
+          editSvg.appendChild(midHit);
         });
       }
 
@@ -1281,7 +1641,12 @@ export function DesignFrame({
         if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newPath);
       };
 
-      const startVertexDrag = (editData: { layerId: string; points: PathPoint[]; closed: boolean }, pointIndex: number, dragHandle: "anchor" | "cpIn" | "cpOut") => {
+      const startVertexDrag = (
+        editData: { layerId: string; points: PathPoint[]; closed: boolean },
+        indices: number[],
+        originIndex: number,
+        dragHandle: "anchor" | "cpIn" | "cpOut",
+      ) => {
         let workingPoints = editData.points;
 
         const svgEl2 = targetPath.closest("svg");
@@ -1296,7 +1661,9 @@ export function DesignFrame({
         const snapTolerance = 6 / (z * (((svgScaleX2 + svgScaleY2) / 2) || 1));
 
         const drawSmartGuides = (guideX: number | null, guideY: number | null) => {
-          editSvg.querySelectorAll("[data-pe-guide]").forEach(node => node.remove());
+          // A rAF flush may have rebuilt the overlay — draw into the live svg.
+          const liveSvg = pointEditOverlayRef.current || editSvg;
+          liveSvg.querySelectorAll("[data-pe-guide]").forEach(node => node.remove());
           const drawLine = (x1: number | string, y1: number | string, x2: number | string, y2: number | string) => {
             const guide = document.createElementNS("http://www.w3.org/2000/svg", "line");
             guide.setAttribute("x1", `${x1}`);
@@ -1309,7 +1676,7 @@ export function DesignFrame({
             guide.setAttribute("opacity", "0.9");
             guide.style.pointerEvents = "none";
             guide.setAttribute("data-pe-guide", "");
-            editSvg.appendChild(guide);
+            liveSvg.appendChild(guide);
           };
           if (guideX != null) {
             const gx = (guideX - vbX2) * svgScaleX2 + svgLeft2;
@@ -1326,6 +1693,40 @@ export function DesignFrame({
           y: Math.round((((mouseEvent.clientY - contentRect.top) / z - svgTop2) / svgScaleY2 + vbY2) * 10) / 10,
         });
 
+        // Offsets of every dragged vertex from the origin, captured at drag
+        // start so a multi-selection moves as a rigid set.
+        const originPoint = workingPoints[originIndex];
+        const offsets = new Map<number, Point>();
+        indices.forEach(index => offsets.set(index, {
+          x: workingPoints[index].x - originPoint.x,
+          y: workingPoints[index].y - originPoint.y,
+        }));
+
+        // rAF throttle: accumulate the newest position, repaint once/frame.
+        let pendingPosition: Point | null = null;
+        let pendingAlt = false;
+        let pendingGuides: { guideX: number | null; guideY: number | null } = { guideX: null, guideY: null };
+        let rafId = 0;
+
+        const flushPosition = (position: Point, guides: { guideX: number | null; guideY: number | null }) => {
+          if (dragHandle === "anchor") {
+            for (const index of indices) {
+              const offset = offsets.get(index);
+              if (!offset) continue;
+              workingPoints = movePathPoint(workingPoints, index, index === originIndex
+                ? position
+                : { x: position.x + offset.x, y: position.y + offset.y });
+            }
+          } else {
+            const remainsLinked = workingPoints[originIndex].type === "smooth" && !pendingAlt;
+            workingPoints = movePathHandle(workingPoints, originIndex, dragHandle, position, remainsLinked);
+          }
+          editData.points = workingPoints;
+          targetPath.setAttribute("d", serializePathData(workingPoints, editData.closed));
+          refreshOverlay(el);
+          drawSmartGuides(guides.guideX, guides.guideY);
+        };
+
         const onPointMove = (mouseEvent: MouseEvent) => {
           const position = eventToPathPoint(mouseEvent);
           let snapped = position;
@@ -1335,7 +1736,7 @@ export function DesignFrame({
             // F4: smart guides — snap the dragged vertex to any other
             // anchor's X/Y so custom figures stay straight.
             for (let other = 0; other < workingPoints.length; other++) {
-              if (other === pointIndex) continue;
+              if (other === originIndex) continue;
               if (guideX === null && Math.abs(workingPoints[other].x - position.x) < snapTolerance) {
                 snapped = { ...snapped, x: workingPoints[other].x };
                 guideX = workingPoints[other].x;
@@ -1346,21 +1747,21 @@ export function DesignFrame({
               }
             }
           }
-          if (dragHandle === "anchor") {
-            workingPoints = movePathPoint(workingPoints, pointIndex, snapped);
-          } else {
-            const remainsLinked = workingPoints[pointIndex].type === "smooth" && !mouseEvent.altKey;
-            workingPoints = movePathHandle(workingPoints, pointIndex, dragHandle, snapped, remainsLinked);
-          }
-          editData.points = workingPoints;
-          targetPath.setAttribute("d", serializePathData(workingPoints, editData.closed));
-          refreshOverlay(el);
-          drawSmartGuides(guideX, guideY);
+          pendingPosition = snapped;
+          pendingAlt = mouseEvent.altKey;
+          pendingGuides = { guideX, guideY };
+          if (rafId) return;
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            if (pendingPosition) flushPosition(pendingPosition, pendingGuides);
+          });
         };
 
         const onPointUp = () => {
           document.removeEventListener("mousemove", onPointMove);
           document.removeEventListener("mouseup", onPointUp);
+          if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+          if (pendingPosition) flushPosition(pendingPosition, pendingGuides);
           drawSmartGuides(null, null);
           persistPointEdit(editData);
         };
@@ -1386,7 +1787,10 @@ export function DesignFrame({
           targetPath.setAttribute("d", serializePathData(withInsert, editData.closed));
           refreshOverlay(el);
           const refreshed = pointEditPathRef.current;
-          if (refreshed) startVertexDrag(refreshed, insertedIndex, "anchor");
+          if (refreshed) {
+            selectedVerticesRef.current = new Set([insertedIndex]);
+            startVertexDrag(refreshed, [insertedIndex], insertedIndex, "anchor");
+          }
           return;
         }
 
@@ -1399,7 +1803,27 @@ export function DesignFrame({
         const pointIndex = Number.parseInt(pointAttribute, 10);
         const editData = pointEditPathRef.current;
         if (!editData?.points[pointIndex]) return;
-        startVertexDrag(editData, pointIndex, handle);
+        // Fitts: adjacent 12px hit circles overlap, so only a press that is
+        // closest to this anchor counts as its drag.
+        const screen = vertexScreenPointsRef.current;
+        const mouseOverlay = {
+          x: ((event as MouseEvent).clientX - cRect.left) / z,
+          y: ((event as MouseEvent).clientY - cRect.top) / z,
+        };
+        if (handle === "anchor" && screen && getVertexAt(mouseOverlay.x, mouseOverlay.y, screen, 12) !== pointIndex) return;
+        if (handle === "anchor" && !(event as MouseEvent).shiftKey) {
+          selectedVerticesRef.current = new Set([pointIndex]);
+        } else if (handle === "anchor") {
+          const next = new Set(selectedVerticesRef.current);
+          if (next.has(pointIndex)) next.delete(pointIndex);
+          else next.add(pointIndex);
+          selectedVerticesRef.current = next;
+        }
+        if (handle === "anchor" && selectedVerticesRef.current.has(pointIndex)) {
+          startVertexDrag(editData, [...selectedVerticesRef.current], pointIndex, handle);
+        } else if (handle !== "anchor") {
+          startVertexDrag(editData, [pointIndex], pointIndex, handle);
+        }
       });
 
       const toggleAnchor = (target: SVGElement) => {
@@ -1495,35 +1919,47 @@ export function DesignFrame({
         document.addEventListener("mouseup", onRotUp);
       });
 
-      // ── F4 A1: hover a selected shape → corner circles appear; press any
-      // circle and drag toward the center to round, away to sharpen to 0. ──
+      // ── F4 A1: corner widgets on the selected shape (hover not required).
+      // Parametric path shapes get radius handles; free-form paths (no corner
+      // model) get a read-only vertex network; CSS rects get border-radius
+      // handles. ──
       if (targetPath && pathData) {
-        const shapeGeometry = resolveShapeGeometry(targetPath);
-        if (shapeGeometry) {
-          if (hoverHookRef.current !== el) {
-            hoverDetachRef.current?.();
-            const onShapeEnter = () => {
-              shapeHoverRef.current = el;
-              refreshOverlay(el);
-            };
-            const onShapeLeave = () => {
-              if (radiusDragRef.current) return;
-              shapeHoverRef.current = null;
-              overlay.querySelector("[data-radius-overlay]")?.remove();
-              overlay.querySelector("[data-radius-label]")?.remove();
-            };
-            el.addEventListener("mouseenter", onShapeEnter);
-            el.addEventListener("mouseleave", onShapeLeave);
-            hoverHookRef.current = el;
-            hoverDetachRef.current = () => {
-              el.removeEventListener("mouseenter", onShapeEnter);
-              el.removeEventListener("mouseleave", onShapeLeave);
-            };
+        const freePoints = cornersFromShapePath(pathData) === null ? parsePathData(pathData) : null;
+        if (freePoints) {
+          const svgEl = targetPath.closest("svg");
+          const svgRect = svgEl?.getBoundingClientRect();
+          const svgVbStr = svgEl?.getAttribute("viewBox");
+          let vbX = 0, vbY = 0, vbWidth = 0, vbHeight = 0;
+          if (svgVbStr) {
+            const vbp = svgVbStr.split(/\s+/);
+            vbX = parseFloat(vbp[0]) || 0;
+            vbY = parseFloat(vbp[1]) || 0;
+            vbWidth = parseFloat(vbp[2]) || 0;
+            vbHeight = parseFloat(vbp[3]) || 0;
           }
-          if (shapeHoverRef.current === el) {
-            renderRadiusHandles(shapeGeometry);
-          }
+          const readSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          readSvg.setAttribute("width", "100%");
+          readSvg.setAttribute("height", "100%");
+          Object.assign(readSvg.style, {
+            position: "absolute", top: "0", left: "0",
+            width: "100%", height: "100%",
+            pointerEvents: "none", zIndex: "10000",
+            overflow: "visible",
+          });
+          overlay.appendChild(readSvg);
+          renderVectorNetwork(readSvg, freePoints, {
+            vbX, vbY,
+            svgScaleX: svgRect && vbWidth ? (svgRect.width / z) / vbWidth : 1,
+            svgScaleY: svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1,
+            svgLeft: svgRect ? (svgRect.left - cRect.left) / z : x,
+            svgTop: svgRect ? (svgRect.top - cRect.top) / z : y,
+          }, false);
+        } else {
+          const shapeGeometry = resolveShapeGeometry(targetPath);
+          if (shapeGeometry) renderRadiusHandles(shapeGeometry, el, x, y, w, h);
         }
+      } else if (el.tagName.toLowerCase() === "div" && el.getAttribute("data-layer-kind") === "shape") {
+        renderCssRadiusHandles(el, x, y, w, h);
       }
     }
 
@@ -1695,12 +2131,40 @@ export function DesignFrame({
       });
       overlay.appendChild(preview);
       hoverPreviewRef.current = preview;
+
+      // ── F4 A1: hovering an UNSELECTED shape also shows its corner widgets ──
+      hoverTargetRef.current = el;
+      const path = el.tagName.toLowerCase() === "path" ? el : el.querySelector?.("path");
+      const d = path?.getAttribute("d");
+      if (path && d && cornersFromShapePath(d) !== null) {
+        const geom = resolveShapeGeometry(el);
+        if (geom) {
+          renderRadiusHandles(geom, el, (elRect.left - cRect.left) / z, (elRect.top - cRect.top) / z, elRect.width / z, elRect.height / z);
+          hoverRadiusRef.current = true;
+        }
+      } else if (el.tagName.toLowerCase() === "div" && el.getAttribute("data-layer-kind") === "shape") {
+        renderCssRadiusHandles(el, (elRect.left - cRect.left) / z, (elRect.top - cRect.top) / z, elRect.width / z, elRect.height / z);
+        hoverRadiusRef.current = true;
+      }
     }
 
     function hideHoverPreview() {
+      const wasHoverTarget = hoverTargetRef.current;
       if (hoverPreviewRef.current) {
         hoverPreviewRef.current.remove();
         hoverPreviewRef.current = null;
+      }
+      hoverTargetRef.current = null;
+      // Handles shown for a hovered UNSELECTED shape leave with the preview;
+      // the selected shape's own handles persist (guard with radiusDragRef).
+      if (hoverRadiusRef.current) {
+        hoverRadiusRef.current = false;
+        if (!radiusDragRef.current) {
+          overlay.querySelector("[data-radius-overlay]")?.remove();
+          overlay.querySelector("[data-radius-label]")?.remove();
+          // Restore the selected shape's handles if the hover displaced them.
+          if (selectedRef.current && selectedRef.current !== wasHoverTarget) refreshOverlay(selectedRef.current);
+        }
       }
     }
 
@@ -1737,6 +2201,10 @@ export function DesignFrame({
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
         if (hit && hit !== selectedRef.current) {
           showHoverPreview(hit);
+        } else if (hit === selectedRef.current) {
+          // Back over the selected shape: drop the hover preview (and any
+          // hover-owned handles) without touching the selection.
+          hideHoverPreview();
         } else if (!hit) {
           hideHoverPreview();
         }
@@ -2431,6 +2899,13 @@ export function DesignFrame({
         dragTarget = parentSvg;
       }
 
+      // F4 A2: a press on the shape body (vertex presses stopPropagation
+      // earlier) clears the vertex selection while staying in edit mode.
+      if (vertexEditModeRef.current && selectedVerticesRef.current.size > 0) {
+        selectedVerticesRef.current = new Set();
+        refreshOverlay(selectedRef.current || dragTarget);
+      }
+
       // ── Shift+click: toggle multi-selection ──
       if (me.shiftKey) {
         const lid = dragTarget.getAttribute("data-layer-id");
@@ -2845,7 +3320,16 @@ export function DesignFrame({
     content.addEventListener("dblclick", (e: Event) => {
       const me = e as MouseEvent;
       const target = me.target as HTMLElement;
-      if (!target || target === content) return;
+      if (!target || target === content) {
+        // F4 A2: double-click on empty canvas leaves vertex-edit mode.
+        if (vertexEditModeRef.current) {
+          e.stopPropagation();
+          e.preventDefault();
+          exitVertexEditModeRef.current?.();
+          if (selectedRef.current) refreshOverlay(selectedRef.current);
+        }
+        return;
+      }
 
       // ── Scope drill-down (Sprint 3): enter container as new scope ──
       const tool = activeToolRef.current;

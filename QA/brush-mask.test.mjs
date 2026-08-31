@@ -165,12 +165,12 @@ globalThis.DOMParser = class {
   }
 };
 
-// maskApply.ts / htmlMutations.ts import "./cssMutations", "./layerKind" and
-// "./htmlMutations" without an extension (fine for the browser toolchains,
-// not for Node ESM).
+// maskApply.ts / htmlMutations.ts import "./cssMutations", "./layerKind",
+// "./htmlMutations" and "./gradient" without an extension (fine for the
+// browser toolchains, not for Node ESM).
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "./cssMutations" || specifier === "./layerKind" || specifier === "./htmlMutations") {
+    if (specifier === "./cssMutations" || specifier === "./layerKind" || specifier === "./htmlMutations" || specifier === "./gradient") {
       return nextResolve(`${specifier}.ts`, context);
     }
     return nextResolve(specifier, context);

@@ -158,7 +158,7 @@ globalThis.DOMParser = class {
 // maskApply.ts imports "./cssMutations" (and friends) without an extension.
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "./cssMutations" || specifier === "./layerKind" || specifier === "./htmlMutations") {
+    if (specifier === "./cssMutations" || specifier === "./layerKind" || specifier === "./htmlMutations" || specifier === "./gradient") {
       return nextResolve(`${specifier}.ts`, context);
     }
     return nextResolve(specifier, context);
