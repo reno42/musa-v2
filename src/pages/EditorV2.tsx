@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
-import { SETTLE_MS, shouldCapture, thumbnailScale } from "../lib/autoSnapshot";
+import { localDayKey, previewReminderStorageKey, shouldShowPreviewReminder } from "../lib/previewReminder";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -551,6 +551,42 @@ function detectMaskTarget(event: MouseEvent): ContextMenuMaskTarget | null {
   };
 }
 
+function PreviewReminderPopover({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
+  return (
+    <div
+      id="preview-reminder"
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 10px)",
+        right: 0,
+        zIndex: 120,
+        width: 288,
+        padding: 14,
+        borderRadius: 10,
+        border: "1px solid rgba(200,184,152,0.35)",
+        background: "#151515",
+        boxShadow: "0 12px 28px rgba(0,0,0,0.35)",
+        color: "#e8e5dc",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 5 }}>Tu preview tiene cambios pendientes</div>
+      <p style={{ margin: 0, color: "#aaa69a", fontSize: 12, lineHeight: 1.5 }}>
+        El diseño cambió desde la última captura. Puedes actualizarlo desde Information.
+      </p>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+        <button type="button" className="editor-v2-topbar-btn" onClick={onDismiss}>
+          Ahora no
+        </button>
+        <button type="button" className="editor-v2-topbar-btn" onClick={onOpen} style={{ color: "#c8b898", borderColor: "rgba(200,184,152,0.45)" }}>
+          Abrir Information
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
   const { user, signOut } = useAuth();
@@ -562,16 +598,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // QA probe: verification agents inspect undo depth / frames without guessing.
   if (typeof window !== "undefined") (window as any).__docStore = store;
   const frames = useSyncExternalStore(store.subscribe, store.getSnapshot) as FrameData[];
-  // Bumped during render, not in an effect: the auto-snapshot below has to be
-  // able to tell "changed since the last capture" without depending on which
-  // effect happens to run first. framesRef itself is declared further down,
-  // alongside the autosave that also needs it.
-  const revisionSeenRef = useRef<FrameData[] | null>(null);
-  const revisionRef = useRef(0);
-  if (revisionSeenRef.current !== frames) {
-    revisionSeenRef.current = frames;
-    revisionRef.current += 1;
-  }
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -670,10 +696,27 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showMorePanels, setShowMorePanels] = useState(false);
+  const [designUpdatedAt, setDesignUpdatedAt] = useState<string | null>(null);
+  const [coverCapturedAt, setCoverCapturedAt] = useState<string | null>(null);
+  const [previewMetaLoaded, setPreviewMetaLoaded] = useState(false);
+  const [showPreviewReminder, setShowPreviewReminder] = useState(false);
+  const [emphasizePreviewCapture, setEmphasizePreviewCapture] = useState(false);
   const toggleRightPanel = (tab: string) => {
     if (showRightPanel && rightPanelTab === tab) setShowRightPanel(false);
     else { setRightPanelTab(tab); setShowRightPanel(true); }
   };
+  const openPreviewCaptureGuide = useCallback(() => {
+    setShowPreviewReminder(false);
+    setShowMorePanels(false);
+    setRightPanelTab("meta");
+    setShowRightPanel(true);
+    setEmphasizePreviewCapture(true);
+  }, []);
+  const handleCoverUpdated = useCallback((capturedAt: string) => {
+    setCoverCapturedAt(capturedAt);
+    setShowPreviewReminder(false);
+    setEmphasizePreviewCapture(false);
+  }, []);
   // Fail-safe below 1536px: the panel cluster collapses into a single "⋯"
   // menu, so no panel is ever inaccessible on smaller desktops. 1536 is the
   // common 1920-screen-at-125%-scaling width — the last width where the
@@ -798,6 +841,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           return;
         }
         setTemplateName(t.name || "Untitled");
+        setDesignUpdatedAt(t.metadata?.updatedAt || null);
         if (t.workspaceId) setTemplateWorkspaceId(t.workspaceId);
 
         // Multi-frame support: frames[] is the source of truth. An EMPTY array
@@ -862,6 +906,36 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     return () => { cancelled = true; };
   }, [templateId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewMetaLoaded(false);
+    fetch(`/api/meta/${templateId}`, { headers: getApiHeaders() })
+      .then(response => {
+        if (!response.ok) throw new Error(`Preview metadata failed (${response.status})`);
+        return response.json();
+      })
+      .then(result => {
+        if (!cancelled) setCoverCapturedAt(result?.data?.cover_captured_at || null);
+      })
+      .catch(() => {
+        if (!cancelled) setCoverCapturedAt(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewMetaLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [templateId]);
+
+  useEffect(() => {
+    if (!previewMetaLoaded || !designUpdatedAt) return;
+    const key = previewReminderStorageKey(templateId, user?.id);
+    let lastShownDay: string | null = null;
+    try { lastShownDay = window.localStorage.getItem(key); } catch {}
+    if (!shouldShowPreviewReminder({ designUpdatedAt, coverCapturedAt, lastShownDay })) return;
+    setShowPreviewReminder(true);
+    try { window.localStorage.setItem(key, localDayKey()); } catch {}
+  }, [previewMetaLoaded, designUpdatedAt, coverCapturedAt, templateId, user?.id]);
+
   // ── Auto-save (immediate localStorage, debounced API sync) ──
   const autoSave = useCallback((updatedFrames: FrameData[]) => {
     const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
@@ -910,6 +984,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           lastBroadcastRef.current = { html: active?.html || "", css: active?.css || "" };
           retryCountRef.current = 0;
           isDirtyRef.current = false;
+          setDesignUpdatedAt(new Date().toISOString());
           break;
         } catch (err) {
           console.error(`[SAVE] API PUT attempt ${attempt + 1}/${MAX_RETRIES + 1} FAILED:`, err);
@@ -3859,84 +3934,6 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, []);
 
-  // ── Auto-snapshot ──────────────────────────────────────────────────────
-  // Why this runs while the user is working rather than as they leave, and
-  // what each guard is for, is written up in lib/autoSnapshot.ts. The short
-  // version: an exit-triggered capture is missing exactly when you need it,
-  // because nothing waits for async work during unload and nothing fires at
-  // all when a laptop lid closes.
-  const snapshotStateRef = useRef({ capturedRevision: -1, lastCaptureAt: 0, running: false });
-
-  const captureSnapshot = useCallback(async (flush = false) => {
-    const state = snapshotStateRef.current;
-    if (state.running || !templateId) return;
-    const frame = framesRef.current?.[0];
-    const decision = shouldCapture({
-      revision: revisionRef.current,
-      capturedRevision: state.capturedRevision,
-      lastCaptureAt: state.lastCaptureAt,
-      now: Date.now(),
-      hasFrame: Boolean(frame?.html),
-      flush,
-    });
-    if (!decision.capture || !frame) return;
-
-    state.running = true;
-    const revisionAtStart = revisionRef.current;
-    try {
-      // Card-sized, not full-bore: rendering a 4000px artboard at 2x to show
-      // it 300px wide is most of what a snapshot costs.
-      const blob = await captureFrameToPng(frame, thumbnailScale(frame.width, frame.height), "jpg");
-      if (!blob) return;
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("read failed"));
-        reader.readAsDataURL(blob);
-      });
-      // Through the same tool the dashboard's "capture thumbnails" uses. A
-      // PUT on the template would take the long road — read the design, set
-      // one string, write the whole blob back — and this runs on a timer.
-      //
-      // No workspaceId on purpose. The tool resolves the template's own
-      // workspace for the storage path, and the tenancy guard rejects a
-      // mismatch — which is what it should do, and what this was tripping:
-      // a snapshot fires seconds after an edit, so the client's idea of the
-      // current workspace can already have moved on.
-      await mcpCall("update_thumbnail", { templateId, thumbnail: dataUrl });
-      state.capturedRevision = revisionAtStart;
-      state.lastCaptureAt = Date.now();
-    } catch (err) {
-      // A card showing yesterday's snapshot is fine. Interrupting the person
-      // designing to tell them about it is not.
-      console.warn("[snapshot] no se pudo capturar:", err);
-    } finally {
-      state.running = false;
-    }
-  }, [templateId, captureFrameToPng]);
-
-  // Fires once the edits stop, so by the time anyone leaves it is already done.
-  useEffect(() => {
-    if (!templateId) return;
-    const timer = window.setTimeout(() => { void captureSnapshot(false); }, SETTLE_MS);
-    return () => window.clearTimeout(timer);
-  }, [templateId, frames, captureSnapshot]);
-
-  // Best-effort flush. Covers the tab being hidden, the app being backgrounded
-  // on a phone, and leaving the editor by any in-app route. It is a flush of
-  // something already pending, never the mechanism.
-  useEffect(() => {
-    if (!templateId) return;
-    const onHide = () => { if (document.visibilityState === "hidden") void captureSnapshot(true); };
-    document.addEventListener("visibilitychange", onHide);
-    window.addEventListener("pagehide", onHide);
-    return () => {
-      document.removeEventListener("visibilitychange", onHide);
-      window.removeEventListener("pagehide", onHide);
-      void captureSnapshot(true);
-    };
-  }, [templateId, captureSnapshot]);
-
   /* Capture first frame as PNG base64 — for FileInfoPanel cover */
   const handleCoverCapture = useCallback(async (): Promise<string | null> => {
     if (!selectedFrame) return null;
@@ -6561,10 +6558,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 className={`editor-v2-topbar-icon-btn ${showMorePanels ? "active" : ""}`}
                 onClick={() => setShowMorePanels(v => !v)}
                 title="Paneles — Historial, Info, Biblioteca, Propiedades"
+                aria-describedby={showPreviewReminder ? "preview-reminder" : undefined}
               >
                 <span style={{ fontSize: 13, lineHeight: 1 }}>⋯</span>
                 <span style={{ fontSize: 11, marginLeft: 4 }}>Paneles</span>
               </button>
+              {showPreviewReminder && (
+                <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={() => setShowPreviewReminder(false)} />
+              )}
               <TopbarMenu open={showMorePanels} onClose={() => setShowMorePanels(false)} width={250}>
                 {([
                   { tab: "history", label: "Historial", desc: "Versiones guardadas del archivo" },
@@ -6594,15 +6595,21 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 <IconHistory size={14} />
                 <span style={{ fontSize: 11, marginLeft: 4 }}>Historial</span>
               </button>
-              <button
-                type="button"
-                className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
-                onClick={() => toggleRightPanel("meta")}
-                title="Info — marca, campaña, tags y conexiones del grafo"
-              >
-                <IconInfo size={14} />
-                <span style={{ fontSize: 11, marginLeft: 4 }}>Info</span>
-              </button>
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className={`editor-v2-topbar-icon-btn ${showRightPanel && rightPanelTab === "meta" ? "active" : ""}`}
+                  onClick={() => toggleRightPanel("meta")}
+                  title="Info — marca, campaña, tags y conexiones del grafo"
+                  aria-describedby={showPreviewReminder ? "preview-reminder" : undefined}
+                >
+                  <IconInfo size={14} />
+                  <span style={{ fontSize: 11, marginLeft: 4 }}>Info</span>
+                </button>
+                {showPreviewReminder && (
+                  <PreviewReminderPopover onOpen={openPreviewCaptureGuide} onDismiss={() => setShowPreviewReminder(false)} />
+                )}
+              </div>
               {/* Biblioteca: Estilos (Brand Guidelines), Plantillas (Key
                   Visuals) y Recursos (Assets) viven en sus pestañas internas. */}
               <button
@@ -7800,6 +7807,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             <FileInfoPanel
               templateId={templateId}
               onCoverCapture={handleCoverCapture}
+              emphasizeCapture={emphasizePreviewCapture}
+              onCoverUpdated={handleCoverUpdated}
             />
           )}
           {rightPanelTab === "designSystem" && (

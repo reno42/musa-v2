@@ -14332,7 +14332,14 @@ section h2{font-size:28px;border-bottom:3px solid #8B5CF6;padding-bottom:8px;mar
         "design-covers", `${params.workspaceId}/covers`, params.templateId, path);
       const { data: urlData } = await sbUp.storage.from("design-covers").createSignedUrl(path, 31536000);
       const coverUrl = urlData?.signedUrl || "";
-      await sbUp.from("design_file_meta").upsert({ template_id: params.templateId, cover_image_url: coverUrl, updated_at: new Date().toISOString() }, { onConflict: "template_id" });
+      const capturedAt = new Date().toISOString();
+      await sbUp.from("design_file_meta").upsert({
+        template_id: params.templateId,
+        cover_image_url: coverUrl,
+        cover_captured_at: capturedAt,
+        cover_source: "external",
+        updated_at: capturedAt,
+      }, { onConflict: "template_id" });
       return { success: true, cover_image_url: coverUrl, templateId: params.templateId };
     }
 

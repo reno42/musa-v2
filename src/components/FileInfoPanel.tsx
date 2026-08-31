@@ -17,6 +17,8 @@ interface FileMeta {
   format: string;
   file_type: string;
   cover_image_url: string;
+  cover_captured_at: string | null;
+  cover_source: "snapshot" | "upload" | "external" | null;
   obsidian_link: string;
   production_data: Record<string, string>;
 }
@@ -28,6 +30,8 @@ interface Props {
   templateId: string | null;
   thumbnailUrl?: string | null;      // auto-generated, fallback
   onCoverCapture?: () => Promise<string | null>;  // returns base64 data URL
+  emphasizeCapture?: boolean;
+  onCoverUpdated?: (capturedAt: string) => void;
 }
 
 /** Must match CATEGORIES in BrandGraphDataTable and the API's normalizeCategory. */
@@ -50,11 +54,11 @@ const PRODUCTION_FIELDS = [
 ] as const;
 
 
-export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Props) {
+export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphasizeCapture = false, onCoverUpdated }: Props) {
   const [meta, setMeta] = useState<FileMeta>({
     brand_id: null, brand: "", campaign_id: null, campaign: "", category: "", content_kind: "", asset_type: "other",
     designer_type: "other", is_permanent: false,
-    tags: [], theme: "", format: "", file_type: "", cover_image_url: "", obsidian_link: "",
+    tags: [], theme: "", format: "", file_type: "", cover_image_url: "", cover_captured_at: null, cover_source: null, obsidian_link: "",
     production_data: {},
   });
   const [brands, setBrands] = useState<BrandOption[]>([]);
@@ -70,6 +74,11 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
   const [uploading, setUploading] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const metaRef = useRef<FileMeta>(meta);
+  const snapshotButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (emphasizeCapture) snapshotButtonRef.current?.focus();
+  }, [emphasizeCapture]);
 
   /** Read the row back from the server. Also the listener below, so an edit
    *  made in the brand table lands here without reopening the file. */
@@ -93,6 +102,8 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
         format: d.data.format || "",
         file_type: d.data.file_type || "",
         cover_image_url: d.data.cover_image_url || "",
+        cover_captured_at: d.data.cover_captured_at || null,
+        cover_source: d.data.cover_source || null,
         obsidian_link: d.data.obsidian_link || "",
         production_data: d.data.production_data || {},
       };
@@ -258,12 +269,16 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       const res = await fetch(`/api/meta/${templateId}/cover`, {
         method: "POST",
         headers: getApiHeaders(),
-        body: JSON.stringify({ imageBase64: b64 }),
+        body: JSON.stringify({ imageBase64: b64, coverSource: "upload" }),
       });
+      if (!res.ok) throw new Error(`Cover upload failed (${res.status})`);
       const d = await res.json();
-      if (d.success) scheduleSave({ cover_image_url: d.data.cover_image_url });
+      if (d.success) {
+        scheduleSave({ cover_image_url: d.data.cover_image_url, cover_captured_at: d.data.cover_captured_at, cover_source: "upload" });
+        onCoverUpdated?.(d.data.cover_captured_at);
+      }
     } catch {} finally { setUploading(false); }
-  }, [templateId]);
+  }, [templateId, onCoverUpdated]);
 
   const handleSnapshot = useCallback(async () => {
     if (!onCoverCapture || !templateId) return;
@@ -274,12 +289,16 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
       const res = await fetch(`/api/meta/${templateId}/cover`, {
         method: "POST",
         headers: getApiHeaders(),
-        body: JSON.stringify({ imageBase64: b64 }),
+        body: JSON.stringify({ imageBase64: b64, coverSource: "snapshot" }),
       });
+      if (!res.ok) throw new Error(`Snapshot upload failed (${res.status})`);
       const d = await res.json();
-      if (d.success) scheduleSave({ cover_image_url: d.data.cover_image_url });
+      if (d.success) {
+        scheduleSave({ cover_image_url: d.data.cover_image_url, cover_captured_at: d.data.cover_captured_at, cover_source: "snapshot" });
+        onCoverUpdated?.(d.data.cover_captured_at);
+      }
     } catch {} finally { setUploading(false); }
-  }, [templateId, onCoverCapture]);
+  }, [templateId, onCoverCapture, onCoverUpdated]);
 
   if (loading) return <div style={panelStyle}>Loading…</div>;
 
@@ -304,9 +323,26 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture }: Prop
               <input type="file" accept="image/png,image/jpeg" style={{ display: "none" }} onChange={handleFileUpload} disabled={uploading} />
             </label>
             {onCoverCapture && (
-              <button type="button" style={snapshotBtnStyle} onClick={handleSnapshot} disabled={uploading}>
-                Use snapshot
-              </button>
+              <>
+                <button
+                  ref={snapshotButtonRef}
+                  type="button"
+                  style={{
+                    ...snapshotBtnStyle,
+                    ...(emphasizeCapture ? { outline: "2px solid #c8b898", outlineOffset: 2 } : {}),
+                  }}
+                  onClick={handleSnapshot}
+                  disabled={uploading}
+                  aria-describedby={emphasizeCapture ? "preview-capture-guidance" : undefined}
+                >
+                  Use snapshot
+                </button>
+                {emphasizeCapture && (
+                  <span id="preview-capture-guidance" style={{ color: "#c8b898", fontSize: 10, lineHeight: 1.35 }}>
+                    Actualiza aquí el preview del diseño.
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>

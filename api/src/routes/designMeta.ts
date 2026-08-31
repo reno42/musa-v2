@@ -446,6 +446,8 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
     }
 
     const ext = mimeType === "image/jpeg" ? "jpg" : "png";
+    const coverSource = req.body.coverSource === "snapshot" ? "snapshot" : "upload";
+    const capturedAt = new Date().toISOString();
     const { data: template } = await sb.from("templates").select("workspace_id").eq("id", templateId).single();
     if (!template?.workspace_id) return res.status(404).json({ success: false, error: "Template not found" });
     const path = `${template.workspace_id}/covers/${templateId}.${ext}`;
@@ -466,10 +468,12 @@ designMetaRoutes.post("/:templateId/cover", async (req, res) => {
       template_id: templateId,
       workspace_id: template.workspace_id,
       cover_image_url: coverUrl,
-      updated_at: new Date().toISOString(),
+      cover_captured_at: capturedAt,
+      cover_source: coverSource,
+      updated_at: capturedAt,
     }, { onConflict: "template_id" });
 
-    res.json({ success: true, data: { cover_image_url: coverUrl } });
+    res.json({ success: true, data: { cover_image_url: coverUrl, cover_captured_at: capturedAt, cover_source: coverSource } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -497,6 +501,8 @@ function rowToMeta(row: any) {
     format: row.format || "",
     file_type: row.file_type || "",
     cover_image_url: row.cover_image_url || "",
+    cover_captured_at: row.cover_captured_at || null,
+    cover_source: row.cover_source || null,
     obsidian_link: row.obsidian_link || "",
     created_at: row.created_at,
     updated_at: row.updated_at,
