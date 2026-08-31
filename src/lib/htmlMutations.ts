@@ -1,5 +1,6 @@
 import { cloneLayerCss } from "./cssMutations";
 import { classifyLayer } from "./layerKind";
+import { parseGradientValue } from "./gradient";
 
 function parseFragment(html: string): Document {
   return new DOMParser().parseFromString(html, "text/html");
@@ -34,6 +35,122 @@ export function replaceLayerPathData(
   if (!path) return null;
   path.setAttribute("d", pathData);
   for (const [name, value] of Object.entries(metadata)) layer.setAttribute(name, value);
+  return serializeFragment(document);
+}
+
+/** What a shape's fill can be (F2 fill picker routed through svg defs). */
+export type SvgFillMedia =
+  | { kind: "solid"; color: string }
+  | { kind: "gradient"; css: string }
+  | { kind: "image"; url: string }
+  | { kind: "none" };
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+
+function gradientTransformCoords(angle: number): { x1: string; y1: string; x2: string; y2: string } {
+  // CSS 0deg points up; convert to an objectBoundingBox axis.
+  const rad = (angle * Math.PI) / 180;
+  const dx = Math.sin(rad) / 2, dy = -Math.cos(rad) / 2;
+  return { x1: String(0.5 - dx), y1: String(0.5 - dy), x2: String(0.5 + dx), y2: String(0.5 + dy) };
+}
+
+/**
+ * Paint an svg shape's fill through real svg paint servers: gradients and
+ * photos become <defs> entries referenced with url(#…), solid/none are
+ * plain fill attributes. CSS gradients don't apply inside an svg's <path>,
+ * so this is the only way the fill picker's degradados render on shapes.
+ */
+export function applyLayerSvgFill(
+  html: string,
+  layerId: string,
+  fill: SvgFillMedia,
+): string | null {
+  const document = parseFragment(html);
+  const layer = findLayer(document, layerId);
+  if (!layer) return null;
+  const path = layer.matches("path") ? layer : layer.querySelector("path");
+  if (!path) return null;
+  const svg = layer.matches("svg") ? layer : layer.querySelector("svg");
+
+  const defId = `musa-fill-${layerId}`;
+  const dropDef = () => {
+    if (!svg) return;
+    svg.querySelector(`#${defId}`)?.remove();
+  };
+
+  if (fill.kind === "none") {
+    dropDef();
+    path.setAttribute("fill", "none");
+    return serializeFragment(document);
+  }
+
+  if (fill.kind === "solid") {
+    dropDef();
+    path.setAttribute("fill", fill.color);
+    return serializeFragment(document);
+  }
+
+  if (!svg) {
+    // No svg host (a bare path without an svg ancestor) — degrade to solid.
+    path.setAttribute("fill", fill.kind === "image" ? "none" : "#000000");
+    return serializeFragment(document);
+  }
+
+  dropDef();
+  const defs = svg.querySelector("defs") ?? svg.insertBefore(document.createElementNS(SVG_NS, "defs"), svg.firstChild);
+
+  if (fill.kind === "gradient") {
+    const parsed = parseGradientValue(fill.css);
+    if (!parsed) {
+      path.setAttribute("fill", "none");
+      return serializeFragment(document);
+    }
+    // svg has no conic primitive: angular/diamond degrade to the linear
+    // axis (documented approximation; divs/text keep the real conic).
+    const isRadial = parsed.type === "radial";
+    const server = document.createElementNS(SVG_NS, isRadial ? "radialGradient" : "linearGradient");
+    server.setAttribute("id", defId);
+    if (isRadial) {
+      server.setAttribute("cx", "50%");
+      server.setAttribute("cy", "50%");
+      server.setAttribute("r", "75%");
+    } else {
+      const coords = gradientTransformCoords(parsed.angle);
+      server.setAttribute("x1", coords.x1);
+      server.setAttribute("y1", coords.y1);
+      server.setAttribute("x2", coords.x2);
+      server.setAttribute("y2", coords.y2);
+    }
+    for (const stop of parsed.stops) {
+      const stopEl = document.createElementNS(SVG_NS, "stop");
+      stopEl.setAttribute("offset", `${stop.pos}%`);
+      stopEl.setAttribute("stop-color", stop.color);
+      stopEl.setAttribute("stop-opacity", String(stop.alpha));
+      server.appendChild(stopEl);
+    }
+    defs.appendChild(server);
+    path.setAttribute("fill", `url(#${defId})`);
+    return serializeFragment(document);
+  }
+
+  // Image fill via a pattern sized to the viewBox (cover behavior).
+  const vb = (svg.getAttribute("viewBox") || "0 0 0 0").split(/\s+/).map(Number);
+  const w = vb[2] || 100, h = vb[3] || 100;
+  const pattern = document.createElementNS(SVG_NS, "pattern");
+  pattern.setAttribute("id", defId);
+  pattern.setAttribute("patternUnits", "userSpaceOnUse");
+  pattern.setAttribute("width", String(w));
+  pattern.setAttribute("height", String(h));
+  const image = document.createElementNS(SVG_NS, "image");
+  image.setAttribute("width", String(w));
+  image.setAttribute("height", String(h));
+  image.setAttribute("preserveAspectRatio", "xMidYMid slice");
+  image.setAttribute("href", fill.url);
+  image.setAttributeNS(XLINK_NS, "xlink:href", fill.url);
+  pattern.appendChild(image);
+  defs.appendChild(pattern);
+  path.setAttribute("fill", `url(#${defId})`);
   return serializeFragment(document);
 }
 

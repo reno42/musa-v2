@@ -1006,24 +1006,12 @@ export function DesignFrame({
     const targetPath = (isPathEl ? el : pathEl) as Element | null;
     const pathData = targetPath?.getAttribute("d");
 
-    // ── F4 A1: radius handles for the currently hovered shape. Circles sit
-    // on every vertex; grabbing one and dragging horizontally rounds ALL
-    // corners live (left = rounder, right = sharper). ──
+    // ── F4 A1: Figma-style corner widgets. While the shape is hovered, a
+    // circle sits inside every corner; press one and drag toward the center
+    // to round, away from it to sharpen down to radius 0. ──
     const renderRadiusHandles = (geom: NonNullable<ReturnType<typeof resolveShapeGeometry>>) => {
       overlay.querySelector("[data-radius-overlay]")?.remove();
       overlay.querySelector("[data-radius-label]")?.remove();
-      const svgOwner = geom.path.closest("svg");
-      const svgRectR = svgOwner?.getBoundingClientRect();
-      const vbParts = (svgOwner?.getAttribute("viewBox") || "0 0 0 0").split(/\s+/).map(Number);
-      const [vbXr = 0, vbYr = 0, vbWr = 0, vbHr = 0] = vbParts;
-      const svgLeftR = svgRectR ? (svgRectR.left - cRect.left) / z : 0;
-      const svgTopR = svgRectR ? (svgRectR.top - cRect.top) / z : 0;
-      const scaleXr = svgRectR && vbWr ? (svgRectR.width / z) / vbWr : 1;
-      const scaleYr = svgRectR && vbHr ? (svgRectR.height / z) / vbHr : 1;
-      const project = (vx: number, vy: number): [number, number] => [
-        (vx - vbXr) * scaleXr + svgLeftR,
-        (vy - vbYr) * scaleYr + svgTopR,
-      ];
 
       const radiusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       radiusSvg.setAttribute("width", "100%");
@@ -1042,67 +1030,112 @@ export function DesignFrame({
       Object.assign(radiusLabel.style, {
         position: "absolute",
         display: "none",
-        padding: "2px 6px",
+        padding: "3px 8px",
         borderRadius: "4px",
-        background: "rgba(15,17,26,0.92)",
-        border: "1px solid rgba(245,158,11,0.4)",
-        color: "#FBBF24",
-        fontSize: "10px",
-        fontFamily: "monospace",
+        background: "#0F111A",
+        border: "1px solid rgba(59,130,246,0.55)",
+        color: "#ffffff",
+        fontSize: "11px",
+        fontWeight: "600",
+        fontFamily: "system-ui, sans-serif",
         pointerEvents: "none",
         whiteSpace: "nowrap",
         zIndex: "10002",
       });
       overlay.appendChild(radiusLabel);
 
-      const showRadiusAt = (handleCircle: SVGCircleElement, text: string) => {
+      // Map each path vertex to overlay space by normalizing it against the
+      // shape's own bounds (avoids viewBox maths entirely): the layer rect
+      // (x, y, w, h) is the shape bounds as painted, so nx/ny ∈ [0,1] land
+      // exactly on the painted corners.
+      const xs = geom.vertices.map(v => v.x);
+      const ys = geom.vertices.map(v => v.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const vw = Math.max(...xs) - minX || 1;
+      const vh = Math.max(...ys) - minY || 1;
+      // Overlay px → path-local px (path coordinates may differ from painted px).
+      const toLocal = w > 0 ? vw / w : 1;
+      const maxRadiusLocal = Math.min(vw, vh) / 2;
+      const center = { x: x + w / 2, y: y + h / 2 };
+      const INSET = 12; // rest distance from the corner, toward the center
+
+      const showLabelAt = (cx: number, cy: number, text: string) => {
         radiusLabel.textContent = text;
         radiusLabel.style.display = "block";
-        radiusLabel.style.left = `${parseFloat(handleCircle.getAttribute("cx") || "0") + 12}px`;
-        radiusLabel.style.top = `${parseFloat(handleCircle.getAttribute("cy") || "0") - 14}px`;
+        radiusLabel.style.left = `${cx + 12}px`;
+        radiusLabel.style.top = `${cy - 14}px`;
       };
 
       geom.vertices.forEach((vertex, index) => {
-        const [px, py] = project(vertex.x, vertex.y);
+        const nx = (vertex.x - minX) / vw;
+        const ny = (vertex.y - minY) / vh;
+        const cornerX = x + nx * w;
+        const cornerY = y + ny * h;
+        const ux = center.x - cornerX;
+        const uy = center.y - cornerY;
+        const uLen = Math.hypot(ux, uy) || 1;
+        const dx = ux / uLen, dy = uy / uLen;
+        const restX = cornerX + dx * INSET;
+        const restY = cornerY + dy * INSET;
+
         const handleCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        handleCircle.setAttribute("cx", `${px}`);
-        handleCircle.setAttribute("cy", `${py}`);
+        handleCircle.setAttribute("cx", `${restX}`);
+        handleCircle.setAttribute("cy", `${restY}`);
         handleCircle.setAttribute("r", "5");
-        handleCircle.setAttribute("fill", "#F59E0B");
-        handleCircle.setAttribute("stroke", "#fff");
-        handleCircle.setAttribute("stroke-width", "1.5");
+        handleCircle.setAttribute("fill", "#ffffff");
+        handleCircle.setAttribute("stroke", "#3B82F6");
+        handleCircle.setAttribute("stroke-width", "2");
         handleCircle.setAttribute("data-radius-handle", `${index}`);
-        handleCircle.style.cursor = "ew-resize";
+        handleCircle.style.cursor = "pointer";
         handleCircle.style.pointerEvents = "auto";
+
+        const currentRadius = () =>
+          geom.uniform || (geom.radii.length ? geom.radii.reduce((a, b) => a + b, 0) / geom.radii.length : 0);
+
         handleCircle.addEventListener("mouseenter", () => {
           if (radiusDragRef.current) return;
-          showRadiusAt(handleCircle, `r ${Math.round(geom.radii[index])}px`);
+          showLabelAt(restX, restY, `Radius ${Math.round(currentRadius())}`);
         });
         handleCircle.addEventListener("mouseleave", () => {
           if (radiusDragRef.current) return;
           radiusLabel.style.display = "none";
         });
+
         handleCircle.addEventListener("mousedown", (event) => {
           event.stopPropagation();
           event.preventDefault();
           radiusDragRef.current = true;
-          const startX = event.clientX;
-          const baseRadius = geom.uniform;
+          const baseRadius = currentRadius();
+          // Pointer position in overlay space (same space as x/y/w/h).
+          const project = (clientX: number, clientY: number): [number, number] => [
+            (clientX - cRect.left) / z,
+            (clientY - cRect.top) / z,
+          ];
+          const [p0x, p0y] = project(event.clientX, event.clientY);
+          // Signed distance along the corner→center axis: dragging inward
+          // (toward the center) grows the radius; outward past the corner
+          // reaches exactly 0.
+          const dist0 = (p0x - cornerX) * dx + (p0y - cornerY) * dy;
           let current = baseRadius;
-          const onRadiusMove = (moveEvent: MouseEvent) => {
-            const deltaX = (moveEvent.clientX - startX) / z;
-            // Left = rounder (radius grows), right = sharper (radius shrinks).
-            current = Math.max(0, Math.min(500, baseRadius - deltaX * 0.5));
-            geom.path.setAttribute("d", verticesToPath(geom.vertices, current));
-            showRadiusAt(handleCircle, `r ${Math.round(current)}px`);
+          const applyRadius = (r: number) => {
+            geom.path.setAttribute("d", verticesToPath(geom.vertices, r));
             window.dispatchEvent(new CustomEvent("musa:shape-radius-live", {
-              detail: { layerId: geom.layerId, uniform: current, radii: geom.vertices.map(() => current) },
+              detail: { layerId: geom.layerId, uniform: r, radii: geom.vertices.map(() => r) },
             }));
+          };
+          const onRadiusMove = (moveEvent: MouseEvent) => {
+            const [mx, my] = project(moveEvent.clientX, moveEvent.clientY);
+            const dist = (mx - cornerX) * dx + (my - cornerY) * dy;
+            current = Math.max(0, Math.min(maxRadiusLocal, baseRadius + (dist - dist0) * toLocal));
+            applyRadius(current);
+            showLabelAt(restX, restY, `Radius ${Math.round(current)}`);
           };
           const onRadiusUp = () => {
             document.removeEventListener("mousemove", onRadiusMove);
             document.removeEventListener("mouseup", onRadiusUp);
             radiusDragRef.current = false;
+            radiusLabel.style.display = "none";
             geom.holder.setAttribute("data-shape-corner-radius", `${Math.round(current * 10) / 10}`);
             geom.holder.removeAttribute("data-vr");
             emitFrameChange(cssRef.current, content.innerHTML);
@@ -1462,8 +1495,8 @@ export function DesignFrame({
         document.addEventListener("mouseup", onRotUp);
       });
 
-      // ── F4 A1: hover a selected shape → vertex circles appear; grab any
-      // circle and drag horizontally to round/sharpen the whole figure. ──
+      // ── F4 A1: hover a selected shape → corner circles appear; press any
+      // circle and drag toward the center to round, away to sharpen to 0. ──
       if (targetPath && pathData) {
         const shapeGeometry = resolveShapeGeometry(targetPath);
         if (shapeGeometry) {

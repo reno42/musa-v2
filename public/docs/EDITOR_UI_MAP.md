@@ -73,10 +73,15 @@ dentro de un frame, o el frame mismo). Tiene sus propias 3 pestañas
 **Properties** — solo estas 6 categorías, todas conectadas a CSS real:
 - **Position** — 6 botones de alinear (izq/centro-h/der/arriba/abajo/centro-v, alinean contra el frame), X/Y, Rotation (un campo, número sin signo = positivo).
 - **Layout** — Width/Height en una fila.
-- **Appearance** — Opacity, Corner radius (un campo para las 4 esquinas + 4 campos independientes).
+- **Appearance** — Opacity, Corner radius (un campo para las 4 esquinas + 4 campos independientes). En figuras SVG (estrella/polígono/bezier-cerrada) el Radius controla el radio uniforme de vértices (`data-shape-corner-radius`) y el botón "◈ Radio por vértice" despliega un campo por vértice (`data-vr`, posicional).
 - **Fill** — si es `<img>`: preview de la imagen + Opacity. Si es figura (herramienta o bezier/SVG): color + fill-opacity. Si es texto/div: color de texto, color/gradiente de fondo, subir imagen, blend mode (mismo comportamiento de siempre).
 - **Stroke** — Color + Opacity (una fila), Position (Inside/Center/Outside, simulado con `border` vs `outline`+`outline-offset`) + Weight (otra fila). En SVG usa `stroke` nativo en vez de border/outline.
 - **Effects** — botones para agregar: Drop Shadow, Inner Shadow, Layer Blur, Background Blur, Glass, Noise, Texture, Dither. Cada uno muestra sus propios campos al agregarse (shadows: X/Y/Blur/Spread/Color/Opacity, blurs: cantidad, noise/texture/dither: intensidad).
+
+**Canvas sobre figuras (F4, flecha de selección):**
+- **Hover sobre figura seleccionada** → círculos ámbar en cada vértice; hover en un círculo muestra su radio; arrastrar horizontalmente un círculo redondea TODA la figura en vivo (izquierda = redondea, derecha = afila) y el panel refleja el valor en tiempo real (`musa:shape-radius-live`).
+- **Doble-click sobre figura/path** → modo vértices editables: anclas arrastrables con guías inteligentes (snap al X/Y de otros vértices, líneas punteadas ámbar), circulitos punteados en el punto medio de cada segmento para insertar vértices nuevos. Esc o click fuera para salir. Tras editar vértices la figura queda marcada `data-shape-custom="1"` — solo el radio se puede cambiar paramétricamente (count/ratio se ignoran para no borrar las ediciones).
+- Radios por vértice y geometría viven en `src/lib/shapePaths.ts` (`verticesToPath` acepta `number | number[]`; `cornersFromShapePath` recupera vértices de un path ya redondeado).
 
 **Code** — todo lo relacionado a estructura/markup de ESTE elemento:
 - Selector de tag semántico (`<div>`→`<section>` etc.)

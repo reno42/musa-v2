@@ -1,14 +1,24 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { GoogleFontPicker } from "./GoogleFontPicker";
-import { setTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
+import { setTransformFunction, removeTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
 import { styleTargets } from "../lib/selectionModel";
 import { isGroupLayer, paintPropertiesFor, summarizeFills } from "../../shared/paintModel.ts";
 import { getApiHeaders } from "../lib/apiKey";
 import { prepareImageForUpload } from "../lib/imageCompress";
-import { toHexColor } from "../lib/colorUtils";
+import { toHexColor, formatColor, parseColorText, hexToRgb, rgbToHsv, hsvToRgb, type ColorFormat } from "../lib/colorUtils";
+import {
+  splitTopLevelCommas,
+  parseGradientValue,
+  buildGradientCss,
+  gradientColorAt,
+  DEFAULT_NEW_GRADIENT,
+  type ParsedGradient,
+} from "../lib/gradient";
+import type { BooleanOpName } from "../lib/pathBoolean";
+import type { SvgFillMedia } from "../lib/htmlMutations";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { AnimationPanel } from "./AnimationPanel";
 
@@ -44,6 +54,12 @@ interface Props {
    *  every vertex at once (uniform). */
   onShapeVertexRadiusChange?: (layerId: string, frameId: string, index: number | "all", value: number) => void;
   onGroupModeChange?: (layerId: string, frameId: string, mode: "group" | "container") => void;
+  /** F1 buscatrazos: boolean op across every selected shape. */
+  onBooleanOp?: (op: BooleanOpName) => void;
+  /** True when ≥2 shapes with paths are selected — enables the buscatrazos. */
+  booleanOpReady?: boolean;
+  /** F2: fill media for svg shapes (gradients/photos need real svg defs). */
+  onSvgFillMedia?: (frameId: string, layerId: string, media: SvgFillMedia) => void;
   /** F3 remove-background: swap an <img> layer's src to the cutout PNG.
    *  The editor stores the original src in data-orig-src (non-destructive). */
   onImageSrcChange?: (frameId: string, layerId: string, newSrc: string, origSrc: string | null) => void;
@@ -427,12 +443,12 @@ function SpacingBox({ label, prefix, styles, onUpdate }: {
 // ── Alignment icons (align-to-frame, Position category) ──
 
 const ALIGN_BUTTONS: { key: "left" | "centerH" | "right" | "top" | "centerV" | "bottom"; title: string }[] = [
-  { key: "left", title: "Align left" },
-  { key: "centerH", title: "Align center horizontal" },
-  { key: "right", title: "Align right" },
-  { key: "top", title: "Align top" },
-  { key: "bottom", title: "Align bottom" },
-  { key: "centerV", title: "Align center vertical" },
+  { key: "left", title: "Alinear a la izquierda" },
+  { key: "centerH", title: "Alinear centros horizontalmente" },
+  { key: "right", title: "Alinear a la derecha" },
+  { key: "top", title: "Alinear hacia arriba" },
+  { key: "centerV", title: "Alinear centros verticalmente" },
+  { key: "bottom", title: "Alinear hacia abajo" },
 ];
 
 function AlignIcon({ type }: { type: typeof ALIGN_BUTTONS[number]["key"] }) {
@@ -502,32 +518,33 @@ function updatePseudoCss(css: string, selector: string, pseudo: string, props: R
 
 type StrokePosition = "inside" | "center" | "outside";
 
-function readStroke(s: Record<string, string>): { position: StrokePosition; weight: number; color: string; alpha: number } {
+function readStroke(s: Record<string, string>): { position: StrokePosition; weight: number; color: string; alpha: number; style: string } {
   const outlineWidth = parseFloat(s["outline-width"]) || 0;
   const outlineActive = (s["outline-style"] || "none") !== "none" && outlineWidth > 0;
   if (outlineActive) {
     const offset = parseFloat(s["outline-offset"]) || 0;
     const position: StrokePosition = offset < 0 ? "center" : "outside";
-    return { position, weight: outlineWidth, color: toHex(s["outline-color"]), alpha: parseAlpha(s["outline-color"]) };
+    return { position, weight: outlineWidth, color: toHex(s["outline-color"]), alpha: parseAlpha(s["outline-color"]), style: s["outline-style"] || "solid" };
   }
   const borderWidth = parseFloat(s["border-width"]) || 0;
-  return { position: "inside", weight: borderWidth, color: toHex(s["border-color"] || "#000000"), alpha: parseAlpha(s["border-color"]) };
+  return { position: "inside", weight: borderWidth, color: toHex(s["border-color"] || "#000000"), alpha: parseAlpha(s["border-color"]), style: borderWidth > 0 && (s["border-style"] || "none") !== "none" ? s["border-style"] : "solid" };
 }
 
 function writeStroke(
   updateMulti: (props: Record<string, string>) => void,
-  next: { position: StrokePosition; weight: number; color: string; alpha: number },
+  next: { position: StrokePosition; weight: number; color: string; alpha: number; style?: string },
 ) {
+  const style = next.style || "solid";
   const colorValue = next.alpha < 1 ? hexToRgba(next.color, next.alpha) : next.color;
   const visible = next.weight > 0;
   if (next.position === "inside") {
     updateMulti({
-      "border-width": `${next.weight}px`, "border-style": visible ? "solid" : "none", "border-color": colorValue,
+      "border-width": `${next.weight}px`, "border-style": visible ? style : "none", "border-color": colorValue,
       "outline-width": "0", "outline-style": "none", "outline-offset": "0",
     });
   } else {
     updateMulti({
-      "outline-width": `${next.weight}px`, "outline-style": visible ? "solid" : "none", "outline-color": colorValue,
+      "outline-width": `${next.weight}px`, "outline-style": visible ? style : "none", "outline-color": colorValue,
       "outline-offset": next.position === "center" ? `${-next.weight / 2}px` : "0px",
       "border-width": "0", "border-style": "none",
     });
@@ -537,18 +554,6 @@ function writeStroke(
 // ── Box-shadow (Drop Shadow / Inner Shadow) helpers ──
 
 interface ShadowEffect { x: number; y: number; blur: number; spread: number; color: string; alpha: number; inset: boolean }
-
-function splitTopLevelCommas(str: string): string[] {
-  const out: string[] = [];
-  let depth = 0, cur = "";
-  for (const ch of str) {
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else { cur += ch; }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
 
 function parseBoxShadows(value: string): ShadowEffect[] {
   if (!value || value === "none") return [];
@@ -648,21 +653,468 @@ const mutedNote: React.CSSProperties = {
   fontSize: 10, lineHeight: 1.5, color: "#7a7668", padding: "2px 2px 4px",
 };
 
+// ── F1/F2/F3 popup primitives ──
+
+const popupCard: React.CSSProperties = {
+  position: "absolute", right: 8, top: "100%", marginTop: 2, zIndex: 40,
+  background: "#1c1a16", border: "1px solid rgba(200,184,152,0.25)", borderRadius: 8,
+  padding: 8, display: "flex", flexDirection: "column", gap: 6, width: 212,
+  boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+};
+
+function EyeButton({ on, onClick, title }: { on: boolean; onClick: () => void; title?: string }) {
+  return (
+    <button type="button" title={title || (on ? "Ocultar" : "Mostrar")} onClick={onClick}
+      style={{ fontSize: 11, lineHeight: 1, padding: "2px 4px", borderRadius: 3, border: "none",
+        background: "none", cursor: "pointer", opacity: on ? 1 : 0.35, color: "#c8b898", flexShrink: 0 }}>
+      👁
+    </button>
+  );
+}
+
+const hexOf = (rgb: { r: number; g: number; b: number }) =>
+  "#" + [rgb.r, rgb.g, rgb.b].map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
+
+/**
+ * Full color picker (F2): SV square + hue + alpha, with the value editable
+ * as text in the selected format (hex/rgb/hsl/hsb/cmyk/css) — Enter applies.
+ */
+function ColorPickerCard({ hex, alpha, onChange }: {
+  hex: string; alpha: number;
+  onChange: (hex: string, alpha: number) => void;
+}) {
+  const [format, setFormat] = useState<ColorFormat>("hex");
+  const [text, setText] = useState(() => formatColor(hex, "hex", alpha));
+  const svRef = useRef<HTMLDivElement>(null);
+  const rgb = hexToRgb(hex) ?? { r: 0, g: 0, b: 0 };
+  const hsv = rgbToHsv(rgb);
+
+  useEffect(() => { setText(formatColor(hex, format, alpha)); }, [hex, alpha, format]);
+
+  const applyHsv = (h: number, s: number, v: number) => onChange(hexOf(hsvToRgb({ h, s, v })), alpha);
+
+  const svDrag = (e: React.PointerEvent) => {
+    const rect = svRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    const move = (clientX: number, clientY: number) => {
+      const s = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const v = 1 - Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+      applyHsv(hsv.h, s, v);
+    };
+    move(e.clientX, e.clientY);
+    const onMove = (ev: PointerEvent) => move(ev.clientX, ev.clientY);
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
+  const commitText = () => {
+    const parsed = parseColorText(text);
+    if (parsed) onChange(parsed.hex, parsed.alpha);
+    else setText(formatColor(hex, format, alpha));
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <select value={format} onChange={e => setFormat(e.target.value as ColorFormat)} style={{ ...sel, flex: 1 }}>
+          <option value="hex">HEX</option>
+          <option value="rgb">RGB</option>
+          <option value="hsl">HSL</option>
+          <option value="hsb">HSB</option>
+          <option value="cmyk">CMYK</option>
+          <option value="css">CSS</option>
+        </select>
+      </div>
+      <input value={text} onChange={e => setText(e.target.value)} onBlur={commitText}
+        onKeyDown={e => { if (e.key === "Enter") { commitText(); (e.target as HTMLInputElement).blur(); } }}
+        style={inp} />
+      <div ref={svRef} onPointerDown={svDrag}
+        style={{ height: 118, borderRadius: 4, cursor: "crosshair", position: "relative",
+          background: `linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, hsl(${hsv.h} 100% 50%))`,
+          border: "1px solid rgba(255,255,255,0.08)" }}>
+        <span style={{ position: "absolute", left: `${hsv.s * 100}%`, top: `${(1 - hsv.v) * 100}%`,
+          width: 10, height: 10, borderRadius: "50%", transform: "translate(-50%, -50%)",
+          border: "2px solid #fff", boxShadow: "0 0 3px rgba(0,0,0,0.6)", pointerEvents: "none" }} />
+      </div>
+      <input type="range" min={0} max={360} value={Math.round(hsv.h)}
+        onChange={e => applyHsv(parseFloat(e.target.value), hsv.s, hsv.v)}
+        style={{ accentColor: "#c8b898", background: "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)", borderRadius: 3, height: 8 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <input type="range" min={0} max={100} value={Math.round(alpha * 100)}
+          onChange={e => onChange(hex, parseInt(e.target.value) / 100)}
+          style={{ flex: 1, accentColor: "#c8b898" }} />
+        <span style={{ fontSize: 9, color: "#7a7668", width: 30, textAlign: "right" }}>{Math.round(alpha * 100)}%</span>
+      </div>
+    </div>
+  );
+}
+
+/** Gradient editor with a draggable-stops bar (F2): click the bar to add a
+ * node at that position with the interpolated color, drag nodes to move. */
+function GradientEditor({ gradient, onChange }: {
+  gradient: ParsedGradient;
+  onChange: (g: ParsedGradient) => void;
+}) {
+  const [selStop, setSelStop] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
+  const selected = gradient.stops[Math.min(selStop, gradient.stops.length - 1)];
+
+  const posFromX = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 50;
+    return Math.round(Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) * 100);
+  };
+
+  const dragStop = (index: number, e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelStop(index);
+    const onMove = (ev: PointerEvent) => {
+      onChange({ ...gradient, stops: gradient.stops.map((s, i) => i === index ? { ...s, pos: posFromX(ev.clientX) } : s) });
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
+  const addStopAt = (pos: number) => {
+    if (gradient.stops.length >= 10) return;
+    const at = gradientColorAt(gradient.stops, pos);
+    const stops = [...gradient.stops, { color: at.color, alpha: at.alpha, pos }].sort((a, b) => a.pos - b.pos);
+    setSelStop(stops.findIndex(s => s.pos === pos && s.color === at.color));
+    onChange({ ...gradient, stops });
+  };
+
+  const removeStop = (index: number) => {
+    if (gradient.stops.length <= 2) return;
+    onChange({ ...gradient, stops: gradient.stops.filter((_, i) => i !== index) });
+    setSelStop(0);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ display: "flex", gap: 3 }}>
+        {(["linear", "radial", "conic", "diamond"] as const).map(t => (
+          <button key={t} type="button" onClick={() => onChange({ ...gradient, type: t })}
+            style={{ flex: 1, fontSize: 9, padding: "3px 2px", borderRadius: 3, cursor: "pointer",
+              border: gradient.type === t ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.08)",
+              background: gradient.type === t ? "rgba(200,184,152,0.14)" : "rgba(15,15,15,0.5)",
+              color: gradient.type === t ? "#c8b898" : "#7a7668" }}>
+            {t === "linear" ? "Lineal" : t === "radial" ? "Radial" : t === "conic" ? "Angular" : "Diamante"}
+          </button>
+        ))}
+      </div>
+      {gradient.type !== "radial" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 9, color: "#7a7668" }}>Ángulo</span>
+          <ScrubbyInput value={String(gradient.angle)} min={0} max={360} suffix="°"
+            onChange={v => onChange({ ...gradient, angle: parseInt(v) || 0 })} />
+        </div>
+      )}
+      <div ref={barRef} onPointerDown={e => { e.preventDefault(); addStopAt(posFromX(e.clientX)); }}
+        title="Click para añadir un nodo ahí"
+        style={{ height: 18, borderRadius: 4, cursor: "copy", position: "relative",
+          background: `${buildGradientCss(gradient)}, repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 10px 10px`,
+          border: "1px solid rgba(255,255,255,0.12)" }}>
+        {gradient.stops.map((stop, i) => (
+          <span key={i} onPointerDown={e => dragStop(i, e)}
+            style={{ position: "absolute", left: `${stop.pos}%`, top: "50%", transform: "translate(-50%, -50%)",
+              width: 12, height: 12, borderRadius: "50%", cursor: "ew-resize",
+              background: stop.color, opacity: stop.alpha,
+              border: i === selStop ? "2px solid #fff" : "1px solid rgba(0,0,0,0.6)",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.6)" }} />
+        ))}
+      </div>
+      {selected && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input type="color" value={selected.color} onChange={e => {
+              onChange({ ...gradient, stops: gradient.stops.map((s, i) => i === selStop ? { ...s, color: e.target.value } : s) });
+            }} style={{ ...colorInp, width: 24, height: 20 }} />
+            <input value={selected.color} onChange={e => {
+              const hex = toHexColor(e.target.value, selected.color);
+              onChange({ ...gradient, stops: gradient.stops.map((s, i) => i === selStop ? { ...s, color: hex } : s) });
+            }} style={{ ...inp, width: 70 }} />
+            <span style={{ fontSize: 9, color: "#7a7668" }}>α</span>
+            <ScrubbyInput value={String(Math.round(selected.alpha * 100))} min={0} max={100} suffix="%"
+              onChange={v => onChange({ ...gradient, stops: gradient.stops.map((s, i) => i === selStop ? { ...s, alpha: (parseInt(v) || 0) / 100 } : s) })}
+              style={{ flex: 1 }} />
+          </div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 9, color: "#7a7668" }}>Pos</span>
+            <ScrubbyInput value={String(selected.pos)} min={0} max={100} suffix="%"
+              onChange={v => onChange({ ...gradient, stops: gradient.stops.map((s, i) => i === selStop ? { ...s, pos: parseInt(v) || 0 } : s) })}
+              style={{ flex: 1 }} />
+            {gradient.stops.length > 2 && (
+              <button type="button" onClick={() => removeStop(selStop)}
+                style={{ fontSize: 10, padding: "1px 5px", borderRadius: 2, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", cursor: "pointer" }}>×</button>
+            )}
+          </div>
+        </div>
+      )}
+      <button type="button" onClick={() => addStopAt(50)}
+        style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, border: "1px dashed rgba(200,184,152,0.2)", background: "none", color: "#c8b898", cursor: "pointer" }}>
+        + Nodo (centro)
+      </button>
+    </div>
+  );
+}
+
+type FillKind = "solid" | "gradient" | "image" | "video";
+
+const FILL_KIND_LABELS: { kind: FillKind; label: string }[] = [
+  { kind: "solid", label: "Color" },
+  { kind: "gradient", label: "Degradado" },
+  { kind: "image", label: "Foto" },
+  { kind: "video", label: "Video" },
+];
+
+/** The fill picker popup (F2): a type selector on top — full color,
+ * degradado, foto o video — with the editor for the chosen type below. */
+function FillPickerCard({ kind, hex, alpha, gradient, imageUrl, videoUrl, onKind, onSolid, onGradient, onImageUrl, onVideoUrl, onUpload, onClose }: {
+  kind: FillKind; hex: string; alpha: number;
+  gradient: ParsedGradient | null;
+  imageUrl: string; videoUrl: string;
+  onKind: (kind: FillKind) => void;
+  onSolid: (hex: string, alpha: number) => void;
+  onGradient: (g: ParsedGradient) => void;
+  onImageUrl: (url: string) => void;
+  onVideoUrl: (url: string) => void;
+  onUpload: () => void;
+  onClose: () => void;
+}) {
+  const [imageUrlText, setImageUrlText] = useState(imageUrl);
+  const [videoUrlText, setVideoUrlText] = useState(videoUrl);
+  useEffect(() => { setImageUrlText(imageUrl); }, [imageUrl]);
+  useEffect(() => { setVideoUrlText(videoUrl); }, [videoUrl]);
+
+  return (
+    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 3, flex: 1 }}>
+          {FILL_KIND_LABELS.map(({ kind: k, label }) => (
+            <button key={k} type="button" onClick={() => onKind(k)}
+              style={{ flex: 1, fontSize: 9, padding: "3px 2px", borderRadius: 3, cursor: "pointer",
+                border: kind === k ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.08)",
+                background: kind === k ? "rgba(200,184,152,0.14)" : "rgba(15,15,15,0.5)",
+                color: kind === k ? "#c8b898" : "#7a7668" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={onClose} style={{ fontSize: 11, color: "#7a7668", background: "none", border: "none", cursor: "pointer", marginLeft: 4 }}>×</button>
+      </div>
+      {kind === "solid" && <ColorPickerCard hex={hex} alpha={alpha} onChange={onSolid} />}
+      {kind === "gradient" && (gradient
+        ? <GradientEditor gradient={gradient} onChange={onGradient} />
+        : <button type="button" onClick={() => onGradient(DEFAULT_NEW_GRADIENT)}
+            style={{ fontSize: 10, padding: "5px 8px", borderRadius: 4, border: "1px dashed rgba(200,184,152,0.25)", background: "none", color: "#c8b898", cursor: "pointer" }}>
+            + Crear degradado
+          </button>)}
+      {kind === "image" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <input value={imageUrlText} placeholder="https://… de la imagen"
+            onChange={e => setImageUrlText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") onImageUrl(imageUrlText.trim()); }}
+            onBlur={() => imageUrlText.trim() !== imageUrl && onImageUrl(imageUrlText.trim())}
+            style={inp} />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button type="button" onClick={onUpload} style={{ ...smallBtn, flex: 1 }}>Subir imagen</button>
+            {imageUrl && <button type="button" onClick={() => { setImageUrlText(""); onImageUrl(""); }} style={{ ...smallBtn, flex: 1 }}>Quitar</button>}
+          </div>
+        </div>
+      )}
+      {kind === "video" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <input value={videoUrlText} placeholder="https://… del video"
+            onChange={e => setVideoUrlText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") onVideoUrl(videoUrlText.trim()); }}
+            onBlur={() => videoUrlText.trim() !== videoUrl && onVideoUrl(videoUrlText.trim())}
+            style={inp} />
+          <div style={mutedNote}>El video queda almacenado con la capa; la reproducción depende del soporte de la capa destino.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stroke FX (F3 border controls: básico / dinámico / pincelada) ──
+
+interface StrokeFx {
+  style: string;      // solid | dashed | dotted
+  profile: string;    // uniform | taper | swell
+  cap: string;        // straight | bevel | round
+  capRound: number;   // 0-100
+  frequency: number;  // 0-100
+  wiggle: number;     // 0-100
+  smoothen: number;   // 0-100
+  brush: string;      // "" | brocha | pincel | crayola | lapiz | rotulador | aerografo
+}
+
+const DEFAULT_STROKE_FX: StrokeFx = {
+  style: "solid", profile: "uniform", cap: "straight", capRound: 0,
+  frequency: 20, wiggle: 0, smoothen: 50, brush: "",
+};
+
+const STROKE_BRUSHES: { value: string; label: string }[] = [
+  { value: "brocha", label: "Brocha" }, { value: "pincel", label: "Pincel" },
+  { value: "crayola", label: "Crayola" }, { value: "lapiz", label: "Lápiz" },
+  { value: "rotulador", label: "Rotulador" }, { value: "aerografo", label: "Aerógrafo" },
+];
+
+function StrokeControlsCard({ fx, isSvg, onChange, onClose }: {
+  fx: StrokeFx; isSvg: boolean;
+  onChange: (next: Partial<StrokeFx>) => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"basico" | "dinamico" | "pincelada">("basico");
+  return (
+    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 3, flex: 1 }}>
+          {(["basico", "dinamico", "pincelada"] as const).map(t => (
+            <button key={t} type="button" onClick={() => setTab(t)}
+              style={{ flex: 1, fontSize: 9, padding: "3px 2px", borderRadius: 3, cursor: "pointer", textTransform: "capitalize",
+                border: tab === t ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.08)",
+                background: tab === t ? "rgba(200,184,152,0.14)" : "rgba(15,15,15,0.5)",
+                color: tab === t ? "#c8b898" : "#7a7668" }}>
+              {t}
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={onClose} style={{ fontSize: 11, color: "#7a7668", background: "none", border: "none", cursor: "pointer", marginLeft: 4 }}>×</button>
+      </div>
+      {tab === "basico" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <PropRow label="Estilo">
+            <select value={fx.style} onChange={e => onChange({ style: e.target.value })} style={sel}>
+              <option value="solid">Sólido</option>
+              <option value="dashed">Discontinuo</option>
+              <option value="dotted">Punteado</option>
+            </select>
+          </PropRow>
+          <PropRow label="Perfil">
+            <select value={fx.profile} onChange={e => onChange({ profile: e.target.value })} style={sel}>
+              <option value="uniform">Uniforme</option>
+              <option value="taper">Hacia punta</option>
+              <option value="swell">Engrosado</option>
+            </select>
+          </PropRow>
+          <PropRow label="Puntas">
+            <select value={fx.cap} onChange={e => onChange({ cap: e.target.value })} style={sel}>
+              <option value="straight">Recta</option>
+              <option value="bevel">Biselada</option>
+              <option value="round">Redondeada</option>
+            </select>
+          </PropRow>
+          <PropRow label="Redondez">
+            <ScrubbyInput value={String(fx.capRound)} min={0} max={100} suffix="%"
+              onChange={v => onChange({ capRound: Math.max(0, Math.min(100, parseInt(v) || 0)) })} />
+          </PropRow>
+          <div style={mutedNote}>
+            {isSvg
+              ? "El estilo y las puntas se aplican al trazo del path; el perfil se almacena con la figura."
+              : "El estilo se aplica al borde; perfil y puntas se almacenan con el trazo."}
+          </div>
+        </div>
+      )}
+      {tab === "dinamico" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <PropRow label="Frecuencia">
+            <ScrubbyInput value={String(fx.frequency)} min={0} max={100} suffix="%"
+              onChange={v => onChange({ frequency: Math.max(0, Math.min(100, parseInt(v) || 0)) })} />
+          </PropRow>
+          <PropRow label="Wiggle">
+            <ScrubbyInput value={String(fx.wiggle)} min={0} max={100} suffix="%"
+              onChange={v => onChange({ wiggle: Math.max(0, Math.min(100, parseInt(v) || 0)) })} />
+          </PropRow>
+          <PropRow label="Smooth">
+            <ScrubbyInput value={String(fx.smoothen)} min={0} max={100} suffix="%"
+              onChange={v => onChange({ smoothen: Math.max(0, Math.min(100, parseInt(v) || 0)) })} />
+          </PropRow>
+          <div style={mutedNote}>Los valores dinámicos se guardan junto al trazo para el render vectorial.</div>
+        </div>
+      )}
+      {tab === "pincelada" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 3 }}>
+            {STROKE_BRUSHES.map(b => (
+              <button key={b.value} type="button" onClick={() => onChange({ brush: fx.brush === b.value ? "" : b.value })}
+                style={{ fontSize: 9, padding: "4px 2px", borderRadius: 3, cursor: "pointer",
+                  border: fx.brush === b.value ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.08)",
+                  background: fx.brush === b.value ? "rgba(200,184,152,0.14)" : "rgba(15,15,15,0.5)",
+                  color: fx.brush === b.value ? "#c8b898" : "#7a7668" }}>
+                {b.label}
+              </button>
+            ))}
+          </div>
+          <div style={mutedNote}>La pincelada elegida viaja con el trazo (export e historial incluidos).</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Effect type chooser shown by the Effects section's + button (F1). */
+const EFFECT_CHOICES: { value: string; label: string }[] = [
+  { value: "inner", label: "Sombra interior" },
+  { value: "drop", label: "Sombra exterior" },
+  { value: "layerBlur", label: "Layer Blur" },
+  { value: "bgBlur", label: "Background Blur" },
+  { value: "glass", label: "Glass" },
+  { value: "noise", label: "Ruido" },
+  { value: "texture", label: "Textura" },
+  { value: "dither", label: "Trama" },
+];
+
+function EffectsAddCard({ onPick, onClose }: { onPick: (value: string) => void; onClose: () => void }) {
+  return (
+    <div style={popupCard} onPointerDown={e => e.stopPropagation()}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1 }}>Elegir efecto</span>
+        <button type="button" onClick={onClose} style={{ fontSize: 11, color: "#7a7668", background: "none", border: "none", cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
+        {EFFECT_CHOICES.map(choice => (
+          <button key={choice.value} type="button" onClick={() => onPick(choice.value)} style={smallBtn}>
+            {choice.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ──
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
   onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
+  onBooleanOp, booleanOpReady, onSvgFillMedia,
   frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    position: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
+    align: true, position: true, rotation: true, layout: true, appearance: true, fill: true, stroke: true, effects: true,
     typography: true, groupmode: true, shape: true, spacing: true, border: true,
     flexgrid: true, oldposition: false, transform: false, transition: false, states: false,
   });
   const [activePseudo, setActivePseudo] = useState<string>(":hover");
   const [customCssText, setCustomCssText] = useState("");
   const [copied, setCopied] = useState<"html" | "css" | null>(null);
+  // ── F1/F2/F3 popup + submenu state ──
+  const [fillPickerOpen, setFillPickerOpen] = useState(false);
+  const [typeAdvancedOpen, setTypeAdvancedOpen] = useState(false);
+  const [strokeControlsOpen, setStrokeControlsOpen] = useState(false);
+  const [fxAddOpen, setFxAddOpen] = useState(false);
+  const [fxOpenKey, setFxOpenKey] = useState<string | null>(null);
 
   const toggle = (s: string) => setExpanded(prev => ({ ...prev, [s]: !prev[s] }));
   
@@ -680,6 +1132,10 @@ export function HtmlContextualPanel({
     useEffect(() => {
       setLiveShapeRadius(null);
       setVertexListOpen(false);
+      setFillPickerOpen(false);
+      setStrokeControlsOpen(false);
+      setFxAddOpen(false);
+      setFxOpenKey(null);
     }, [element?.layerId]);
     const shapeRadii = element?.vertexRadii ?? null;
     const shapeRadiusDisplay = element && liveShapeRadius?.layerId === element.layerId
@@ -749,35 +1205,9 @@ export function HtmlContextualPanel({
     setCustomCssText("");
   }, [css, element, onCssChange]);
 
-  // ── Background image upload (reuses /api/assets/upload → design-assets bucket) ──
+  // ── Background image upload (reuses /api/assets/upload → design-assets bucket). The handler
+  // lives below the isSvgShape/isSvgText flags — svg uploads route to svg defs. ──
   const bgImageInputRef = useRef<HTMLInputElement>(null);
-
-  const handleBgImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !element) return;
-    try {
-      // Shrunk here, where the file already is. A phone photo is routinely
-      // 8-12MB and none of it survives being drawn into a frame.
-      const { dataUrl: base64 } = await prepareImageForUpload(file);
-
-      const result = await fetch(`/api/assets/upload`, {
-        method: "POST",
-        headers: getApiHeaders(),
-        body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64, workspaceId }),
-      }).then(r => r.json());
-
-      if (!result.url) throw new Error("Upload succeeded but no URL returned");
-
-      const bgValue = `url(${result.url}) center/cover no-repeat`;
-      let updated = updateElementCssProperty(css, element.selector, "background-image", bgValue);
-      updated = updateElementCssProperty(updated, element.selector, "background-size", "cover");
-      onCssChange(updated);
-
-      e.target.value = ""; // reset for re-upload of same file
-    } catch (err: any) {
-      console.error("[BG_IMAGE] Upload failed:", err);
-    }
-  }, [css, element, onCssChange, workspaceId]);
 
   // ── Code tab: this element's own markup + CSS rule, read from the frame ──
   const elementHtml = useMemo(() => {
@@ -900,7 +1330,11 @@ export function HtmlContextualPanel({
     }))),
     [groupTargets, css],
   );
-  const isText = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "label", "button", "em", "strong", "small", "b", "i"].includes(element.tag);
+  // A layer is text when it is a semantic text tag OR was created/classified
+  // as text (the Text tool emits <div data-layer-kind="text">). Without the
+  // layerKind check, text-tool layers hide the Typography section entirely —
+  // and with it, the font picker and custom font uploads.
+  const isText = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "a", "li", "label", "button", "em", "strong", "small", "b", "i"].includes(element.tag) || element.layerKind === "text";
   const isFlex = s["display"] === "flex" || s["display"] === "inline-flex";
   const isGrid = s["display"] === "grid" || s["display"] === "inline-grid";
   const isSvg = element.isSvg;
@@ -908,6 +1342,10 @@ export function HtmlContextualPanel({
   const isSvgShape = isSvg && ["path", "rect", "circle", "ellipse", "polygon", "polyline", "line"].includes(element.svgChildTag || "");
   const isSvgText = isSvg && element.svgChildTag === "text";
   const isImage = element.tag === "img";
+
+  // Svg shapes paint fills with real defs (a CSS background can't tint a
+  // <path>) — every fill write for them routes through onSvgFillMedia.
+  const svgFillSupported = Boolean((isSvgShape || isSvgText) && onSvgFillMedia);
 
   // ── Position category: align-to-frame ──
   const alignTo = (key: typeof ALIGN_BUTTONS[number]["key"]) => {
@@ -920,6 +1358,40 @@ export function HtmlContextualPanel({
     else if (key === "centerV") update(selector, "top", `${Math.round((frameHeight - h) / 2)}px`);
     else if (key === "bottom") update(selector, "top", `${Math.round(frameHeight - h)}px`);
   };
+
+  // ── F2: fill photo upload (shared with the picker's Foto tab; divs paint
+  // it as a background, svg shapes as a pattern def) ──
+  const handleBgImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !element) return;
+    try {
+      // Shrunk here, where the file already is. A phone photo is routinely
+      // 8-12MB and none of it survives being drawn into a frame.
+      const { dataUrl: base64 } = await prepareImageForUpload(file);
+
+      const result = await fetch(`/api/assets/upload`, {
+        method: "POST",
+        headers: getApiHeaders(),
+        body: JSON.stringify({ name: file.name.replace(/\.[^.]+$/, ""), data: base64, workspaceId }),
+      }).then(r => r.json());
+
+      if (!result.url) throw new Error("Upload succeeded but no URL returned");
+
+      if (svgFillSupported) {
+        onSvgFillMedia!(element.frameId, element.layerId, { kind: "image", url: result.url });
+        onCssChange(updateElementCssProperty(css, element.selector, "--fill-image", result.url));
+      } else {
+        const bgValue = `url(${result.url}) center/cover no-repeat`;
+        let updated = updateElementCssProperty(css, element.selector, "background-image", bgValue);
+        updated = updateElementCssProperty(updated, element.selector, "background-size", "cover");
+        onCssChange(updated);
+      }
+
+      e.target.value = ""; // reset for re-upload of same file
+    } catch (err: any) {
+      console.error("[BG_IMAGE] Upload failed:", err);
+    }
+  }, [css, element, onCssChange, workspaceId, svgFillSupported, onSvgFillMedia]);
 
   // ── F3: Quitar fondo (remove-background, u2netp) ──
   const [removeBgState, setRemoveBgState] = useState<"idle" | "loading" | "error">("idle");
@@ -1002,6 +1474,329 @@ export function HtmlContextualPanel({
   const bgBlur = getFilterFn(s["backdrop-filter"] || "", "blur");
   const hasGlass = /saturate/.test(s["backdrop-filter"] || "");
 
+  // ── F2: unified fill model. One row + one picker for every medium — the
+  // picker edits solid/gradient/image/video and the writes fan out to the
+  // property each medium paints with (css for divs/text, svg defs for shapes).
+  const fillMemRaw = getCssPropertyValue(css, selector, "--fill-mem");
+  const fillMemActive = Boolean(fillMemRaw && fillMemRaw !== "0" && fillMemRaw !== "none");
+  const bgImageValue = s["background-image"] || "";
+  const svgFillRaw = s["fill"] || "";
+  const svgFillIsRef = svgFillRaw.startsWith("url(");
+  const svgGradientMem = getCssPropertyValue(css, selector, "--fill-gradient") || "";
+  const svgImageMem = getCssPropertyValue(css, selector, "--fill-image") || "";
+  const fillVideoUrl = getCssPropertyValue(css, selector, "--fill-video") || "";
+  const fillGradientCss = svgFillSupported ? svgGradientMem : bgImageValue;
+  const fillGradientParsed = fillGradientCss ? parseGradientValue(fillGradientCss) : null;
+  const fillImageUrl = svgFillSupported ? svgImageMem : (/^url\(/.test(bgImageValue) ? bgImageValue : "");
+  const fillSolidRaw = svgFillSupported ? (svgFillIsRef ? "" : svgFillRaw) : (s[fillProperty || "background-color"] || "");
+  const fillPropName = fillProperty || "background-color";
+  const fillSolidHex = toHex(fillSolidRaw || "#c8b898");
+  const fillSolidAlpha = parseAlpha(fillSolidRaw || "#c8b898");
+  let memFillKind: FillKind = "solid";
+  if (fillMemActive) {
+    try { memFillKind = (JSON.parse(fillMemRaw) as { kind?: FillKind }).kind || "solid"; } catch { memFillKind = "solid"; }
+  }
+  const fillKind: FillKind = fillMemActive
+    ? memFillKind
+    : fillVideoUrl ? "video"
+      : fillGradientParsed ? "gradient"
+        : fillImageUrl ? "image"
+          : "solid";
+
+  const writeFillSolid = useCallback((hex: string, alpha: number) => {
+    if (svgFillSupported && element) {
+      onSvgFillMedia!(element.frameId, element.layerId, { kind: "solid", color: hex });
+      update(selector, "fill-opacity", String(alpha));
+      return;
+    }
+    update(selector, fillPropName, alpha < 1 ? hexToRgba(hex, alpha) : hex);
+    if (fillGradientParsed || fillImageUrl) update(selector, "background-image", "none");
+    update(selector, "--fill-mem", "0");
+  }, [svgFillSupported, element, onSvgFillMedia, selector, fillProperty, fillGradientParsed, fillImageUrl, update]);
+
+  const writeFillGradient = useCallback((g: ParsedGradient) => {
+    const gradientCss = buildGradientCss(g);
+    if (svgFillSupported && element) {
+      onSvgFillMedia!(element.frameId, element.layerId, { kind: "gradient", css: gradientCss });
+      return;
+    }
+    update(selector, "background-image", gradientCss);
+    update(selector, "--fill-mem", "0");
+  }, [svgFillSupported, element, onSvgFillMedia, selector, update]);
+
+  const writeFillImage = useCallback((url: string) => {
+    if (svgFillSupported && element) {
+      onSvgFillMedia!(element.frameId, element.layerId, url ? { kind: "image", url } : { kind: "solid", color: fillSolidHex });
+      return;
+    }
+    update(selector, "background-image", url ? `url(${url}) center/cover no-repeat` : "none");
+    update(selector, "--fill-mem", "0");
+  }, [svgFillSupported, element, onSvgFillMedia, selector, fillSolidHex, update]);
+
+  const writeFillVideo = useCallback((url: string) => {
+    update(selector, "--fill-video", url);
+  }, [selector, update]);
+
+  const switchFillKind = useCallback((kind: FillKind) => {
+    if (kind === "solid") writeFillSolid(fillSolidHex, fillSolidAlpha);
+    else if (kind === "gradient") {
+      if (!fillGradientParsed) writeFillGradient(DEFAULT_NEW_GRADIENT);
+    } else if (kind === "image") writeFillImage(fillImageUrl);
+    else if (kind === "video") writeFillVideo(fillVideoUrl);
+  }, [writeFillSolid, writeFillGradient, writeFillImage, writeFillVideo, fillSolidHex, fillSolidAlpha, fillGradientParsed, fillImageUrl, fillVideoUrl]);
+
+  const toggleFillHidden = useCallback(() => {
+    if (!fillMemActive) {
+      const mem = JSON.stringify({
+        kind: fillKind, hex: fillSolidHex, alpha: fillSolidAlpha,
+        gradientCss: fillGradientCss, imageUrl: fillImageUrl, videoUrl: fillVideoUrl,
+      });
+      if (svgFillSupported && element) {
+        onSvgFillMedia!(element.frameId, element.layerId, { kind: "none" });
+      } else {
+        update(selector, fillPropName, "transparent");
+        if (fillGradientParsed || fillImageUrl) update(selector, "background-image", "none");
+      }
+      update(selector, "--fill-mem", mem);
+    } else {
+      try {
+        const mem = JSON.parse(fillMemRaw) as { kind: FillKind; hex?: string; alpha?: number; gradientCss?: string; imageUrl?: string; videoUrl?: string };
+        if (svgFillSupported && element) {
+          if (mem.kind === "gradient" && mem.gradientCss) onSvgFillMedia!(element.frameId, element.layerId, { kind: "gradient", css: mem.gradientCss });
+          else if (mem.kind === "image" && mem.imageUrl) onSvgFillMedia!(element.frameId, element.layerId, { kind: "image", url: mem.imageUrl });
+          else onSvgFillMedia!(element.frameId, element.layerId, { kind: "solid", color: mem.hex || "#c8b898" });
+        } else {
+          if (mem.kind === "gradient" && mem.gradientCss) update(selector, "background-image", mem.gradientCss);
+          else if (mem.kind === "image" && mem.imageUrl) update(selector, "background-image", mem.imageUrl);
+          if (mem.hex) update(selector, fillPropName, (mem.alpha ?? 1) < 1 ? hexToRgba(mem.hex, mem.alpha ?? 1) : mem.hex);
+        }
+      } catch { /* corrupted memory — leave hidden */ return; }
+      update(selector, "--fill-mem", "0");
+    }
+  }, [fillMemActive, fillKind, fillSolidHex, fillSolidAlpha, fillGradientCss, fillImageUrl, fillVideoUrl, svgFillSupported, element, onSvgFillMedia, selector, fillPropName, fillGradientParsed, update]);
+
+  // ── F3: stroke gating (oculto hasta +) + eye memory ──
+  const strokeMemRaw = getCssPropertyValue(css, selector, "--stroke-mem");
+  const strokeMemActive = Boolean(strokeMemRaw && strokeMemRaw !== "0");
+  const strokeFx = useMemo<StrokeFx>(() => ({
+    style: stroke.style || "solid",
+    profile: getCssPropertyValue(css, selector, "--stroke-profile") || "uniform",
+    cap: getCssPropertyValue(css, selector, "--stroke-cap") || "straight",
+    capRound: parseInt(getCssPropertyValue(css, selector, "--stroke-cap-round") || "0") || 0,
+    frequency: parseInt(getCssPropertyValue(css, selector, "--stroke-freq") || "20") || 20,
+    wiggle: parseInt(getCssPropertyValue(css, selector, "--stroke-wiggle") || "0") || 0,
+    smoothen: parseInt(getCssPropertyValue(css, selector, "--stroke-smooth") || "50") || 50,
+    brush: getCssPropertyValue(css, selector, "--stroke-brush") || "",
+  }), [css, selector, stroke.style]);
+  const divStrokeOn = ((s["border-style"] || "none") !== "none" && (parseFloat(s["border-width"]) || 0) > 0)
+    || ((s["outline-style"] || "none") !== "none" && (parseFloat(s["outline-width"]) || 0) > 0);
+  const svgStrokeOn = (parseFloat(s["stroke-width"]) || 0) > 0;
+  const strokePresent = isGroup ? true : strokeMemActive || (isSvgShape ? svgStrokeOn : divStrokeOn);
+
+  const addStroke = useCallback(() => {
+    if (isSvgShape) {
+      updateMulti(selector, { stroke: "#000000", "stroke-width": "1px", "--stroke-mem": "0" });
+    } else {
+      writeStroke(props => updateMulti(selector, props), { position: "inside", weight: 1, color: "#000000", alpha: 1, style: "solid" });
+      update(selector, "--stroke-mem", "0");
+    }
+  }, [isSvgShape, selector, updateMulti]);
+
+  const toggleStrokeHidden = useCallback(() => {
+    if (isGroup) return;
+    if (isSvgShape) {
+      if (!strokeMemActive) {
+        update(selector, "--stroke-mem", JSON.stringify({ width: parseFloat(s["stroke-width"]) || 1 }));
+        update(selector, "stroke-width", "0px");
+      } else {
+        try {
+          const mem = JSON.parse(strokeMemRaw) as { width?: number };
+          update(selector, "stroke-width", `${mem.width || 1}px`);
+        } catch { update(selector, "stroke-width", "1px"); }
+        update(selector, "--stroke-mem", "0");
+      }
+      return;
+    }
+    if (!strokeMemActive) {
+      update(selector, "--stroke-mem", JSON.stringify(stroke));
+      writeStroke(props => updateMulti(selector, props), { ...stroke, weight: stroke.weight || 1, style: stroke.style });
+      // hide: drop the visible drawing, keep the values in the memory prop
+      writeStroke(props => updateMulti(selector, props), { ...stroke, weight: stroke.weight || 1, style: stroke.style, alpha: stroke.alpha });
+      updateMulti(selector, { "border-width": "0px", "border-style": "none", "outline-width": "0px", "outline-style": "none" });
+    } else {
+      try {
+        const mem = JSON.parse(strokeMemRaw) as { position: StrokePosition; weight: number; color: string; alpha: number; style?: string };
+        writeStroke(props => updateMulti(selector, props), mem);
+      } catch {
+        writeStroke(props => updateMulti(selector, props), { position: "inside", weight: 1, color: "#000000", alpha: 1, style: "solid" });
+      }
+      update(selector, "--stroke-mem", "0");
+    }
+  }, [isGroup, isSvgShape, strokeMemActive, strokeMemRaw, stroke, selector, update, updateMulti]);
+
+  const applyStrokeFx = useCallback((next: Partial<StrokeFx>) => {
+    if (next.style !== undefined) {
+      if (isSvgShape) {
+        const dash = next.style === "dashed" ? "6 4" : next.style === "dotted" ? "1 4" : "none";
+        update(selector, "stroke-dasharray", dash);
+      } else {
+        writeStroke(props => updateMulti(selector, props), { ...stroke, style: next.style });
+      }
+    }
+    if (next.cap !== undefined) {
+      if (isSvgShape) {
+        const cap = next.cap === "round" ? "round" : "butt";
+        const join = next.cap === "round" ? "round" : next.cap === "bevel" ? "bevel" : "miter";
+        updateMulti(selector, { "stroke-linecap": cap, "stroke-linejoin": join, "--stroke-cap": next.cap });
+      } else {
+        update(selector, "--stroke-cap", next.cap);
+      }
+    }
+    if (next.profile !== undefined) update(selector, "--stroke-profile", next.profile);
+    if (next.capRound !== undefined) update(selector, "--stroke-cap-round", String(next.capRound));
+    if (next.frequency !== undefined) update(selector, "--stroke-freq", String(next.frequency));
+    if (next.wiggle !== undefined) update(selector, "--stroke-wiggle", String(next.wiggle));
+    if (next.smoothen !== undefined) update(selector, "--stroke-smooth", String(next.smoothen));
+    if (next.brush !== undefined) update(selector, "--stroke-brush", next.brush || "0");
+  }, [isSvgShape, stroke, selector, update, updateMulti]);
+
+  // ── F1: effects with + / ojito / config — hidden values live in --fx-* props ──
+  const parseHiddenShadowList = useCallback((raw: string): ShadowEffect[] =>
+    raw && raw !== "0" ? raw.split(";;").flatMap(part => parseBoxShadows(part.trim())) : [], []);
+  const memShadowsRaw = getCssPropertyValue(css, selector, "--fx-shadows");
+  const hiddenShadows = parseHiddenShadowList(memShadowsRaw);
+  const memLayerBlur = getCssPropertyValue(css, selector, "--fx-layerblur");
+  const memBgBlur = getCssPropertyValue(css, selector, "--fx-bgblur");
+  const memGlass = getCssPropertyValue(css, selector, "--fx-glass");
+  const memNoises = (["noise", "texture", "dither"] as NoiseKind[]).map(kind => ({
+    kind,
+    value: getCssPropertyValue(css, selector, `--fx-${kind}`),
+  }));
+
+  const fxHasAny = shadows.length > 0 || layerBlur != null || bgBlur != null || hasGlass
+    || hiddenShadows.length > 0
+    || (memLayerBlur && memLayerBlur !== "0") || (memBgBlur && memBgBlur !== "0") || (memGlass && memGlass !== "0")
+    || memNoises.some(n => n.value && n.value !== "0");
+
+  const addEffect = useCallback((value: string) => {
+    setFxAddOpen(false);
+    if (value === "drop") {
+      writeShadows([...shadows, DEFAULT_DROP_SHADOW]);
+      setFxOpenKey(`sh:${shadows.length}`);
+    } else if (value === "inner") {
+      writeShadows([...shadows, DEFAULT_INNER_SHADOW]);
+      setFxOpenKey(`sh:${shadows.length}`);
+    } else if (value === "layerBlur") {
+      update(selector, "--fx-layerblur", "0");
+      update(selector, "filter", setFilterFn(s["filter"] || "", "blur", "8px"));
+      setFxOpenKey("layerBlur");
+    } else if (value === "bgBlur") {
+      update(selector, "--fx-bgblur", "0");
+      update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", "12px"));
+      setFxOpenKey("bgBlur");
+    } else if (value === "glass") {
+      update(selector, "--fx-glass", "0");
+      update(selector, "backdrop-filter", setFilterFn(setFilterFn(s["backdrop-filter"] || "", "blur", "12px"), "saturate", "1.8"));
+      setFxOpenKey("glass");
+    } else {
+      const kind = value as NoiseKind;
+      update(selector, `--fx-${kind}`, "0");
+      update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, 0.2));
+      setFxOpenKey(kind);
+    }
+  }, [shadows, writeShadows, s, selector, update]);
+
+  const hideShadowAt = useCallback((index: number) => {
+    const target = shadows[index];
+    if (!target) return;
+    const memList = [...hiddenShadows, target];
+    update(selector, "--fx-shadows", memList.map(formatShadow).join(";;"));
+    writeShadows(shadows.filter((_, j) => j !== index));
+  }, [shadows, hiddenShadows, selector, update, writeShadows]);
+
+  const showHiddenShadowAt = useCallback((index: number) => {
+    const target = hiddenShadows[index];
+    if (!target) return;
+    const rest = hiddenShadows.filter((_, j) => j !== index);
+    update(selector, "--fx-shadows", rest.length ? rest.map(formatShadow).join(";;") : "0");
+    writeShadows([...shadows, target]);
+  }, [shadows, hiddenShadows, selector, update, writeShadows]);
+
+  // ── F2 fill row: swatch preview + hex (solid) + transparencia % + ojito ──
+  const fillSwatchBackground = fillKind === "solid" ? fillSolidHex
+    : fillKind === "gradient" ? (fillGradientCss || "#333")
+      : fillKind === "image" ? `url("${fillImageUrl}") center/cover`
+        : "linear-gradient(135deg, #1c1a16, #4a4438)";
+  const fillAvgAlpha = fillGradientParsed
+    ? fillGradientParsed.stops.reduce((acc, st) => acc + st.alpha, 0) / (fillGradientParsed.stops.length || 1)
+    : 1;
+  const fillAlphaPct = fillKind === "solid" ? fillSolidAlpha * 100
+    : fillKind === "gradient" ? fillAvgAlpha * 100
+      : (parseFloat(s["opacity"]) || 1) * 100;
+
+  const [fillHexText, setFillHexText] = useState(fillSolidHex);
+  useEffect(() => { setFillHexText(fillSolidHex); }, [fillSolidHex]);
+  const applyFillHexText = useCallback(() => {
+    const parsed = parseColorText(fillHexText);
+    if (parsed) writeFillSolid(parsed.hex, fillSolidAlpha);
+    else setFillHexText(fillSolidHex);
+  }, [fillHexText, fillSolidAlpha, fillSolidHex, writeFillSolid]);
+
+  const applyFillAlphaPct = useCallback((v: string) => {
+    const next = Math.max(0, Math.min(100, parseFloat(v) || 0)) / 100;
+    if (fillKind === "solid") { writeFillSolid(fillSolidHex, next); return; }
+    if (fillKind === "gradient" && fillGradientParsed) {
+      // rescale every stop's alpha proportionally so relative blends survive
+      writeFillGradient({
+        ...fillGradientParsed,
+        stops: fillGradientParsed.stops.map(st => ({
+          ...st, alpha: fillAvgAlpha > 0 ? Math.max(0, Math.min(1, (st.alpha / fillAvgAlpha) * next)) : next,
+        })),
+      });
+      return;
+    }
+    update(selector, "opacity", String(next));
+  }, [fillKind, fillSolidHex, fillGradientParsed, fillAvgAlpha, writeFillSolid, writeFillGradient, selector, update]);
+
+  // ── F1 effects: compact rows (nombre + ojito + ×); hide/show swaps the
+  // live value with a --fx-* memory prop so nothing is lost by hiding. ──
+  const fxMemToggle = useCallback((memProp: string, curValue: string | null, apply: (v: string | null) => void) => {
+    const mem = getCssPropertyValue(css, selector, memProp);
+    if (curValue != null) {
+      update(selector, memProp, curValue);
+      apply(null);
+    } else if (mem && mem !== "0") {
+      apply(mem);
+      update(selector, memProp, "0");
+    }
+  }, [css, selector, update]);
+
+  const activeNoises = (["noise", "texture", "dither"] as NoiseKind[])
+    .map(kind => ({ kind, value: findNoiseFilter(s["filter"] || "", kind) }))
+    .filter(n => n.value != null);
+  const fxCount = shadows.length + hiddenShadows.length
+    + (layerBlur != null ? 1 : 0) + (bgBlur != null ? 1 : 0) + (hasGlass ? 1 : 0)
+    + activeNoises.length
+    + (memLayerBlur && memLayerBlur !== "0" ? 1 : 0) + (memBgBlur && memBgBlur !== "0" ? 1 : 0)
+    + (memGlass && memGlass !== "0" ? 1 : 0)
+    + memNoises.filter(n => n.value && n.value !== "0").length;
+
+  const fxRow = (key: string, label: string, opts?: { hidden?: boolean; onHide?: () => void; onShow?: () => void; onRemove?: () => void }) => (
+    <div key={key} style={{ display: "flex", gap: 4, alignItems: "center", padding: "3px 6px", borderRadius: 4,
+      background: "rgba(15,15,15,0.35)", border: "1px solid rgba(255,255,255,0.04)", opacity: opts?.hidden ? 0.45 : 1 }}>
+      <button type="button" onClick={() => setFxOpenKey(fxOpenKey === key ? "" : key)}
+        style={{ flex: 1, textAlign: "left", fontSize: 10, color: "#c8b898", background: "none", border: "none", cursor: "pointer", padding: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+      </button>
+      {opts?.onHide && <EyeButton on onClick={opts.onHide} title="Ocultar (queda en memoria)" />}
+      {opts?.onShow && <EyeButton on={false} onClick={opts.onShow} title="Mostrar" />}
+      {opts?.onRemove && (
+        <button type="button" title="Quitar" onClick={opts.onRemove}
+          style={{ fontSize: 10, padding: "1px 5px", borderRadius: 2, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", cursor: "pointer" }}>×</button>
+      )}
+    </div>
+  );
+
   return (
     <div className="html-contextual-panel" style={panelStyle}>
       {/* ── Minimal header, shown on every sub-tab ── */}
@@ -1012,9 +1807,28 @@ export function HtmlContextualPanel({
 
       {subTab === "properties" && (
         <div style={{ overflow: "auto", flex: 1 }}>
-          {/* ══ Position ══ */}
-          <SectionHead label="Position" section="position" expanded={expanded} toggle={toggle} />
-          {expanded.position && (
+          {/* ══ Buscatrazos (F1): union/subtract/intersect/exclude for shapes ══ */}
+          {!isText && !isGroup && onBooleanOp && (
+            <div style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase", letterSpacing: 1, flexShrink: 0 }}>Buscatrazos</span>
+              {([
+                { op: "union" as const, label: "Unir" },
+                { op: "subtract" as const, label: "Sustraer" },
+                { op: "intersect" as const, label: "Intersecar" },
+                { op: "exclude" as const, label: "Excluir" },
+              ]).map(({ op, label }) => (
+                <button key={op} type="button" disabled={!booleanOpReady} onClick={() => onBooleanOp(op)}
+                  title={booleanOpReady ? undefined : "Selecciona dos o más figuras"}
+                  style={{ ...smallBtn, flex: 1, padding: "3px 2px", opacity: booleanOpReady ? 1 : 0.35, cursor: booleanOpReady ? "pointer" : "not-allowed" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ══ Alineación (F1): 6 buttons, one row ══ */}
+          <SectionHead label="Alineación" section="align" expanded={expanded} toggle={toggle} />
+          {expanded.align && (
             <div style={sectionBody}>
               <div style={{ display: "flex", gap: 2 }}>
                 {ALIGN_BUTTONS.map(a => (
@@ -1026,19 +1840,49 @@ export function HtmlContextualPanel({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ══ Posición ══ */}
+          <SectionHead label="Posición" section="position" expanded={expanded} toggle={toggle} />
+          {expanded.position && (
+            <div style={sectionBody}>
               <div style={{ display: "flex", gap: 8 }}>
                 <InlineField label="X"><ScrubbyInput value={String(parseInt(s["left"]) || 0)} onChange={v => update(selector, "left", `${parseInt(v) || 0}px`)} /></InlineField>
                 <InlineField label="Y"><ScrubbyInput value={String(parseInt(s["top"]) || 0)} onChange={v => update(selector, "top", `${parseInt(v) || 0}px`)} /></InlineField>
               </div>
-              <PropRow label="Rotation">
-                <ScrubbyInput value={extractTransformValue(s["transform"], "rotate") || "0"}
-                  onChange={v => update(selector, "transform", setTransformFunction(s["transform"], "rotate", normalizeAngleValue(v)))} suffix="°" />
-              </PropRow>
             </div>
           )}
 
-          {/* ══ Layout ══ */}
-          <SectionHead label="Layout" section="layout" expanded={expanded} toggle={toggle} />
+          {/* ══ Rotación (F1): grados + reflejo horizontal + reflejo vertical ══ */}
+          <SectionHead label="Rotación" section="rotation" expanded={expanded} toggle={toggle} />
+          {expanded.rotation && (
+            <div style={sectionBody}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <InlineField label="°">
+                  <ScrubbyInput value={extractTransformValue(s["transform"], "rotate") || "0"}
+                    onChange={v => update(selector, "transform", setTransformFunction(s["transform"], "rotate", normalizeAngleValue(v)))} suffix="°" />
+                </InlineField>
+                <button type="button" title="Reflejar horizontalmente"
+                  onClick={() => update(selector, "transform", extractTransformValue(s["transform"], "scaleX") === "-1"
+                    ? removeTransformFunction(s["transform"], "scaleX")
+                    : setTransformFunction(s["transform"], "scaleX", "-1"))}
+                  style={{ ...smallBtn, padding: "3px 8px", ...(extractTransformValue(s["transform"], "scaleX") === "-1" ? smallBtnActive : {}) }}>
+                  ⇔
+                </button>
+                <button type="button" title="Reflejar verticalmente"
+                  onClick={() => update(selector, "transform", extractTransformValue(s["transform"], "scaleY") === "-1"
+                    ? removeTransformFunction(s["transform"], "scaleY")
+                    : setTransformFunction(s["transform"], "scaleY", "-1"))}
+                  style={{ ...smallBtn, padding: "3px 8px", ...(extractTransformValue(s["transform"], "scaleY") === "-1" ? smallBtnActive : {}) }}>
+                  ⇕
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ══ Dimensiones ══ */}
+          <SectionHead label="Dimensiones" section="layout" expanded={expanded} toggle={toggle} />
           {expanded.layout && (
             <div style={sectionBody}>
               <div style={{ display: "flex", gap: 8 }}>
@@ -1048,33 +1892,43 @@ export function HtmlContextualPanel({
             </div>
           )}
 
-          {/* ══ Appearance ══ */}
-          <SectionHead label="Appearance" section="appearance" expanded={expanded} toggle={toggle} />
+          {/* ══ Apariencia (F1): opacidad + radio + radio-por-vértice en un row ══ */}
+          <SectionHead label="Apariencia" section="appearance" expanded={expanded} toggle={toggle} />
           {expanded.appearance && (
             <div style={sectionBody}>
-              <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
-              {shapeRadii ? (
-                <>
-                  {/* F4: shape corner radius — live while a canvas vertex
-                      circle is being dragged (musa:shape-radius-live). */}
-                  <PropRow label="Radius">
-                    <ScrubbyInput value={String(Math.round(shapeRadiusDisplay || 0))} min={0} suffix="px"
-                      onChange={v => {
-                        const next = Math.max(0, parseFloat(v) || 0);
-                        if (element.shapeOptions && onShapeOptionsChange) {
-                          onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions, cornerRadius: next });
-                        } else {
-                          onShapeVertexRadiusChange?.(element.layerId, element.frameId, "all", next);
-                        }
-                      }} />
-                  </PropRow>
-                  <PropRow label="Vértices">
-                    <button type="button" style={vertexListOpen ? smallBtnActive : smallBtn}
-                      onClick={() => setVertexListOpen(open => !open)}>
-                      ◈ Radio por vértice ({shapeRadii.length})
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <InlineField label="Op">
+                  <ScrubbyInput value={String(Math.round((parseFloat(s["opacity"]) || 0) * 100))} min={0} max={100} suffix="%"
+                    onChange={v => update(selector, "opacity", String(Math.max(0, Math.min(100, parseInt(v) || 0)) / 100))} />
+                </InlineField>
+                {shapeRadii ? (
+                  <>
+                    <InlineField label="Radio">
+                      {/* F4: live while a canvas vertex circle is dragged */}
+                      <ScrubbyInput value={String(Math.round(shapeRadiusDisplay || 0))} min={0} suffix="px"
+                        onChange={v => {
+                          const next = Math.max(0, parseFloat(v) || 0);
+                          if (element.shapeOptions && onShapeOptionsChange) {
+                            onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions, cornerRadius: next });
+                          } else {
+                            onShapeVertexRadiusChange?.(element.layerId, element.frameId, "all", next);
+                          }
+                        }} />
+                    </InlineField>
+                    <button type="button" title="Radio por vértice" onClick={() => setVertexListOpen(open => !open)}
+                      style={{ ...smallBtn, padding: "3px 6px", ...(vertexListOpen ? smallBtnActive : {}) }}>
+                      ◈ {shapeRadii.length}
                     </button>
-                  </PropRow>
-                  {vertexListOpen && shapeRadii.map((radius, index) => (
+                  </>
+                ) : (
+                  <InlineField label="Radio">
+                    <ScrubbyInput value={s["border-radius"] || "0"} onChange={v => update(selector, "border-radius", v)} suffix="px" />
+                  </InlineField>
+                )}
+              </div>
+              {shapeRadii && vertexListOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "4px 6px", borderRadius: 4, background: "rgba(15,15,15,0.35)", border: "1px solid rgba(255,255,255,0.04)" }}>
+                  {shapeRadii.map((radius, index) => (
                     <PropRow key={index} label={`V${index + 1}`}>
                       <ScrubbyInput
                         value={String(Math.round((element && liveShapeRadius?.layerId === element.layerId
@@ -1084,7 +1938,7 @@ export function HtmlContextualPanel({
                         onChange={v => onShapeVertexRadiusChange?.(element.layerId, element.frameId, index, Math.max(0, parseFloat(v) || 0))} />
                     </PropRow>
                   ))}
-                  {vertexListOpen && shapeRadii.length > 0 && (
+                  {shapeRadii.length > 0 && (
                     <PropRow label="Reset">
                       <button type="button" style={smallBtn}
                         onClick={() => onShapeVertexRadiusChange?.(element.layerId, element.frameId, "all", 0)}>
@@ -1092,26 +1946,22 @@ export function HtmlContextualPanel({
                       </button>
                     </PropRow>
                   )}
-                </>
-              ) : (
-                <>
-                  <PropRow label="Radius">
-                    <ScrubbyInput value={s["border-radius"] || "0"} onChange={v => update(selector, "border-radius", v)} suffix="px" />
-                  </PropRow>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {(["top-left", "top-right", "bottom-right", "bottom-left"] as const).map(corner => (
-                      <div key={corner} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                        <span style={{ fontSize: 8, color: "#555" }}>{corner.split("-").map(w => w[0]).join("")}</span>
-                        <input value={s[`border-${corner}-radius`] || ""} placeholder="0" onChange={e => update(selector, `border-${corner}-radius`, e.target.value)} style={{ ...miniInp, width: 36, textAlign: "center" }} />
-                      </div>
-                    ))}
-                  </div>
-                </>
+                </div>
+              )}
+              {!shapeRadii && (
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["top-left", "top-right", "bottom-right", "bottom-left"] as const).map(corner => (
+                    <div key={corner} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                      <span style={{ fontSize: 8, color: "#555" }}>{corner.split("-").map(w => w[0]).join("")}</span>
+                      <input value={s[`border-${corner}-radius`] || ""} placeholder="0" onChange={e => update(selector, `border-${corner}-radius`, e.target.value)} style={{ ...miniInp, width: 36, textAlign: "center" }} />
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}
 
-          {/* ══ Fill ══ */}
+          {/* ══ Fill (F2): swatch + hex + transparencia + ojito; doble click abre el picker ══ */}
           <SectionHead label="Fill" section="fill" expanded={expanded} toggle={toggle} />
           {expanded.fill && (
             <div style={sectionBody}>
@@ -1176,37 +2026,115 @@ export function HtmlContextualPanel({
                   )}
                   <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
                 </>
-              ) : isSvgShape || isSvgText ? (
-                <>
-                  <ColorRow label="Fill" value={s["fill"] || "#c8b898"} onChange={v => update(selector, "fill", v)} />
-                  <OpacityRow label="Opacity" value={s["fill-opacity"] || "1"} onChange={v => update(selector, "fill-opacity", v)} />
-                </>
-              ) : fillProperty ? (
-                <>
-                  {/* One control named Fill, whatever property the medium
-                      paints with. A text used to get a second one called "BG"
-                      that drew a box behind the glyphs instead of colouring
-                      them. */}
-                  <ColorRow label="Fill" value={s[fillProperty] || ""} onChange={v => update(selector, fillProperty, v)} />
-                  <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
-                  {!isText && (
-                    <>
-                      <GradientBuilder key={element.layerId} value={s["background-image"] || ""} onChange={(v) => update(selector, "background-image", v)} />
-                      <PropRow label="Img">
-                        <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleBgImageUpload} ref={bgImageInputRef} />
-                        <button type="button" onClick={() => bgImageInputRef.current?.click()} style={smallBtn}>🖼 Image</button>
-                      </PropRow>
-                    </>
+              ) : svgFillSupported || fillProperty ? (
+                /* One row for every medium — color, degradado, foto o video.
+                   The swatch previews the kind; double-click opens the picker. */
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleBgImageUpload} ref={bgImageInputRef} />
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <div title="Doble click: elegir tipo de relleno (color, degradado, foto, video)"
+                      onDoubleClick={() => setFillPickerOpen(true)}
+                      onClick={() => setFillPickerOpen(true)}
+                      style={{ width: 26, height: 22, flexShrink: 0, borderRadius: 4, cursor: "pointer",
+                        border: "1px solid rgba(255,255,255,0.15)", background: fillSwatchBackground }} />
+                    {fillKind === "solid" ? (
+                      <input value={fillHexText} onChange={e => setFillHexText(e.target.value)}
+                        onBlur={applyFillHexText}
+                        onKeyDown={e => { if (e.key === "Enter") applyFillHexText(); }}
+                        style={{ ...inp, flex: 1, minWidth: 0 }} />
+                    ) : (
+                      <button type="button" onClick={() => setFillPickerOpen(true)}
+                        title={fillKind === "image" ? fillImageUrl : undefined}
+                        style={{ ...smallBtn, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {fillKind === "gradient" && fillGradientParsed
+                          ? `${fillGradientParsed.type === "linear" ? "Lineal" : fillGradientParsed.type === "radial" ? "Radial" : fillGradientParsed.type === "conic" ? "Angular" : "Diamante"} · ${fillGradientParsed.stops.length} nodos`
+                          : fillKind === "image" ? "Foto de relleno"
+                            : "Video de relleno"}
+                      </button>
+                    )}
+                    <InlineField label="Trans">
+                      <ScrubbyInput value={String(Math.round(fillAlphaPct))} min={0} max={100} suffix="%"
+                        onChange={applyFillAlphaPct} />
+                    </InlineField>
+                    <EyeButton on={!fillMemActive} onClick={toggleFillHidden} />
+                  </div>
+                  {fillPickerOpen && (
+                    <FillPickerCard
+                      kind={fillKind}
+                      hex={fillSolidHex} alpha={fillSolidAlpha}
+                      gradient={fillGradientParsed}
+                      imageUrl={fillImageUrl} videoUrl={fillVideoUrl}
+                      onKind={switchFillKind}
+                      onSolid={writeFillSolid}
+                      onGradient={writeFillGradient}
+                      onImageUrl={writeFillImage}
+                      onVideoUrl={writeFillVideo}
+                      onUpload={() => bgImageInputRef.current?.click()}
+                      onClose={() => setFillPickerOpen(false)} />
                   )}
-                </>
+                  {fillKind === "video" && (
+                    <div style={mutedNote}>El video se guarda en la capa (--fill-video); la reproducción en el lienzo depende del soporte del elemento.</div>
+                  )}
+                </div>
               ) : (
                 <div style={mutedNote}>Este elemento no tiene relleno propio.</div>
               )}
             </div>
           )}
 
-          {/* ══ Stroke ══ */}
-          <SectionHead label="Stroke" section="stroke" expanded={expanded} toggle={toggle} />
+          {/* ══ Tipografía (F1): Font/Size/Weight/Spacing/Align; avanzados bajo toggle ══ */}
+          {(isText || isSvgText) && (
+            <>
+              <SectionHead label="Tipografía" section="typography" expanded={expanded} toggle={toggle} />
+              {expanded.typography && (
+                <div style={sectionBody}>
+                  <PropRow label="Font">
+                    <GoogleFontPicker value={primaryFamily(s["font-family"] || "")} onChange={(f) => update(selector, "font-family", cssFontFamily(f))} />
+                  </PropRow>
+                  <PropRow label="Size">
+                    <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />
+                  </PropRow>
+                  <SelectRow label="Weight" value={s["font-weight"] || "400"} options={FONT_WEIGHTS} onChange={v => update(selector, "font-weight", v)} />
+                  <PropRow label="Spacing">
+                    <ScrubbyInput value={s["letter-spacing"] || "normal"} onChange={v => update(selector, "letter-spacing", v)} />
+                  </PropRow>
+                  <PropRow label="Align">
+                    <div style={{ display: "flex", gap: 2, flex: 1 }}>
+                      {TEXT_ALIGNMENTS.map(a => (
+                        <button key={a.value} type="button" title={a.title}
+                          onClick={() => update(selector, "text-align", a.value)}
+                          style={{ flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
+                            background: s["text-align"] === a.value ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
+                            border: s["text-align"] === a.value ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.04)",
+                            color: s["text-align"] === a.value ? "#c8b898" : "#7a7668" }}>
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </PropRow>
+                  <button type="button" onClick={() => setTypeAdvancedOpen(o => !o)}
+                    style={{ ...smallBtn, width: "100%", ...(typeAdvancedOpen ? smallBtnActive : {}) }}>
+                    {typeAdvancedOpen ? "− Controles avanzados" : "+ Controles avanzados"}
+                  </button>
+                  {typeAdvancedOpen && (
+                    <>
+                      <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(selector, "text-decoration", v)} />
+                      <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(selector, "text-transform", v)} />
+                      <PropRow label="Line-H">
+                        <ScrubbyInput value={s["line-height"] || ""} onChange={v => update(selector, "line-height", v)} />
+                      </PropRow>
+                      <PropRow label="Txt Shadow">
+                        <input value={s["text-shadow"] || "none"} placeholder="0 2px 4px rgba(0,0,0,0.2)" onChange={e => update(selector, "text-shadow", e.target.value)} style={inp} />
+                      </PropRow>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ══ Borde (F3): oculto hasta +; color/transparencia/ojito + posición/grosor/controles ══ */}
+          <SectionHead label="Borde" section="stroke" expanded={expanded} toggle={toggle} />
           {expanded.stroke && (
             <div style={sectionBody}>
               {isGroup ? (
@@ -1225,166 +2153,194 @@ export function HtmlContextualPanel({
                     {groupStrokes.length > 1 && ` Ahora tienen ${groupStrokes.length} colores distintos.`}
                   </div>
                 </>
-              ) : isSvgShape ? (
-                <>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <InlineField label="Color">
-                      <input type="color" value={toHex(s["stroke"])} onChange={e => update(selector, "stroke", e.target.value)} style={colorInp} />
-                    </InlineField>
-                    <InlineField label="Opacity">
-                      <ScrubbyInput value={s["stroke-opacity"] || "1"} onChange={v => update(selector, "stroke-opacity", v)} min={0} max={1} step={0.01} />
-                    </InlineField>
-                  </div>
-                  <PropRow label="Weight">
-                    <ScrubbyInput value={s["stroke-width"] || "0"} onChange={v => update(selector, "stroke-width", v)} suffix="px" />
-                  </PropRow>
-                </>
+              ) : !strokePresent ? (
+                <button type="button" onClick={addStroke} style={{ ...smallBtn, width: "100%" }}>+ Añadir borde</button>
               ) : (
-                <>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <InlineField label="Color">
-                      <input type="color" value={stroke.color} onChange={e => writeStroke(props => updateMulti(selector, props), { ...stroke, color: e.target.value })} style={colorInp} />
-                    </InlineField>
-                    <InlineField label="Opacity">
-                      <ScrubbyInput value={String(stroke.alpha)} min={0} max={1} step={0.01}
-                        onChange={v => writeStroke(props => updateMulti(selector, props), { ...stroke, alpha: Math.max(0, Math.min(1, parseFloat(v) || 0)) })} />
-                    </InlineField>
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="color" value={isSvgShape ? toHex(s["stroke"]) : stroke.color}
+                      onChange={e => isSvgShape
+                        ? update(selector, "stroke", e.target.value)
+                        : writeStroke(props => updateMulti(selector, props), { ...stroke, color: e.target.value })}
+                      style={colorInp} />
+                    {isSvgShape ? (
+                      <InlineField label="Trans">
+                        <ScrubbyInput value={String(Math.round((parseFloat(s["stroke-opacity"]) || 1) * 100))} min={0} max={100} suffix="%"
+                          onChange={v => update(selector, "stroke-opacity", String(Math.max(0, Math.min(100, parseFloat(v) || 0)) / 100))} />
+                      </InlineField>
+                    ) : (
+                      <InlineField label="Trans">
+                        <ScrubbyInput value={String(Math.round(stroke.alpha * 100))} min={0} max={100} suffix="%"
+                          onChange={v => writeStroke(props => updateMulti(selector, props),
+                            { ...stroke, alpha: Math.max(0, Math.min(100, parseFloat(v) || 0)) / 100 })} />
+                      </InlineField>
+                    )}
+                    <EyeButton on={!strokeMemActive} onClick={toggleStrokeHidden} />
+                    <button type="button" title="Quitar borde"
+                      onClick={() => isSvgShape
+                        ? updateMulti(selector, { "stroke-width": "0px", "--stroke-mem": "0" })
+                        : updateMulti(selector, { "border-width": "0px", "border-style": "none", "outline-width": "0px", "outline-style": "none", "--stroke-mem": "0" })}
+                      style={{ ...smallBtn, color: "#EF4444" }}>×</button>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <InlineField label="Position">
-                      <select value={stroke.position} onChange={e => writeStroke(props => updateMulti(selector, props), { ...stroke, position: e.target.value as StrokePosition })} style={sel}>
-                        <option value="inside">Inside</option>
-                        <option value="center">Center</option>
-                        <option value="outside">Outside</option>
-                      </select>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {!isSvgShape && (
+                      <InlineField label="Pos">
+                        <select value={stroke.position}
+                          onChange={e => writeStroke(props => updateMulti(selector, props), { ...stroke, position: e.target.value as StrokePosition })}
+                          style={sel}>
+                          <option value="inside">Adentro</option>
+                          <option value="center">Centro</option>
+                          <option value="outside">Afuera</option>
+                        </select>
+                      </InlineField>
+                    )}
+                    <InlineField label="Grosor">
+                      <ScrubbyInput value={isSvgShape ? String(parseFloat(s["stroke-width"]) || 0) : String(stroke.weight)} min={0}
+                        onChange={v => {
+                          const px = Math.max(0, parseFloat(v) || 0);
+                          if (isSvgShape) update(selector, "stroke-width", `${px}px`);
+                          else writeStroke(props => updateMulti(selector, props), { ...stroke, weight: px });
+                        }} suffix="px" />
                     </InlineField>
-                    <InlineField label="Weight">
-                      <ScrubbyInput value={String(stroke.weight)} min={0}
-                        onChange={v => writeStroke(props => updateMulti(selector, props), { ...stroke, weight: Math.max(0, parseInt(v) || 0) })} suffix="px" />
-                    </InlineField>
+                    <button type="button" title="Controles del trazo" onClick={() => setStrokeControlsOpen(o => !o)}
+                      style={{ ...smallBtn, ...(strokeControlsOpen ? smallBtnActive : {}) }}>⚙</button>
                   </div>
-                </>
+                  {strokeControlsOpen && (
+                    <StrokeControlsCard fx={strokeFx} isSvg={isSvgShape} onChange={applyStrokeFx} onClose={() => setStrokeControlsOpen(false)} />
+                  )}
+                </div>
               )}
             </div>
           )}
 
-          {/* ══ Effects ══ */}
-          <SectionHead label="Effects" section="effects" expanded={expanded} toggle={toggle} />
+          {/* ══ Efectos (F1): + añade; filas compactas con ojito/×; config al click en el nombre ══ */}
+          <SectionHead label="Efectos" section="effects" expanded={expanded} toggle={toggle} />
           {expanded.effects && (
             <div style={sectionBody}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                <button type="button" style={smallBtn} onClick={() => writeShadows([...shadows, DEFAULT_DROP_SHADOW])}>+ Drop Shadow</button>
-                <button type="button" style={smallBtn} onClick={() => writeShadows([...shadows, DEFAULT_INNER_SHADOW])}>+ Inner Shadow</button>
-                <button type="button" style={layerBlur != null ? smallBtnActive : smallBtn}
-                  onClick={() => update(selector, "filter", setFilterFn(s["filter"] || "", "blur", layerBlur != null ? null : "8px"))}>
-                  Layer Blur
-                </button>
-                <button type="button" style={bgBlur != null ? smallBtnActive : smallBtn}
-                  onClick={() => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", bgBlur != null ? null : "12px"))}>
-                  Background Blur
-                </button>
-                <button type="button" style={hasGlass ? smallBtnActive : smallBtn}
-                  onClick={() => update(selector, "backdrop-filter", hasGlass
-                    ? setFilterFn(s["backdrop-filter"] || "", "saturate", null)
-                    : setFilterFn(setFilterFn(s["backdrop-filter"] || "", "blur", bgBlur ?? "12px"), "saturate", "1.8"))}>
-                  Glass
-                </button>
-                {(["noise", "texture", "dither"] as NoiseKind[]).map(kind => {
-                  const active = findNoiseFilter(s["filter"] || "", kind);
-                  return (
-                    <button key={kind} type="button" style={active != null ? smallBtnActive : smallBtn}
-                      onClick={() => update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, active != null ? null : 0.2))}>
-                      {kind[0].toUpperCase() + kind.slice(1)}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {shadows.map((sh, i) => (
-                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, padding: "6px", borderRadius: 4, background: "rgba(15,15,15,0.35)", border: "1px solid rgba(255,255,255,0.04)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase" }}>{sh.inset ? "Inner Shadow" : "Drop Shadow"}</span>
-                    <button type="button" onClick={() => writeShadows(shadows.filter((_, j) => j !== i))}
-                      style={{ fontSize: 10, padding: "1px 5px", borderRadius: 2, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", cursor: "pointer" }}>×</button>
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <InlineField label="X"><ScrubbyInput value={String(sh.x)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, x: parseInt(v) || 0 } : x))} /></InlineField>
-                    <InlineField label="Y"><ScrubbyInput value={String(sh.y)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, y: parseInt(v) || 0 } : x))} /></InlineField>
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <InlineField label="Blur"><ScrubbyInput value={String(sh.blur)} min={0} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, blur: Math.max(0, parseInt(v) || 0) } : x))} /></InlineField>
-                    <InlineField label="Spread"><ScrubbyInput value={String(sh.spread)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, spread: parseInt(v) || 0 } : x))} /></InlineField>
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <InlineField label="Color"><input type="color" value={sh.color} onChange={e => writeShadows(shadows.map((x, j) => j === i ? { ...x, color: e.target.value } : x))} style={colorInp} /></InlineField>
-                    <InlineField label="Opacity"><ScrubbyInput value={String(sh.alpha)} min={0} max={1} step={0.01} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, alpha: Math.max(0, Math.min(1, parseFloat(v) || 0)) } : x))} /></InlineField>
-                  </div>
+              {!fxHasAny ? (
+                <div style={{ position: "relative" }}>
+                  <button type="button" onClick={() => setFxAddOpen(true)} style={{ ...smallBtn, width: "100%" }}>+ Añadir efecto</button>
+                  {fxAddOpen && <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />}
                 </div>
-              ))}
+              ) : (
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 3 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", position: "relative" }}>
+                    <button type="button" title="Añadir efecto" onClick={() => setFxAddOpen(true)} style={{ ...smallBtn, width: 24, flexShrink: 0 }}>+</button>
+                    {fxAddOpen && <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />}
+                    <span style={{ fontSize: 9, color: "#7a7668" }}>{fxCount} {fxCount === 1 ? "efecto" : "efectos"}</span>
+                  </div>
+                  {shadows.map((sh, i) => fxRow(`sh:${i}`, sh.inset ? `Sombra interna ${i + 1}` : `Sombra ${i + 1}`, {
+                    onHide: () => hideShadowAt(i),
+                    onRemove: () => writeShadows(shadows.filter((_, j) => j !== i)),
+                  }))}
+                  {hiddenShadows.map((sh, i) => fxRow(`hsh:${i}`, sh.inset ? `Sombra interna ${i + 1} (oculta)` : `Sombra ${i + 1} (oculta)`, {
+                    hidden: true,
+                    onShow: () => showHiddenShadowAt(i),
+                    onRemove: () => {
+                      const rest = hiddenShadows.filter((_, j) => j !== i);
+                      update(selector, "--fx-shadows", rest.length ? rest.map(formatShadow).join(";;") : "0");
+                    },
+                  }))}
+                  {layerBlur != null && fxRow("layerBlur", "Layer Blur", {
+                    onHide: () => fxMemToggle("--fx-layerblur", layerBlur, v => update(selector, "filter", setFilterFn(s["filter"] || "", "blur", v))),
+                    onRemove: () => {
+                      update(selector, "filter", setFilterFn(s["filter"] || "", "blur", null));
+                      update(selector, "--fx-layerblur", "0");
+                    },
+                  })}
+                  {layerBlur == null && memLayerBlur && memLayerBlur !== "0" && fxRow("layerBlur", "Layer Blur (oculto)", {
+                    hidden: true,
+                    onShow: () => fxMemToggle("--fx-layerblur", null, v => update(selector, "filter", setFilterFn(s["filter"] || "", "blur", v))),
+                    onRemove: () => update(selector, "--fx-layerblur", "0"),
+                  })}
+                  {bgBlur != null && fxRow("bgBlur", "Background Blur", {
+                    onHide: () => fxMemToggle("--fx-bgblur", bgBlur, v => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", v))),
+                    onRemove: () => {
+                      update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", null));
+                      update(selector, "--fx-bgblur", "0");
+                    },
+                  })}
+                  {bgBlur == null && memBgBlur && memBgBlur !== "0" && fxRow("bgBlur", "Background Blur (oculto)", {
+                    hidden: true,
+                    onShow: () => fxMemToggle("--fx-bgblur", null, v => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", v))),
+                    onRemove: () => update(selector, "--fx-bgblur", "0"),
+                  })}
+                  {hasGlass && fxRow("glass", "Glass", {
+                    onHide: () => fxMemToggle("--fx-glass", "glass", v => update(selector, "backdrop-filter",
+                      v ? setFilterFn(setFilterFn(s["backdrop-filter"] || "", "blur", bgBlur ?? "12px"), "saturate", "1.8") : setFilterFn(s["backdrop-filter"] || "", "saturate", null))),
+                    onRemove: () => {
+                      update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "saturate", null));
+                      update(selector, "--fx-glass", "0");
+                    },
+                  })}
+                  {!hasGlass && memGlass && memGlass !== "0" && fxRow("glass", "Glass (oculto)", {
+                    hidden: true,
+                    onShow: () => fxMemToggle("--fx-glass", null, v => update(selector, "backdrop-filter",
+                      v ? setFilterFn(setFilterFn(s["backdrop-filter"] || "", "blur", bgBlur ?? "12px"), "saturate", "1.8") : setFilterFn(s["backdrop-filter"] || "", "saturate", null))),
+                    onRemove: () => update(selector, "--fx-glass", "0"),
+                  })}
+                  {activeNoises.map(({ kind, value }) => fxRow(kind, kind[0].toUpperCase() + kind.slice(1), {
+                    onHide: () => fxMemToggle(`--fx-${kind}`, String(value), v => update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, v ? parseFloat(v) : null))),
+                    onRemove: () => {
+                      update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, null));
+                      update(selector, `--fx-${kind}`, "0");
+                    },
+                  }))}
+                  {memNoises.filter(n => n.value && n.value !== "0").map(({ kind }) => fxRow(`h-${kind}`, `${kind[0].toUpperCase() + kind.slice(1)} (oculto)`, {
+                    hidden: true,
+                    onShow: () => fxMemToggle(`--fx-${kind}`, null, v => update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, v ? parseFloat(v) : null))),
+                    onRemove: () => update(selector, `--fx-${kind}`, "0"),
+                  }))}
 
-              {layerBlur != null && (
-                <PropRow label="Layer Blur">
-                  <ScrubbyInput value={String(parseFloat(layerBlur) || 0)} min={0} onChange={v => update(selector, "filter", setFilterFn(s["filter"] || "", "blur", `${Math.max(0, parseInt(v) || 0)}px`))} suffix="px" />
-                </PropRow>
+                  {/* config card for the clicked row */}
+                  {fxOpenKey && fxOpenKey.startsWith("sh:") && shadows[parseInt(fxOpenKey.slice(3))] && (() => {
+                    const i = parseInt(fxOpenKey.slice(3));
+                    const sh = shadows[i];
+                    return (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: 6, borderRadius: 4, background: "rgba(15,15,15,0.35)", border: "1px solid rgba(255,255,255,0.04)" }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <InlineField label="X"><ScrubbyInput value={String(sh.x)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, x: parseInt(v) || 0 } : x))} /></InlineField>
+                          <InlineField label="Y"><ScrubbyInput value={String(sh.y)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, y: parseInt(v) || 0 } : x))} /></InlineField>
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <InlineField label="Blur"><ScrubbyInput value={String(sh.blur)} min={0} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, blur: Math.max(0, parseInt(v) || 0) } : x))} /></InlineField>
+                          <InlineField label="Spread"><ScrubbyInput value={String(sh.spread)} onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, spread: parseInt(v) || 0 } : x))} /></InlineField>
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <InlineField label="Color"><input type="color" value={sh.color} onChange={e => writeShadows(shadows.map((x, j) => j === i ? { ...x, color: e.target.value } : x))} style={colorInp} /></InlineField>
+                          <InlineField label="Alpha"><ScrubbyInput value={String(Math.round(sh.alpha * 100))} min={0} max={100} suffix="%"
+                            onChange={v => writeShadows(shadows.map((x, j) => j === i ? { ...x, alpha: Math.max(0, Math.min(100, parseFloat(v) || 0)) / 100 } : x))} /></InlineField>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {fxOpenKey === "layerBlur" && layerBlur != null && (
+                    <PropRow label="Layer Blur">
+                      <ScrubbyInput value={String(parseFloat(layerBlur) || 0)} min={0} suffix="px"
+                        onChange={v => update(selector, "filter", setFilterFn(s["filter"] || "", "blur", `${Math.max(0, parseInt(v) || 0)}px`))} />
+                    </PropRow>
+                  )}
+                  {fxOpenKey === "bgBlur" && bgBlur != null && (
+                    <PropRow label="BG Blur">
+                      <ScrubbyInput value={String(parseFloat(bgBlur) || 0)} min={0} suffix="px"
+                        onChange={v => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", `${Math.max(0, parseInt(v) || 0)}px`))} />
+                    </PropRow>
+                  )}
+                  {fxOpenKey === "glass" && hasGlass && (
+                    <PropRow label="Glass">
+                      <ScrubbyInput value={String(getFilterFn(s["backdrop-filter"] || "", "saturate") || "1.8")} suffix="×"
+                        onChange={v => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "saturate", v))} />
+                    </PropRow>
+                  )}
+                  {activeNoises.filter(n => fxOpenKey === n.kind).map(({ kind, value }) => (
+                    <OpacityRow key={kind} label={kind[0].toUpperCase() + kind.slice(1)} value={String(value)}
+                      onChange={v => update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, Math.max(0, Math.min(1, parseFloat(v) || 0))))} />
+                  ))}
+                </div>
               )}
-              {bgBlur != null && (
-                <PropRow label="BG Blur">
-                  <ScrubbyInput value={String(parseFloat(bgBlur) || 0)} min={0} onChange={v => update(selector, "backdrop-filter", setFilterFn(s["backdrop-filter"] || "", "blur", `${Math.max(0, parseInt(v) || 0)}px`))} suffix="px" />
-                </PropRow>
-              )}
-              {(["noise", "texture", "dither"] as NoiseKind[]).map(kind => {
-                const active = findNoiseFilter(s["filter"] || "", kind);
-                if (active == null) return null;
-                return (
-                  <OpacityRow key={kind} label={kind[0].toUpperCase() + kind.slice(1)} value={String(active)}
-                    onChange={v => update(selector, "filter", setNoiseFilter(s["filter"] || "", kind, Math.max(0, Math.min(1, parseFloat(v) || 0))))} />
-                );
-              })}
             </div>
           )}
 
-          {/* ══ Typography (moved here from "animation" — text props belong in Properties) ══ */}
-          {(isText || isSvgText) && (
-            <>
-              <SectionHead label="Typography" section="typography" expanded={expanded} toggle={toggle} />
-              {expanded.typography && (
-                <div style={sectionBody}>
-                  <PropRow label="Font">
-                    <GoogleFontPicker value={primaryFamily(s["font-family"] || "")} onChange={(f) => update(selector, "font-family", cssFontFamily(f))} />
-                  </PropRow>
-                  <PropRow label="Size">
-                    <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />
-                  </PropRow>
-                  <SelectRow label="Weight" value={s["font-weight"] || "400"} options={FONT_WEIGHTS} onChange={v => update(selector, "font-weight", v)} />
-                  <PropRow label="Align">
-                    <div style={{ display: "flex", gap: 2, flex: 1 }}>
-                      {TEXT_ALIGNMENTS.map(a => (
-                        <button key={a.value} type="button" title={a.title}
-                          onClick={() => update(selector, "text-align", a.value)}
-                          style={{ flex: 1, padding: "3px 4px", borderRadius: 4, fontSize: 13, cursor: "pointer",
-                            background: s["text-align"] === a.value ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
-                            border: s["text-align"] === a.value ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.04)",
-                            color: s["text-align"] === a.value ? "#c8b898" : "#7a7668" }}>
-                          {a.label}
-                        </button>
-                      ))}
-                    </div>
-                  </PropRow>
-                  <PropRow label="Spacing">
-                    <ScrubbyInput value={s["letter-spacing"] || "normal"} onChange={v => update(selector, "letter-spacing", v)} />
-                  </PropRow>
-                  <PropRow label="Line-H">
-                    <ScrubbyInput value={s["line-height"] || ""} onChange={v => update(selector, "line-height", v)} />
-                  </PropRow>
-                  <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(selector, "text-decoration", v)} />
-                  <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(selector, "text-transform", v)} />
-                  <PropRow label="Txt Shadow">
-                    <input value={s["text-shadow"] || "none"} placeholder="0 2px 4px rgba(0,0,0,0.2)" onChange={e => update(selector, "text-shadow", e.target.value)} style={inp} />
-                  </PropRow>
-                </div>
-              )}
-            </>
-          )}
         </div>
       )}
 
@@ -1695,221 +2651,6 @@ export function HtmlContextualPanel({
               </PropRow>
             </div>
           )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Gradient parsing ──
-// Split on top-level commas only (a paren-depth counter, not a naive regex
-// split) — a color-stop list like "rgb(1,2,3) 0%, rgb(4,5,6) 100%" has
-// commas INSIDE the rgb() calls that must not become stop boundaries.
-const GRADIENT_DIRECTION_ANGLES: Record<string, number> = {
-  top: 0, bottom: 180, left: 270, right: 90,
-  "top right": 45, "right top": 45, "bottom right": 135, "right bottom": 135,
-  "bottom left": 225, "left bottom": 225, "top left": 315, "left top": 315,
-};
-
-interface GradientStop { color: string; alpha: number; pos: number }
-interface ParsedGradient { type: "linear" | "radial" | "conic"; angle: number; stops: GradientStop[] }
-
-/**
- * Parse ANY CSS gradient — critically, one whose colors come back from
- * getComputedStyle() as rgb()/rgba(), which is what the browser always
- * reports regardless of how the source CSS was authored. The previous
- * parser only matched literal #hex via regex, so it silently failed on
- * every computed value, leaving the UI stuck showing its hardcoded purple
- * placeholder instead of the design's real gradient — editing then meant
- * "Apply" overwrote the real gradient with that placeholder.
- */
-function parseGradientValue(value: string): ParsedGradient | null {
-  if (!value || value === "none") return null;
-  const typeMatch = value.match(/(linear|radial|conic)-gradient\(/);
-  if (!typeMatch) return null;
-  const type = typeMatch[1] as "linear" | "radial" | "conic";
-  const openIdx = value.indexOf(typeMatch[0]) + typeMatch[0].length - 1;
-  let depth = 0, end = -1;
-  for (let i = openIdx; i < value.length; i++) {
-    if (value[i] === "(") depth++;
-    else if (value[i] === ")") { depth--; if (depth === 0) { end = i; break; } }
-  }
-  if (end === -1) return null;
-  const parts = splitTopLevelCommas(value.slice(openIdx + 1, end)).map(p => p.trim());
-  if (!parts.length) return null;
-
-  let angle = 90;
-  let stopParts = parts;
-  const first = parts[0] || "";
-  if (type === "linear") {
-    const angleMatch = first.match(/^(-?[\d.]+)deg$/);
-    if (angleMatch) { angle = parseFloat(angleMatch[1]); stopParts = parts.slice(1); }
-    else if (/^to\s+/i.test(first)) {
-      angle = GRADIENT_DIRECTION_ANGLES[first.replace(/^to\s+/i, "").trim().toLowerCase()] ?? 90;
-      stopParts = parts.slice(1);
-    }
-  } else {
-    // radial()/conic()'s leading shape/position descriptor ("circle at
-    // center", "from 45deg") has no color. A real stop is just a color
-    // token optionally followed by one "N%" and nothing else — anything
-    // that doesn't fit that shape is the descriptor, not the first stop.
-    const angleMatch = first.match(/from\s+(-?[\d.]+)deg/);
-    if (angleMatch) angle = parseFloat(angleMatch[1]);
-    const isJustAStop = /^(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)\s*(-?[\d.]+%)?\s*$/.test(first);
-    if (!isJustAStop && parts.length > 1) stopParts = parts.slice(1);
-  }
-
-  const stops: GradientStop[] = [];
-  stopParts.forEach((p, i) => {
-    const colorMatch = p.match(/^(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)/);
-    if (!colorMatch) return;
-    const colorToken = colorMatch[0];
-    const rest = p.slice(colorToken.length).trim();
-    const pctMatch = rest.match(/(-?[\d.]+)%/);
-    stops.push({
-      color: toHexColor(colorToken),
-      alpha: parseAlpha(colorToken),
-      pos: pctMatch ? parseFloat(pctMatch[1]) : Math.round((i / Math.max(1, stopParts.length - 1)) * 100),
-    });
-  });
-  return stops.length >= 2 ? { type, angle, stops } : null;
-}
-
-function buildGradientCss(g: ParsedGradient): string {
-  const stopsStr = g.stops.map(s => `${s.alpha < 1 ? hexToRgba(s.color, s.alpha) : s.color} ${s.pos}%`).join(", ");
-  if (g.type === "linear") return `linear-gradient(${g.angle}deg, ${stopsStr})`;
-  if (g.type === "radial") return `radial-gradient(circle, ${stopsStr})`;
-  return `conic-gradient(from ${g.angle}deg, ${stopsStr})`;
-}
-
-const DEFAULT_NEW_GRADIENT: ParsedGradient = {
-  type: "linear", angle: 90,
-  stops: [{ color: "#667eea", alpha: 1, pos: 0 }, { color: "#764ba2", alpha: 1, pos: 100 }],
-};
-
-// ── Gradient Builder Component ──
-
-function GradientBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [gradient, setGradient] = useState<ParsedGradient | null>(() => parseGradientValue(value));
-  const [expanded, setExpanded] = useState(false);
-  // Tracks the CSS string WE last emitted, so an incoming `value` that only
-  // echoes our own edit doesn't re-parse and reset mid-drag — but a value
-  // that changed for any OTHER reason (undo, another collaborator, the AI
-  // editing this same element) does re-sync the editor to it.
-  const lastAppliedRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (value === lastAppliedRef.current) return;
-    setGradient(parseGradientValue(value));
-  }, [value]);
-
-  const apply = useCallback((next: ParsedGradient) => {
-    setGradient(next);
-    const css = buildGradientCss(next);
-    lastAppliedRef.current = css;
-    onChange(css);
-  }, [onChange]);
-
-  const removeGradient = useCallback(() => {
-    setGradient(null);
-    lastAppliedRef.current = "none";
-    onChange("none");
-  }, [onChange]);
-
-  if (!gradient) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase" }}>Gradient</span>
-        <button type="button" onClick={() => apply(DEFAULT_NEW_GRADIENT)}
-          style={{ fontSize: 10, padding: "5px 8px", borderRadius: 4, border: "1px dashed rgba(200,184,152,0.25)", background: "none", color: "#c8b898", cursor: "pointer" }}>
-          + Add Gradient
-        </button>
-      </div>
-    );
-  }
-
-  const previewStyle: React.CSSProperties = {
-    height: 20, borderRadius: 4,
-    background: buildGradientCss(gradient),
-    border: "1px solid rgba(255,255,255,0.06)",
-    cursor: "pointer",
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 9, color: "#7a7668", textTransform: "uppercase" }}>Gradient</span>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button type="button" onClick={removeGradient} title="Remove gradient"
-            style={{ fontSize: 9, color: "#EF4444", background: "none", border: "none", cursor: "pointer" }}>
-            Remove
-          </button>
-          <button type="button" onClick={() => setExpanded(!expanded)}
-            style={{ fontSize: 9, color: "#c8b898", background: "none", border: "none", cursor: "pointer" }}>
-            {expanded ? "−" : "+"}
-          </button>
-        </div>
-      </div>
-      <div onClick={() => setExpanded(!expanded)} style={previewStyle} title="Click to expand" />
-      {expanded && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "4px 0" }}>
-          {/* Type */}
-          <div style={{ display: "flex", gap: 4 }}>
-            {(["linear", "radial", "conic"] as const).map(t => (
-              <button key={t} type="button" onClick={() => apply({ ...gradient, type: t })}
-                style={{
-                  flex: 1, fontSize: 9, padding: "2px 4px", borderRadius: 3,
-                  border: gradient.type === t ? "1px solid #c8b898" : "1px solid rgba(255,255,255,0.06)",
-                  background: gradient.type === t ? "rgba(200,184,152,0.12)" : "rgba(15,15,15,0.5)",
-                  color: gradient.type === t ? "#c8b898" : "#7a7668",
-                  cursor: "pointer", textTransform: "capitalize",
-                }}>
-                {t}
-              </button>
-            ))}
-          </div>
-          {/* Angle (linear/conic only — radial's "circle" has no direction) */}
-          {gradient.type !== "radial" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 9, color: "#7a7668", width: 32 }}>Angle</span>
-              <ScrubbyInput value={String(gradient.angle)} onChange={v => apply({ ...gradient, angle: parseInt(v) || 0 })} min={0} max={360} suffix="°" />
-            </div>
-          )}
-          {/* Color Stops */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <span style={{ fontSize: 9, color: "#7a7668" }}>Stops</span>
-            {gradient.stops.map((stop, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <input type="color" value={stop.color} onChange={e => {
-                  const newStops = [...gradient.stops];
-                  newStops[i] = { ...newStops[i], color: e.target.value };
-                  apply({ ...gradient, stops: newStops });
-                }} style={{ ...colorInp, width: 22, height: 18 }} />
-                <input value={stop.color} onChange={e => {
-                  const newStops = [...gradient.stops];
-                  newStops[i] = { ...newStops[i], color: toHexColor(e.target.value, newStops[i].color) };
-                  apply({ ...gradient, stops: newStops });
-                }} style={{ ...inp, fontSize: 10, width: 64 }} />
-                <ScrubbyInput value={String(stop.pos)} onChange={v => {
-                  const newStops = [...gradient.stops];
-                  newStops[i] = { ...newStops[i], pos: parseInt(v) || 0 };
-                  apply({ ...gradient, stops: newStops });
-                }} min={0} max={100} suffix="%" style={{ flex: 1 }} />
-                {gradient.stops.length > 2 && (
-                  <button type="button" onClick={() => apply({ ...gradient, stops: gradient.stops.filter((_, j) => j !== i) })}
-                    style={{ fontSize: 10, padding: "1px 4px", borderRadius: 2, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", cursor: "pointer" }}>
-                    ×
-                  </button>
-                )}
-              </div>
-            ))}
-            {gradient.stops.length < 8 && (
-              <button type="button" onClick={() => apply({ ...gradient, stops: [...gradient.stops, { color: "#A78BFA", alpha: 1, pos: 50 }] })}
-                style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, border: "1px dashed rgba(200,184,152,0.2)", background: "none", color: "#c8b898", cursor: "pointer" }}>
-                + Add Stop
-              </button>
-            )}
-          </div>
         </div>
       )}
     </div>
