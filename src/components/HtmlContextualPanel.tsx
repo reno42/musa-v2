@@ -40,6 +40,9 @@ interface Props {
   onOutlineStroke?: (layerId: string, frameId: string) => void;
   onOffsetPath?: (layerId: string, frameId: string, offset: number) => void;
   onShapeOptionsChange?: (layerId: string, frameId: string, options: ShapeOptions) => void;
+  /** F4: per-vertex radius edit — index is the vertex position, "all" sets
+   *  every vertex at once (uniform). */
+  onShapeVertexRadiusChange?: (layerId: string, frameId: string, index: number | "all", value: number) => void;
   onGroupModeChange?: (layerId: string, frameId: string, mode: "group" | "container") => void;
   /** F3 remove-background: swap an <img> layer's src to the cutout PNG.
    *  The editor stores the original src in data-orig-src (non-destructive). */
@@ -649,7 +652,7 @@ const mutedNote: React.CSSProperties = {
 
 export function HtmlContextualPanel({
   workspaceId, element, selectedLayerIds, html, css, onCssChange, onChangeTag, onCopyStyle, onPasteStyle, hasClipboardStyle,
-  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
+  onConvertToPath, onOutlineStroke, onOffsetPath, onShapeOptionsChange, onShapeVertexRadiusChange, onGroupModeChange, onImageSrcChange, onImageRestore, onImageMaskRemove,
   frameWidth, frameHeight, subTab, frameAnimation, onFrameAnimationChange,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -662,6 +665,26 @@ export function HtmlContextualPanel({
   const [copied, setCopied] = useState<"html" | "css" | null>(null);
 
   const toggle = (s: string) => setExpanded(prev => ({ ...prev, [s]: !prev[s] }));
+  
+    // ── F4 A1: live radius feedback while a vertex circle is dragged on the
+    // canvas — the gesture broadcasts musa:shape-radius-live per frame. ──
+    const [liveShapeRadius, setLiveShapeRadius] = useState<{ layerId: string; uniform: number; radii: number[] } | null>(null);
+    const [vertexListOpen, setVertexListOpen] = useState(false);
+    useEffect(() => {
+      const onLiveRadius = (event: Event) => {
+        setLiveShapeRadius((event as CustomEvent<{ layerId: string; uniform: number; radii: number[] }>).detail);
+      };
+      window.addEventListener("musa:shape-radius-live", onLiveRadius);
+      return () => window.removeEventListener("musa:shape-radius-live", onLiveRadius);
+    }, []);
+    useEffect(() => {
+      setLiveShapeRadius(null);
+      setVertexListOpen(false);
+    }, [element?.layerId]);
+    const shapeRadii = element?.vertexRadii ?? null;
+    const shapeRadiusDisplay = element && liveShapeRadius?.layerId === element.layerId
+      ? liveShapeRadius.uniform
+      : element?.shapeOptions?.cornerRadius ?? 0;
 
   /**
    * Every selector a change applies to. The panel is handed one element, so
@@ -1030,17 +1053,61 @@ export function HtmlContextualPanel({
           {expanded.appearance && (
             <div style={sectionBody}>
               <OpacityRow label="Opacity" value={s["opacity"] || "1"} onChange={v => update(selector, "opacity", v)} />
-              <PropRow label="Radius">
-                <ScrubbyInput value={s["border-radius"] || "0"} onChange={v => update(selector, "border-radius", v)} suffix="px" />
-              </PropRow>
-              <div style={{ display: "flex", gap: 4 }}>
-                {(["top-left", "top-right", "bottom-right", "bottom-left"] as const).map(corner => (
-                  <div key={corner} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                    <span style={{ fontSize: 8, color: "#555" }}>{corner.split("-").map(w => w[0]).join("")}</span>
-                    <input value={s[`border-${corner}-radius`] || ""} placeholder="0" onChange={e => update(selector, `border-${corner}-radius`, e.target.value)} style={{ ...miniInp, width: 36, textAlign: "center" }} />
+              {shapeRadii ? (
+                <>
+                  {/* F4: shape corner radius — live while a canvas vertex
+                      circle is being dragged (musa:shape-radius-live). */}
+                  <PropRow label="Radius">
+                    <ScrubbyInput value={String(Math.round(shapeRadiusDisplay || 0))} min={0} suffix="px"
+                      onChange={v => {
+                        const next = Math.max(0, parseFloat(v) || 0);
+                        if (element.shapeOptions && onShapeOptionsChange) {
+                          onShapeOptionsChange(element.layerId, element.frameId, { ...element.shapeOptions, cornerRadius: next });
+                        } else {
+                          onShapeVertexRadiusChange?.(element.layerId, element.frameId, "all", next);
+                        }
+                      }} />
+                  </PropRow>
+                  <PropRow label="Vértices">
+                    <button type="button" style={vertexListOpen ? smallBtnActive : smallBtn}
+                      onClick={() => setVertexListOpen(open => !open)}>
+                      ◈ Radio por vértice ({shapeRadii.length})
+                    </button>
+                  </PropRow>
+                  {vertexListOpen && shapeRadii.map((radius, index) => (
+                    <PropRow key={index} label={`V${index + 1}`}>
+                      <ScrubbyInput
+                        value={String(Math.round((element && liveShapeRadius?.layerId === element.layerId
+                          ? liveShapeRadius.radii[index]
+                          : radius) || 0))}
+                        min={0} suffix="px"
+                        onChange={v => onShapeVertexRadiusChange?.(element.layerId, element.frameId, index, Math.max(0, parseFloat(v) || 0))} />
+                    </PropRow>
+                  ))}
+                  {vertexListOpen && shapeRadii.length > 0 && (
+                    <PropRow label="Reset">
+                      <button type="button" style={smallBtn}
+                        onClick={() => onShapeVertexRadiusChange?.(element.layerId, element.frameId, "all", 0)}>
+                        Todas a 0
+                      </button>
+                    </PropRow>
+                  )}
+                </>
+              ) : (
+                <>
+                  <PropRow label="Radius">
+                    <ScrubbyInput value={s["border-radius"] || "0"} onChange={v => update(selector, "border-radius", v)} suffix="px" />
+                  </PropRow>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(["top-left", "top-right", "bottom-right", "bottom-left"] as const).map(corner => (
+                      <div key={corner} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                        <span style={{ fontSize: 8, color: "#555" }}>{corner.split("-").map(w => w[0]).join("")}</span>
+                        <input value={s[`border-${corner}-radius`] || ""} placeholder="0" onChange={e => update(selector, `border-${corner}-radius`, e.target.value)} style={{ ...miniInp, width: 36, textAlign: "center" }} />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </div>
           )}
 

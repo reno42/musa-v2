@@ -328,6 +328,15 @@ export function getPathBezierSegments(points: PathPoint[], closed = false): Poin
   return segments;
 }
 
+/**
+ * Point at the middle of every segment (t = 0.5 on the segment's Bezier),
+ * in segment order — index N is the segment ending at anchor N + 1. Drives
+ * the vertex-edit mode's "click the segment midpoint to add a point" handles.
+ */
+export function segmentMidpoints(points: PathPoint[], closed = false): Point[] {
+  return getPathBezierSegments(points, closed).map(controls => deCasteljau(controls, 0.5));
+}
+
 export function analyzePathData(d: string, closed = isPathClosed(d)): PathAnalysis {
   const segments = getPathBezierSegments(parsePathData(d), closed);
   const controls = segments.flat();

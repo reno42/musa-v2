@@ -21,12 +21,20 @@ import {
   movePathHandle,
   movePathPoint,
   parsePathData,
+  segmentMidpoints,
   serializePathData,
   splitPathSegment,
   toggleSmoothCorner,
   type PathPoint,
   type Point,
 } from "../lib/pathData";
+import {
+  cornersFromShapePath,
+  parametricVertices,
+  parseVertexRadiiAttr,
+  verticesToPath,
+  type ShapeVertex,
+} from "../lib/shapePaths";
 import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { createFrameAnimator, type FrameAnimator } from "../lib/animationEngine";
@@ -109,6 +117,9 @@ export interface SelectedElementInfo {
   isSvg: boolean;
   svgChildTag?: string;
   shapeOptions?: ShapeOptions;
+  /** Effective radius of every shape vertex (F4) — null when the selection
+   *  is not a shape with recoverable corners. */
+  vertexRadii?: number[] | null;
   /** data-layer-kind of the selected element (group | container | frame | …). */
   layerKind?: string;
   /** Number of element children with their own data-layer-id. */
@@ -756,6 +767,8 @@ export function DesignFrame({
           size: Number(element.getAttribute("data-shape-size")) || 120,
         }
       : undefined;
+    const shapePathForRadii = tag === "path" ? element : element.querySelector("path");
+    const shapeGeometryForRadii = shapePathForRadii ? resolveShapeGeometry(shapePathForRadii) : null;
 
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
@@ -766,6 +779,7 @@ export function DesignFrame({
       isSvg,
       svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
       shapeOptions,
+      vertexRadii: shapeGeometryForRadii ? shapeGeometryForRadii.radii : null,
       layerKind: element.getAttribute("data-layer-kind") || undefined,
       childLayerCount: [...element.children].filter(c => c.hasAttribute("data-layer-id")).length,
       src: tag === "img" ? (element.getAttribute("src") || undefined) : undefined,
@@ -801,6 +815,10 @@ export function DesignFrame({
   }
 
   function selectElement(element: Element, source: Element = element): void {
+    if (vertexEditModeRef.current && vertexEditModeRef.current.layerId !== closestLayerId(element)) {
+      // Selection moved to another layer — leave vertex-edit mode.
+      exitVertexEditModeRef.current?.();
+    }
     selectedRef.current = element;
     selectedSourceRef.current = source;
     refreshOverlay(element);
@@ -867,6 +885,100 @@ export function DesignFrame({
     if (overlayRef.current) overlayRef.current.innerHTML = "";
     pointEditPathRef.current = null;
     pointEditOverlayRef.current = null;
+    vertexEditModeRef.current = null;
+    exitVertexEditModeRef.current?.();
+    exitVertexEditModeRef.current = null;
+  }
+
+  // ── F4: shape vertex interactions ──
+  // A1 — hover a selected shape: circles at each vertex; grab one and drag
+  //   horizontally (left = rounder, right = sharper) to round ALL corners.
+  // A2 — double-click a shape: editable-vertices mode (drag individual
+  //   vertices with smart guides, click a segment midpoint to insert).
+  const vertexEditModeRef = useRef<{ layerId: string } | null>(null);
+  const exitVertexEditModeRef = useRef<(() => void) | null>(null);
+  const shapeHoverRef = useRef<Element | null>(null);
+  const hoverHookRef = useRef<Element | null>(null);
+  const hoverDetachRef = useRef<(() => void) | null>(null);
+  const radiusDragRef = useRef(false);
+
+  function closestLayerId(start: Element | null): string {
+    for (let node: Element | null = start; node; node = node.parentElement) {
+      const id = node.getAttribute("data-layer-id");
+      if (id) return id;
+    }
+    return "";
+  }
+
+  function enterVertexEditMode(element: Element): void {
+    const layerId = element.getAttribute("data-layer-id") || "";
+    vertexEditModeRef.current = { layerId };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      exitVertexEditModeRef.current?.();
+      if (selectedRef.current) refreshOverlay(selectedRef.current);
+    };
+    exitVertexEditModeRef.current = () => {
+      document.removeEventListener("keydown", onKey);
+      vertexEditModeRef.current = null;
+      exitVertexEditModeRef.current = null;
+    };
+    document.addEventListener("keydown", onKey);
+    selectElement(element);
+  }
+
+  /** Double-click target → the shape/path layer whose vertices are editable. */
+  function findVertexEditableTarget(target: Element): Element | null {
+    const layer = target.closest?.("[data-layer-id]");
+    if (!layer) return null;
+    if ((layer.getAttribute("data-layer-kind") || "") === "text") return null;
+    const path = layer.tagName.toLowerCase() === "path" ? layer : layer.querySelector("path");
+    const d = path?.getAttribute("d");
+    if (!path || !d) return null;
+    try {
+      if (parsePathData(d).length < 1) return null;
+    } catch {
+      return null;
+    }
+    return layer;
+  }
+
+  /**
+   * Recover the editable geometry of a shape path: base vertices (parametric
+   * star/polygon or recovered corners), the uniform radius and the effective
+   * per-vertex radii. Null when the path has no recoverable corner model.
+   */
+  function resolveShapeGeometry(pathOwner: Element) {
+    const path = pathOwner.tagName.toLowerCase() === "path" ? pathOwner : pathOwner.querySelector("path");
+    if (!path) return null;
+    const layer = path.closest("[data-layer-id]");
+    const svg = path.closest("svg");
+    const holder = svg || layer;
+    const d = path.getAttribute("d");
+    if (!d || !holder) return null;
+    const kind = holder.getAttribute("data-shape");
+    const custom = holder.getAttribute("data-shape-custom") === "1";
+    const uniform = Number(holder.getAttribute("data-shape-corner-radius")) || 0;
+    let vertices: ShapeVertex[] | null;
+    if ((kind === "star" || kind === "polygon") && !custom) {
+      vertices = parametricVertices({
+        kind,
+        count: Number(holder.getAttribute("data-shape-count")) || (kind === "star" ? 5 : 6),
+        ratio: Number(holder.getAttribute("data-shape-ratio")) || 0.4,
+        size: Number(holder.getAttribute("data-shape-size")) || 120,
+      });
+    } else {
+      vertices = cornersFromShapePath(d);
+    }
+    if (!vertices) return null;
+    return {
+      path,
+      layerId: layer?.getAttribute("data-layer-id") || "",
+      holder,
+      vertices,
+      uniform,
+      radii: parseVertexRadiiAttr(holder.getAttribute("data-vr"), uniform, vertices.length),
+    };
   }
 
   function refreshOverlay(el: Element) {
@@ -894,6 +1006,115 @@ export function DesignFrame({
     const targetPath = (isPathEl ? el : pathEl) as Element | null;
     const pathData = targetPath?.getAttribute("d");
 
+    // ── F4 A1: radius handles for the currently hovered shape. Circles sit
+    // on every vertex; grabbing one and dragging horizontally rounds ALL
+    // corners live (left = rounder, right = sharper). ──
+    const renderRadiusHandles = (geom: NonNullable<ReturnType<typeof resolveShapeGeometry>>) => {
+      overlay.querySelector("[data-radius-overlay]")?.remove();
+      overlay.querySelector("[data-radius-label]")?.remove();
+      const svgOwner = geom.path.closest("svg");
+      const svgRectR = svgOwner?.getBoundingClientRect();
+      const vbParts = (svgOwner?.getAttribute("viewBox") || "0 0 0 0").split(/\s+/).map(Number);
+      const [vbXr = 0, vbYr = 0, vbWr = 0, vbHr = 0] = vbParts;
+      const svgLeftR = svgRectR ? (svgRectR.left - cRect.left) / z : 0;
+      const svgTopR = svgRectR ? (svgRectR.top - cRect.top) / z : 0;
+      const scaleXr = svgRectR && vbWr ? (svgRectR.width / z) / vbWr : 1;
+      const scaleYr = svgRectR && vbHr ? (svgRectR.height / z) / vbHr : 1;
+      const project = (vx: number, vy: number): [number, number] => [
+        (vx - vbXr) * scaleXr + svgLeftR,
+        (vy - vbYr) * scaleYr + svgTopR,
+      ];
+
+      const radiusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      radiusSvg.setAttribute("width", "100%");
+      radiusSvg.setAttribute("height", "100%");
+      Object.assign(radiusSvg.style, {
+        position: "absolute", top: "0", left: "0",
+        width: "100%", height: "100%",
+        pointerEvents: "none", zIndex: "10001",
+        overflow: "visible",
+      });
+      radiusSvg.setAttribute("data-radius-overlay", "");
+      overlay.appendChild(radiusSvg);
+
+      const radiusLabel = document.createElement("div");
+      radiusLabel.setAttribute("data-radius-label", "");
+      Object.assign(radiusLabel.style, {
+        position: "absolute",
+        display: "none",
+        padding: "2px 6px",
+        borderRadius: "4px",
+        background: "rgba(15,17,26,0.92)",
+        border: "1px solid rgba(245,158,11,0.4)",
+        color: "#FBBF24",
+        fontSize: "10px",
+        fontFamily: "monospace",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+        zIndex: "10002",
+      });
+      overlay.appendChild(radiusLabel);
+
+      const showRadiusAt = (handleCircle: SVGCircleElement, text: string) => {
+        radiusLabel.textContent = text;
+        radiusLabel.style.display = "block";
+        radiusLabel.style.left = `${parseFloat(handleCircle.getAttribute("cx") || "0") + 12}px`;
+        radiusLabel.style.top = `${parseFloat(handleCircle.getAttribute("cy") || "0") - 14}px`;
+      };
+
+      geom.vertices.forEach((vertex, index) => {
+        const [px, py] = project(vertex.x, vertex.y);
+        const handleCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        handleCircle.setAttribute("cx", `${px}`);
+        handleCircle.setAttribute("cy", `${py}`);
+        handleCircle.setAttribute("r", "5");
+        handleCircle.setAttribute("fill", "#F59E0B");
+        handleCircle.setAttribute("stroke", "#fff");
+        handleCircle.setAttribute("stroke-width", "1.5");
+        handleCircle.setAttribute("data-radius-handle", `${index}`);
+        handleCircle.style.cursor = "ew-resize";
+        handleCircle.style.pointerEvents = "auto";
+        handleCircle.addEventListener("mouseenter", () => {
+          if (radiusDragRef.current) return;
+          showRadiusAt(handleCircle, `r ${Math.round(geom.radii[index])}px`);
+        });
+        handleCircle.addEventListener("mouseleave", () => {
+          if (radiusDragRef.current) return;
+          radiusLabel.style.display = "none";
+        });
+        handleCircle.addEventListener("mousedown", (event) => {
+          event.stopPropagation();
+          event.preventDefault();
+          radiusDragRef.current = true;
+          const startX = event.clientX;
+          const baseRadius = geom.uniform;
+          let current = baseRadius;
+          const onRadiusMove = (moveEvent: MouseEvent) => {
+            const deltaX = (moveEvent.clientX - startX) / z;
+            // Left = rounder (radius grows), right = sharper (radius shrinks).
+            current = Math.max(0, Math.min(500, baseRadius - deltaX * 0.5));
+            geom.path.setAttribute("d", verticesToPath(geom.vertices, current));
+            showRadiusAt(handleCircle, `r ${Math.round(current)}px`);
+            window.dispatchEvent(new CustomEvent("musa:shape-radius-live", {
+              detail: { layerId: geom.layerId, uniform: current, radii: geom.vertices.map(() => current) },
+            }));
+          };
+          const onRadiusUp = () => {
+            document.removeEventListener("mousemove", onRadiusMove);
+            document.removeEventListener("mouseup", onRadiusUp);
+            radiusDragRef.current = false;
+            geom.holder.setAttribute("data-shape-corner-radius", `${Math.round(current * 10) / 10}`);
+            geom.holder.removeAttribute("data-vr");
+            emitFrameChange(cssRef.current, content.innerHTML);
+            emitElementSelection(el, selectedSourceRef.current || el);
+          };
+          document.addEventListener("mousemove", onRadiusMove);
+          document.addEventListener("mouseup", onRadiusUp);
+        });
+        radiusSvg.appendChild(handleCircle);
+      });
+    };
+
     // Selection border (always show)
     const box = document.createElement("div");
     Object.assign(box.style, {
@@ -906,8 +1127,12 @@ export function DesignFrame({
     });
     overlay.appendChild(box);
 
-    // If this is an SVG path, render point editing overlay
-    if (hasPath && pathData && targetPath) {
+    // If this is an SVG path, render point editing overlay — but only in
+    // explicit vertex-edit mode (F4 A2: entered by double-clicking the shape).
+    const selectedLayerIdForMode = closestLayerId(el);
+    const isVertexEditMode = !!vertexEditModeRef.current
+      && vertexEditModeRef.current.layerId === selectedLayerIdForMode;
+    if (hasPath && pathData && targetPath && isVertexEditMode) {
       const points = parsePathData(pathData);
       const closed = isPathClosed(pathData);
       const layerId = el.getAttribute("data-layer-id") || targetPath.getAttribute("data-layer-id");
@@ -993,23 +1218,37 @@ export function DesignFrame({
         }
       }
 
+      // ── F4 A2: segment-midpoint handles — click to insert a new vertex ──
+      if (closed && points.length >= 2) {
+        const midpoints = segmentMidpoints(points, closed);
+        midpoints.forEach((mid, midpointIndex) => {
+          const mx = (mid.x - vbX) * svgScaleX + svgLeft;
+          const my = (mid.y - vbY) * svgScaleY + svgTop;
+          const midDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          midDot.setAttribute("cx", `${mx}`);
+          midDot.setAttribute("cy", `${my}`);
+          midDot.setAttribute("r", "3.5");
+          midDot.setAttribute("fill", "rgba(59,130,246,0.2)");
+          midDot.setAttribute("stroke", "#93C5FD");
+          midDot.setAttribute("stroke-width", "1");
+          midDot.setAttribute("stroke-dasharray", "2 2");
+          midDot.style.cursor = "copy";
+          midDot.style.pointerEvents = "auto";
+          midDot.setAttribute("data-pe-mid", `${midpointIndex}`);
+          midDot.setAttribute("aria-label", `Insert vertex on segment ${midpointIndex + 1}`);
+          editSvg.appendChild(midDot);
+        });
+      }
+
       const persistPointEdit = (editData: { layerId: string; points: PathPoint[]; closed: boolean }) => {
         const newPath = serializePathData(editData.points, editData.closed);
         targetPath.setAttribute("d", newPath);
+        // Vertex edits take the shape off its parametric definition.
+        targetPath.closest("svg")?.setAttribute("data-shape-custom", "1");
         if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newPath);
       };
 
-      editSvg.addEventListener("mousedown", (event: Event) => {
-        const target = event.target as SVGElement;
-        const pointAttribute = target.getAttribute("data-pe-point");
-        const handle = target.getAttribute("data-pe-handle") as "anchor" | "cpIn" | "cpOut" | null;
-        if (pointAttribute == null || !handle) return;
-        event.stopPropagation();
-        event.preventDefault();
-
-        const pointIndex = Number.parseInt(pointAttribute, 10);
-        const editData = pointEditPathRef.current;
-        if (!editData?.points[pointIndex]) return;
+      const startVertexDrag = (editData: { layerId: string; points: PathPoint[]; closed: boolean }, pointIndex: number, dragHandle: "anchor" | "cpIn" | "cpOut") => {
         let workingPoints = editData.points;
 
         const svgEl2 = targetPath.closest("svg");
@@ -1021,6 +1260,33 @@ export function DesignFrame({
         const [vbX2 = 0, vbY2 = 0, vbWidth2 = 0, vbHeight2 = 0] = viewBox;
         const svgScaleX2 = svgRect2 && vbWidth2 ? (svgRect2.width / z) / vbWidth2 : 1;
         const svgScaleY2 = svgRect2 && vbHeight2 ? (svgRect2.height / z) / vbHeight2 : 1;
+        const snapTolerance = 6 / (z * (((svgScaleX2 + svgScaleY2) / 2) || 1));
+
+        const drawSmartGuides = (guideX: number | null, guideY: number | null) => {
+          editSvg.querySelectorAll("[data-pe-guide]").forEach(node => node.remove());
+          const drawLine = (x1: number | string, y1: number | string, x2: number | string, y2: number | string) => {
+            const guide = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            guide.setAttribute("x1", `${x1}`);
+            guide.setAttribute("y1", `${y1}`);
+            guide.setAttribute("x2", `${x2}`);
+            guide.setAttribute("y2", `${y2}`);
+            guide.setAttribute("stroke", "#F59E0B");
+            guide.setAttribute("stroke-width", "1");
+            guide.setAttribute("stroke-dasharray", "4 3");
+            guide.setAttribute("opacity", "0.9");
+            guide.style.pointerEvents = "none";
+            guide.setAttribute("data-pe-guide", "");
+            editSvg.appendChild(guide);
+          };
+          if (guideX != null) {
+            const gx = (guideX - vbX2) * svgScaleX2 + svgLeft2;
+            drawLine(gx, 0, gx, "100%");
+          }
+          if (guideY != null) {
+            const gy = (guideY - vbY2) * svgScaleY2 + svgTop2;
+            drawLine(0, gy, "100%", gy);
+          }
+        };
 
         const eventToPathPoint = (mouseEvent: MouseEvent): Point => ({
           x: Math.round((((mouseEvent.clientX - contentRect.left) / z - svgLeft2) / svgScaleX2 + vbX2) * 10) / 10,
@@ -1029,24 +1295,78 @@ export function DesignFrame({
 
         const onPointMove = (mouseEvent: MouseEvent) => {
           const position = eventToPathPoint(mouseEvent);
-          if (handle === "anchor") {
-            workingPoints = movePathPoint(workingPoints, pointIndex, position);
+          let snapped = position;
+          let guideX: number | null = null;
+          let guideY: number | null = null;
+          if (dragHandle === "anchor") {
+            // F4: smart guides — snap the dragged vertex to any other
+            // anchor's X/Y so custom figures stay straight.
+            for (let other = 0; other < workingPoints.length; other++) {
+              if (other === pointIndex) continue;
+              if (guideX === null && Math.abs(workingPoints[other].x - position.x) < snapTolerance) {
+                snapped = { ...snapped, x: workingPoints[other].x };
+                guideX = workingPoints[other].x;
+              }
+              if (guideY === null && Math.abs(workingPoints[other].y - position.y) < snapTolerance) {
+                snapped = { ...snapped, y: workingPoints[other].y };
+                guideY = workingPoints[other].y;
+              }
+            }
+          }
+          if (dragHandle === "anchor") {
+            workingPoints = movePathPoint(workingPoints, pointIndex, snapped);
           } else {
             const remainsLinked = workingPoints[pointIndex].type === "smooth" && !mouseEvent.altKey;
-            workingPoints = movePathHandle(workingPoints, pointIndex, handle, position, remainsLinked);
+            workingPoints = movePathHandle(workingPoints, pointIndex, dragHandle, snapped, remainsLinked);
           }
           editData.points = workingPoints;
           targetPath.setAttribute("d", serializePathData(workingPoints, editData.closed));
           refreshOverlay(el);
+          drawSmartGuides(guideX, guideY);
         };
 
         const onPointUp = () => {
           document.removeEventListener("mousemove", onPointMove);
           document.removeEventListener("mouseup", onPointUp);
+          drawSmartGuides(null, null);
           persistPointEdit(editData);
         };
         document.addEventListener("mousemove", onPointMove);
         document.addEventListener("mouseup", onPointUp);
+      };
+
+      editSvg.addEventListener("mousedown", (event: Event) => {
+        const target = event.target as SVGElement;
+
+        // ── F4 A2: click a segment midpoint → insert a vertex, keep dragging ──
+        const midAttribute = target.getAttribute("data-pe-mid");
+        if (midAttribute != null) {
+          event.stopPropagation();
+          event.preventDefault();
+          const editData = pointEditPathRef.current;
+          if (!editData) return;
+          const endIndex = Number.parseInt(midAttribute, 10) + 1;
+          const withInsert = splitPathSegment(editData.points, endIndex, 0.5, editData.closed);
+          if (withInsert.length === editData.points.length) return;
+          editData.points = withInsert;
+          const insertedIndex = Math.min(endIndex, withInsert.length - 1);
+          targetPath.setAttribute("d", serializePathData(withInsert, editData.closed));
+          refreshOverlay(el);
+          const refreshed = pointEditPathRef.current;
+          if (refreshed) startVertexDrag(refreshed, insertedIndex, "anchor");
+          return;
+        }
+
+        const pointAttribute = target.getAttribute("data-pe-point");
+        const handle = target.getAttribute("data-pe-handle") as "anchor" | "cpIn" | "cpOut" | null;
+        if (pointAttribute == null || !handle) return;
+        event.stopPropagation();
+        event.preventDefault();
+
+        const pointIndex = Number.parseInt(pointAttribute, 10);
+        const editData = pointEditPathRef.current;
+        if (!editData?.points[pointIndex]) return;
+        startVertexDrag(editData, pointIndex, handle);
       });
 
       const toggleAnchor = (target: SVGElement) => {
@@ -1142,6 +1462,36 @@ export function DesignFrame({
         document.addEventListener("mouseup", onRotUp);
       });
 
+      // ── F4 A1: hover a selected shape → vertex circles appear; grab any
+      // circle and drag horizontally to round/sharpen the whole figure. ──
+      if (targetPath && pathData) {
+        const shapeGeometry = resolveShapeGeometry(targetPath);
+        if (shapeGeometry) {
+          if (hoverHookRef.current !== el) {
+            hoverDetachRef.current?.();
+            const onShapeEnter = () => {
+              shapeHoverRef.current = el;
+              refreshOverlay(el);
+            };
+            const onShapeLeave = () => {
+              if (radiusDragRef.current) return;
+              shapeHoverRef.current = null;
+              overlay.querySelector("[data-radius-overlay]")?.remove();
+              overlay.querySelector("[data-radius-label]")?.remove();
+            };
+            el.addEventListener("mouseenter", onShapeEnter);
+            el.addEventListener("mouseleave", onShapeLeave);
+            hoverHookRef.current = el;
+            hoverDetachRef.current = () => {
+              el.removeEventListener("mouseenter", onShapeEnter);
+              el.removeEventListener("mouseleave", onShapeLeave);
+            };
+          }
+          if (shapeHoverRef.current === el) {
+            renderRadiusHandles(shapeGeometry);
+          }
+        }
+      }
     }
 
     const handles: [ResizeDirection, number, number, string][] = [
@@ -2466,6 +2816,17 @@ export function DesignFrame({
 
       // ── Scope drill-down (Sprint 3): enter container as new scope ──
       const tool = activeToolRef.current;
+      // ── F4 A2: double-click a shape/path → editable-vertices mode ──
+      if (!tool || tool === "select" || tool === "hand") {
+        const vertexTarget = findVertexEditableTarget(target);
+        if (vertexTarget) {
+          e.stopPropagation();
+          e.preventDefault();
+          hideHoverPreview();
+          enterVertexEditMode(vertexTarget);
+          return;
+        }
+      }
       if (!tool || tool === "select" || tool === "hand") {
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
         if (hit && hit !== content) {

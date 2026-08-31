@@ -103,7 +103,7 @@ import { analyzePathData } from "../lib/pathData";
 import { applyBrushStroke, applyPathMask, applySegmentMaskPath, applySelectionFill, reBakePathMask, removeImageMask } from "../lib/maskApply";
 import type { BrushStroke, MaskMode } from "../../shared/maskBake.ts";
 import { styleTargets, updateSelection } from "../lib/selectionModel";
-import { generatePolygonPath, generateStarPath, clampShapeCount } from "../lib/shapePaths";
+import { cornersFromShapePath, generatePolygonPath, generateStarPath, clampShapeCount, parseVertexRadiiAttr, serializeVertexRadiiAttr, verticesToPath } from "../lib/shapePaths";
 import { installAgentBridge } from "../lib/agentBridge";
 import { findCanvasObjectPosition, normalizeCanvasObject } from "../lib/canvasObjects";
 import { measureContainerForBake, convertContainerToGroup, convertGroupToContainer, ungroupPreservingLayout } from "../lib/groupSemantics";
@@ -2651,6 +2651,33 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const handleShapeOptionsChange = useCallback((layerId: string, frameId: string, options: ShapeOptions) => {
     const frame = frames.find(candidate => candidate.id === frameId);
     if (!frame) return;
+
+    // ── F4: shapes with hand-edited vertices keep their geometry. Only the
+    // radius can be re-applied (recovered from the current path); a count or
+    // ratio change would rebuild the shape from parameters and wipe edits. ──
+    const shapeDoc = new DOMParser().parseFromString(frame.html, "text/html");
+    const shapeLayer = shapeDoc.querySelector(`[data-layer-id="${layerId}"]`);
+    if (shapeLayer?.getAttribute("data-shape-custom") === "1") {
+      const shapePath = shapeLayer.tagName.toLowerCase() === "path" ? shapeLayer : shapeLayer.querySelector("path");
+      const currentD = shapePath?.getAttribute("d") || null;
+      const corners = currentD ? cornersFromShapePath(currentD) : null;
+      if (corners) {
+        const nextRadius = Math.max(0, options.cornerRadius || 0);
+        const nextD = verticesToPath(corners, corners.map(() => nextRadius));
+        const customHtml = replaceLayerPathData(frame.html, layerId, nextD, {
+          "data-shape-corner-radius": String(nextRadius),
+          "data-vr": serializeVertexRadiiAttr(corners.map(() => nextRadius)),
+          "data-shape-custom": "1",
+        });
+        if (customHtml && customHtml !== frame.html) {
+          const customUpdated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: customHtml } : candidate);
+          store.replaceAllWithUndo(customUpdated, "edit");
+          autoSave(customUpdated);
+        }
+      }
+      return; // count/ratio changes are ignored on custom-edited shapes
+    }
+
     const size = options.size || 120;
     const count = clampShapeCount(options.count);
     const d = options.shape === "star"
@@ -2662,6 +2689,35 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       "data-shape-ratio": String(options.ratio),
       "data-shape-corner-radius": String(options.cornerRadius),
       "data-shape-size": String(size),
+    });
+    if (newHtml === null || newHtml === frame.html) return;
+    const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
+    store.replaceAllWithUndo(updated, "edit");
+    autoSave(updated);
+  }, [frames, autoSave]);
+
+  // ── F4: per-vertex radius edits (Appearance panel's per-vertex submenu). ──
+  const handleShapeVertexRadiusChange = useCallback((layerId: string, frameId: string, index: number | "all", value: number) => {
+    const frame = frames.find(candidate => candidate.id === frameId);
+    if (!frame) return;
+    const doc = new DOMParser().parseFromString(frame.html, "text/html");
+    const layer = doc.querySelector(`[data-layer-id="${layerId}"]`);
+    if (!layer) return;
+    const path = layer.tagName.toLowerCase() === "path" ? layer : layer.querySelector("path");
+    const d = path?.getAttribute("d");
+    if (!path || !d) return;
+    const corners = cornersFromShapePath(d);
+    if (!corners) return;
+    const uniform = Number(layer.getAttribute("data-shape-corner-radius") ?? path.getAttribute("data-shape-corner-radius")) || 0;
+    const current = parseVertexRadiiAttr(layer.getAttribute("data-vr") ?? path.getAttribute("data-vr"), uniform, corners.length);
+    const next = index === "all"
+      ? corners.map(() => value)
+      : current.map((radius, position) => position === index ? value : radius);
+    const newD = verticesToPath(corners, next);
+    const newHtml = replaceLayerPathData(frame.html, layerId, newD, {
+      "data-shape-corner-radius": index === "all" ? String(Math.round(value * 10) / 10) : String(uniform),
+      "data-vr": serializeVertexRadiiAttr(next),
+      "data-shape-custom": "1",
     });
     if (newHtml === null || newHtml === frame.html) return;
     const updated = frames.map(candidate => candidate.id === frameId ? { ...candidate, html: newHtml } : candidate);
@@ -7557,6 +7613,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               onOutlineStroke={handleOutlineStroke}
               onOffsetPath={handleOffsetPath}
               onShapeOptionsChange={handleShapeOptionsChange}
+              onShapeVertexRadiusChange={handleShapeVertexRadiusChange}
               onGroupModeChange={handleGroupModeChange}
               onImageSrcChange={handleImageSrcChange}
               onImageRestore={handleImageRestore}
