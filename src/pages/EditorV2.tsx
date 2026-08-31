@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
-import { PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
+import { isPreviewSnoozeDays, PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
 import { GoogleFontPicker } from "../components/GoogleFontPicker";
@@ -611,8 +611,13 @@ function PreviewReminderPopover({
           <select
             id="preview-snooze-days"
             value={snoozeDays}
-            disabled={!snoozeEnabled || savingSnooze}
-            onChange={event => setSnoozeDays(Number(event.target.value) as PreviewSnoozeDays)}
+            disabled={savingSnooze}
+            onChange={event => {
+              const days = Number(event.target.value);
+              if (!isPreviewSnoozeDays(days)) return;
+              setSnoozeDays(days);
+              setSnoozeEnabled(true);
+            }}
             style={{ background: "#202020", color: "#e8e5dc", border: "1px solid rgba(255,255,255,0.16)", borderRadius: 5, padding: "3px 6px" }}
           >
             {PREVIEW_SNOOZE_DAYS.map(days => (

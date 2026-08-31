@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   isPreviewSnoozeDays,
@@ -7,12 +8,24 @@ import {
 } from "../shared/previewReminder.ts";
 
 const today = new Date(2026, 7, 31, 12, 0, 0);
+const editorSource = readFileSync(new URL("../src/pages/EditorV2.tsx", import.meta.url), "utf8");
 
 test("only supported snooze durations are accepted", () => {
   assert.equal(isPreviewSnoozeDays(1), true);
   assert.equal(isPreviewSnoozeDays(30), true);
   assert.equal(isPreviewSnoozeDays(4), false);
   assert.equal(isPreviewSnoozeDays(Number.NaN), false);
+});
+
+test("the snooze duration stays interactive before the opt-in checkbox is checked", () => {
+  const selectorStart = editorSource.indexOf('id="preview-snooze-days"');
+  const selectorEnd = editorSource.indexOf("</select>", selectorStart);
+  const selector = editorSource.slice(selectorStart, selectorEnd);
+
+  assert.ok(selectorStart >= 0, "the preview snooze selector must exist");
+  assert.doesNotMatch(selector, /disabled=\{!snoozeEnabled/);
+  assert.match(selector, /disabled=\{savingSnooze\}/);
+  assert.match(selector, /setSnoozeEnabled\(true\)/);
 });
 
 test("a design changed after its cover was captured is stale", () => {
