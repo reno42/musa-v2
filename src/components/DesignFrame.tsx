@@ -21,7 +21,6 @@ import {
   movePathHandle,
   movePathPoint,
   parsePathData,
-  segmentMidpoints,
   serializePathData,
   splitPathSegment,
   toggleSmoothCorner,
@@ -39,6 +38,7 @@ import {
 import {
   bboxCorners,
   getHandleAt,
+  getSegmentAt,
   getVertexAt,
   updateCornerRadius,
 } from "../lib/shapeHandles";
@@ -955,6 +955,12 @@ export function DesignFrame({
   const selectedVerticesRef = useRef<Set<number>>(new Set());
   const vertexPathElRef = useRef<Element | null>(null);
   const vertexScreenPointsRef = useRef<{ x: number; y: number }[]>([]);
+  // Spec F4: hover state — the vertex under the cursor (8px hit), the
+  // segment hovered for insertion, and whether a vertex drag is live
+  // (hover rendering is skipped while dragging).
+  const hoveredVertexIndexRef = useRef<number | null>(null);
+  const hoveredSegmentRef = useRef<{ startIndex: number; x: number; y: number } | null>(null);
+  const vertexDraggingRef = useRef(false);
   // Hover-preview ownership: which element owns the current preview, and
   // whether the radius handles on screen belong to an UNSELECTED hovered
   // shape (they must leave with the preview, unlike the selected shape's).
@@ -1012,6 +1018,9 @@ export function DesignFrame({
       document.removeEventListener("keydown", onKey);
       vertexEditModeRef.current = null;
       selectedVerticesRef.current = new Set();
+      hoveredVertexIndexRef.current = null;
+      hoveredSegmentRef.current = null;
+      vertexDraggingRef.current = false;
       vertexPathElRef.current = null;
       exitVertexEditModeRef.current = null;
       onVertexEditModeChangeRef.current?.(null);
@@ -1382,24 +1391,49 @@ export function DesignFrame({
    * handles, and — in interactive mode — 12px transparent hit circles
    * (Fitts) plus the selection highlight for multi-selected vertices.
    */
-  function renderVectorNetwork(editSvg: SVGElement, points: PathPoint[], mapping: VectorMapping, interactive: boolean): void {
+  function renderVectorNetwork(editSvg: SVGElement, points: PathPoint[], mapping: VectorMapping, closed: boolean, interactive: boolean): void {
     const screenPoints: { x: number; y: number }[] = [];
     for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
       const point = points[pointIndex];
       const px = (point.x - mapping.vbX) * mapping.svgScaleX + mapping.svgLeft;
       const py = (point.y - mapping.vbY) * mapping.svgScaleY + mapping.svgTop;
       screenPoints.push({ x: px, y: py });
+    }
+
+    // ── Spec F4: the vector network — straight lines between consecutive
+    // vertices (#0099FF, 1px) drawn OVER the shape's own stroke. The vertex
+    // circles are appended after these lines, so they stay on top of all. ──
+    const segmentCount = closed ? screenPoints.length : Math.max(0, screenPoints.length - 1);
+    for (let index = 0; index < segmentCount; index++) {
+      const a = screenPoints[index];
+      const b = screenPoints[(index + 1) % screenPoints.length];
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", `${a.x}`); line.setAttribute("y1", `${a.y}`);
+      line.setAttribute("x2", `${b.x}`); line.setAttribute("y2", `${b.y}`);
+      line.setAttribute("stroke", "#0099FF");
+      line.setAttribute("stroke-width", "1");
+      line.style.pointerEvents = "none";
+      editSvg.appendChild(line);
+    }
+
+    for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
+      const point = points[pointIndex];
+      const px = screenPoints[pointIndex].x;
+      const py = screenPoints[pointIndex].y;
       const selected = interactive && selectedVerticesRef.current.has(pointIndex);
+      // Spec palette: unselected = white fill + #0099FF border; hovered or
+      // selected = #0099FF fill + white border, slightly larger.
+      const emphasized = selected || (interactive && hoveredVertexIndexRef.current === pointIndex);
 
       const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       anchor.setAttribute("cx", `${px}`);
       anchor.setAttribute("cy", `${py}`);
-      anchor.setAttribute("r", selected ? "6" : point.type === "smooth" ? "5" : "4");
-      anchor.setAttribute("fill", selected ? "#ffffff" : pointIndex === 0 ? "#10B981" : point.type === "smooth" ? "#A78BFA" : "#3B82F6");
-      anchor.setAttribute("stroke", selected ? "#3B82F6" : "#fff");
-      anchor.setAttribute("stroke-width", selected ? "2" : "1.5");
+      anchor.setAttribute("r", emphasized ? "6" : "5");
+      anchor.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
+      anchor.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
+      anchor.setAttribute("stroke-width", emphasized ? "2" : "1.5");
       if (interactive) {
-        anchor.style.cursor = "move";
+        anchor.style.cursor = "pointer";
         anchor.style.pointerEvents = "auto";
         anchor.setAttribute("data-pe-point", `${pointIndex}`);
         anchor.setAttribute("data-pe-handle", "anchor");
@@ -1446,6 +1480,36 @@ export function DesignFrame({
     if (interactive) vertexScreenPointsRef.current = screenPoints;
   }
 
+  /** Re-apply hover/insert visuals to the live edit overlay after a rebuild. */
+  function refreshHoverVisuals(): void {
+    const editSvg = pointEditOverlayRef.current;
+    if (!editSvg) return;
+    // Segment-insert indicator: a green "+"-style dot at the projected point.
+    editSvg.querySelectorAll("[data-pe-insert]").forEach(node => node.remove());
+    const segment = hoveredSegmentRef.current;
+    if (segment && hoveredVertexIndexRef.current === null) {
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      marker.setAttribute("cx", `${segment.x}`);
+      marker.setAttribute("cy", `${segment.y}`);
+      marker.setAttribute("r", "4");
+      marker.setAttribute("fill", "#10B981");
+      marker.setAttribute("stroke", "#ffffff");
+      marker.setAttribute("stroke-width", "1.5");
+      marker.style.pointerEvents = "none";
+      marker.setAttribute("data-pe-insert", "");
+      editSvg.appendChild(marker);
+    }
+    // Vertex circles: repaint hovered/selected vs. idle per the spec palette.
+    editSvg.querySelectorAll("[data-pe-point][data-pe-handle='anchor']").forEach(node => {
+      const index = Number.parseInt(node.getAttribute("data-pe-point") || "-1", 10);
+      const emphasized = hoveredVertexIndexRef.current === index || selectedVerticesRef.current.has(index);
+      node.setAttribute("r", emphasized ? "6" : "5");
+      node.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
+      node.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
+      node.setAttribute("stroke-width", emphasized ? "2" : "1.5");
+    });
+  }
+
   /** Invisible 12px hit circle (Fitts) that carries the same data attrs. */
   function makeVertexHitCircle(cx: number, cy: number, pointIndex: number, handle: "anchor" | "cpIn" | "cpOut"): SVGCircleElement {
     const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -1454,7 +1518,7 @@ export function DesignFrame({
     hit.setAttribute("r", "6");
     hit.setAttribute("fill", "transparent");
     hit.setAttribute("stroke", "none");
-    hit.style.cursor = "move";
+    hit.style.cursor = handle === "anchor" ? "pointer" : "move";
     hit.style.pointerEvents = "auto";
     hit.setAttribute("data-pe-point", `${pointIndex}`);
     hit.setAttribute("data-pe-handle", handle);
@@ -1543,23 +1607,28 @@ export function DesignFrame({
     // Corner widgets for the selected shape are rendered by the shared
     // renderRadiusHandles / renderCssRadiusHandles below (F4 A1).
 
-    // Selection border (always show)
-    const box = document.createElement("div");
-    Object.assign(box.style, {
-      position: "absolute",
-      left: `${x}px`, top: `${y}px`,
-      width: `${w}px`, height: `${h}px`,
-      border: `2px solid ${SEL}`,
-      pointerEvents: "none",
-      boxSizing: "border-box",
-    });
-    overlay.appendChild(box);
-
     // If this is an SVG path, render point editing overlay — but only in
     // explicit vertex-edit mode (F4 A2: entered by double-clicking the shape).
     const selectedLayerIdForMode = closestLayerId(el);
     const isVertexEditMode = !!vertexEditModeRef.current
       && vertexEditModeRef.current.layerId === selectedLayerIdForMode;
+
+    // Spec F4: vertex-edit mode hides the selection bounding box (and the
+    // radius/resize widgets live in the else-branch below) — only the vector
+    // network is visible.
+    if (!isVertexEditMode) {
+      // Selection border
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        position: "absolute",
+        left: `${x}px`, top: `${y}px`,
+        width: `${w}px`, height: `${h}px`,
+        border: `2px solid ${SEL}`,
+        pointerEvents: "none",
+        boxSizing: "border-box",
+      });
+      overlay.appendChild(box);
+    }
     if (hasPath && pathData && targetPath && isVertexEditMode) {
       const points = parsePathData(pathData);
       const closed = isPathClosed(pathData);
@@ -1599,39 +1668,33 @@ export function DesignFrame({
 
       vertexPathElRef.current = targetPath;
       const mapping: VectorMapping = { vbX, vbY, svgScaleX, svgScaleY, svgLeft, svgTop };
-      renderVectorNetwork(editSvg, points, mapping, true);
+      renderVectorNetwork(editSvg, points, mapping, closed, true);
 
-      // ── F4 A2: segment-midpoint handles — click to insert a new vertex ──
-      if (closed && points.length >= 2) {
-        const midpoints = segmentMidpoints(points, closed);
-        midpoints.forEach((mid, midpointIndex) => {
-          const mx = (mid.x - vbX) * svgScaleX + svgLeft;
-          const my = (mid.y - vbY) * svgScaleY + svgTop;
-          const midDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          midDot.setAttribute("cx", `${mx}`);
-          midDot.setAttribute("cy", `${my}`);
-          midDot.setAttribute("r", "3.5");
-          midDot.setAttribute("fill", "rgba(59,130,246,0.2)");
-          midDot.setAttribute("stroke", "#93C5FD");
-          midDot.setAttribute("stroke-width", "1");
-          midDot.setAttribute("stroke-dasharray", "2 2");
-          midDot.style.cursor = "copy";
-          midDot.style.pointerEvents = "auto";
-          midDot.setAttribute("data-pe-mid", `${midpointIndex}`);
-          midDot.setAttribute("aria-label", `Insert vertex on segment ${midpointIndex + 1}`);
-          editSvg.appendChild(midDot);
-          // Fitts: a transparent 12px hit circle over the 7px dot.
-          const midHit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          midHit.setAttribute("cx", `${mx}`);
-          midHit.setAttribute("cy", `${my}`);
-          midHit.setAttribute("r", "6");
-          midHit.setAttribute("fill", "transparent");
-          midHit.style.cursor = "copy";
-          midHit.style.pointerEvents = "auto";
-          midHit.setAttribute("data-pe-mid", `${midpointIndex}`);
-          editSvg.appendChild(midHit);
-        });
+      // ── Spec F4: click anywhere on a segment to insert a vertex there.
+      // Transparent 16px hit bands (±8px tolerance) over each segment; the
+      // vertex circles are appended before them, so anchors win on overlap. ──
+      if (points.length >= 2) {
+        const screen = vertexScreenPointsRef.current;
+        const segmentCount = closed ? points.length : points.length - 1;
+        for (let startIndex = 0; startIndex < segmentCount; startIndex++) {
+          const a = screen[startIndex];
+          const b = screen[(startIndex + 1) % screen.length];
+          if (!a || !b || (a.x === b.x && a.y === b.y)) continue;
+          const segLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          segLine.setAttribute("x1", `${a.x}`); segLine.setAttribute("y1", `${a.y}`);
+          segLine.setAttribute("x2", `${b.x}`); segLine.setAttribute("y2", `${b.y}`);
+          segLine.setAttribute("stroke", "transparent");
+          segLine.setAttribute("stroke-width", "16");
+          segLine.style.cursor = "copy";
+          segLine.style.pointerEvents = "auto";
+          segLine.setAttribute("data-pe-seg", `${startIndex}`);
+          segLine.setAttribute("aria-label", `Insert vertex on segment ${startIndex + 1}`);
+          editSvg.appendChild(segLine);
+        }
       }
+
+      // Restore hover/insert visuals after the rebuild.
+      refreshHoverVisuals();
 
       const persistPointEdit = (editData: { layerId: string; points: PathPoint[]; closed: boolean }) => {
         const newPath = serializePathData(editData.points, editData.closed);
@@ -1648,6 +1711,9 @@ export function DesignFrame({
         dragHandle: "anchor" | "cpIn" | "cpOut",
       ) => {
         let workingPoints = editData.points;
+        vertexDraggingRef.current = true;
+        hoveredVertexIndexRef.current = null;
+        hoveredSegmentRef.current = null;
 
         const svgEl2 = targetPath.closest("svg");
         const svgRect2 = svgEl2?.getBoundingClientRect();
@@ -1760,6 +1826,7 @@ export function DesignFrame({
         const onPointUp = () => {
           document.removeEventListener("mousemove", onPointMove);
           document.removeEventListener("mouseup", onPointUp);
+          vertexDraggingRef.current = false;
           if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
           if (pendingPosition) flushPosition(pendingPosition, pendingGuides);
           drawSmartGuides(null, null);
@@ -1772,15 +1839,31 @@ export function DesignFrame({
       editSvg.addEventListener("mousedown", (event: Event) => {
         const target = event.target as SVGElement;
 
-        // ── F4 A2: click a segment midpoint → insert a vertex, keep dragging ──
-        const midAttribute = target.getAttribute("data-pe-mid");
-        if (midAttribute != null) {
+        // ── Spec F4: click a segment → insert a vertex AT the click point ──
+        const segAttribute = target.getAttribute("data-pe-seg");
+        if (segAttribute != null) {
           event.stopPropagation();
           event.preventDefault();
           const editData = pointEditPathRef.current;
-          if (!editData) return;
-          const endIndex = Number.parseInt(midAttribute, 10) + 1;
-          const withInsert = splitPathSegment(editData.points, endIndex, 0.5, editData.closed);
+          const screen = vertexScreenPointsRef.current;
+          if (!editData || !screen) return;
+          const startIndex = Number.parseInt(segAttribute, 10);
+          const endIndex = Math.min(startIndex + 1, editData.points.length);
+          const a = screen[startIndex];
+          const b = screen[(startIndex + 1) % screen.length];
+          if (!a || !b) return;
+          // Fraction of the click along the segment (clamped 0..1).
+          const mouseOverlay = {
+            x: ((event as MouseEvent).clientX - cRect.left) / z,
+            y: ((event as MouseEvent).clientY - cRect.top) / z,
+          };
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const lengthSq = dx * dx + dy * dy;
+          const t = lengthSq === 0
+            ? 0
+            : Math.min(1, Math.max(0, ((mouseOverlay.x - a.x) * dx + (mouseOverlay.y - a.y) * dy) / lengthSq));
+          const withInsert = splitPathSegment(editData.points, endIndex, t, editData.closed);
           if (withInsert.length === editData.points.length) return;
           editData.points = withInsert;
           const insertedIndex = Math.min(endIndex, withInsert.length - 1);
@@ -1953,7 +2036,7 @@ export function DesignFrame({
             svgScaleY: svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1,
             svgLeft: svgRect ? (svgRect.left - cRect.left) / z : x,
             svgTop: svgRect ? (svgRect.top - cRect.top) / z : y,
-          }, false);
+          }, isPathClosed(pathData), false);
         } else {
           const shapeGeometry = resolveShapeGeometry(targetPath);
           if (shapeGeometry) renderRadiusHandles(shapeGeometry, el, x, y, w, h);
@@ -2905,6 +2988,12 @@ export function DesignFrame({
         selectedVerticesRef.current = new Set();
         refreshOverlay(selectedRef.current || dragTarget);
       }
+      // Spec F4: while in vertex-edit mode a press on the EDITED shape's body
+      // must not drag the shape or change the selection; presses on other
+      // layers fall through so selectElement switches selection and exits.
+      if (vertexEditModeRef.current && vertexEditModeRef.current.layerId === closestLayerId(dragTarget)) {
+        return;
+      }
 
       // ── Shift+click: toggle multi-selection ──
       if (me.shiftKey) {
@@ -3406,6 +3495,39 @@ export function DesignFrame({
         kbe.stopPropagation();
       });
     });
+
+    // ── Spec F4: vertex hover — pointer cursor + blue hover circle over a
+    // vertex (8px hit), green "+" insert indicator over a segment, default
+    // elsewhere. Attached on document so it fires over the overlay children
+    // and the empty canvas alike; skipped while a vertex drag is active. ──
+    const onVertexHoverMove = (event: MouseEvent) => {
+      if (!vertexEditModeRef.current || vertexDraggingRef.current) return;
+      const editData = pointEditPathRef.current;
+      const screen = vertexScreenPointsRef.current;
+      if (!editData || !screen) return;
+      const cRect = content.getBoundingClientRect();
+      const z = zoomRef.current || 1;
+      const inside = event.clientX >= cRect.left && event.clientX <= cRect.right
+        && event.clientY >= cRect.top && event.clientY <= cRect.bottom;
+      if (!inside) {
+        hoveredVertexIndexRef.current = null;
+        hoveredSegmentRef.current = null;
+        refreshHoverVisuals();
+        return;
+      }
+      const mouseX = (event.clientX - cRect.left) / z;
+      const mouseY = (event.clientY - cRect.top) / z;
+      const vertexIndex = getVertexAt(mouseX, mouseY, screen, 8);
+      if (vertexIndex !== null) {
+        hoveredVertexIndexRef.current = vertexIndex;
+        hoveredSegmentRef.current = null;
+      } else {
+        hoveredVertexIndexRef.current = null;
+        hoveredSegmentRef.current = getSegmentAt(mouseX, mouseY, screen, editData.closed, 8);
+      }
+      refreshHoverVisuals();
+    };
+    document.addEventListener("mousemove", onVertexHoverMove);
 
     // ── Keyboard shortcuts (within shadow host context) ──
     shadow.host.addEventListener("keydown", (e: Event) => {

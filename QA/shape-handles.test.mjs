@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   bboxCorners,
   getHandleAt,
+  getSegmentAt,
   getVertexAt,
   hitTestHandle,
   updateCornerRadius,
@@ -102,6 +103,81 @@ test("getVertexAt uses a custom threshold and breaks ties by first index", () =>
   ];
   assert.equal(getVertexAt(5, 0, points, 8), 0);
   assert.equal(getVertexAt(50, 50, points, 80), 0); // both at equal distance (70.7 < 80)
+});
+
+// ── getSegmentAt ──
+
+test("getSegmentAt finds the segment under the cursor with its projection", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  // 6px above the bottom edge (0,100)-(100,100) → that segment, point (40,100)
+  const hit = getSegmentAt(40, 94, points, true);
+  assert.equal(hit.startIndex, 2);
+  closeTo(hit.x, 40);
+  closeTo(hit.y, 100);
+});
+
+test("getSegmentAt respects the threshold and returns null outside it", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+  assert.notEqual(getSegmentAt(50, 7, points, false), null); // 7px < 8 → hit
+  assert.equal(getSegmentAt(50, 8, points, false), null);  // 8px is NOT inside (strict <)
+  assert.equal(getSegmentAt(50, 20, points, false), null);
+});
+
+test("getSegmentAt clamps the projection to the segment ends", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+  // Beyond the right end: projection clamps to (100,0), distance 3 → hit
+  const hit = getSegmentAt(103, 0, points, false);
+  assert.equal(hit.startIndex, 0);
+  closeTo(hit.x, 100);
+  closeTo(hit.y, 0);
+});
+
+test("getSegmentAt connects the last vertex back to the first only when closed", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+  ];
+  // Near the closing diagonal (100,100)→(0,0): only reachable when closed.
+  assert.equal(getSegmentAt(60, 64, points, false), null);
+  const closedHit = getSegmentAt(60, 64, points, true);
+  assert.equal(closedHit.startIndex, 2);
+  closeTo(closedHit.x, 62);
+  closeTo(closedHit.y, 62);
+});
+
+test("getSegmentAt picks the NEAREST segment and skips zero-length ones", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 0, y: 0 }, // duplicate — zero-length segment
+    { x: 100, y: 0 },
+  ];
+  // 5px above the (0,0)-(100,0) edge; the degenerate segment contributes
+  // nothing closer than the real one.
+  const hit = getSegmentAt(50, 5, points, false);
+  assert.equal(hit.startIndex, 1);
+  closeTo(hit.x, 50);
+  closeTo(hit.y, 0);
+});
+
+test("getSegmentAt honors a custom threshold", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+  assert.equal(getSegmentAt(50, 10, points, false, 12).startIndex, 0); // 10px < 12
+  assert.equal(getSegmentAt(50, 10, points, false, 8), null); // 10px > 8
 });
 
 // ── updateCornerRadius ──

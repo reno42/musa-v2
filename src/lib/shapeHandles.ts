@@ -82,6 +82,57 @@ export function getVertexAt(
   return best;
 }
 
+export interface SegmentHit {
+  /** Index of the segment's start vertex — the new vertex inserts after it. */
+  startIndex: number;
+  /** Closest point on the segment (projection), same space as the input. */
+  x: number;
+  y: number;
+}
+
+/**
+ * The segment (straight line between consecutive vertices) nearest to the
+ * cursor within the threshold (default 8px), or null. Screen-space. When
+ * closed, the last vertex connects back to the first; open paths only test
+ * their real segments. Zero-length segments fall back to their point.
+ */
+export function getSegmentAt(
+  mouseX: number,
+  mouseY: number,
+  points: readonly { x: number; y: number }[],
+  closed: boolean,
+  threshold = 8,
+): SegmentHit | null {
+  const count = points.length;
+  const segments = closed ? count : Math.max(0, count - 1);
+  let best: SegmentHit | null = null;
+  let bestDistance = threshold;
+  for (let startIndex = 0; startIndex < segments; startIndex++) {
+    const a = points[startIndex];
+    const b = points[(startIndex + 1) % count];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSq = dx * dx + dy * dy;
+    let projectedX: number;
+    let projectedY: number;
+    if (lengthSq === 0) {
+      projectedX = a.x;
+      projectedY = a.y;
+    } else {
+      const t = ((mouseX - a.x) * dx + (mouseY - a.y) * dy) / lengthSq;
+      const clamped = Math.min(1, Math.max(0, t));
+      projectedX = a.x + clamped * dx;
+      projectedY = a.y + clamped * dy;
+    }
+    const distance = Math.hypot(mouseX - projectedX, mouseY - projectedY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { startIndex, x: projectedX, y: projectedY };
+    }
+  }
+  return best;
+}
+
 /**
  * Immutable radius update. With index === null every corner takes the new
  * value (uniform); with an index only that corner changes and the others
