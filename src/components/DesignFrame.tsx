@@ -273,6 +273,12 @@ const TRACKED_PROPS = [
   "stroke-dasharray", "stroke-dashoffset", "stroke-opacity",
 ];
 
+function isConvertibleCssShape(layer: Element): boolean {
+  if (layer.tagName.toLowerCase() !== "div" || layer.getAttribute("data-layer-kind") !== "shape" || layer.children.length > 0) return false;
+  const computed = layer.ownerDocument.defaultView?.getComputedStyle(layer);
+  return !!computed && !computed.borderTopLeftRadius.includes("%");
+}
+
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
@@ -1419,10 +1425,10 @@ export function DesignFrame({
       const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       anchor.setAttribute("cx", `${px}`);
       anchor.setAttribute("cy", `${py}`);
-      anchor.setAttribute("r", emphasized ? "4.5" : "3.5");
+      anchor.setAttribute("r", emphasized ? "2.25" : "1.75");
       anchor.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
       anchor.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
-      anchor.setAttribute("stroke-width", emphasized ? "1.5" : "1.25");
+      anchor.setAttribute("stroke-width", emphasized ? "1" : "0.75");
       anchor.setAttribute("data-pe-visual-anchor", "");
       if (interactive) {
         anchor.style.cursor = "pointer";
@@ -1451,8 +1457,8 @@ export function DesignFrame({
 
         const control = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         control.setAttribute("cx", `${handleX}`); control.setAttribute("cy", `${handleY}`);
-        control.setAttribute("r", "3.5"); control.setAttribute("fill", color);
-        control.setAttribute("stroke", "#fff"); control.setAttribute("stroke-width", "1");
+        control.setAttribute("r", "1.75"); control.setAttribute("fill", color);
+        control.setAttribute("stroke", "#fff"); control.setAttribute("stroke-width", "0.75");
         if (interactive) {
           control.style.cursor = "move";
           control.style.pointerEvents = "auto";
@@ -1483,10 +1489,10 @@ export function DesignFrame({
       const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       marker.setAttribute("cx", `${segment.x}`);
       marker.setAttribute("cy", `${segment.y}`);
-      marker.setAttribute("r", "3.5");
+      marker.setAttribute("r", "1.75");
       marker.setAttribute("fill", "#ffffff");
       marker.setAttribute("stroke", "#0099FF");
-      marker.setAttribute("stroke-width", "1.25");
+      marker.setAttribute("stroke-width", "0.75");
       marker.style.pointerEvents = "none";
       marker.setAttribute("data-pe-insert", "");
       editSvg.appendChild(marker);
@@ -1495,10 +1501,10 @@ export function DesignFrame({
     editSvg.querySelectorAll("[data-pe-visual-anchor]").forEach(node => {
       const index = Number.parseInt(node.getAttribute("data-pe-point") || "-1", 10);
       const emphasized = hoveredVertexIndexRef.current === index || selectedVerticesRef.current.has(index);
-      node.setAttribute("r", emphasized ? "4.5" : "3.5");
+      node.setAttribute("r", emphasized ? "2.25" : "1.75");
       node.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
       node.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
-      node.setAttribute("stroke-width", emphasized ? "1.5" : "1.25");
+      node.setAttribute("stroke-width", emphasized ? "1" : "0.75");
     });
   }
 
@@ -1517,7 +1523,7 @@ export function DesignFrame({
     return hit;
   }
 
-  /** Double-click target → the shape/path layer whose vertices are editable. */
+  /** Resolve a shape/path layer whose vertices are already editable. */
   function findVertexEditableTarget(target: Element): Element | null {
     const layer = target.closest?.("[data-layer-id]");
     if (!layer) return null;
@@ -1535,7 +1541,7 @@ export function DesignFrame({
 
   /** Convert a simple CSS shape into a real path before vertex editing. */
   function convertCssShapeToEditablePath(layer: Element): Element | null {
-    if (layer.tagName.toLowerCase() !== "div" || layer.getAttribute("data-layer-kind") !== "shape" || layer.children.length > 0) return null;
+    if (!isConvertibleCssShape(layer)) return null;
     const content = shadowRef.current?.getElementById("__df_content");
     if (!content) return null;
     const computed = layer.ownerDocument.defaultView?.getComputedStyle(layer);
@@ -1552,12 +1558,12 @@ export function DesignFrame({
     svg.setAttribute("data-shape-custom", "1");
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     svg.setAttribute("style", (layer as HTMLElement).style.cssText);
-    Object.assign(svg.style, {
-      backgroundColor: "transparent",
-      border: "none",
-      borderRadius: "0",
-      overflow: "visible",
-    });
+    // The original CSS may use !important. Keep the paint only on the path so
+    // the converted SVG cannot leave a rectangular copy behind it.
+    svg.style.setProperty("background-color", "transparent", "important");
+    svg.style.setProperty("border", "none", "important");
+    svg.style.setProperty("border-radius", "0", "important");
+    svg.style.overflow = "visible";
     const path = layer.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", serializePathData([
       { type: "anchor", x: 0, y: 0 },
@@ -1961,13 +1967,6 @@ export function DesignFrame({
         refreshOverlay(el);
       };
 
-      editSvg.addEventListener("dblclick", (event: Event) => {
-        const target = event.target as SVGElement;
-        if (!target.hasAttribute("data-pe-point")) return;
-        event.stopPropagation();
-        event.preventDefault();
-        toggleAnchor(target);
-      });
       editSvg.addEventListener("keydown", (event: Event) => {
         const keyboardEvent = event as KeyboardEvent;
         if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
@@ -2044,41 +2043,9 @@ export function DesignFrame({
         document.addEventListener("mouseup", onRotUp);
       });
 
-      // Free-form paths get a read-only vertex network. Radius widgets for
-      // parametric paths and CSS rectangles are added only on selected hover.
-      if (targetPath && pathData) {
-        const freePoints = cornersFromShapePath(pathData) === null ? parsePathData(pathData) : null;
-        if (freePoints) {
-          const svgEl = targetPath.closest("svg");
-          const svgRect = svgEl?.getBoundingClientRect();
-          const svgVbStr = svgEl?.getAttribute("viewBox");
-          let vbX = 0, vbY = 0, vbWidth = 0, vbHeight = 0;
-          if (svgVbStr) {
-            const vbp = svgVbStr.split(/\s+/);
-            vbX = parseFloat(vbp[0]) || 0;
-            vbY = parseFloat(vbp[1]) || 0;
-            vbWidth = parseFloat(vbp[2]) || 0;
-            vbHeight = parseFloat(vbp[3]) || 0;
-          }
-          const readSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          readSvg.setAttribute("width", "100%");
-          readSvg.setAttribute("height", "100%");
-          Object.assign(readSvg.style, {
-            position: "absolute", top: "0", left: "0",
-            width: "100%", height: "100%",
-            pointerEvents: "none", zIndex: "10000",
-            overflow: "visible",
-          });
-          overlay.appendChild(readSvg);
-          renderVectorNetwork(readSvg, freePoints, {
-            vbX, vbY,
-            svgScaleX: svgRect && vbWidth ? (svgRect.width / z) / vbWidth : 1,
-            svgScaleY: svgRect && vbHeight ? (svgRect.height / z) / vbHeight : 1,
-            svgLeft: svgRect ? (svgRect.left - cRect.left) / z : x,
-            svgTop: svgRect ? (svgRect.top - cRect.top) / z : y,
-          }, isPathClosed(pathData), false);
-        }
-      }
+      // Vertex geometry is intentionally absent in normal selection mode.
+      // Radius widgets are mounted separately, only while the selected shape
+      // is hovered.
     }
 
     const handles: [ResizeDirection, number, number, string][] = [
@@ -3448,6 +3415,26 @@ export function DesignFrame({
       document.addEventListener("mouseup", onDragUp);
     });
 
+    // ── Triple-click: enter the mutually-exclusive vertex editing mode. ──
+    content.addEventListener("click", (e: Event) => {
+      const me = e as MouseEvent;
+      if (me.detail !== 3 || vertexEditModeRef.current) return;
+      const tool = activeToolRef.current;
+      if (tool && tool !== "select" && tool !== "hand") return;
+      const target = me.target as HTMLElement;
+      if (!target || target === content) return;
+      const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
+      const selected = selectedRef.current;
+      const isAlreadySelected = !!hit && !!selected && closestLayerId(hit) === closestLayerId(selected);
+      if (!isAlreadySelected || !hit) return;
+      const vertexTarget = findVertexEditableTarget(target) || convertCssShapeToEditablePath(hit);
+      if (!vertexTarget) return;
+      e.stopPropagation();
+      e.preventDefault();
+      hideHoverPreview();
+      enterVertexEditMode(vertexTarget);
+    });
+
     // ── Double-click: scope drill-down or inline text editing ──
     content.addEventListener("dblclick", (e: Event) => {
       const me = e as MouseEvent;
@@ -3463,23 +3450,21 @@ export function DesignFrame({
         return;
       }
 
-      // ── Scope drill-down (Sprint 3): enter container as new scope ──
       const tool = activeToolRef.current;
-      // ── F4 A2: double-click a shape/path → editable-vertices mode ──
+      // A double-click is the first two thirds of a triple-click. Reserve it
+      // on selected shapes so it cannot start text editing or drill-down while
+      // the user is trying to enter vertex mode.
       if (!tool || tool === "select" || tool === "hand") {
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
         const selected = selectedRef.current;
         const isAlreadySelected = !!hit && !!selected && closestLayerId(hit) === closestLayerId(selected);
-        let vertexTarget = isAlreadySelected ? findVertexEditableTarget(target) : null;
-        if (!vertexTarget && isAlreadySelected && hit) vertexTarget = convertCssShapeToEditablePath(hit);
-        if (vertexTarget) {
+        if (isAlreadySelected && hit && (findVertexEditableTarget(target) || isConvertibleCssShape(hit))) {
           e.stopPropagation();
           e.preventDefault();
-          hideHoverPreview();
-          enterVertexEditMode(vertexTarget);
           return;
         }
       }
+      // ── Scope drill-down (Sprint 3): enter container as new scope ──
       if (!tool || tool === "select" || tool === "hand") {
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
         if (hit && hit !== content) {

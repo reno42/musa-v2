@@ -238,15 +238,24 @@ test("rectangle creation is sharp by default and radius handles require selected
 
 test("vertex mode is exclusive, subtle, and supports CSS shapes plus segment insertion", () => {
   const frame = readFileSync(new URL("../src/components/DesignFrame.tsx", import.meta.url), "utf8");
+  const normalSelectionStart = frame.indexOf("} else {\n      // Rotation handle");
+  const normalSelectionEnd = frame.indexOf("const handles:", normalSelectionStart);
+  const normalSelection = frame.slice(normalSelectionStart, normalSelectionEnd);
 
-  assert.match(frame, /isAlreadySelected[\s\S]*convertCssShapeToEditablePath\(hit\)/);
+  assert.match(frame, /me\.detail !== 3[\s\S]*isAlreadySelected[\s\S]*convertCssShapeToEditablePath\(hit\)/);
   assert.match(frame, /if \(vertexEditModeRef\.current\) return;/);
-  assert.match(frame, /anchor\.setAttribute\("r", emphasized \? "4\.5" : "3\.5"\)/);
+  assert.match(frame, /anchor\.setAttribute\("r", emphasized \? "2\.25" : "1\.75"\)/);
+  assert.match(frame, /control\.setAttribute\("r", "1\.75"\)/);
+  assert.match(frame, /marker\.setAttribute\("r", "1\.75"\)/);
   assert.match(frame, /querySelectorAll\("\[data-pe-visual-anchor\]"\)/);
+  assert.match(frame, /hit\.setAttribute\("r", "8"\)/);
   assert.match(frame, /marker\.setAttribute\("fill", "#ffffff"\)/);
   assert.match(frame, /marker\.setAttribute\("stroke", "#0099FF"\)/);
   assert.match(frame, /editSvg\.insertBefore\(segLine, editSvg\.firstChild\)/);
   assert.match(frame, /splitPathSegment\(editData\.points, endIndex, t, editData\.closed\)/);
+  assert.doesNotMatch(normalSelection, /renderVectorNetwork\(/);
+  assert.match(frame, /setProperty\("background-color", "transparent", "important"\)/);
+  assert.doesNotMatch(frame, /editSvg\.addEventListener\("dblclick"/);
 });
 
 // ── shapePaths API regression: verticesToPath still accepts a scalar ──
