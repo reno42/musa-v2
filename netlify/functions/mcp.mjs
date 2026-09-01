@@ -26,6 +26,7 @@ import { ANIMATION_PRESETS, ANIMATION_PROPS, EASING_PRESETS, animationStats, app
 import { createSegmentJob, dispatchSegmentJob, getSegmentJob, findExistingCutout } from "../../api/src/services/segmentation.js";
 import { decodeNetlifyBody, JSON_UTF8_CONTENT_TYPE } from "./http-encoding.mjs";
 import { getUserKey } from "./keys.mjs";
+import { createInitializeResponse, createInitializedNotificationResponse, createToolsListResponse } from "./mcp-lifecycle.mjs";
 
 // ═══════════════════════════════════════════════════════════════
 // F1 mask baking — geometry/CSS contract in shared/maskBake.ts;
@@ -16225,9 +16226,7 @@ export const handler = async (event) => {
 
   // MCP lifecycle methods
   if (method === "initialize") {
-    return {
-      statusCode: 200, headers,
-      body: JSON.stringify(jsonRpcResult(id, {
+    return createInitializeResponse(id, headers, {
         protocolVersion: "2024-11-05",
         capabilities: { tools: { listChanged: true } },
         serverInfo: { name: "futuraria-mcp", version: "1.0.0" },
@@ -16259,19 +16258,15 @@ export const handler = async (event) => {
           docsBaseUrl: siteUrl + "/docs/",
           skillUrl: siteUrl + "/SKILL.md",
         },
-      })),
-    };
+      });
   }
 
   if (method === "notifications/initialized") {
-    return { statusCode: 200, headers, body: JSON.stringify(jsonRpcResult(id, {})) };
+    return createInitializedNotificationResponse(id, headers);
   }
 
   if (method === "tools/list") {
-    return {
-      statusCode: 200, headers,
-      body: JSON.stringify(jsonRpcResult(id, { tools: MCP_TOOLS })),
-    };
+    return createToolsListResponse(id, headers, MCP_TOOLS);
   }
 
   if (method === "tools/call") {
