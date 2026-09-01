@@ -236,6 +236,19 @@ test("rectangle creation is sharp by default and radius handles require selected
   assert.match(frame, /overlay\.contains\(relatedTarget\)/);
 });
 
+test("vertex mode is exclusive, subtle, and supports CSS shapes plus segment insertion", () => {
+  const frame = readFileSync(new URL("../src/components/DesignFrame.tsx", import.meta.url), "utf8");
+
+  assert.match(frame, /isAlreadySelected[\s\S]*convertCssShapeToEditablePath\(hit\)/);
+  assert.match(frame, /if \(vertexEditModeRef\.current\) return;/);
+  assert.match(frame, /anchor\.setAttribute\("r", emphasized \? "4\.5" : "3\.5"\)/);
+  assert.match(frame, /querySelectorAll\("\[data-pe-visual-anchor\]"\)/);
+  assert.match(frame, /marker\.setAttribute\("fill", "#ffffff"\)/);
+  assert.match(frame, /marker\.setAttribute\("stroke", "#0099FF"\)/);
+  assert.match(frame, /editSvg\.insertBefore\(segLine, editSvg\.firstChild\)/);
+  assert.match(frame, /splitPathSegment\(editData\.points, endIndex, t, editData\.closed\)/);
+});
+
 // ── shapePaths API regression: verticesToPath still accepts a scalar ──
 
 test("verticesToPath still accepts a scalar radius (uniform)", () => {

@@ -1413,17 +1413,17 @@ export function DesignFrame({
       const px = screenPoints[pointIndex].x;
       const py = screenPoints[pointIndex].y;
       const selected = interactive && selectedVerticesRef.current.has(pointIndex);
-      // Spec palette: unselected = white fill + #0099FF border; hovered or
-      // selected = #0099FF fill + white border, slightly larger.
+      // Idle anchors stay subtle; hover/selection gains a compact blue fill.
       const emphasized = selected || (interactive && hoveredVertexIndexRef.current === pointIndex);
 
       const anchor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       anchor.setAttribute("cx", `${px}`);
       anchor.setAttribute("cy", `${py}`);
-      anchor.setAttribute("r", emphasized ? "6" : "5");
+      anchor.setAttribute("r", emphasized ? "4.5" : "3.5");
       anchor.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
       anchor.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
-      anchor.setAttribute("stroke-width", emphasized ? "2" : "1.5");
+      anchor.setAttribute("stroke-width", emphasized ? "1.5" : "1.25");
+      anchor.setAttribute("data-pe-visual-anchor", "");
       if (interactive) {
         anchor.style.cursor = "pointer";
         anchor.style.pointerEvents = "auto";
@@ -1476,38 +1476,38 @@ export function DesignFrame({
   function refreshHoverVisuals(): void {
     const editSvg = pointEditOverlayRef.current;
     if (!editSvg) return;
-    // Segment-insert indicator: a green "+"-style dot at the projected point.
+    // Segment-insert indicator: a subtle prospective vertex at the projection.
     editSvg.querySelectorAll("[data-pe-insert]").forEach(node => node.remove());
     const segment = hoveredSegmentRef.current;
     if (segment && hoveredVertexIndexRef.current === null) {
       const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       marker.setAttribute("cx", `${segment.x}`);
       marker.setAttribute("cy", `${segment.y}`);
-      marker.setAttribute("r", "4");
-      marker.setAttribute("fill", "#10B981");
-      marker.setAttribute("stroke", "#ffffff");
-      marker.setAttribute("stroke-width", "1.5");
+      marker.setAttribute("r", "3.5");
+      marker.setAttribute("fill", "#ffffff");
+      marker.setAttribute("stroke", "#0099FF");
+      marker.setAttribute("stroke-width", "1.25");
       marker.style.pointerEvents = "none";
       marker.setAttribute("data-pe-insert", "");
       editSvg.appendChild(marker);
     }
     // Vertex circles: repaint hovered/selected vs. idle per the spec palette.
-    editSvg.querySelectorAll("[data-pe-point][data-pe-handle='anchor']").forEach(node => {
+    editSvg.querySelectorAll("[data-pe-visual-anchor]").forEach(node => {
       const index = Number.parseInt(node.getAttribute("data-pe-point") || "-1", 10);
       const emphasized = hoveredVertexIndexRef.current === index || selectedVerticesRef.current.has(index);
-      node.setAttribute("r", emphasized ? "6" : "5");
+      node.setAttribute("r", emphasized ? "4.5" : "3.5");
       node.setAttribute("fill", emphasized ? "#0099FF" : "#ffffff");
       node.setAttribute("stroke", emphasized ? "#ffffff" : "#0099FF");
-      node.setAttribute("stroke-width", emphasized ? "2" : "1.5");
+      node.setAttribute("stroke-width", emphasized ? "1.5" : "1.25");
     });
   }
 
-  /** Invisible 12px hit circle (Fitts) that carries the same data attrs. */
+  /** Invisible 16px hit circle keeps the smaller visual anchors easy to grab. */
   function makeVertexHitCircle(cx: number, cy: number, pointIndex: number, handle: "anchor" | "cpIn" | "cpOut"): SVGCircleElement {
     const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     hit.setAttribute("cx", `${cx}`);
     hit.setAttribute("cy", `${cy}`);
-    hit.setAttribute("r", "6");
+    hit.setAttribute("r", "8");
     hit.setAttribute("fill", "transparent");
     hit.setAttribute("stroke", "none");
     hit.style.cursor = handle === "anchor" ? "pointer" : "move";
@@ -1531,6 +1531,55 @@ export function DesignFrame({
       return null;
     }
     return layer;
+  }
+
+  /** Convert a simple CSS shape into a real path before vertex editing. */
+  function convertCssShapeToEditablePath(layer: Element): Element | null {
+    if (layer.tagName.toLowerCase() !== "div" || layer.getAttribute("data-layer-kind") !== "shape" || layer.children.length > 0) return null;
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!content) return null;
+    const computed = layer.ownerDocument.defaultView?.getComputedStyle(layer);
+    if (!computed || computed.borderTopLeftRadius.includes("%")) return null;
+    const rect = getVisualRect(layer);
+    const z = zoomRef.current || 1;
+    const width = Math.max(1, Number.parseFloat(computed.width) || rect.width / z);
+    const height = Math.max(1, Number.parseFloat(computed.height) || rect.height / z);
+    const svg = layer.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const attribute of [...layer.attributes]) {
+      if (attribute.name !== "style" && attribute.name !== "data-layer-kind") svg.setAttribute(attribute.name, attribute.value);
+    }
+    svg.setAttribute("data-layer-kind", "svg");
+    svg.setAttribute("data-shape-custom", "1");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("style", (layer as HTMLElement).style.cssText);
+    Object.assign(svg.style, {
+      backgroundColor: "transparent",
+      border: "none",
+      borderRadius: "0",
+      overflow: "visible",
+    });
+    const path = layer.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", serializePathData([
+      { type: "anchor", x: 0, y: 0 },
+      { type: "anchor", x: width, y: 0 },
+      { type: "anchor", x: width, y: height },
+      { type: "anchor", x: 0, y: height },
+    ], true));
+    const fill = computed.backgroundColor === "rgba(0, 0, 0, 0)" ? "none" : computed.backgroundColor;
+    path.setAttribute("fill", fill);
+    const strokeWidth = Number.parseFloat(computed.borderTopWidth) || 0;
+    path.setAttribute("stroke", strokeWidth > 0 && computed.borderTopStyle !== "none" ? computed.borderTopColor : "none");
+    path.setAttribute("stroke-width", `${strokeWidth}`);
+    svg.appendChild(path);
+    layer.replaceWith(svg);
+    const updatedCss = updateCssRule(cssRef.current, getSelector(svg), {
+      "background-color": "transparent",
+      "border": "none",
+      "border-radius": "0",
+      "overflow": "visible",
+    });
+    emitFrameChange(updatedCss, content.innerHTML);
+    return svg;
   }
 
   /**
@@ -1680,7 +1729,9 @@ export function DesignFrame({
           segLine.style.pointerEvents = "auto";
           segLine.setAttribute("data-pe-seg", `${startIndex}`);
           segLine.setAttribute("aria-label", `Insert vertex on segment ${startIndex + 1}`);
-          editSvg.appendChild(segLine);
+          // Keep the broad segment target behind the visible anchors so it
+          // cannot steal a vertex drag where their hit areas overlap.
+          editSvg.insertBefore(segLine, editSvg.firstChild);
         }
       }
 
@@ -2270,6 +2321,7 @@ export function DesignFrame({
 
       // ── Hover preview (select/hand tool, no buttons pressed) ──
       if ((!activeToolRef.current || activeToolRef.current === "select" || activeToolRef.current === "hand") && me.buttons === 0) {
+        if (vertexEditModeRef.current) return;
         const target = me.target as HTMLElement;
         if (!target || target === content) { hideHoverPreview(); return; }
         const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
@@ -3415,7 +3467,11 @@ export function DesignFrame({
       const tool = activeToolRef.current;
       // ── F4 A2: double-click a shape/path → editable-vertices mode ──
       if (!tool || tool === "select" || tool === "hand") {
-        const vertexTarget = findVertexEditableTarget(target);
+        const hit = resolveHitTarget(target, scopeRef.current, me.ctrlKey || me.metaKey);
+        const selected = selectedRef.current;
+        const isAlreadySelected = !!hit && !!selected && closestLayerId(hit) === closestLayerId(selected);
+        let vertexTarget = isAlreadySelected ? findVertexEditableTarget(target) : null;
+        if (!vertexTarget && isAlreadySelected && hit) vertexTarget = convertCssShapeToEditablePath(hit);
         if (vertexTarget) {
           e.stopPropagation();
           e.preventDefault();
