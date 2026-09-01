@@ -11,6 +11,7 @@ import {
   updateCornerRadius,
 } from "../src/lib/shapeHandles.ts";
 import { verticesToPath } from "../src/lib/shapePaths.ts";
+import { fitPathBox } from "../src/lib/pathData.ts";
 
 const closeTo = (actual, expected, tolerance = 1e-7) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -255,7 +256,51 @@ test("vertex mode is exclusive, subtle, and supports CSS shapes plus segment ins
   assert.match(frame, /splitPathSegment\(editData\.points, endIndex, t, editData\.closed\)/);
   assert.doesNotMatch(normalSelection, /renderVectorNetwork\(/);
   assert.match(frame, /setProperty\("background-color", "transparent", "important"\)/);
+  assert.match(frame, /setProperty\("background", "none", "important"\)/);
+  assert.match(frame, /setProperty\("background-image", "none", "important"\)/);
+  assert.match(frame, /setProperty\("pointer-events", "none", "important"\)/);
+  assert.match(frame, /setProperty\("pointer-events", "visiblePainted", "important"\)/);
+  assert.match(frame, /data-css-shape-converted/);
+  assert.match(frame, /pointHitsConvertedShape\(child, clientX, clientY\)/);
+  assert.match(frame, /if \(isConvertedCssShapeSvg\(target\)\) return null/);
+  assert.match(frame, /const fitted = fitPathBox\(/);
+  assert.match(frame, /svg\.setAttribute\("viewBox", `\$\{fitted\.x\} \$\{fitted\.y\} \$\{fitted\.width\} \$\{fitted\.height\}`\)/);
+  assert.match(frame, /persistPathPointEdit\(pathEl, next, editData\.closed, editData\.layerId\)/);
+  assert.match(frame, /persistPathPointEdit\(targetPath, editData\.points, editData\.closed, editData\.layerId\)/);
+  assert.match(frame, /if \(persistConvertedShapeBounds\(targetPath, points, closed\)\) return true/);
+  assert.match(frame, /if \(!isVertexEditMode\) \{\s*const handles:/);
+  assert.match(frame, /setProperty\("left", `\$\{fitted\.left\}px`, "important"\)/);
+  assert.match(frame, /lastEmittedHtmlRef\.current = htmlChanged \? updatedHtml : null/);
+  assert.match(frame, /setAttribute\("preserveAspectRatio", "none"\)/);
+  assert.ok((frame.match(/persistConvertedShapeBounds\(pathEl, updated, closed\)/g) || []).length >= 3);
   assert.doesNotMatch(frame, /editSvg\.addEventListener\("dblclick"/);
+});
+
+test("fitting an edited rectangle preserves screen coordinates and follows the new silhouette", () => {
+  const fitted = fitPathBox([
+    { type: "anchor", x: -20, y: 10 },
+    { type: "anchor", x: 130, y: -15 },
+    { type: "anchor", x: 80, y: 140 },
+    { type: "anchor", x: 0, y: 100 },
+  ], {
+    x: 0, y: 0, width: 100, height: 100,
+  }, {
+    left: 200, top: 300, width: 200, height: 100,
+  });
+
+  assert.deepEqual(fitted, {
+    x: -20,
+    y: -15,
+    width: 150,
+    height: 155,
+    left: 160,
+    top: 285,
+    cssWidth: 300,
+    cssHeight: 155,
+  });
+  // Old and fitted transforms map the same path coordinate to the same screen point.
+  assert.equal(200 + 50 * 2, fitted.left + (50 - fitted.x) * (fitted.cssWidth / fitted.width));
+  assert.equal(300 + 50, fitted.top + (50 - fitted.y) * (fitted.cssHeight / fitted.height));
 });
 
 // ── shapePaths API regression: verticesToPath still accepts a scalar ──

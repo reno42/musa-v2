@@ -17,6 +17,7 @@ import {
   createSmoothPoint,
   deletePoint as deletePathPoint,
   findClosestPathSegment,
+  fitPathBox,
   isPathClosed,
   movePathHandle,
   movePathPoint,
@@ -279,6 +280,42 @@ function isConvertibleCssShape(layer: Element): boolean {
   return !!computed && !computed.borderTopLeftRadius.includes("%");
 }
 
+function isConvertedCssShapeSvg(element: Element | null): element is SVGSVGElement {
+  if (!element || element.tagName.toLowerCase() !== "svg") return false;
+  const svg = element as SVGSVGElement;
+  if (svg.getAttribute("data-css-shape-converted") === "1") return true;
+  // Compatibility with rectangles converted by the first vertex-edit release.
+  return svg.getAttribute("data-layer-kind") === "svg"
+    && svg.getAttribute("data-shape-custom") === "1"
+    && svg.style.backgroundColor === "transparent"
+    && svg.style.getPropertyPriority("background-color") === "important"
+    && svg.querySelectorAll(":scope > path").length === 1;
+}
+
+/** True when a screen-space point hits the painted path, not its SVG viewport. */
+function pointHitsConvertedShape(element: Element, clientX: number, clientY: number): boolean {
+  if (!isConvertedCssShapeSvg(element)) return true;
+  const path = element.querySelector(":scope > path") as SVGPathElement | null;
+  const matrix = path?.getScreenCTM();
+  if (!path || !matrix || typeof path.isPointInFill !== "function") return true;
+  try {
+    const screenPoint = element.createSVGPoint();
+    screenPoint.x = clientX;
+    screenPoint.y = clientY;
+    const localPoint = screenPoint.matrixTransform(matrix.inverse());
+    const computed = path.ownerDocument.defaultView?.getComputedStyle(path);
+    const fillPainted = computed?.fill !== "none" && Number.parseFloat(computed?.fillOpacity || "1") > 0;
+    const strokePainted = computed?.stroke !== "none"
+      && Number.parseFloat(computed?.strokeOpacity || "1") > 0
+      && Number.parseFloat(computed?.strokeWidth || "0") > 0;
+    return (fillPainted && path.isPointInFill(localPoint))
+      || (strokePainted && typeof path.isPointInStroke === "function" && path.isPointInStroke(localPoint));
+  } catch {
+    // Keep selection usable in browsers that cannot invert this SVG matrix.
+    return true;
+  }
+}
+
 export function DesignFrame({
   frame, isActive, zoom, onActivate, onElementSelect, onLayerEscape, onCssChange, onHtmlChange,
   selectionRequest, selectedLayerId, selectedLayerIds = [], onLayerSelectionChange,
@@ -371,8 +408,14 @@ export function DesignFrame({
   const hoverPreviewRef = useRef<HTMLElement | null>(null);
 
   function emitFrameChange(updatedCss: string, updatedHtml?: string) {
+    const cssChanged = updatedCss !== cssRef.current;
+    const htmlChanged = updatedHtml !== undefined && updatedHtml !== htmlRef.current;
     cssRef.current = updatedCss;
-    lastEmittedCssRef.current = updatedCss;
+    lastEmittedCssRef.current = cssChanged ? updatedCss : null;
+    if (updatedHtml !== undefined) {
+      htmlRef.current = updatedHtml;
+      lastEmittedHtmlRef.current = htmlChanged ? updatedHtml : null;
+    }
     const style = shadowRef.current?.querySelector("style");
     if (style) style.textContent = `#__df_content { width: ${frame.width}px; height: ${frame.height}px; overflow: hidden; }\n${mapBodySelectors(updatedCss)}`;
     onCssChangeRef.current?.(frame.id, updatedCss, updatedHtml);
@@ -560,6 +603,8 @@ export function DesignFrame({
       lastEmittedCssRef.current = null; // consume the echo
       return;
     }
+    // A different update won the race; the older echo marker is now stale.
+    lastEmittedCssRef.current = null;
     cssRef.current = frame.css;
     const shadow = shadowRef.current;
     if (!shadow) return;
@@ -680,6 +725,8 @@ export function DesignFrame({
       lastEmittedHtmlRef.current = null; // consume the echo
       return;
     }
+    // Do not let an older local emission suppress a later undo/external edit.
+    lastEmittedHtmlRef.current = null;
 
     let html = frame.html;
 
@@ -893,7 +940,8 @@ export function DesignFrame({
     const selectableKids = (parent: Element) =>
       [...parent.children].filter(child => {
         const lid = child.getAttribute("data-layer-id");
-        return lid && !lid.startsWith("auto_");
+        return lid && !lid.startsWith("auto_")
+          && pointHitsConvertedShape(child, clientX, clientY);
       });
 
     // Descend from the top-level hit to the deepest child under the point.
@@ -949,7 +997,7 @@ export function DesignFrame({
   // ── F4: shape vertex interactions ──
   // A1 — hover a selected shape: circles at each vertex; grab one and drag
   //   horizontally (left = sharper, right = rounder) to round ALL corners.
-  // A2 — double-click a shape: editable-vertices mode (drag individual
+  // A2 — triple-click a shape: editable-vertices mode (drag individual
   //   vertices with smart guides, click a segment midpoint to insert).
   const vertexEditModeRef = useRef<{ layerId: string } | null>(null);
   const exitVertexEditModeRef = useRef<(() => void) | null>(null);
@@ -1012,10 +1060,7 @@ export function DesignFrame({
       for (const index of selected) next = deletePathPoint(next, index);
       editData.points = next;
       selectedVerticesRef.current = new Set();
-      const newD = serializePathData(next, editData.closed);
-      pathEl.setAttribute("d", newD);
-      pathEl.closest("svg")?.setAttribute("data-shape-custom", "1");
-      if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newD);
+      persistPathPointEdit(pathEl, next, editData.closed, editData.layerId);
       if (selectedRef.current) refreshOverlay(selectedRef.current);
     };
     exitVertexEditModeRef.current = () => {
@@ -1556,13 +1601,19 @@ export function DesignFrame({
     }
     svg.setAttribute("data-layer-kind", "svg");
     svg.setAttribute("data-shape-custom", "1");
+    svg.setAttribute("data-css-shape-converted", "1");
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("style", (layer as HTMLElement).style.cssText);
-    // The original CSS may use !important. Keep the paint only on the path so
-    // the converted SVG cannot leave a rectangular copy behind it.
+    // Keep all paint on the path. Clearing only background-color is not enough:
+    // a background shorthand/image would keep drawing the original rectangle.
+    svg.style.setProperty("background", "none", "important");
     svg.style.setProperty("background-color", "transparent", "important");
+    svg.style.setProperty("background-image", "none", "important");
     svg.style.setProperty("border", "none", "important");
     svg.style.setProperty("border-radius", "0", "important");
+    svg.style.setProperty("box-shadow", "none", "important");
+    svg.style.setProperty("pointer-events", "none", "important");
     svg.style.overflow = "visible";
     const path = layer.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", serializePathData([
@@ -1576,16 +1627,96 @@ export function DesignFrame({
     const strokeWidth = Number.parseFloat(computed.borderTopWidth) || 0;
     path.setAttribute("stroke", strokeWidth > 0 && computed.borderTopStyle !== "none" ? computed.borderTopColor : "none");
     path.setAttribute("stroke-width", `${strokeWidth}`);
+    path.style.setProperty("pointer-events", "visiblePainted", "important");
     svg.appendChild(path);
     layer.replaceWith(svg);
-    const updatedCss = updateCssRule(cssRef.current, getSelector(svg), {
+    const updatedCss = updateCssRule(cssRef.current, getSelector(svg), importantProperties({
+      "background": "none",
       "background-color": "transparent",
+      "background-image": "none",
       "border": "none",
       "border-radius": "0",
+      "box-shadow": "none",
+      "pointer-events": "none",
       "overflow": "visible",
-    });
+    }));
     emitFrameChange(updatedCss, content.innerHTML);
     return svg;
+  }
+
+  /**
+   * Make a converted rectangle's SVG box follow its edited path bounds. The
+   * viewBox and CSS box move together, so the path keeps the same screen
+   * position while selection no longer points at the obsolete rectangle.
+   */
+  function persistConvertedShapeBounds(
+    targetPath: Element,
+    points: PathPoint[],
+    closed: boolean,
+  ): boolean {
+    const svg = targetPath.closest("svg");
+    const content = shadowRef.current?.getElementById("__df_content");
+    if (!isConvertedCssShapeSvg(svg) || !content || points.length === 0) return false;
+
+    svg.setAttribute("data-css-shape-converted", "1");
+    svg.setAttribute("preserveAspectRatio", "none");
+    const oldViewBox = (svg.getAttribute("viewBox") || "0 0 1 1").split(/\s+/).map(Number);
+    const [oldX = 0, oldY = 0, oldWidthRaw = 1, oldHeightRaw = 1] = oldViewBox;
+    const computed = svg.ownerDocument.defaultView?.getComputedStyle(svg);
+    const fitted = fitPathBox(
+      points,
+      { x: oldX, y: oldY, width: oldWidthRaw, height: oldHeightRaw },
+      {
+        left: Number.parseFloat(computed?.left || "") || 0,
+        top: Number.parseFloat(computed?.top || "") || 0,
+        width: Number.parseFloat(computed?.width || "") || Math.max(Math.abs(oldWidthRaw) || 1, 1),
+        height: Number.parseFloat(computed?.height || "") || Math.max(Math.abs(oldHeightRaw) || 1, 1),
+      },
+    );
+
+    targetPath.setAttribute("d", serializePathData(points, closed));
+    svg.setAttribute("viewBox", `${fitted.x} ${fitted.y} ${fitted.width} ${fitted.height}`);
+    svg.style.setProperty("left", `${fitted.left}px`, "important");
+    svg.style.setProperty("top", `${fitted.top}px`, "important");
+    svg.style.setProperty("width", `${fitted.cssWidth}px`, "important");
+    svg.style.setProperty("height", `${fitted.cssHeight}px`, "important");
+    svg.style.setProperty("background", "none", "important");
+    svg.style.setProperty("background-color", "transparent", "important");
+    svg.style.setProperty("background-image", "none", "important");
+    svg.style.setProperty("pointer-events", "none", "important");
+    (targetPath as HTMLElement | SVGElement).style.setProperty("pointer-events", "visiblePainted", "important");
+
+    const updatedCss = updateCssRule(cssRef.current, getSelector(svg), importantProperties({
+      left: `${fitted.left}px`,
+      top: `${fitted.top}px`,
+      width: `${fitted.cssWidth}px`,
+      height: `${fitted.cssHeight}px`,
+      background: "none",
+      "background-color": "transparent",
+      "background-image": "none",
+      border: "none",
+      "border-radius": "0",
+      "box-shadow": "none",
+      "pointer-events": "none",
+      overflow: "visible",
+    }));
+    emitFrameChange(updatedCss, content.innerHTML);
+    return true;
+  }
+
+  /** Persist every vertex-mode mutation through the same converted-shape path. */
+  function persistPathPointEdit(
+    targetPath: Element,
+    points: PathPoint[],
+    closed: boolean,
+    layerId: string,
+  ): boolean {
+    const newPath = serializePathData(points, closed);
+    targetPath.setAttribute("d", newPath);
+    targetPath.closest("svg")?.setAttribute("data-shape-custom", "1");
+    if (persistConvertedShapeBounds(targetPath, points, closed)) return true;
+    if (layerId) onEditPathPointsRef.current?.(layerId, newPath);
+    return false;
   }
 
   /**
@@ -1745,11 +1876,9 @@ export function DesignFrame({
       refreshHoverVisuals();
 
       const persistPointEdit = (editData: { layerId: string; points: PathPoint[]; closed: boolean }) => {
-        const newPath = serializePathData(editData.points, editData.closed);
-        targetPath.setAttribute("d", newPath);
-        // Vertex edits take the shape off its parametric definition.
-        targetPath.closest("svg")?.setAttribute("data-shape-custom", "1");
-        if (editData.layerId) onEditPathPointsRef.current?.(editData.layerId, newPath);
+        if (persistPathPointEdit(targetPath, editData.points, editData.closed, editData.layerId)) {
+          refreshOverlay(targetPath.closest("[data-layer-id]") || el);
+        }
       };
 
       const startVertexDrag = (
@@ -2048,27 +2177,29 @@ export function DesignFrame({
       // is hovered.
     }
 
-    const handles: [ResizeDirection, number, number, string][] = [
-      ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
-      ["w", 0, 0.5, "ew-resize"], ["e", 1, 0.5, "ew-resize"],
-      ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
-    ];
-    for (const [direction, cx, cy, cursor] of handles) {
-      const handle = document.createElement("div");
-      Object.assign(handle.style, {
-        position: "absolute",
-        left: `${x + cx * w - HANDLE / 2}px`,
-        top: `${y + cy * h - HANDLE / 2}px`,
-        width: `${HANDLE}px`, height: `${HANDLE}px`,
-        background: SEL, border: "1px solid #fff",
-        cursor, pointerEvents: "auto", boxSizing: "border-box",
-      });
-      overlay.appendChild(handle);
-      handle.addEventListener("mousedown", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        startResize(el, e as MouseEvent, direction, x, y, w, h);
-      });
+    if (!isVertexEditMode) {
+      const handles: [ResizeDirection, number, number, string][] = [
+        ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
+        ["w", 0, 0.5, "ew-resize"], ["e", 1, 0.5, "ew-resize"],
+        ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
+      ];
+      for (const [direction, cx, cy, cursor] of handles) {
+        const handle = document.createElement("div");
+        Object.assign(handle.style, {
+          position: "absolute",
+          left: `${x + cx * w - HANDLE / 2}px`,
+          top: `${y + cy * h - HANDLE / 2}px`,
+          width: `${HANDLE}px`, height: `${HANDLE}px`,
+          background: SEL, border: "1px solid #fff",
+          cursor, pointerEvents: "auto", boxSizing: "border-box",
+        });
+        overlay.appendChild(handle);
+        handle.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          startResize(el, e as MouseEvent, direction, x, y, w, h);
+        });
+      }
     }
   }
 
@@ -2170,6 +2301,9 @@ export function DesignFrame({
     // - Ctrl/Cmd+click → deep select (exact element under cursor)
     function resolveHitTarget(target: Element, scope: Element | null, ctrlKey: boolean): Element | null {
       if (target === content || target.closest?.("#__df_overlay")) return null;
+      // Legacy converted rectangles may still expose the transparent SVG host
+      // as the event target. Only their painted child path is selectable.
+      if (isConvertedCssShapeSvg(target)) return null;
       // Ctrl/Cmd+click: deep select — nearest ancestor with data-layer-id
       if (ctrlKey) {
         let el: Element | null = target;
@@ -2546,7 +2680,9 @@ export function DesignFrame({
           if (closest && closest.distance < 20) {
             const updated = splitPathSegment(points, closest.endIndex, closest.t, closed);
             pathEl.setAttribute("d", serializePathData(updated, closed));
-            emitFrameChange(cssRef.current, content.innerHTML);
+            if (!persistConvertedShapeBounds(pathEl, updated, closed)) {
+              emitFrameChange(cssRef.current, content.innerHTML);
+            }
             return;
           }
         }
@@ -2578,7 +2714,9 @@ export function DesignFrame({
           if (bestDist < 12 && bestIdx >= 0 && points.length > 2) {
             const updated = deletePathPoint(points, bestIdx);
             pathEl.setAttribute("d", serializePathData(updated, closed));
-            emitFrameChange(cssRef.current, content.innerHTML);
+            if (!persistConvertedShapeBounds(pathEl, updated, closed)) {
+              emitFrameChange(cssRef.current, content.innerHTML);
+            }
             return;
           }
         }
@@ -2628,7 +2766,9 @@ export function DesignFrame({
               document.removeEventListener("mouseup", onConvertUp);
               if (!dragged) updated = toggleSmoothCorner(points, bestIdx, closed);
               pathEl.setAttribute("d", serializePathData(updated, closed));
-              emitFrameChange(cssRef.current, content.innerHTML);
+              if (!persistConvertedShapeBounds(pathEl, updated, closed)) {
+                emitFrameChange(cssRef.current, content.innerHTML);
+              }
             };
             document.addEventListener("mousemove", onConvertMove);
             document.addEventListener("mouseup", onConvertUp);

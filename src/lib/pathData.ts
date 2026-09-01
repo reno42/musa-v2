@@ -366,6 +366,35 @@ export function computeBounds(points: PathPoint[]): { x: number; y: number; widt
   };
 }
 
+/**
+ * Fit an SVG viewport and its rendered CSS box to edited path coordinates
+ * without moving the path on screen. This is used when a CSS rectangle becomes
+ * a free-form SVG and its vertices move beyond the rectangle's old bounds.
+ */
+export function fitPathBox(
+  points: PathPoint[],
+  viewBox: { x: number; y: number; width: number; height: number },
+  renderedBox: { left: number; top: number; width: number; height: number },
+): { x: number; y: number; width: number; height: number; left: number; top: number; cssWidth: number; cssHeight: number } {
+  const bounds = computeBounds(points);
+  const oldWidth = Math.max(Math.abs(viewBox.width) || 1, 1);
+  const oldHeight = Math.max(Math.abs(viewBox.height) || 1, 1);
+  const scaleX = Math.max(renderedBox.width, 1) / oldWidth;
+  const scaleY = Math.max(renderedBox.height, 1) / oldHeight;
+  const width = Math.max(bounds.width, 1);
+  const height = Math.max(bounds.height, 1);
+  return {
+    x: bounds.x,
+    y: bounds.y,
+    width,
+    height,
+    left: renderedBox.left + (bounds.x - viewBox.x) * scaleX,
+    top: renderedBox.top + (bounds.y - viewBox.y) * scaleY,
+    cssWidth: width * scaleX,
+    cssHeight: height * scaleY,
+  };
+}
+
 export function clonePathPoints(points: PathPoint[]): PathPoint[] {
   return points.map((point) => ({
     ...point,
