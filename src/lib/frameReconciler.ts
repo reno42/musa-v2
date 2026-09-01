@@ -110,6 +110,18 @@ export function reconcileFrameHtml(
   // Current live DOM
   const currentLayers = collectLayers(content);
 
+  // Undo can restore a wrapper around layers that already exist live at the
+  // root. A recursive clone would duplicate those children, so rebuild this
+  // rare topology change atomically.
+  const restoresWrapperAroundLiveChildren = [...targetLayers].some(([lid, { el }]) =>
+    !currentLayers.has(lid)
+    && [...el.querySelectorAll("[data-layer-id]")].some(child => currentLayers.has(child.getAttribute("data-layer-id") || "")),
+  );
+  if (restoresWrapperAroundLiveChildren) {
+    content.innerHTML = targetHtml;
+    return { patched: 0, inserted: targetLayers.size, removed: currentLayers.size, skipped: 0, durationMs: performance.now() - t0 };
+  }
+
   // DUPLICATE data-layer-id bailout (legacy batch-generated designs): the
   // id-keyed diff below assumes ids are unique — with duplicates the map
   // drops siblings and the sync pass fights over shared nodes, DUPLICATING

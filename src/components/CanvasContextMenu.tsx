@@ -115,7 +115,7 @@ export function CanvasContextMenu({
   }, [x, y]);
 
   const hasElement = Boolean(selectedElement);
-  const isGroup = Boolean(selectedElement?.childLayerCount);
+  const isGroup = selectedElement?.layerKind === "group";
 
   const run = (action: () => void) => () => { action(); onClose(); };
 

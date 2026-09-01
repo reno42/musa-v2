@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
+import { frameRichTextRegistry, MIXED_TEXT_STYLE, type RichTextProperty } from "../lib/richText";
 import { GoogleFontPicker } from "./GoogleFontPicker";
 import { setTransformFunction, removeTransformFunction, updateCssProperty as setCssProperty, getCssPropertyValue } from "../lib/cssMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames } from "../lib/googleFonts";
@@ -295,6 +296,7 @@ function SelectRow({ label, value, options, onChange }: {
   return (
     <PropRow label={label}>
       <select value={value || ""} onChange={e => onChange(e.target.value)} style={sel}>
+        {value === MIXED_TEXT_STYLE && <option value={MIXED_TEXT_STYLE} disabled>Mixed</option>}
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </PropRow>
@@ -1255,6 +1257,15 @@ export function HtmlContextualPanel({
   }
 
   const s = element.computedStyles;
+  const textStyles = element.richTextStyles || s;
+  const applyTypography = (property: RichTextProperty, value: string) => {
+    if (element.layerKind === "text") {
+      frameRichTextRegistry.get(element.frameId)?.(element.layerId, property, value);
+    } else {
+      update(element.selector, property, value);
+    }
+  };
+  const textValue = (property: RichTextProperty, fallback = "") => textStyles[property] || fallback;
   const selector = element.selector;
 
   /**
@@ -1488,7 +1499,10 @@ export function HtmlContextualPanel({
   const fillGradientCss = svgFillSupported ? svgGradientMem : bgImageValue;
   const fillGradientParsed = fillGradientCss ? parseGradientValue(fillGradientCss) : null;
   const fillImageUrl = svgFillSupported ? svgImageMem : (/^url\(/.test(bgImageValue) ? bgImageValue : "");
-  const fillSolidRaw = svgFillSupported ? (svgFillIsRef ? "" : svgFillRaw) : (s[fillProperty || "background-color"] || "");
+  const effectiveFillValue = element.layerKind === "text" && fillProperty === "color"
+    ? textValue("color")
+    : s[fillProperty || "background-color"];
+  const fillSolidRaw = svgFillSupported ? (svgFillIsRef ? "" : svgFillRaw) : (effectiveFillValue === MIXED_TEXT_STYLE ? "" : (effectiveFillValue || ""));
   const fillPropName = fillProperty || "background-color";
   const fillSolidHex = toHex(fillSolidRaw || "#c8b898");
   const fillSolidAlpha = parseAlpha(fillSolidRaw || "#c8b898");
@@ -1509,7 +1523,9 @@ export function HtmlContextualPanel({
       update(selector, "fill-opacity", String(alpha));
       return;
     }
-    update(selector, fillPropName, alpha < 1 ? hexToRgba(hex, alpha) : hex);
+    const color = alpha < 1 ? hexToRgba(hex, alpha) : hex;
+    if (element?.layerKind === "text" && fillPropName === "color") applyTypography("color", color);
+    else update(selector, fillPropName, color);
     if (fillGradientParsed || fillImageUrl) update(selector, "background-image", "none");
     update(selector, "--fill-mem", "0");
   }, [svgFillSupported, element, onSvgFillMedia, selector, fillProperty, fillGradientParsed, fillImageUrl, update]);
@@ -2089,14 +2105,14 @@ export function HtmlContextualPanel({
               {expanded.typography && (
                 <div style={sectionBody}>
                   <PropRow label="Font">
-                    <GoogleFontPicker value={primaryFamily(s["font-family"] || "")} onChange={(f) => update(selector, "font-family", cssFontFamily(f))} />
+                    <GoogleFontPicker value={textValue("font-family") === MIXED_TEXT_STYLE ? "Mixed" : primaryFamily(textValue("font-family"))} onChange={(f) => applyTypography("font-family", cssFontFamily(f))} />
                   </PropRow>
                   <PropRow label="Size">
-                    <ScrubbyInput value={s["font-size"] || ""} onChange={v => update(selector, "font-size", v)} label="" suffix="px" />
+                    <ScrubbyInput value={textValue("font-size") === MIXED_TEXT_STYLE ? "" : textValue("font-size")} onChange={v => applyTypography("font-size", v)} label="" suffix="px" />
                   </PropRow>
-                  <SelectRow label="Weight" value={s["font-weight"] || "400"} options={FONT_WEIGHTS} onChange={v => update(selector, "font-weight", v)} />
+                  <SelectRow label="Weight" value={textValue("font-weight", "400")} options={FONT_WEIGHTS} onChange={v => applyTypography("font-weight", v)} />
                   <PropRow label="Spacing">
-                    <ScrubbyInput value={s["letter-spacing"] || "normal"} onChange={v => update(selector, "letter-spacing", v)} />
+                    <ScrubbyInput value={textValue("letter-spacing", "normal") === MIXED_TEXT_STYLE ? "" : textValue("letter-spacing", "normal")} onChange={v => applyTypography("letter-spacing", v)} />
                   </PropRow>
                   <PropRow label="Align">
                     <div style={{ display: "flex", gap: 2, flex: 1 }}>
@@ -2118,10 +2134,10 @@ export function HtmlContextualPanel({
                   </button>
                   {typeAdvancedOpen && (
                     <>
-                      <SelectRow label="Deco" value={s["text-decoration"] || "none"} options={TEXT_DECORATIONS} onChange={v => update(selector, "text-decoration", v)} />
-                      <SelectRow label="Case" value={s["text-transform"] || "none"} options={TEXT_TRANSFORMS} onChange={v => update(selector, "text-transform", v)} />
+                      <SelectRow label="Deco" value={textValue("text-decoration", "none")} options={TEXT_DECORATIONS} onChange={v => applyTypography("text-decoration", v)} />
+                      <SelectRow label="Case" value={textValue("text-transform", "none")} options={TEXT_TRANSFORMS} onChange={v => applyTypography("text-transform", v)} />
                       <PropRow label="Line-H">
-                        <ScrubbyInput value={s["line-height"] || ""} onChange={v => update(selector, "line-height", v)} />
+                        <ScrubbyInput value={textValue("line-height") === MIXED_TEXT_STYLE ? "" : textValue("line-height")} onChange={v => applyTypography("line-height", v)} />
                       </PropRow>
                       <PropRow label="Txt Shadow">
                         <input value={s["text-shadow"] || "none"} placeholder="0 2px 4px rgba(0,0,0,0.2)" onChange={e => update(selector, "text-shadow", e.target.value)} style={inp} />

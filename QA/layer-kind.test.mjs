@@ -70,7 +70,7 @@ test("a painted wrapper is a container, never a group", () => {
 });
 
 test("a wrapper of only text runs is a text block, not a group", () => {
-  assert.equal(classifyLayer({ tag: "div", children: [text("h1"), text("p")] }), "container");
+  assert.equal(classifyLayer({ tag: "div", children: [text("h1"), text("p")] }), "text");
 });
 
 test("an unpainted wrapper of unrelated elements is a real group", () => {
@@ -96,10 +96,8 @@ test("a painted text tag is a container, so its fill survives", () => {
 
 
 // ── One block, or several ──
-// Renzo's rule: runs that sit together AND look the same are one block. The
-// moment one carries a different font, weight or colour it is its own block,
-// because a single block has one set of type controls and two looks inside it
-// would be unconfigurable.
+// A text box is one selectable layer. Inline runs may differ in font, weight
+// and colour; those differences are formatting ranges, never child layers.
 
 test("runs that look the same are one block", () => {
   assert.equal(isTextBlock([
@@ -108,27 +106,25 @@ test("runs that look the same are one block", () => {
   ]), true);
 });
 
-test("\"El carro está bonito\" with one word restyled is not one block", () => {
+test("\"El carro está bonito\" with one word restyled remains one block", () => {
   const same = "font-family:Inter;font-size:16px;color:#111";
   assert.equal(isTextBlock([
     text("span", same),
     text("span", "font-family:Inter;font-size:16px;font-weight:700;color:#e11"),
     text("span", same),
-  ]), false);
+  ]), true);
 });
 
 test("a heading over a subheading is still one block when the look matches", () => {
   assert.equal(isTextBlock([text("h1", "color:#111"), text("p", "color:#111")]), true);
 });
 
-test("only the properties that need their own controls split a block", () => {
-  // Letter-spacing differing does not: it is set per block, not per run.
+test("inline property differences never split a block", () => {
   assert.equal(isTextBlock([
     text("span", "color:#111;letter-spacing:1px"),
     text("span", "color:#111;letter-spacing:4px"),
   ]), true);
-  // Colour does.
-  assert.equal(isTextBlock([text("span", "color:#111"), text("span", "color:#eee")]), false);
+  assert.equal(isTextBlock([text("span", "color:#111"), text("span", "color:#eee")]), true);
 });
 
 test("unstyled runs share the empty fingerprint, so they are one block", () => {
@@ -136,9 +132,9 @@ test("unstyled runs share the empty fingerprint, so they are one block", () => {
   assert.equal(isTextBlock([text("h1"), text("p")]), true);
 });
 
-test("a split block classifies as a group, so its runs stay separate layers", () => {
+test("mixed inline formatting classifies as one text layer", () => {
   assert.equal(classifyLayer({
     tag: "div",
     children: [text("span", "color:#111"), text("span", "color:#e11")],
-  }), "group");
+  }), "text");
 });

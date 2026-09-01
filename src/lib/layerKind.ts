@@ -72,8 +72,7 @@ export function styleFingerprint(styleAttr: string | null | undefined): string {
 export function isTextBlock(children: ChildShape[]): boolean {
   if (children.length === 0) return false;
   if (!children.every(c => TEXT_TAGS.has(c.tag.toLowerCase()) && !c.hasChildren)) return false;
-  const first = styleFingerprint(children[0].styleAttr);
-  return children.every(c => styleFingerprint(c.styleAttr) === first);
+  return children.every(c => TEXT_TAGS.has(c.tag.toLowerCase()) && !c.hasChildren);
 }
 
 export type LayerKind = "shape" | "image" | "text" | "group" | "container";
@@ -103,7 +102,7 @@ export function classifyLayer(el: {
   if (paintsABox(el.styleAttr)) return "container";
 
   // Several text runs and nothing else: one text block.
-  if (isTextBlock(el.children)) return "container";
+  if (isTextBlock(el.children)) return "text";
 
   return "group";
 }

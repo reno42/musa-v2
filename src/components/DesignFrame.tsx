@@ -12,6 +12,7 @@ import { mapBodySelectors } from "../lib/frameCapture";
 import { sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { pickTopmostByBounds } from "../lib/selectionModel";
 import { reconcileFrameHtml } from "../lib/frameReconciler";
+import { applyRichTextStyle, frameRichTextRegistry, MIXED_TEXT_STYLE, summarizeRichTextStyles } from "../lib/richText";
 import {
   computeBounds,
   createSmoothPoint,
@@ -133,6 +134,9 @@ export interface SelectedElementInfo {
   layerKind?: string;
   /** Number of element children with their own data-layer-id. */
   childLayerCount?: number;
+  /** Effective typography of the active character range. Mixed values remain editable. */
+  richTextStyles?: Record<string, string>;
+  textEditing?: boolean;
   /** `src` attribute for an <img> element — drives the Fill panel's image preview. */
   src?: string;
   movableLayers: Array<{
@@ -348,6 +352,7 @@ export function DesignFrame({
   onDrawShapeRef.current = onDrawShape;
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
+  const savedTextRangeRef = useRef<Range | null>(null);
   const onAddTextBoxRef = useRef(onAddTextBox);
   onAddTextBoxRef.current = onAddTextBox;
   const onAddPenPathRef = useRef(onAddPenPath);
@@ -393,6 +398,22 @@ export function DesignFrame({
   onHtmlChangeRef.current = onHtmlChange;
   const onElementSelectRef = useRef(onElementSelect);
   onElementSelectRef.current = onElementSelect;
+
+  useEffect(() => {
+    frameRichTextRegistry.set(frame.id, (layerId, property, value) => {
+      const content = shadowRef.current?.getElementById("__df_content") as HTMLElement | null;
+      const root = content?.querySelector(`[data-layer-id="${CSS.escape(layerId)}"][data-layer-kind="text"]`) as HTMLElement | null;
+      if (!content || !root) return;
+      savedTextRangeRef.current = applyRichTextStyle(root, savedTextRangeRef.current, property, value);
+      const selection = root.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      if (savedTextRangeRef.current) selection?.addRange(savedTextRangeRef.current);
+      lastEmittedHtmlRef.current = content.innerHTML;
+      onHtmlChangeRef.current?.(frame.id, content.innerHTML);
+      emitElementSelection(root);
+    });
+    return () => { frameRichTextRegistry.delete(frame.id); };
+  }, [frame.id]);
   const onLayerEscapeRef = useRef(onLayerEscape);
   onLayerEscapeRef.current = onLayerEscape;
   const onLayerSelectionChangeRef = useRef(onLayerSelectionChange);
@@ -868,6 +889,16 @@ export function DesignFrame({
     const shapePathForRadii = tag === "path" ? element : element.querySelector("path");
     const shapeGeometryForRadii = shapePathForRadii ? resolveShapeGeometry(shapePathForRadii) : null;
 
+    const isRichText = element.getAttribute("data-layer-kind") === "text";
+    const activeRange = isRichText && editingTextRef.current === element ? savedTextRangeRef.current : null;
+    const richTextStyles = isRichText
+      ? summarizeRichTextStyles(element as HTMLElement, activeRange)
+      : undefined;
+    if (richTextStyles) {
+      for (const [property, value] of Object.entries(richTextStyles)) {
+        if (value !== MIXED_TEXT_STYLE) computedStyles[property] = value;
+      }
+    }
     onElementSelectRef.current?.({
       layerId: element.getAttribute("data-layer-id") || "",
       tag,
@@ -880,6 +911,8 @@ export function DesignFrame({
       vertexRadii: shapeGeometryForRadii ? shapeGeometryForRadii.radii : null,
       layerKind: element.getAttribute("data-layer-kind") || undefined,
       childLayerCount: [...element.children].filter(c => c.hasAttribute("data-layer-id")).length,
+      richTextStyles,
+      textEditing: editingTextRef.current === element,
       src: tag === "img" ? (element.getAttribute("src") || undefined) : undefined,
       movableLayers,
     });
@@ -947,10 +980,12 @@ export function DesignFrame({
     // Descend from the top-level hit to the deepest child under the point.
     let hit: Element | null = pickTopmostByBounds(selectableKids(content), point, getVisualRect);
     if (!hit) return null;
+    if (hit.getAttribute("data-layer-kind") === "text") return hit;
     for (;;) {
       const deeper: Element | null = pickTopmostByBounds(selectableKids(hit), point, getVisualRect);
       if (!deeper) break;
       hit = deeper;
+      if (hit.getAttribute("data-layer-kind") === "text") break;
     }
 
     // Group capture: the OUTERMOST explicit group ancestor wins.
@@ -2304,6 +2339,8 @@ export function DesignFrame({
       // Legacy converted rectangles may still expose the transparent SVG host
       // as the event target. Only their painted child path is selectable.
       if (isConvertedCssShapeSvg(target)) return null;
+      const textBlock = target.closest?.('[data-layer-kind="text"][data-layer-id]');
+      if (textBlock && content.contains(textBlock)) return textBlock;
       // Ctrl/Cmd+click: deep select — nearest ancestor with data-layer-id
       if (ctrlKey) {
         let el: Element | null = target;
@@ -3623,43 +3660,54 @@ export function DesignFrame({
 
       if (editingTextRef.current) return; // already editing
 
+      const hit = resolveHitTarget(target, scopeRef.current, false) as HTMLElement | null;
+      const editTarget = hit?.getAttribute("data-layer-kind") === "text" ? hit : target;
       // Only allow editing on text-like elements
-      const tag = target.tagName.toLowerCase();
+      const tag = editTarget.tagName.toLowerCase();
       const isTextLike = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "span", "a", "li", "div", "label", "button", "em", "strong", "small", "b", "i"].includes(tag);
       if (!isTextLike) return;
 
       // Editing a container as plain text would destroy its child structure.
-      if (target.children.length > 0) return;
+      if (editTarget.children.length > 0 && editTarget.getAttribute("data-layer-kind") !== "text") return;
 
       e.stopPropagation();
       e.preventDefault();
-      editingTextRef.current = target;
+      editingTextRef.current = editTarget;
 
-      target.setAttribute("contenteditable", "true");
-      target.style.outline = `2px solid ${SEL}`;
-      target.style.outlineOffset = "2px";
-      target.style.cursor = "text";
-      target.focus();
+      editTarget.setAttribute("contenteditable", "true");
+      editTarget.setAttribute("spellcheck", "true");
+      editTarget.style.outline = `1px solid ${SEL}`;
+      editTarget.style.outlineOffset = "1px";
+      editTarget.style.cursor = "text";
+      editTarget.focus();
+      emitElementSelection(editTarget);
+
+      const rememberRange = () => {
+        const selection = editTarget.ownerDocument.getSelection();
+        if (!selection?.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!editTarget.contains(range.commonAncestorContainer)) return;
+        savedTextRangeRef.current = range.cloneRange();
+        emitElementSelection(editTarget);
+      };
+      editTarget.ownerDocument.addEventListener("selectionchange", rememberRange);
 
       const onBlur = () => {
-        target.removeEventListener("blur", onBlur);
-        target.removeAttribute("contenteditable");
-        target.style.outline = "";
-        target.style.outlineOffset = "";
-        target.style.cursor = "";
+        editTarget.removeEventListener("blur", onBlur);
+        editTarget.ownerDocument.removeEventListener("selectionchange", rememberRange);
+        editTarget.removeAttribute("contenteditable");
+        editTarget.style.outline = "";
+        editTarget.style.outlineOffset = "";
+        editTarget.style.cursor = "";
         editingTextRef.current = null;
-
-        const layerId = target.getAttribute("data-layer-id");
-        if (layerId) {
-          const newText = target.textContent || "";
-          onTextChangeRef.current?.(layerId, newText);
-        }
+        onHtmlChangeRef.current?.(frame.id, content.innerHTML);
+        emitElementSelection(editTarget);
       };
 
-      target.addEventListener("blur", onBlur);
+      editTarget.addEventListener("blur", onBlur);
 
       // Prevent Enter from bubbling to keyboard shortcuts
-      target.addEventListener("keydown", (ke: Event) => {
+      editTarget.addEventListener("keydown", (ke: Event) => {
         const kbe = ke as KeyboardEvent;
         if (kbe.key === "Escape") {
           target.blur();

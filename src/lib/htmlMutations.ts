@@ -248,6 +248,12 @@ export function ensureLayerIds(html: string, createId: () => string): string {
   }
 
   for (const element of document.body.querySelectorAll("*")) {
+    const richTextRoot = element.parentElement?.closest('[data-layer-kind="text"]');
+    if (richTextRoot) {
+      if (element.hasAttribute("data-layer-id")) { element.removeAttribute("data-layer-id"); changed = true; }
+      if (element.hasAttribute("data-layer-kind")) { element.removeAttribute("data-layer-kind"); changed = true; }
+      continue;
+    }
     if (!element.hasAttribute("data-layer-id")) {
       element.setAttribute("data-layer-id", createId());
       changed = true;
