@@ -72,6 +72,7 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
   const [saving, setSaving] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [coverError, setCoverError] = useState("");
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const metaRef = useRef<FileMeta>(meta);
   const snapshotButtonRef = useRef<HTMLButtonElement>(null);
@@ -282,23 +283,28 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
 
   const handleSnapshot = useCallback(async () => {
     if (!onCoverCapture || !templateId) return;
+    setCoverError("");
     setUploading(true);
     try {
       const b64 = await onCoverCapture();
-      if (!b64) return;
+      if (!b64) throw new Error("No se pudo renderizar el diseño.");
       const res = await fetch(`/api/meta/${templateId}/cover`, {
         method: "POST",
         headers: getApiHeaders(),
         body: JSON.stringify({ imageBase64: b64, coverSource: "snapshot" }),
       });
-      if (!res.ok) throw new Error(`Snapshot upload failed (${res.status})`);
-      const d = await res.json();
+      const d = await res.json().catch(() => null);
+      if (!res.ok || !d?.success) throw new Error(d?.error || `La captura no pudo guardarse (${res.status}).`);
       if (d.success) {
         scheduleSave({ cover_image_url: d.data.cover_image_url, cover_captured_at: d.data.cover_captured_at, cover_source: "snapshot" });
         onCoverUpdated?.(d.data.cover_captured_at);
       }
-    } catch {} finally { setUploading(false); }
-  }, [templateId, onCoverCapture, onCoverUpdated]);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "La captura no pudo guardarse.";
+      console.error("[Cover snapshot]", cause);
+      setCoverError(message);
+    } finally { setUploading(false); }
+  }, [templateId, onCoverCapture, onCoverUpdated, scheduleSave]);
 
   if (loading) return <div style={panelStyle}>Loading…</div>;
 
@@ -333,13 +339,19 @@ export function FileInfoPanel({ templateId, thumbnailUrl, onCoverCapture, emphas
                   }}
                   onClick={handleSnapshot}
                   disabled={uploading}
-                  aria-describedby={emphasizeCapture ? "preview-capture-guidance" : undefined}
+                  aria-busy={uploading}
+                  aria-describedby={[emphasizeCapture ? "preview-capture-guidance" : "", coverError ? "preview-capture-error" : ""].filter(Boolean).join(" ") || undefined}
                 >
-                  Use snapshot
+                  {uploading ? "Capturando…" : "Use snapshot"}
                 </button>
                 {emphasizeCapture && (
                   <span id="preview-capture-guidance" style={{ color: "#c8b898", fontSize: 10, lineHeight: 1.35 }}>
                     Actualiza aquí el preview del diseño.
+                  </span>
+                )}
+                {coverError && (
+                  <span id="preview-capture-error" role="alert" style={{ color: "#fca5a5", fontSize: 10, lineHeight: 1.35, maxWidth: 180 }}>
+                    {coverError}
                   </span>
                 )}
               </>

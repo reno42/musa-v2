@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { rasterizeFrame, canvasToBlob, inlineFrameImages, mapBodySelectors } from "../lib/frameCapture";
+import { thumbnailScale } from "../lib/autoSnapshot";
 import { isPreviewSnoozeDays, PREVIEW_SNOOZE_DAYS, shouldShowPreviewReminder, type PreviewSnoozeDays } from "../../shared/previewReminder.ts";
 import { downloadBlob } from "../lib/download";
 import { CodePanel } from "../components/CodePanel";
@@ -4003,11 +4004,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
   }, []);
 
-  /* Capture first frame as PNG base64 — for FileInfoPanel cover */
+  /* Capture the selected frame as a card-sized JPEG. The cover endpoint has a
+     1MB decoded-byte budget; rasterizing a 1080×1350 artboard at 1.5× made a
+     normal snapshot exceed it before Supabase was ever reached. */
   const handleCoverCapture = useCallback(async (): Promise<string | null> => {
     if (!selectedFrame) return null;
     try {
-      const blob = await captureFrameToPng(selectedFrame, 1.5, "png");
+      const scale = thumbnailScale(selectedFrame.width, selectedFrame.height);
+      const blob = await captureFrameToPng(selectedFrame, scale, "jpg");
       if (!blob) return null;
       return new Promise<string>((resolve) => {
         const reader = new FileReader();
