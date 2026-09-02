@@ -5405,3 +5405,19 @@ html, body, #root { height: 100%; width: 100%; }
   0%, 40% { background: rgba(245,158,11,0.22); border-color: rgba(245,158,11,0.5); }
   100% { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
 }
+
+/* ── Editor shell-first boot: chrome interactive, everything else waits ── */
+/* While .is-booting (template JSON still loading) every button is inert and
+   dimmed EXCEPT the back button, which must stay clickable so a misclick can
+   be undone instantly. The canvas itself is replaced by a skeleton. */
+.editor-v2-root.is-booting button:not(.editor-v2-back-btn) {
+  pointer-events: none;
+  opacity: 0.45;
+}
+@keyframes editor-boot-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.9; }
+}
+.editor-boot-pulse {
+  animation: editor-boot-pulse 1.6s ease-in-out infinite;
+}

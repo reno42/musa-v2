@@ -674,6 +674,44 @@ function PreviewReminderPopover({
   );
 }
 
+/** Full-canvas placeholder shown while the template JSON loads (shell-first
+ *  boot). The chrome around it — topbar, back button — is already live; only
+ *  the canvas waits. Shows the file's cached cover when available so the user
+ *  can confirm at a glance WHICH file is opening and bail out instantly. */
+function CanvasBootSkeleton({ name, coverUrl }: { name: string; coverUrl?: string | null }) {
+  return (
+    <div
+      aria-busy="true"
+      style={{
+        position: "absolute", inset: 0, zIndex: 5,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16,
+        background: "#0a0a0a",
+      }}
+    >
+      {coverUrl ? (
+        <img
+          src={coverUrl}
+          alt=""
+          style={{
+            width: 200, height: 200, objectFit: "cover", borderRadius: 14,
+            border: "1px solid rgba(255,255,255,0.08)",
+            boxShadow: "0 16px 48px rgba(0,0,0,0.55)", opacity: 0.9,
+          }}
+        />
+      ) : (
+        <div style={{
+          width: 200, height: 200, borderRadius: 14,
+          border: "1px dashed rgba(255,255,255,0.12)",
+          background: "rgba(255,255,255,0.02)",
+        }} />
+      )}
+      <div className="editor-boot-pulse" style={{ color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
+        Cargando “{name}”…
+      </div>
+    </div>
+  );
+}
+
 export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) {
   const { addToast } = useToast();
   const { user, signOut } = useAuth();
@@ -738,7 +776,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [store]);
 
   // ── UI state ──
-  const [loading, setLoading] = useState(true);
+  // loadingRef mirrors `loading` for callbacks registered once (autoSave,
+  // keyboard, beforeunload, realtime): with the shell-first boot the chrome
+  // renders before the template arrives, so every persistence path must be
+  // able to check it synchronously and refuse to save an empty document
+  // over the real one.
+  const [loading, setLoadingState] = useState(true);
+  const loadingRef = useRef(true);
+  const setLoading = useCallback((v: boolean) => {
+    loadingRef.current = v;
+    setLoadingState(v);
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -923,6 +971,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setBackgroundColor(fg);
   }, [foregroundColor, backgroundColor]);
 
+  // ── Fase 2: boot identity — name + cover from the dashboard's list cache ──
+  // Best-effort hydration so the topbar and the canvas skeleton show WHICH
+  // file is opening before the fetch resolves. The server response overwrites
+  // both with authoritative data on arrival.
+  const [bootPreview, setBootPreview] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("futuraria-tpl-cache-v1");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const hit = Array.isArray(parsed?.data)
+        ? parsed.data.find((t: any) => t?.id === templateId)
+        : null;
+      if (!hit) return;
+      if (hit.name) setTemplateName(hit.name);
+      setBootPreview(hit.thumbnail || null);
+    } catch { /* cache is best-effort */ }
+  }, [templateId]);
+
   // ── Load template → parse into frames ──
   useEffect(() => {
     let cancelled = false;
@@ -1050,6 +1117,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   // ── Auto-save (immediate localStorage, debounced API sync) ──
   const autoSave = useCallback((updatedFrames: FrameData[]) => {
+    // Shell-first boot: until the template lands the store is empty, and a
+    // save here would write an empty payload stamped as "newest" — which
+    // templateApi prefers over the server on the next getTemplate.
+    if (loadingRef.current) return;
     const active = updatedFrames.find(f => f.id === selectedFrameId) || updatedFrames[0];
 
     // Compute content hash + attribution for change tracking
@@ -1359,6 +1430,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Flush pending save on tab close / navigation ──
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (loadingRef.current) return; // boot not finished — nothing valid to flush
       if (isDirtyRef.current && saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
@@ -1430,6 +1502,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         realtimeReadyRef.current = true;
         return;
       }
+      // Shell-first boot: the store is still empty — applying a remote frame
+      // here would build a 1-frame ghost that load() then discards.
+      if (loadingRef.current) return;
       const targetFrameId = remoteFrameId || selectedFrameId;
       if (!targetFrameId) return;
       // Ignore our own broadcasts
@@ -1454,6 +1529,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         if (isDirtyRef.current) {
           return;
         }
+        // Shell-first boot: nothing to diff against until the template lands.
+        if (loadingRef.current) return;
         try {
           const tpl = await getTemplate(templateId);
           if (!tpl) return;
@@ -3701,6 +3778,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Shell-first boot: the document isn't in memory yet — every shortcut
+      // (Ctrl+S version save, Delete, nudge, paste, …) would act on an
+      // empty store.
+      if (loadingRef.current) return;
       // Escape closes dropdowns
       if (e.key === "Escape") {
         setShowFontPicker(false);
@@ -6744,13 +6825,10 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   }, [templateId]);
 
   // ── Loading / Error ──
-  if (loading) {
-    return (
-      <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#080808", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: "#888", fontSize: 16 }}>Loading template...</div>
-      </div>
-    );
-  }
+  // Shell-first boot: while `loading` the chrome below renders immediately —
+  // topbar, back button and file name are live from the first paint — and only
+  // the canvas area is swapped for a skeleton (see CanvasBootSkeleton).
+  // Every persistence path is guarded by loadingRef until data arrives.
   if (error) {
     return (
       <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#080808", alignItems: "center", justifyContent: "center" }}>
@@ -6777,7 +6855,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   return (
     <div
-      className="editor-v2-root"
+      className={`editor-v2-root${loading ? " is-booting" : ""}`}
       onDragEnter={handleAppDragEnter}
       onDragOver={handleAppDragOver}
       onDragLeave={handleAppDragLeave}
@@ -6799,7 +6877,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       )}
       {/* ═══ Top Bar ═══ */}
       <div className="editor-v2-topbar">
-        <button type="button" onClick={onBack} className="editor-v2-topbar-btn" title="Back to Dashboard">
+        <button type="button" onClick={onBack} className="editor-v2-topbar-btn editor-v2-back-btn" title="Back to Dashboard">
           <IconArrowLeft size={14} />
         </button>
         {/* Hamburger — visible on mobile/tablet */}
@@ -7703,6 +7781,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           className="editor-v2-canvas-area"
           onContextMenu={(e) => {
             e.preventDefault();
+            if (loading) return; // boot — nothing to act on yet
             setContextMenu({
               x: e.clientX,
               y: e.clientY,
@@ -7778,6 +7857,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               </button>
             </div>
           )}
+          {loading ? (
+            <CanvasBootSkeleton name={templateName} coverUrl={bootPreview} />
+          ) : (
           <InfiniteHtmlCanvas
             leftInset={canvasLeftInset}
             rightInset={canvasRightInset}
@@ -7862,6 +7944,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onCommentDelete={handleDeleteComment}
             onCommentToKanban={handleCommentToKanban}
           />
+          )}
           {/* REQ-022 — zero-frame empty state: deleting the last frame is a
               valid place to be, not a dead end. This card keeps the file
               usable by offering the first frame's dimensions directly. */}

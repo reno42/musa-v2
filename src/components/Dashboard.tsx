@@ -1171,10 +1171,15 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
 
 
-    /* ── GRID MODE: original layout with frosted info panel inside card */
+    /* ── GRID MODE: original layout with frosted info panel inside card.
+       `layout` makes reorders (a freshly saved file jumping to position 1)
+       glide instead of teleporting, so the click target stays trackable
+       while the list re-sorts after the background refresh. */
     return (
-    <div
+    <motion.div
       key={t.id}
+      layout="position"
+      transition={{ layout: { type: "spring", stiffness: 420, damping: 36 } }}
       className="dash-card"
       style={{ ...cardStyle }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.2)"; el.style.boxShadow = "inset 0 1px 1px rgba(255,255,255,0.1), 0 16px 32px rgba(0,0,0,0.5)"; el.style.transform = "translateY(-4px)"; }}
@@ -1247,7 +1252,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
     );
   };
 
