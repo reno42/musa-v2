@@ -303,8 +303,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
     try { return localStorage.getItem("futuraria-delete-confirm") !== "false"; } catch { return true; }
   });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [deleteInputName, setDeleteInputName] = useState("");
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [deleteSkipUntil, setDeleteSkipUntil] = useState(0);
+  const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const deleteTriggerRef = useRef<HTMLElement | null>(null);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   // Sub-tabs inside Diseño and Agentes.
@@ -942,15 +944,21 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       handleDelete(id);
       return;
     }
+    deleteTriggerRef.current = document.getElementById(`template-actions-${id}`);
     setDeleteTarget({ id, name });
-    setDeleteInputName("");
+    setDeleteConfirmed(false);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    setDeleteConfirmed(false);
+    requestAnimationFrame(() => deleteTriggerRef.current?.focus());
   };
 
   const executeDelete = () => {
-    if (!deleteTarget || deleteInputName !== deleteTarget.name) return;
+    if (!deleteTarget || !deleteConfirmed) return;
     handleDelete(deleteTarget.id);
-    setDeleteTarget(null);
-    setDeleteInputName("");
+    closeDeleteDialog();
   };
 
   const handleDuplicate = async (id: string) => {
@@ -1119,6 +1127,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
           <div style={{ position: "relative", display: "inline-block" }}>
           <button
+            id={`template-actions-${t.id}`}
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
             style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "4px 12px", color: "rgba(255,255,255,0.92)", fontSize: 12, fontWeight: 700, letterSpacing: 2, minWidth: 28, cursor: "pointer", fontFamily: "inherit" }}
@@ -1208,6 +1217,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       <div className="dash-card-actions" style={{ position: "absolute", top: 8, right: 8, zIndex: 4 }}>
         <div style={{ position: "relative", display: "inline-block" }}>
           <button
+            id={`template-actions-${t.id}`}
             type="button"
             onClick={e => { e.stopPropagation(); setActionDropdownId(actionDropdownId === t.id ? null : t.id); }}
             style={{ background: "rgba(8,10,16,0.88)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 6, padding: "3px 10px", color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 700, letterSpacing: 2, lineHeight: 1.2, flex: "none", cursor: "pointer", fontFamily: "inherit" }}
@@ -2561,7 +2571,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   onChange={e => { setDeleteConfirmEnabled(e.target.checked); try { localStorage.setItem("futuraria-delete-confirm", String(e.target.checked)); } catch {} }}
                   style={{ accentColor: "#818cf8" }}
                 />
-                Pedir confirmación escribiendo el nombre
+                Pedir confirmación antes de borrar
               </label>
             </div>
 
@@ -2777,31 +2787,55 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteTarget && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }} onClick={() => { setDeleteTarget(null); setDeleteInputName(""); }}>
-          <div className="liquid-glass" style={{ maxWidth: 420, width: "90%", borderRadius: 16, padding: 28 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px", color: "#f87171" }}>Delete Template</h3>
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }} onClick={closeDeleteDialog}>
+          <div
+            ref={deleteDialogRef}
+            className="liquid-glass"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-template-title"
+            aria-describedby="delete-template-description"
+            style={{ maxWidth: 420, width: "90%", borderRadius: 16, padding: 28 }}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+              if (e.key === "Escape") {
+                closeDeleteDialog();
+                return;
+              }
+              if (e.key !== "Tab") return;
+              const controls = deleteDialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])");
+              if (!controls?.length) return;
+              const first = controls[0];
+              const last = controls[controls.length - 1];
+              if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              }
+            }}
+          >
+            <h3 id="delete-template-title" style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px", color: "#f87171" }}>Delete Template</h3>
             <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 0 4px", lineHeight: 1.5 }}>
               You are about to <strong style={{ color: "#f87171" }}>permanently delete</strong> <em>{deleteTarget.name}</em>.
             </p>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
+            <p id="delete-template-description" style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
               {deleteMode === "soft"
                 ? "It will be moved to Trash and recoverable from the Papelera sub-tab for 30 days."
                 : "This action cannot be undone. The template will be removed from the database."}
             </p>
 
-            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 4 }}>Type the template name to confirm:</label>
-            <input
-              autoFocus
-              value={deleteInputName}
-              onChange={e => setDeleteInputName(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && deleteInputName === deleteTarget.name) executeDelete(); if (e.key === "Escape") { setDeleteTarget(null); setDeleteInputName(""); } }}
-              placeholder={deleteTarget.name}
-              style={{
-                width: "100%", padding: "10px 14px", borderRadius: 8,
-                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)",
-                color: "#fff", fontSize: 13, outline: "none", marginBottom: 12,
-              }}
-            />
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", marginBottom: 16, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                autoFocus
+                checked={deleteConfirmed}
+                onChange={e => setDeleteConfirmed(e.target.checked)}
+                style={{ accentColor: "#dc2626", marginTop: 2 }}
+              />
+              I understand and want to delete this file
+            </label>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 16, cursor: "pointer" }}>
               <input
@@ -2818,7 +2852,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button
                 type="button"
-                onClick={() => { setDeleteTarget(null); setDeleteInputName(""); }}
+                onClick={closeDeleteDialog}
                 className="liquid-glass"
                 style={{ borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.03)" }}
               >
@@ -2827,10 +2861,10 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               <button
                 type="button"
                 onClick={executeDelete}
-                disabled={deleteInputName !== deleteTarget.name}
+                disabled={!deleteConfirmed}
                 style={{
-                  borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 600, border: "none", cursor: deleteInputName === deleteTarget.name ? "pointer" : "not-allowed",
-                  color: "#fff", background: deleteInputName === deleteTarget.name ? "#dc2626" : "rgba(220,38,38,0.3)",
+                  borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 600, border: "none", cursor: deleteConfirmed ? "pointer" : "not-allowed",
+                  color: "#fff", background: deleteConfirmed ? "#dc2626" : "rgba(220,38,38,0.3)",
                   transition: "all 0.2s ease",
                 }}
               >
