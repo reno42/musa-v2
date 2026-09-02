@@ -2816,14 +2816,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
               }
             }}
           >
-            <h3 id="delete-template-title" style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px", color: "#f87171" }}>Delete Template</h3>
+            <h3 id="delete-template-title" style={{ fontSize: 16, fontWeight: 600, margin: "0 0 8px", color: "#f87171" }}>Eliminar archivo</h3>
             <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 0 4px", lineHeight: 1.5 }}>
-              You are about to <strong style={{ color: "#f87171" }}>permanently delete</strong> <em>{deleteTarget.name}</em>.
+              Estás a punto de eliminar <em>{deleteTarget.name}</em>.
             </p>
             <p id="delete-template-description" style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: "0 0 16px" }}>
               {deleteMode === "soft"
-                ? "It will be moved to Trash and recoverable from the Papelera sub-tab for 30 days."
-                : "This action cannot be undone. The template will be removed from the database."}
+                ? "Se moverá a la Papelera y podrás recuperarlo durante 30 días."
+                : "Esta acción no se puede deshacer. El archivo se eliminará definitivamente de la base de datos."}
             </p>
 
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", marginBottom: 16, cursor: "pointer" }}>
@@ -2834,7 +2834,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 onChange={e => setDeleteConfirmed(e.target.checked)}
                 style={{ accentColor: "#dc2626", marginTop: 2 }}
               />
-              I understand and want to delete this file
+              Entiendo y quiero eliminar este archivo
             </label>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 16, cursor: "pointer" }}>
@@ -2846,7 +2846,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 }}
                 style={{ accentColor: "#818cf8" }}
               />
-              Don't show this confirmation for the next 5 minutes
+              No mostrar esta confirmación durante los próximos 5 minutos
             </label>
 
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -2856,7 +2856,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                 className="liquid-glass"
                 style={{ borderRadius: 100, padding: "8px 20px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.03)" }}
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 type="button"
@@ -2868,7 +2868,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
                   transition: "all 0.2s ease",
                 }}
               >
-                Delete
+                Eliminar
               </button>
             </div>
           </div>
