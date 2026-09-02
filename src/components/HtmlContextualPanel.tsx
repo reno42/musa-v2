@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import type { SelectedElementInfo, ShapeOptions } from "./DesignFrame";
 import { frameRichTextRegistry, MIXED_TEXT_STYLE, type RichTextProperty } from "../lib/richText";
 import { GoogleFontPicker } from "./GoogleFontPicker";
@@ -674,6 +675,68 @@ function EyeButton({ on, onClick, title }: { on: boolean; onClick: () => void; t
   );
 }
 
+/**
+ * Floating card anchored to a panel row: opens to the LEFT of the panel —
+ * over the canvas, so it never covers the sections below the row — and
+ * clamps itself to the viewport so it always stays fully on screen.
+ * Portal-rendered because the panel scrolls and would otherwise clip an
+ * absolutely-positioned card. Clicking anywhere outside (the anchor
+ * included is exempt) closes it.
+ */
+function PanelPopup({ anchor, onClose, children }: {
+  anchor: React.RefObject<HTMLElement | null>;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const anchorEl = anchor.current;
+      const card = cardRef.current;
+      if (!anchorEl || !card) return;
+      const ar = anchorEl.getBoundingClientRect();
+      const cw = card.offsetWidth;
+      const ch = card.offsetHeight;
+      let left = ar.left - cw - 8;               // hacia la izquierda del panel
+      if (left < 8) left = ar.right + 8;         // sin sitio: intenta a la derecha
+      left = Math.max(8, Math.min(left, window.innerWidth - cw - 8));
+      let top = ar.top;
+      top = Math.max(8, Math.min(top, window.innerHeight - ch - 8));
+      setPos({ left: Math.round(left), top: Math.round(top) });
+    };
+    place();
+    // Content switches (color→degradado→foto) change the card's height.
+    const observer = new ResizeObserver(place);
+    if (cardRef.current) observer.observe(cardRef.current);
+    document.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    const onDocPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (cardRef.current?.contains(target) || anchor.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", onDocPointerDown, true);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", onDocPointerDown, true);
+    };
+  }, [anchor, onClose]);
+
+  return createPortal(
+    <div ref={cardRef} onPointerDown={e => e.stopPropagation()}
+      style={{ ...popupCard, position: "fixed", right: "auto", marginTop: 0, zIndex: 1000,
+        left: pos?.left ?? -9999, top: pos?.top ?? -9999,
+        visibility: pos ? "visible" : "hidden" }}>
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 const hexOf = (rgb: { r: number; g: number; b: number }) =>
   "#" + [rgb.r, rgb.g, rgb.b].map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
 
@@ -1117,6 +1180,10 @@ export function HtmlContextualPanel({
   const [strokeControlsOpen, setStrokeControlsOpen] = useState(false);
   const [fxAddOpen, setFxAddOpen] = useState(false);
   const [fxOpenKey, setFxOpenKey] = useState<string | null>(null);
+  // Rows the floating popups anchor to (see PanelPopup).
+  const fillRowRef = useRef<HTMLDivElement>(null);
+  const strokeRowRef = useRef<HTMLDivElement>(null);
+  const fxAddRowRef = useRef<HTMLDivElement>(null);
 
   const toggle = (s: string) => setExpanded(prev => ({ ...prev, [s]: !prev[s] }));
   
@@ -1158,8 +1225,25 @@ export function HtmlContextualPanel({
       : [selector]
   ), [element, selectedLayerIds]);
 
+  /**
+   * Sequential writes inside one handler must compose. handleCssChange
+   * replaces the frame stylesheet wholesale, so two update() calls in the
+   * same burst — each computing from the render's css prop — left only the
+   * last one standing ("+ Añadir borde" wrote border-width, then
+   * --stroke-mem, and the memory write erased the border; the fill eye and
+   * the fill picker lost their writes the same way). The chain buffer lives
+   * exactly one microtask: long enough to link one burst, never across
+   * interactions.
+   */
+  const cssChainRef = useRef<string | null>(null);
+  const commitCss = useCallback((next: string) => {
+    cssChainRef.current = next;
+    queueMicrotask(() => { cssChainRef.current = null; });
+    onCssChange(next);
+  }, [onCssChange]);
+
   const update = useCallback((selector: string, prop: string, value: string) => {
-    let updated = css;
+    let updated = cssChainRef.current ?? css;
     for (const target of targetsFor(selector)) {
       updated = updateElementCssProperty(updated, target, prop, value);
       // Auto-set border-style to solid when border-width becomes non-zero
@@ -1179,18 +1263,18 @@ export function HtmlContextualPanel({
       updated = ensureGoogleFontImport(updated, fontName);
       injectGoogleFontIntoFrames(fontName);
     }
-    onCssChange(updated);
-  }, [css, onCssChange, targetsFor]);
+    commitCss(updated);
+  }, [css, commitCss, targetsFor]);
 
   const updateMulti = useCallback((selector: string, props: Record<string, string>) => {
-    let updated = css;
+    let updated = cssChainRef.current ?? css;
     for (const target of targetsFor(selector)) {
       for (const [k, v] of Object.entries(props)) {
         updated = updateElementCssProperty(updated, target, k, v);
       }
     }
-    onCssChange(updated);
-  }, [css, onCssChange, targetsFor]);
+    commitCss(updated);
+  }, [css, commitCss, targetsFor]);
 
   const applyCustomCss = useCallback(() => {
     if (!element || !customCssText.trim()) return;
@@ -2045,12 +2129,12 @@ export function HtmlContextualPanel({
               ) : svgFillSupported || fillProperty ? (
                 /* One row for every medium — color, degradado, foto o video.
                    The swatch previews the kind; double-click opens the picker. */
-                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div ref={fillRowRef} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
                   <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleBgImageUpload} ref={bgImageInputRef} />
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <div title="Doble click: elegir tipo de relleno (color, degradado, foto, video)"
+                    <div title="Click: abrir el picker de relleno (color, degradado, foto, video)"
                       onDoubleClick={() => setFillPickerOpen(true)}
-                      onClick={() => setFillPickerOpen(true)}
+                      onClick={() => setFillPickerOpen(o => !o)}
                       style={{ width: 26, height: 22, flexShrink: 0, borderRadius: 4, cursor: "pointer",
                         border: "1px solid rgba(255,255,255,0.15)", background: fillSwatchBackground }} />
                     {fillKind === "solid" ? (
@@ -2075,18 +2159,20 @@ export function HtmlContextualPanel({
                     <EyeButton on={!fillMemActive} onClick={toggleFillHidden} />
                   </div>
                   {fillPickerOpen && (
-                    <FillPickerCard
-                      kind={fillKind}
-                      hex={fillSolidHex} alpha={fillSolidAlpha}
-                      gradient={fillGradientParsed}
-                      imageUrl={fillImageUrl} videoUrl={fillVideoUrl}
-                      onKind={switchFillKind}
-                      onSolid={writeFillSolid}
-                      onGradient={writeFillGradient}
-                      onImageUrl={writeFillImage}
-                      onVideoUrl={writeFillVideo}
-                      onUpload={() => bgImageInputRef.current?.click()}
-                      onClose={() => setFillPickerOpen(false)} />
+                    <PanelPopup anchor={fillRowRef} onClose={() => setFillPickerOpen(false)}>
+                      <FillPickerCard
+                        kind={fillKind}
+                        hex={fillSolidHex} alpha={fillSolidAlpha}
+                        gradient={fillGradientParsed}
+                        imageUrl={fillImageUrl} videoUrl={fillVideoUrl}
+                        onKind={switchFillKind}
+                        onSolid={writeFillSolid}
+                        onGradient={writeFillGradient}
+                        onImageUrl={writeFillImage}
+                        onVideoUrl={writeFillVideo}
+                        onUpload={() => bgImageInputRef.current?.click()}
+                        onClose={() => setFillPickerOpen(false)} />
+                    </PanelPopup>
                   )}
                   {fillKind === "video" && (
                     <div style={mutedNote}>El video se guarda en la capa (--fill-video); la reproducción en el lienzo depende del soporte del elemento.</div>
@@ -2172,7 +2258,7 @@ export function HtmlContextualPanel({
               ) : !strokePresent ? (
                 <button type="button" onClick={addStroke} style={{ ...smallBtn, width: "100%" }}>+ Añadir borde</button>
               ) : (
-                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div ref={strokeRowRef} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input type="color" value={isSvgShape ? toHex(s["stroke"]) : stroke.color}
                       onChange={e => isSvgShape
@@ -2222,7 +2308,9 @@ export function HtmlContextualPanel({
                       style={{ ...smallBtn, ...(strokeControlsOpen ? smallBtnActive : {}) }}>⚙</button>
                   </div>
                   {strokeControlsOpen && (
-                    <StrokeControlsCard fx={strokeFx} isSvg={isSvgShape} onChange={applyStrokeFx} onClose={() => setStrokeControlsOpen(false)} />
+                    <PanelPopup anchor={strokeRowRef} onClose={() => setStrokeControlsOpen(false)}>
+                      <StrokeControlsCard fx={strokeFx} isSvg={isSvgShape} onChange={applyStrokeFx} onClose={() => setStrokeControlsOpen(false)} />
+                    </PanelPopup>
                   )}
                 </div>
               )}
@@ -2234,15 +2322,23 @@ export function HtmlContextualPanel({
           {expanded.effects && (
             <div style={sectionBody}>
               {!fxHasAny ? (
-                <div style={{ position: "relative" }}>
+                <div style={{ position: "relative" }} ref={fxAddRowRef}>
                   <button type="button" onClick={() => setFxAddOpen(true)} style={{ ...smallBtn, width: "100%" }}>+ Añadir efecto</button>
-                  {fxAddOpen && <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />}
+                  {fxAddOpen && (
+                    <PanelPopup anchor={fxAddRowRef} onClose={() => setFxAddOpen(false)}>
+                      <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />
+                    </PanelPopup>
+                  )}
                 </div>
               ) : (
                 <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 3 }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", position: "relative" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", position: "relative" }} ref={fxAddRowRef}>
                     <button type="button" title="Añadir efecto" onClick={() => setFxAddOpen(true)} style={{ ...smallBtn, width: 24, flexShrink: 0 }}>+</button>
-                    {fxAddOpen && <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />}
+                    {fxAddOpen && (
+                      <PanelPopup anchor={fxAddRowRef} onClose={() => setFxAddOpen(false)}>
+                        <EffectsAddCard onPick={addEffect} onClose={() => setFxAddOpen(false)} />
+                      </PanelPopup>
+                    )}
                     <span style={{ fontSize: 9, color: "#7a7668" }}>{fxCount} {fxCount === 1 ? "efecto" : "efectos"}</span>
                   </div>
                   {shadows.map((sh, i) => fxRow(`sh:${i}`, sh.inset ? `Sombra interna ${i + 1}` : `Sombra ${i + 1}`, {
