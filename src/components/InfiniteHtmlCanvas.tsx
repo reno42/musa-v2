@@ -1,7 +1,9 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type SelectedElementInfo } from "./DesignFrame";
+import { DesignFrame, frameHitTestRegistry, frameMarqueeRegistry, type FrameData, type HtmlCanvasObject, type LayerSelectionRequest, type LayerVisualGeometry, type SelectedElementInfo } from "./DesignFrame";
 import { CanvasGuides, type Guide, type ColumnConfig, type SmartGuide } from "./CanvasGuides";
 import { computeAlignmentGuides, computeSpacingGuides, snapToGuides, type ElementBounds } from "../lib/smartGuides";
+import { isRoundableCanvasShape, resizeCanvasObjectBounds, rotationDegreesFromTransform, rotationFromPointer, type CanvasResizeDirection } from "../lib/canvasObjects";
+import { getCssPropertyValue, setTransformFunction } from "../lib/cssMutations";
 import type { BrushStroke } from "../../shared/maskBake.ts";
 
 /**
@@ -75,7 +77,7 @@ interface InfiniteHtmlCanvasProps {
   onRenameFrame?: (frameId: string, name: string) => void;
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   /** A drag carried these layers clear of their frame. */
-  onLayerEscape?: (frameId: string, layerIds: string[], box: { x: number; y: number; width: number; height: number }) => void;
+  onLayerEscape?: (frameId: string, layerIds: string[], box: { x: number; y: number; width: number; height: number }, geometries?: Record<string, LayerVisualGeometry>) => void;
   /** Click on frame body resolves the topmost layer under the cursor (layer-panel order). */
   onRequestLayerSelect?: (frameId: string, layerId: string, additive?: boolean) => void;
   layerSelectionRequest?: LayerSelectionRequest | null;
@@ -114,6 +116,9 @@ interface InfiniteHtmlCanvasProps {
   onSelectOrphan?: (id: string | null) => void;
   onOrphanShiftClick?: (id: string) => void;
   onOrphanMove?: (id: string, x: number, y: number) => void;
+  onOrphanResize?: (id: string, width: number, height: number, x: number, y: number) => void;
+  onOrphanRotate?: (id: string, degrees: number) => void;
+  onOrphanRadiusChange?: (id: string, radius: number) => void;
   onDeleteOrphan?: (id: string) => void;
   /** Drop an orphan onto a frame (drag-end detection on canvas). */
   onOrphanDropToFrame?: (orphanId: string, targetFrameId: string) => void;
@@ -182,7 +187,7 @@ export function InfiniteHtmlCanvas({
   onBrushStroke, brushSize = 24,
   onWandSegment, wandLoading = null,
   onFrameResize, onCreateFrame, onCreateOrphanFromTool,
-  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
+  onSelectOrphan, onOrphanShiftClick, onOrphanMove, onOrphanResize, onOrphanRotate, onOrphanRadiusChange, onOrphanDropToFrame, onDeleteOrphan, onMarqueeSelectOrphans, onEyedropperPick,
   onOrphanHtmlChange, autoEditOrphanId, onAutoEditOrphanHandled,
   autoEditLayerId, onAutoEditHandled,
   guides = [], onGuidesChange, showGrid = true, gridSize = 8, showRulers = true, columnConfig = null, smartGuides = [],
@@ -206,6 +211,35 @@ export function InfiniteHtmlCanvas({
 
   // Orphan drag state
   const orphanDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+  const orphanResizeRef = useRef<{
+    id: string;
+    direction: CanvasResizeDirection;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    origWidth: number;
+    origHeight: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const orphanRotateRef = useRef<{
+    id: string;
+    center: { x: number; y: number };
+    startPointer: { x: number; y: number };
+    initialDegrees: number;
+    degrees: number;
+    initialTransform: string;
+  } | null>(null);
+  const orphanRadiusRef = useRef<{
+    id: string;
+    startX: number;
+    initialRadius: number;
+    radius: number;
+    maxRadius: number;
+  } | null>(null);
   const [isDraggingOrphan, setIsDraggingOrphan] = useState(false);
 
   // Marquee selection state (Phase 3)
@@ -491,6 +525,49 @@ export function InfiniteHtmlCanvas({
       }
       return;
     }
+    if (orphanRotateRef.current) {
+      const rotation = orphanRotateRef.current;
+      rotation.degrees = rotationFromPointer(
+        rotation.center,
+        rotation.startPointer,
+        { x: e.clientX, y: e.clientY },
+        rotation.initialDegrees,
+      );
+      const controls = document.querySelector(`[data-canvas-object-controls="${rotation.id}"]`) as HTMLElement | null;
+      if (controls) controls.style.transform = `rotate(${rotation.degrees}deg)`;
+      const root = document.querySelector(`[data-canvas-object-id="${rotation.id}"] [data-layer-id="${rotation.id}"]`) as HTMLElement | null;
+      if (root) root.style.transform = setTransformFunction(rotation.initialTransform, "rotate", `${rotation.degrees}deg`);
+      return;
+    }
+    if (orphanRadiusRef.current) {
+      const radius = orphanRadiusRef.current;
+      radius.radius = Math.max(0, Math.min(radius.maxRadius, radius.initialRadius + (e.clientX - radius.startX) / zoom));
+      const root = document.querySelector(`[data-canvas-object-id="${radius.id}"] [data-layer-id="${radius.id}"]`) as HTMLElement | null;
+      if (root) root.style.borderRadius = `${radius.radius}px`;
+      return;
+    }
+    // Root-object resize. Preview the wrapper directly for a fluid drag; the
+    // owner commits both geometry and matching root CSS on mouseup.
+    if (orphanResizeRef.current) {
+      const resize = orphanResizeRef.current;
+      const dx = (e.clientX - resize.startX) / zoom;
+      const dy = (e.clientY - resize.startY) / zoom;
+      const { x, y, width, height } = resizeCanvasObjectBounds({
+        x: resize.origX,
+        y: resize.origY,
+        width: resize.origWidth,
+        height: resize.origHeight,
+      }, resize.direction, dx, dy);
+      Object.assign(resize, { x, y, width, height });
+      const el = document.querySelector(`[data-canvas-object-id="${resize.id}"]`) as HTMLElement | null;
+      if (el) {
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.width = `${width}px`;
+        el.style.height = `${height}px`;
+      }
+      return;
+    }
     // Orphan dragging
     if (orphanDragRef.current) {
       const od = orphanDragRef.current;
@@ -539,6 +616,34 @@ export function InfiniteHtmlCanvas({
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     isPanning.current = false;
     setDupPlaceholders(null);
+    if (orphanRotateRef.current) {
+      const rotation = orphanRotateRef.current;
+      const root = document.querySelector(`[data-canvas-object-id="${rotation.id}"] [data-layer-id="${rotation.id}"]`) as HTMLElement | null;
+      if (root) root.style.transform = "";
+      onOrphanRotate?.(rotation.id, Math.round(rotation.degrees * 10) / 10);
+      orphanRotateRef.current = null;
+      return;
+    }
+    if (orphanRadiusRef.current) {
+      const radius = orphanRadiusRef.current;
+      const root = document.querySelector(`[data-canvas-object-id="${radius.id}"] [data-layer-id="${radius.id}"]`) as HTMLElement | null;
+      if (root) root.style.borderRadius = "";
+      onOrphanRadiusChange?.(radius.id, Math.round(radius.radius));
+      orphanRadiusRef.current = null;
+      return;
+    }
+    if (orphanResizeRef.current) {
+      const resize = orphanResizeRef.current;
+      onOrphanResize?.(
+        resize.id,
+        Math.round(resize.width),
+        Math.round(resize.height),
+        Math.round(resize.x),
+        Math.round(resize.y),
+      );
+      orphanResizeRef.current = null;
+      return;
+    }
     // Single frame drag commit
     if (dragFrameRef.current) {
       const df = dragFrameRef.current;
@@ -686,7 +791,7 @@ export function InfiniteHtmlCanvas({
     }
     marqueeStartRef.current = null;
     setMarqueeRect(null);
-  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onSelectOrphan, onRequestLayerSelect, onElementSelect, onSelectFrame]);
+  }, [zoom, onFrameMove, onMultiFrameMove, onDuplicateFrames, onMarqueeSelect, onMarqueeSelectOrphans, onCreateFrame, onCreateOrphanFromTool, activeTool, frames, canvasObjects, marqueeRect, frameDrawRect, onOrphanMove, onOrphanResize, onOrphanRotate, onOrphanRadiusChange, onSelectOrphan, onRequestLayerSelect, onElementSelect, onSelectFrame]);
 
   // Zoom with wheel — must use native listener with { passive: false }
   useEffect(() => {
@@ -991,6 +1096,67 @@ export function InfiniteHtmlCanvas({
     startOrphanDrag(orphanId, e);
   }, [activeTool, onSelectOrphan, onOrphanShiftClick, startOrphanDrag]);
 
+  const startOrphanResize = useCallback((
+    orphanId: string,
+    direction: CanvasResizeDirection,
+    e: React.MouseEvent,
+  ) => {
+    if (e.button !== 0) return;
+    const object = canvasObjects.find(item => item.id === orphanId);
+    if (!object) return;
+    e.preventDefault();
+    e.stopPropagation();
+    orphanDragRef.current = null;
+    orphanResizeRef.current = {
+      id: object.id,
+      direction,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: object.x,
+      origY: object.y,
+      origWidth: object.width,
+      origHeight: object.height,
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+    };
+  }, [canvasObjects]);
+
+  const startOrphanRotate = useCallback((orphanId: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const object = canvasObjects.find(item => item.id === orphanId);
+    const wrapper = document.querySelector(`[data-canvas-object-id="${orphanId}"]`) as HTMLElement | null;
+    if (!object || !wrapper) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = wrapper.getBoundingClientRect();
+    const initialTransform = getCssPropertyValue(object.css, `[data-layer-id="${object.id}"]`, "transform");
+    orphanRotateRef.current = {
+      id: object.id,
+      center: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      startPointer: { x: e.clientX, y: e.clientY },
+      initialDegrees: rotationDegreesFromTransform(initialTransform),
+      degrees: rotationDegreesFromTransform(initialTransform),
+      initialTransform,
+    };
+  }, [canvasObjects]);
+
+  const startOrphanRadius = useCallback((orphanId: string, initialRadius: number, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const object = canvasObjects.find(item => item.id === orphanId);
+    if (!object) return;
+    e.preventDefault();
+    e.stopPropagation();
+    orphanRadiusRef.current = {
+      id: object.id,
+      startX: e.clientX,
+      initialRadius,
+      radius: initialRadius,
+      maxRadius: Math.min(object.width, object.height) / 2,
+    };
+  }, [canvasObjects]);
+
   // Frame body mousedown.
   //
   // A frame is NEVER selected by a plain click on its body — only its NAME
@@ -1126,7 +1292,7 @@ export function InfiniteHtmlCanvas({
               zoom={zoom}
               onActivate={onActivateFrame ?? onSelectFrame}
               onElementSelect={onElementSelect}
-              onLayerEscape={(layerIds, box) => onLayerEscape?.(frame.id, layerIds, box)}
+              onLayerEscape={(layerIds, box, geometries) => onLayerEscape?.(frame.id, layerIds, box, geometries)}
               selectionRequest={layerSelectionRequest?.frameId === frame.id ? layerSelectionRequest : null}
               selectedLayerId={selectedElement?.frameId === frame.id ? selectedElement.layerId : null}
               selectedLayerIds={selectedElement?.frameId === frame.id ? selectedLayerIds : []}
@@ -1166,6 +1332,12 @@ export function InfiniteHtmlCanvas({
         {/* Canvas-level orphan objects (outside all frames) */}
         {canvasObjects.map(obj => {
           const isSelected = selectedOrphanIds.has(obj.id);
+          const selector = `[data-layer-id="${obj.id}"]`;
+          const transform = getCssPropertyValue(obj.css, selector, "transform");
+          const rotation = rotationDegreesFromTransform(transform);
+          const radiusValue = getCssPropertyValue(obj.css, selector, "border-radius");
+          const radius = /^\d+(?:\.\d+)?px$/i.test(radiusValue.trim()) ? parseFloat(radiusValue) : 0;
+          const canRound = isRoundableCanvasShape(obj.kind, obj.html, radiusValue);
           return (
             <div
               key={obj.id}
@@ -1186,12 +1358,110 @@ export function InfiniteHtmlCanvas({
               <style>{obj.css}</style>
               <div dangerouslySetInnerHTML={{ __html: obj.html }} />
               {isSelected && (
-                <div style={{
-                  position: "absolute", inset: 0,
-                  border: "2px solid #3B82F6",
-                  borderRadius: 2, pointerEvents: "none",
-                  boxShadow: "0 0 0 1px #3B82F6",
-                }} />
+                <div
+                  data-canvas-object-controls={obj.id}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    pointerEvents: "none",
+                    transform: `rotate(${rotation}deg)`,
+                    transformOrigin: "center",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute", inset: 0,
+                    border: `${2 / zoom}px solid #3B82F6`,
+                    borderRadius: 2, pointerEvents: "none",
+                  }} />
+                  {selectedOrphanIds.size === 1 && ([
+                    ["nw", "0%", "0%"], ["n", "50%", "0%"], ["ne", "100%", "0%"],
+                    ["e", "100%", "50%"], ["se", "100%", "100%"], ["s", "50%", "100%"],
+                    ["sw", "0%", "100%"], ["w", "0%", "50%"],
+                  ] as const).map(([direction, left, top]) => (
+                    <button
+                      key={direction}
+                      type="button"
+                      aria-label={`Redimensionar objeto hacia ${direction}`}
+                      onMouseDown={event => startOrphanResize(obj.id, direction, event)}
+                      onClick={event => event.stopPropagation()}
+                      style={{
+                        position: "absolute",
+                        left,
+                        top,
+                        width: 8 / zoom,
+                        height: 8 / zoom,
+                        minWidth: 0,
+                        minHeight: 0,
+                        padding: 0,
+                        border: `${1 / zoom}px solid #3B82F6`,
+                        borderRadius: 1,
+                        background: "#FFFFFF",
+                        transform: "translate(-50%, -50%)",
+                        cursor: `${direction}-resize`,
+                        zIndex: 2,
+                        pointerEvents: "auto",
+                      }}
+                    />
+                  ))}
+                  {selectedOrphanIds.size === 1 && (
+                    <>
+                      <div style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: -28 / zoom,
+                        height: 28 / zoom,
+                        borderLeft: `${1 / zoom}px solid #3B82F6`,
+                        pointerEvents: "none",
+                      }} />
+                      <button
+                        type="button"
+                        aria-label="Rotar objeto"
+                        onMouseDown={event => startOrphanRotate(obj.id, event)}
+                        onClick={event => event.stopPropagation()}
+                        style={{
+                          position: "absolute",
+                          left: "50%",
+                          top: -32 / zoom,
+                          width: 10 / zoom,
+                          height: 10 / zoom,
+                          minWidth: 0,
+                          minHeight: 0,
+                          padding: 0,
+                          border: `${1 / zoom}px solid #3B82F6`,
+                          borderRadius: "50%",
+                          background: "#FFFFFF",
+                          transform: "translate(-50%, -50%)",
+                          cursor: "grab",
+                          pointerEvents: "auto",
+                        }}
+                      />
+                      {canRound && (
+                        <button
+                          type="button"
+                          aria-label="Redondear esquinas"
+                          onMouseDown={event => startOrphanRadius(obj.id, radius, event)}
+                          onClick={event => event.stopPropagation()}
+                          style={{
+                            position: "absolute",
+                            left: Math.min(Math.max(radius, 12 / zoom), obj.width / 2),
+                            top: 12 / zoom,
+                            width: 9 / zoom,
+                            height: 9 / zoom,
+                            minWidth: 0,
+                            minHeight: 0,
+                            padding: 0,
+                            border: `${1 / zoom}px solid #3B82F6`,
+                            borderRadius: "50%",
+                            background: "#3B82F6",
+                            transform: "translate(-50%, -50%)",
+                            cursor: "ew-resize",
+                            pointerEvents: "auto",
+                          }}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </div>
           );

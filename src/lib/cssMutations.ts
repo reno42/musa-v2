@@ -429,8 +429,12 @@ export function cloneLayerTreeCss(
   layerIds: Iterable<string>,
   idMap: Map<string, string>,
   positionOffset = 0,
+  referenceIdMap: Map<string, string> = new Map(),
 ): string {
-  let cloned = remapLayerCss(extractLayerTreeCss(css, layerHtml, layerIds), idMap);
+  let cloned = remapCssReferences(
+    remapLayerCss(extractLayerTreeCss(css, layerHtml, layerIds), idMap),
+    referenceIdMap,
+  );
   if (positionOffset === 0) return cloned;
 
   for (const [oldId, newId] of idMap) {
@@ -446,6 +450,29 @@ export function cloneLayerTreeCss(
     }
   }
   return cloned;
+}
+
+export function remapCssReferences(css: string, idMap: Map<string, string>): string {
+  let updated = css;
+  for (const [oldId, newId] of idMap) {
+    const escaped = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    updated = updated.replace(new RegExp(`(?<![\\w/.-])#${escaped}(?![\\w-])`, "g"), `#${newId}`);
+  }
+  return updated;
+}
+
+/** Remap only local href/url fragments; external URL fragments stay intact. */
+export function remapFragmentReferences(value: string, idMap: Map<string, string>): string {
+  let updated = value;
+  for (const [oldId, newId] of idMap) {
+    const escaped = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    updated = updated.replace(
+      new RegExp(`url\\(\\s*(["']?)#${escaped}\\1\\s*\\)`, "g"),
+      (_match, quote: string) => `url(${quote}#${newId}${quote})`,
+    );
+    if (updated === `#${oldId}`) updated = `#${newId}`;
+  }
+  return updated;
 }
 
 function normalizedCss(value: string): string {

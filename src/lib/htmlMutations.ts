@@ -1,4 +1,4 @@
-import { cloneLayerCss } from "./cssMutations";
+import { cloneLayerCss, remapCssReferences, remapFragmentReferences } from "./cssMutations";
 import { classifyLayer } from "./layerKind";
 import { parseGradientValue } from "./gradient";
 
@@ -164,17 +164,42 @@ function offsetInlinePosition(element: Element, offset = 20): void {
   }
 }
 
-function cloneLayerTree(element: Element, createId: () => string): { clone: Element; idMap: Map<string, string> } {
+function cloneLayerTree(element: Element, createId: () => string): { clone: Element; idMap: Map<string, string>; referenceIdMap: Map<string, string> } {
   const clone = element.cloneNode(true) as Element;
   const idMap = new Map<string, string>();
-  for (const clonedElement of [clone, ...clone.querySelectorAll("[data-layer-id]")]) {
+  const clonedElements = [clone, ...clone.querySelectorAll("*")];
+  for (const clonedElement of clonedElements.filter(item => item.hasAttribute("data-layer-id"))) {
     const oldId = clonedElement.getAttribute("data-layer-id");
     if (!oldId) continue;
     const newId = createId();
     clonedElement.setAttribute("data-layer-id", newId);
     idMap.set(oldId, newId);
   }
-  return { clone, idMap };
+  const referenceIdMap = new Map<string, string>();
+  for (const clonedElement of clonedElements.filter(item => item.hasAttribute("id"))) {
+    const oldId = clonedElement.getAttribute("id");
+    if (!oldId) continue;
+    const newId = `${oldId}_${createId()}`;
+    clonedElement.setAttribute("id", newId);
+    referenceIdMap.set(oldId, newId);
+  }
+  if (referenceIdMap.size > 0) {
+    for (const clonedElement of clonedElements) {
+      for (const attribute of clonedElement.getAttributeNames()) {
+        if (attribute === "id") continue;
+        const value = clonedElement.getAttribute(attribute);
+        if (!value) continue;
+        const remapped = /^(?:aria-labelledby|aria-describedby)$/i.test(attribute)
+          ? value.split(/\s+/).map(token => referenceIdMap.get(token) || token).join(" ")
+          : remapFragmentReferences(value, referenceIdMap);
+        clonedElement.setAttribute(attribute, remapped);
+      }
+      if (clonedElement.tagName.toLowerCase() === "style" && clonedElement.textContent) {
+        clonedElement.textContent = remapCssReferences(clonedElement.textContent, referenceIdMap);
+      }
+    }
+  }
+  return { clone, idMap, referenceIdMap };
 }
 
 /**
@@ -317,13 +342,13 @@ export function pasteLayerFromHtml(
   sourceLayerId: string,
   createId: () => string,
   offset = 20,
-): { html: string; idMap: Map<string, string>; rootLayerId: string } | null {
+): { html: string; idMap: Map<string, string>; referenceIdMap: Map<string, string>; rootLayerId: string } | null {
   const sourceDocument = parseFragment(sourceHtml);
   const sourceElement = findLayer(sourceDocument, sourceLayerId);
   if (!sourceElement) return null;
 
   const targetDocument = parseFragment(targetHtml);
-  const { clone, idMap } = cloneLayerTree(sourceElement, createId);
+  const { clone, idMap, referenceIdMap } = cloneLayerTree(sourceElement, createId);
   offsetInlinePosition(clone, offset);
 
   const matchingTarget = findLayer(targetDocument, sourceLayerId);
@@ -332,7 +357,7 @@ export function pasteLayerFromHtml(
 
   const rootLayerId = idMap.get(sourceLayerId);
   if (!rootLayerId) return null;
-  return { html: serializeFragment(targetDocument), idMap, rootLayerId };
+  return { html: serializeFragment(targetDocument), idMap, referenceIdMap, rootLayerId };
 }
 
 export function changeLayerTag(html: string, layerId: string, newTag: string): string | null {

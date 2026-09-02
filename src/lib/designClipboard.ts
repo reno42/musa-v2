@@ -1,4 +1,9 @@
-import type { FrameData } from "../components/DesignFrame";
+import type { FrameData, HtmlCanvasObject } from "../components/DesignFrame";
+
+export interface CanvasObjectClipboardItem {
+  layerId: string;
+  object: HtmlCanvasObject;
+}
 
 export type DesignClipboard =
   | {
@@ -8,8 +13,24 @@ export type DesignClipboard =
     html: string;
     css: string;
     layout: { left: string; top: string; translate: string };
+    /** Canvas geometry used when an in-frame element is pasted as a root object. */
+    canvasGeometry?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      frameLocalX?: number;
+      frameLocalY?: number;
+      contentWidth?: number;
+      contentHeight?: number;
+      contentOffsetX?: number;
+      contentOffsetY?: number;
+      name: string;
+      kind: string;
+    };
     pasteCount: number;
   }
+  | { kind: "canvas-object"; objects: CanvasObjectClipboardItem[]; pasteCount: number }
   | { kind: "frames"; frames: FrameData[]; pasteCount: number };
 
 interface StoredDesignClipboard {
@@ -31,8 +52,27 @@ function isDesignClipboard(value: unknown): value is DesignClipboard {
     layerId?: unknown;
     html?: unknown;
     css?: unknown;
+    objects?: unknown;
   };
   if (clipboard.kind === "frames") return Array.isArray(clipboard.frames);
+  if (clipboard.kind === "canvas-object") {
+    return Array.isArray(clipboard.objects) && clipboard.objects.length > 0
+      && clipboard.objects.every(value => {
+        if (!value || typeof value !== "object") return false;
+        const item = value as { layerId?: unknown; object?: Partial<HtmlCanvasObject> };
+        const object = item.object;
+        return typeof item.layerId === "string"
+          && Boolean(object)
+          && typeof object?.id === "string"
+          && object.frameId === null
+          && typeof object.html === "string"
+          && typeof object.css === "string"
+          && typeof object.x === "number"
+          && typeof object.y === "number"
+          && typeof object.width === "number"
+          && typeof object.height === "number";
+      });
+  }
   return clipboard.kind === "element"
     && typeof clipboard.frameId === "string"
     && typeof clipboard.layerId === "string"

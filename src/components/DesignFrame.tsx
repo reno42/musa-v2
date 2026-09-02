@@ -49,6 +49,7 @@ import { transformPathData, type BrushStroke } from "../../shared/maskBake.ts";
 import type { AnimationSchema } from "../../shared/animationSchema.ts";
 import { createFrameAnimator, type FrameAnimator } from "../lib/animationEngine";
 import { stopFrame } from "../lib/animationPlayback";
+import { toFrameLocalBounds } from "../lib/canvasObjects";
 
 /**
  * DesignFrame — Renders HTML/CSS inside a Shadow DOM container with
@@ -124,6 +125,8 @@ export interface SelectedElementInfo {
   selector: string;
   computedStyles: Record<string, string>;
   frameId: string;
+  /** Actual painted box in frame-local coordinates, including transforms. */
+  visualBounds?: { x: number; y: number; width: number; height: number };
   isSvg: boolean;
   svgChildTag?: string;
   shapeOptions?: ShapeOptions;
@@ -156,6 +159,17 @@ export interface LayerSelectionRequest {
   requestId: number;
 }
 
+export interface LayerVisualGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  contentWidth: number;
+  contentHeight: number;
+  contentOffsetX: number;
+  contentOffsetY: number;
+}
+
 interface DesignFrameProps {
   frame: FrameData;
   isActive: boolean;
@@ -164,7 +178,11 @@ interface DesignFrameProps {
   onElementSelect?: (info: SelectedElementInfo | null) => void;
   /** A drag carried these layers entirely past the frame's edge, so they
    *  belong on the canvas now. Position is in frame coordinates. */
-  onLayerEscape?: (layerIds: string[], box: { x: number; y: number; width: number; height: number }) => void;
+  onLayerEscape?: (
+    layerIds: string[],
+    box: { x: number; y: number; width: number; height: number },
+    geometries?: Record<string, LayerVisualGeometry>,
+  ) => void;
   selectionRequest?: LayerSelectionRequest | null;
   selectedLayerId?: string | null;
   selectedLayerIds?: readonly string[];
@@ -861,6 +879,11 @@ export function DesignFrame({
     for (const property of TRACKED_PROPS) computedStyles[property] = computed.getPropertyValue(property);
 
     const tag = element.tagName.toLowerCase();
+    const visualRect = getVisualRect(element);
+    const content = shadowRef.current?.getElementById("__df_content");
+    const contentRect = content?.getBoundingClientRect();
+    const z = zoomRef.current || 1;
+    const visualBounds = contentRect ? toFrameLocalBounds(visualRect, contentRect, z) : undefined;
     const parentSvg = source.closest?.("svg");
     const isSvg = tag === "svg" || !!parentSvg;
     const movableLayers = collectMovableElements(element).flatMap(item => {
@@ -905,6 +928,7 @@ export function DesignFrame({
       selector: getStyleSelector(element, source),
       computedStyles,
       frameId: frame.id,
+      visualBounds,
       isSvg,
       svgChildTag: isSvg && source !== element ? source.tagName.toLowerCase() : undefined,
       shapeOptions,
@@ -3518,8 +3542,27 @@ export function DesignFrame({
             .map(el => el.getAttribute("data-layer-id"))
             .filter((id): id is string => Boolean(id));
           if (layerIds.length) {
+            const contentRect = content.getBoundingClientRect();
+            const z = zoomRef.current || 1;
+            const geometries: Record<string, LayerVisualGeometry> = {};
+            for (const target of dragTargets) {
+              const layerId = target.getAttribute("data-layer-id");
+              if (!layerId) continue;
+              const bounds = toFrameLocalBounds(getVisualRect(target), contentRect, z);
+              const computed = target.ownerDocument.defaultView!.getComputedStyle(target);
+              const translate = parseCssTranslate(computed.translate);
+              const logicalX = (parseFloat(computed.left) || 0) + translate.x;
+              const logicalY = (parseFloat(computed.top) || 0) + translate.y;
+              geometries[layerId] = {
+                ...bounds,
+                contentWidth: parseFloat(computed.width) || bounds.width,
+                contentHeight: parseFloat(computed.height) || bounds.height,
+                contentOffsetX: bounds.x - logicalX,
+                contentOffsetY: bounds.y - logicalY,
+              };
+            }
             for (const item of dragItems) (item.el as HTMLElement).style.translate = "";
-            onLayerEscapeRef.current(layerIds, { x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+            onLayerEscapeRef.current(layerIds, { x: minX, y: minY, width: maxX - minX, height: maxY - minY }, geometries);
             return;
           }
         }

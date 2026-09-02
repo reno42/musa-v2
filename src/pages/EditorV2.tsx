@@ -19,7 +19,7 @@ import type { ImportResult } from "../lib/designImport";
 import { InfiniteHtmlCanvas, type HtmlToolName, type WandClickPoint, type CanvasCommentPin } from "../components/InfiniteHtmlCanvas";
 import { CanvasContextMenu } from "../components/CanvasContextMenu";
 import type { Guide, ColumnConfig } from "../components/CanvasGuides";
-import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
+import type { FrameData, HtmlCanvasObject, LayerSelectionRequest, LayerVisualGeometry, SelectedElementInfo, ShapeOptions } from "../components/DesignFrame";
 import { frameMarqueeRegistry } from "../components/DesignFrame";
 import { toHexColor } from "../lib/colorUtils";
 import { SOCIAL_FORMATS, CUSTOM_FORMAT_ID, clampFrameDimension } from "../lib/socialFormats";
@@ -878,6 +878,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const success = store.undo();
     if (!success) return;
     const cur = store.frames as FrameData[];
+    const restoredObjects = store.canvasObjects as HtmlCanvasObject[];
+    canvasObjectsRef.current = restoredObjects;
+    setCanvasObjects(restoredObjects);
     lastPushTimeRef.current = 0;
     setSelectedElement(null);
     setContentFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : null);
@@ -896,6 +899,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const success = store.redo();
     if (!success) return;
     const cur = store.frames as FrameData[];
+    const restoredObjects = store.canvasObjects as HtmlCanvasObject[];
+    canvasObjectsRef.current = restoredObjects;
+    setCanvasObjects(restoredObjects);
     lastPushTimeRef.current = 0;
     setSelectedElement(null);
     setContentFrameId(cid => cid && cur.some(f => f.id === cid) ? cid : null);
@@ -987,6 +993,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           : [];
         canvasObjectsRef.current = loadedCanvasObjects;
         setCanvasObjects(loadedCanvasObjects);
+        store.replaceCanvasObjects(loadedCanvasObjects);
       } catch (err: any) {
         if (!cancelled) setError(err.message || "Failed to load template");
       } finally {
@@ -1169,11 +1176,12 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSavingVersion(false);
   }, [savingVersion, templateId, selectedFrameId, templateName, addToast]);
 
-  const commitCanvasObjects = useCallback((next: HtmlCanvasObject[], updatedFrames = framesRef.current) => {
+  const commitCanvasObjects = useCallback((next: HtmlCanvasObject[], updatedFrames = framesRef.current, label = "edit object") => {
+    store.replaceDocumentWithUndo(updatedFrames, next, label);
     canvasObjectsRef.current = next;
     setCanvasObjects(next);
     autoSave(updatedFrames);
-  }, [autoSave]);
+  }, [autoSave, store]);
 
   // ── Comments: mobile detection (two-button bar) ──
   // Coarse primary pointer OR a narrow viewport: the phone experience.
@@ -1459,6 +1467,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               if (JSON.stringify(canvasObjectsRef.current) !== JSON.stringify(remoteCanvasObjects)) {
                 canvasObjectsRef.current = remoteCanvasObjects;
                 setCanvasObjects(remoteCanvasObjects);
+                store.replaceCanvasObjects(remoteCanvasObjects);
               }
               // Safety: never replace non-empty local frames with empty remote frames
               if (t.frames && Array.isArray(t.frames) && t.frames.length > 0) {
@@ -1699,9 +1708,45 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
 
   /** Orphan CSS change (from inline editing or context panel) */
   const handleOrphanCssChange = useCallback((orphanId: string, newCss: string, newHtml?: string) => {
-    commitCanvasObjects(canvasObjectsRef.current.map(o =>
-      o.id === orphanId ? { ...o, css: newCss, ...(newHtml !== undefined ? { html: newHtml } : {}) } : o
-    ));
+    const selector = `[data-layer-id="${orphanId}"]`;
+    const widthValue = getCssPropertyValue(newCss, selector, "width").trim();
+    const heightValue = getCssPropertyValue(newCss, selector, "height").trim();
+    const cssWidth = /^\d+(?:\.\d+)?px(?:\s*!important)?$/i.test(widthValue) ? parseFloat(widthValue) : NaN;
+    const cssHeight = /^\d+(?:\.\d+)?px(?:\s*!important)?$/i.test(heightValue) ? parseFloat(heightValue) : NaN;
+    commitCanvasObjects(canvasObjectsRef.current.map(object => object.id === orphanId ? {
+      ...object,
+      css: newCss,
+      ...(Number.isFinite(cssWidth) && cssWidth > 0 ? { width: Math.round(cssWidth) } : {}),
+      ...(Number.isFinite(cssHeight) && cssHeight > 0 ? { height: Math.round(cssHeight) } : {}),
+      ...(newHtml !== undefined ? { html: newHtml } : {}),
+    } : object));
+  }, [commitCanvasObjects]);
+
+  /** Resize a root object with the same CSS-backed dimensions as an in-frame layer. */
+  const handleOrphanResize = useCallback((orphanId: string, width: number, height: number, x: number, y: number) => {
+    const selector = `[data-layer-id="${orphanId}"]`;
+    commitCanvasObjects(canvasObjectsRef.current.map(object => {
+      if (object.id !== orphanId) return object;
+      let css = updateCssProperty(object.css, selector, "width", `${width}px !important`);
+      css = updateCssProperty(css, selector, "height", `${height}px !important`);
+      return { ...object, x, y, width, height, css };
+    }));
+  }, [commitCanvasObjects]);
+
+  const handleOrphanRotate = useCallback((orphanId: string, degrees: number) => {
+    const selector = `[data-layer-id="${orphanId}"]`;
+    commitCanvasObjects(canvasObjectsRef.current.map(object => {
+      if (object.id !== orphanId) return object;
+      const current = getCssPropertyValue(object.css, selector, "transform");
+      return { ...object, css: updateCssProperty(object.css, selector, "transform", setTransformFunction(current, "rotate", `${degrees}deg`)) };
+    }), framesRef.current, "rotate object");
+  }, [commitCanvasObjects]);
+
+  const handleOrphanRadiusChange = useCallback((orphanId: string, radius: number) => {
+    const selector = `[data-layer-id="${orphanId}"]`;
+    commitCanvasObjects(canvasObjectsRef.current.map(object => object.id === orphanId
+      ? { ...object, css: updateCssProperty(object.css, selector, "border-radius", `${radius}px`) }
+      : object), framesRef.current, "round object");
   }, [commitCanvasObjects]);
 
   /** Reorder orphan z-index in layers panel */
@@ -1727,9 +1772,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   /** Update orphan width/height */
   const handleOrphanDimensionChange = useCallback((orphanId: string, field: "width" | "height", value: number) => {
     if (value < 1) return;
-    const next = canvasObjectsRef.current.map(o =>
-      o.id === orphanId ? { ...o, [field]: Math.round(value) } : o
-    );
+    const next = canvasObjectsRef.current.map(object => {
+      if (object.id !== orphanId) return object;
+      const rounded = Math.round(value);
+      return {
+        ...object,
+        [field]: rounded,
+        css: updateCssProperty(object.css, `[data-layer-id="${orphanId}"]`, field, `${rounded}px !important`),
+      };
+    });
     commitCanvasObjects(next);
   }, [commitCanvasObjects]);
 
@@ -1755,25 +1806,39 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!frame) return;
     const extracted = extractLayerFromHtml(frame.html, layerId);
     if (!extracted) return;
-    const transferredCss = cloneLayerTreeCss(frame.css, extracted.layerHtml, extracted.layerIds, new Map(extracted.layerIds.map(id => [id, id])), 0);
+    let transferredCss = cloneLayerTreeCss(frame.css, extracted.layerHtml, extracted.layerIds, new Map(extracted.layerIds.map(id => [id, id])), 0);
     const sourceCss = removeLayersCss(frame.css, extracted.layerIds);
-    // Get visual position: use frame's position as offset
+    const selection = selectedElement?.layerId === layerId && selectedElement.frameId === frameId ? selectedElement : null;
+    const translate = parseTranslate(selection?.computedStyles.translate || "");
+    const logicalX = parseFloat(selection?.computedStyles.left || "") || 0;
+    const logicalY = parseFloat(selection?.computedStyles.top || "") || 0;
+    const bounds = selection?.visualBounds;
+    const visualX = bounds?.x ?? logicalX + translate.x;
+    const visualY = bounds?.y ?? logicalY + translate.y;
+    const contentWidth = parseFloat(selection?.computedStyles.width || "") || bounds?.width || frame.width;
+    const contentHeight = parseFloat(selection?.computedStyles.height || "") || bounds?.height || frame.height;
+    const selector = `[data-layer-id="${layerId}"]`;
+    transferredCss = updateCssProperty(transferredCss, selector, "position", "absolute");
+    transferredCss = updateCssProperty(transferredCss, selector, "left", `${-(visualX - logicalX - translate.x)}px !important`);
+    transferredCss = updateCssProperty(transferredCss, selector, "top", `${-(visualY - logicalY - translate.y)}px !important`);
+    transferredCss = updateCssProperty(transferredCss, selector, "translate", "none !important");
+    transferredCss = updateCssProperty(transferredCss, selector, "width", `${contentWidth}px !important`);
+    transferredCss = updateCssProperty(transferredCss, selector, "height", `${contentHeight}px !important`);
     const newOrphan: HtmlCanvasObject = {
-      id: createOrphanId(),
+      id: layerId,
       name: /data-layer-name=["']([^"']+)["']/i.exec(extracted.layerHtml)?.[1] || "Object",
       kind: /data-layer-kind=["']([^"']+)["']/i.exec(extracted.layerHtml)?.[1] || "shape",
       frameId: null,
       html: extracted.layerHtml,
       css: transferredCss,
-      x: frame.x, y: frame.y,
-      width: frame.width, height: frame.height,
+      x: frame.x + visualX, y: frame.y + visualY,
+      width: bounds?.width || contentWidth, height: bounds?.height || contentHeight,
       zIndex: canvasObjectsRef.current.length + frames.length,
     };
     const updated = frames.map(f => f.id === frameId ? { ...f, html: extracted.html, css: sourceCss } : f);
-    store.replaceAllWithUndo(updated, "move to canvas");
-    commitCanvasObjects([...canvasObjectsRef.current, newOrphan], updated);
+    commitCanvasObjects([...canvasObjectsRef.current, newOrphan], updated, "move to canvas");
     addToast("Layer moved to canvas.", "success");
-  }, [frames, commitCanvasObjects, addToast]);
+  }, [frames, selectedElement, commitCanvasObjects, addToast]);
 
   /** Move an orphan into a target frame */
   const handleMoveOrphanToFrame = useCallback((orphanId: string, targetFrameId: string) => {
@@ -1782,10 +1847,17 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!orphan || !targetFrame) return;
     const inserted = insertLayerIntoHtml(targetFrame.html, orphan.html, null, "inside");
     if (!inserted) { addToast("Could not insert object into frame.", "error"); return; }
-    const combinedCss = mergeCssRules(targetFrame.css, orphan.css);
+    const selector = `[data-layer-id="${orphan.id}"]`;
+    const sourceLeft = parseFloat(getCssPropertyValue(orphan.css, selector, "left")) || 0;
+    const sourceTop = parseFloat(getCssPropertyValue(orphan.css, selector, "top")) || 0;
+    let movedCss = updateCssProperty(orphan.css, selector, "position", "absolute");
+    movedCss = updateCssProperty(movedCss, selector, "left", `${orphan.x - targetFrame.x + sourceLeft}px !important`);
+    movedCss = updateCssProperty(movedCss, selector, "top", `${orphan.y - targetFrame.y + sourceTop}px !important`);
+    movedCss = updateCssProperty(movedCss, selector, "width", `${orphan.width}px !important`);
+    movedCss = updateCssProperty(movedCss, selector, "height", `${orphan.height}px !important`);
+    const combinedCss = mergeCssRules(targetFrame.css, movedCss);
     const updated = frames.map(f => f.id === targetFrameId ? { ...f, html: inserted.html, css: combinedCss } : f);
-    store.replaceAllWithUndo(updated, "move to frame");
-    commitCanvasObjects(canvasObjectsRef.current.filter(object => object.id !== orphanId), updated);
+    commitCanvasObjects(canvasObjectsRef.current.filter(object => object.id !== orphanId), updated, "move to frame");
     setSelectedOrphanIds(prev => { const next = new Set(prev); next.delete(orphanId); return next; });
     addToast("Object moved into frame.", "success");
   }, [canvasObjects, frames, commitCanvasObjects, addToast]);
@@ -2153,6 +2225,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     frameId: string,
     layerIds: string[],
     box: { x: number; y: number; width: number; height: number },
+    geometries?: Record<string, LayerVisualGeometry>,
   ) => {
     const frame = framesRef.current.find(f => f.id === frameId);
     if (!frame) return;
@@ -2167,24 +2240,38 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (!extracted) continue;
 
       // The layer's own rules travel with it; the frame keeps none of them.
-      const layerCss = extractLayerTreeCss(css, extracted.layerHtml, extracted.layerIds);
+      let layerCss = extractLayerTreeCss(css, extracted.layerHtml, extracted.layerIds);
       const withoutLayer = deleteLayerFromHtml(html, layerId);
       if (withoutLayer === null) continue;
       html = withoutLayer;
       css = removeLayersCss(css, extracted.layerIds);
 
+      const geometry = geometries?.[layerId] || {
+        ...box,
+        contentWidth: box.width,
+        contentHeight: box.height,
+        contentOffsetX: 0,
+        contentOffsetY: 0,
+      };
+      const selector = `[data-layer-id="${layerId}"]`;
+      layerCss = updateCssProperty(layerCss, selector, "position", "absolute");
+      layerCss = updateCssProperty(layerCss, selector, "left", `${-geometry.contentOffsetX}px !important`);
+      layerCss = updateCssProperty(layerCss, selector, "top", `${-geometry.contentOffsetY}px !important`);
+      layerCss = updateCssProperty(layerCss, selector, "translate", "none !important");
+      layerCss = updateCssProperty(layerCss, selector, "width", `${geometry.contentWidth}px !important`);
+      layerCss = updateCssProperty(layerCss, selector, "height", `${geometry.contentHeight}px !important`);
       escaping.push({
-        id: createOrphanId(),
+        id: layerId,
         name: `Suelto ${escaping.length + 1}`,
         kind: "shape",
         frameId: null,
         html: extracted.layerHtml,
         css: layerCss,
         // Frame coordinates become canvas coordinates by adding the frame's own.
-        x: Math.round(frame.x + box.x),
-        y: Math.round(frame.y + box.y),
-        width: Math.round(box.width) || 1,
-        height: Math.round(box.height) || 1,
+        x: Math.round(frame.x + geometry.x),
+        y: Math.round(frame.y + geometry.y),
+        width: Math.round(geometry.width) || 1,
+        height: Math.round(geometry.height) || 1,
         zIndex: zIndex++,
       });
     }
@@ -2192,8 +2279,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!escaping.length) return;
 
     const updatedFrames = framesRef.current.map(f => f.id === frameId ? { ...f, html, css } : f);
-    store.replaceAllWithUndo(updatedFrames, "edit");
-    commitCanvasObjects([...canvasObjectsRef.current, ...escaping], updatedFrames);
+    commitCanvasObjects([...canvasObjectsRef.current, ...escaping], updatedFrames, "move to canvas");
     setSelectedElement(null);
     setMultiSelectLayerIds([]);
     setSelectedOrphanIds(new Set(escaping.map(o => o.id)));
@@ -3169,6 +3255,19 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (selectedElement && selectedElement.frameId === selectedFrameId) {
       const sourceFrame = frames.find(frame => frame.id === selectedElement.frameId);
       if (!sourceFrame) return null;
+      const sourceLayer = extractLayerFromHtml(sourceFrame.html, selectedElement.layerId);
+      const translate = parseTranslate(selectedElement.computedStyles.translate);
+      const localX = parseFloat(selectedElement.computedStyles.left) || 0;
+      const localY = parseFloat(selectedElement.computedStyles.top) || 0;
+      const bounds = selectedElement.visualBounds;
+      const contentWidth = parseFloat(selectedElement.computedStyles.width) || bounds?.width || sourceFrame.width;
+      const contentHeight = parseFloat(selectedElement.computedStyles.height) || bounds?.height || sourceFrame.height;
+      const width = bounds?.width || contentWidth;
+      const height = bounds?.height || contentHeight;
+      const logicalX = localX + translate.x;
+      const logicalY = localY + translate.y;
+      const frameLocalX = bounds?.x ?? logicalX;
+      const frameLocalY = bounds?.y ?? logicalY;
       return {
         kind: "element",
         frameId: sourceFrame.id,
@@ -3180,8 +3279,31 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
           top: selectedElement.computedStyles.top,
           translate: selectedElement.computedStyles.translate,
         },
+        canvasGeometry: {
+          x: sourceFrame.x + frameLocalX,
+          y: sourceFrame.y + frameLocalY,
+          width,
+          height,
+          frameLocalX,
+          frameLocalY,
+          contentWidth,
+          contentHeight,
+          contentOffsetX: frameLocalX - logicalX,
+          contentOffsetY: frameLocalY - logicalY,
+          name: sourceLayer
+            ? /data-layer-name=["']([^"']+)["']/i.exec(sourceLayer.layerHtml)?.[1] || selectedElement.tag
+            : selectedElement.tag,
+          kind: selectedElement.layerKind || (selectedElement.isSvg ? "shape" : selectedElement.tag === "img" ? "image" : "object"),
+        },
         pasteCount: 0,
       };
+    }
+
+    if (selectedOrphanIds.size > 0) {
+      const objects = canvasObjectsRef.current
+        .filter(object => selectedOrphanIds.has(object.id))
+        .map(object => ({ layerId: object.id, object: { ...object } }));
+      if (objects.length > 0) return { kind: "canvas-object", objects, pasteCount: 0 };
     }
 
     const frameIds = selectedFrameIds.size > 0
@@ -3191,7 +3313,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     return copiedFrames.length > 0
       ? { kind: "frames", frames: copiedFrames, pasteCount: 0 }
       : null;
-  }, [selectedElement, selectedFrameId, selectedFrameIds, frames]);
+  }, [selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames]);
 
   const copySelection = useCallback(() => {
     const clipboard = captureSelection();
@@ -3201,6 +3323,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       addToast(availableAcrossProjects
         ? "Elemento copiado. Puedes pegarlo en otro proyecto."
         : "Elemento copiado en esta pestaña; es demasiado grande para compartirlo entre pestañas.",
+      availableAcrossProjects ? "success" : "error");
+      return;
+    }
+    if (clipboard.kind === "canvas-object") {
+      const count = clipboard.objects.length;
+      addToast(availableAcrossProjects
+        ? `${count} objeto${count === 1 ? "" : "s"} copiado${count === 1 ? "" : "s"}. Puedes pegarlo en otro proyecto.`
+        : `${count} objeto${count === 1 ? "" : "s"} copiado${count === 1 ? "" : "s"} en esta pestaña.`,
       availableAcrossProjects ? "success" : "error");
       return;
     }
@@ -3223,6 +3353,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       return;
     }
 
+    if (clipboard.kind === "canvas-object") {
+      const ids = new Set(clipboard.objects.map(item => item.object.id));
+      persistDesignClipboard(clipboard);
+      commitCanvasObjects(canvasObjectsRef.current.filter(object => !ids.has(object.id)));
+      setSelectedOrphanIds(new Set());
+      addToast(`${ids.size} objeto${ids.size === 1 ? "" : "s"} cortado${ids.size === 1 ? "" : "s"}.`, "success");
+      return;
+    }
+
     const frameIds = new Set(clipboard.frames.map(frame => frame.id));
     if (!deleteFrames(frameIds)) {
       addToast("No se pudo cortar la selección.", "error");
@@ -3230,7 +3369,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     }
     persistDesignClipboard(clipboard);
     addToast(`${clipboard.frames.length} frame${clipboard.frames.length === 1 ? "" : "s"} cortado${clipboard.frames.length === 1 ? "" : "s"}.`, "success");
-  }, [captureSelection, handleDeleteElement, deleteFrames, addToast]);
+  }, [captureSelection, handleDeleteElement, deleteFrames, commitCanvasObjects, addToast]);
 
   const pasteSelection = useCallback(() => {
     const clipboard = readDesignClipboard();
@@ -3242,12 +3381,152 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     persistDesignClipboard(clipboard);
     const offset = clipboard.pasteCount * 20;
 
+    if (clipboard.kind === "canvas-object") {
+      const targetFrame = selectedFrameId ? frames.find(frame => frame.id === selectedFrameId) : null;
+      if (targetFrame) {
+        let nextHtml = targetFrame.html;
+        let nextCss = targetFrame.css;
+        let pastedCount = 0;
+        const originX = Math.min(...clipboard.objects.map(item => item.object.x));
+        const originY = Math.min(...clipboard.objects.map(item => item.object.y));
+        for (const item of clipboard.objects) {
+          const sourceLayer = extractLayerFromHtml(item.object.html, item.layerId);
+          if (!sourceLayer) continue;
+          const pasted = pasteLayerFromHtml(nextHtml, item.object.html, item.layerId, createLayerId, offset);
+          if (!pasted) continue;
+          nextHtml = pasted.html;
+          let objectCss = cloneLayerTreeCss(
+            item.object.css,
+            sourceLayer.layerHtml,
+            sourceLayer.layerIds,
+            pasted.idMap,
+            0,
+            pasted.referenceIdMap,
+          );
+          const rootSelector = `[data-layer-id="${pasted.rootLayerId}"]`;
+          const localX = item.object.x - originX + offset;
+          const localY = item.object.y - originY + offset;
+          const sourceSelector = `[data-layer-id="${item.layerId}"]`;
+          const sourceLeft = parseFloat(getCssPropertyValue(item.object.css, sourceSelector, "left")) || 0;
+          const sourceTop = parseFloat(getCssPropertyValue(item.object.css, sourceSelector, "top")) || 0;
+          const sourceWidth = parseFloat(getCssPropertyValue(item.object.css, sourceSelector, "width")) || item.object.width;
+          const sourceHeight = parseFloat(getCssPropertyValue(item.object.css, sourceSelector, "height")) || item.object.height;
+          objectCss = updateCssProperty(objectCss, rootSelector, "position", "absolute");
+          objectCss = updateCssProperty(objectCss, rootSelector, "left", `${localX + sourceLeft}px !important`);
+          objectCss = updateCssProperty(objectCss, rootSelector, "top", `${localY + sourceTop}px !important`);
+          objectCss = updateCssProperty(objectCss, rootSelector, "width", `${sourceWidth}px !important`);
+          objectCss = updateCssProperty(objectCss, rootSelector, "height", `${sourceHeight}px !important`);
+          nextCss = mergeCssRules(nextCss, objectCss);
+          pastedCount++;
+        }
+        if (pastedCount === 0) return;
+        const updated = frames.map(frame => frame.id === targetFrame.id
+          ? { ...frame, html: nextHtml, css: nextCss }
+          : frame);
+        store.replaceAllWithUndo(updated, "paste");
+        setContentFrameId(targetFrame.id);
+        setSelectedFrameId(targetFrame.id);
+        setSelectedFrameIds(new Set([targetFrame.id]));
+        setSelectedOrphanIds(new Set());
+        setSelectedElement(null);
+        autoSave(updated);
+        addToast(`${pastedCount} objeto${pastedCount === 1 ? "" : "s"} pegado${pastedCount === 1 ? "" : "s"} dentro del frame.`, "success");
+        return;
+      }
+
+      const clones: HtmlCanvasObject[] = [];
+      for (const item of clipboard.objects) {
+        const sourceLayer = extractLayerFromHtml(item.object.html, item.layerId);
+        const pasted = pasteLayerFromHtml("", item.object.html, item.layerId, createLayerId, 0);
+        if (!sourceLayer || !pasted) continue;
+        const rootSelector = `[data-layer-id="${pasted.rootLayerId}"]`;
+        let css = cloneLayerTreeCss(
+          item.object.css,
+          sourceLayer.layerHtml,
+          sourceLayer.layerIds,
+          pasted.idMap,
+          0,
+          pasted.referenceIdMap,
+        );
+        css = updateCssProperty(css, rootSelector, "position", "absolute");
+        const sourceSelector = `[data-layer-id="${item.layerId}"]`;
+        css = updateCssProperty(css, rootSelector, "left", getCssPropertyValue(item.object.css, sourceSelector, "left") || "0px !important");
+        css = updateCssProperty(css, rootSelector, "top", getCssPropertyValue(item.object.css, sourceSelector, "top") || "0px !important");
+        css = updateCssProperty(css, rootSelector, "width", getCssPropertyValue(item.object.css, sourceSelector, "width") || `${item.object.width}px !important`);
+        css = updateCssProperty(css, rootSelector, "height", getCssPropertyValue(item.object.css, sourceSelector, "height") || `${item.object.height}px !important`);
+        clones.push({
+          ...item.object,
+          id: pasted.rootLayerId,
+          frameId: null,
+          html: pasted.html,
+          css,
+          x: item.object.x + offset,
+          y: item.object.y + offset,
+          zIndex: frames.length + canvasObjectsRef.current.length + clones.length,
+        });
+      }
+      if (clones.length === 0) return;
+      commitCanvasObjects([...canvasObjectsRef.current, ...clones]);
+      setSelectedOrphanIds(new Set(clones.map(object => object.id)));
+      setSelectedFrameId(null);
+      setSelectedFrameIds(new Set());
+      setContentFrameId(null);
+      setSelectedElement(null);
+      addToast(`${clones.length} objeto${clones.length === 1 ? "" : "s"} pegado${clones.length === 1 ? "" : "s"} en el canvas.`, "success");
+      return;
+    }
+
     if (clipboard.kind === "element") {
-      const targetFrameId = selectedFrameId || clipboard.frameId;
-      const targetFrame = frames.find(frame => frame.id === targetFrameId);
-      if (!targetFrame) return;
       const sourceLayer = extractLayerFromHtml(clipboard.html, clipboard.layerId);
       if (!sourceLayer) return;
+      const targetFrame = selectedFrameId ? frames.find(frame => frame.id === selectedFrameId) : null;
+      if (!targetFrame) {
+        const pasted = pasteLayerFromHtml("", clipboard.html, clipboard.layerId, createLayerId, 0);
+        if (!pasted) return;
+        const geometry = clipboard.canvasGeometry;
+        const fallback = findCanvasObjectPosition(frames, canvasObjectsRef.current);
+        const width = Math.max(8, Math.round(geometry?.width || parseFloat(getCssPropertyValue(clipboard.css, `[data-layer-id="${clipboard.layerId}"]`, "width")) || 100));
+        const height = Math.max(8, Math.round(geometry?.height || parseFloat(getCssPropertyValue(clipboard.css, `[data-layer-id="${clipboard.layerId}"]`, "height")) || 100));
+        const contentWidth = Math.max(1, geometry?.contentWidth || width);
+        const contentHeight = Math.max(1, geometry?.contentHeight || height);
+        const rootSelector = `[data-layer-id="${pasted.rootLayerId}"]`;
+        let css = cloneLayerTreeCss(
+          clipboard.css,
+          sourceLayer.layerHtml,
+          sourceLayer.layerIds,
+          pasted.idMap,
+          0,
+          pasted.referenceIdMap,
+        );
+        css = updateCssProperty(css, rootSelector, "position", "absolute");
+        css = updateCssProperty(css, rootSelector, "left", `${-(geometry?.contentOffsetX || 0)}px !important`);
+        css = updateCssProperty(css, rootSelector, "top", `${-(geometry?.contentOffsetY || 0)}px !important`);
+        css = updateCssProperty(css, rootSelector, "translate", "none !important");
+        css = updateCssProperty(css, rootSelector, "width", `${contentWidth}px !important`);
+        css = updateCssProperty(css, rootSelector, "height", `${contentHeight}px !important`);
+        const object: HtmlCanvasObject = {
+          id: pasted.rootLayerId,
+          name: geometry?.name || /data-layer-name=["']([^"']+)["']/i.exec(sourceLayer.layerHtml)?.[1] || "Object",
+          kind: geometry?.kind || /data-layer-kind=["']([^"']+)["']/i.exec(sourceLayer.layerHtml)?.[1] || "object",
+          frameId: null,
+          html: pasted.html,
+          css,
+          x: Math.round((geometry?.x ?? fallback.x) + offset),
+          y: Math.round((geometry?.y ?? fallback.y) + offset),
+          width,
+          height,
+          zIndex: frames.length + canvasObjectsRef.current.length,
+        };
+        commitCanvasObjects([...canvasObjectsRef.current, object]);
+        setSelectedOrphanIds(new Set([object.id]));
+        setSelectedFrameId(null);
+        setSelectedFrameIds(new Set());
+        setContentFrameId(null);
+        setSelectedElement(null);
+        addToast("Elemento pegado en el canvas.", "success");
+        return;
+      }
+      const targetFrameId = targetFrame.id;
       const pasted = pasteLayerFromHtml(
         targetFrame.html,
         clipboard.html,
@@ -3261,29 +3540,25 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         sourceLayer.layerHtml,
         sourceLayer.layerIds,
         pasted.idMap,
-        offset,
+        0,
+        pasted.referenceIdMap,
       );
       const rootSelector = `[data-layer-id="${pasted.rootLayerId}"]`;
-      let offsetByPosition = false;
-      for (const property of ["left", "top"] as const) {
-        const value = clipboard.layout[property];
-        if (!/^-?\d+(?:\.\d+)?px$/.test(value)) continue;
-        pastedCss = updateCssProperty(
-          pastedCss,
-          rootSelector,
-          property,
-          `${parseFloat(value) + offset}px`,
-        );
-        offsetByPosition = true;
-      }
-      if (!offsetByPosition) {
+      pastedCss = updateCssProperty(pastedCss, rootSelector, "position", "absolute");
+      if (clipboard.canvasGeometry) {
+        const geometry = clipboard.canvasGeometry;
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "left", `${(geometry.frameLocalX || 0) - (geometry.contentOffsetX || 0) + offset}px !important`);
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "top", `${(geometry.frameLocalY || 0) - (geometry.contentOffsetY || 0) + offset}px !important`);
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "translate", "none !important");
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "width", `${geometry.contentWidth || geometry.width}px !important`);
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "height", `${geometry.contentHeight || geometry.height}px !important`);
+      } else {
         const translate = parseTranslate(clipboard.layout.translate);
-        pastedCss = updateCssProperty(
-          pastedCss,
-          rootSelector,
-          "translate",
-          `${translate.x + offset}px ${translate.y + offset}px`,
-        );
+        const left = parseFloat(clipboard.layout.left) || 0;
+        const top = parseFloat(clipboard.layout.top) || 0;
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "left", `${left + translate.x + offset}px !important`);
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "top", `${top + translate.y + offset}px !important`);
+        pastedCss = updateCssProperty(pastedCss, rootSelector, "translate", "none !important");
       }
       const newCss = mergeCssRules(targetFrame.css, pastedCss);
       const updated = frames.map(frame => frame.id === targetFrameId
@@ -3315,7 +3590,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     setSelectedElement(null);
     autoSave(updated);
     addToast(`${clones.length} frame${clones.length === 1 ? "" : "s"} pegado${clones.length === 1 ? "" : "s"}.`, "success");
-  }, [selectedFrameId, frames, autoSave, addToast]);
+  }, [selectedFrameId, frames, autoSave, commitCanvasObjects, addToast]);
 
   const handleChangeTag = useCallback((newTag: string) => {
     if (!selectedElement || !selectedFrameId) return;
@@ -3573,6 +3848,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
+        || selectedOrphanIds.size > 0
         || selectedFrameIds.size > 0
         || Boolean(selectedFrameId);
       if (!hasSelection) return;
@@ -3601,6 +3877,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       if (isEditableTarget(e.target)) return;
       if ((e.target as HTMLElement)?.closest?.('[data-chat-fab-panel]')) return;
       const hasSelection = Boolean(selectedElement && selectedElement.frameId === selectedFrameId)
+        || selectedOrphanIds.size > 0
         || selectedFrameIds.size > 0
         || Boolean(selectedFrameId);
       if (!hasSelection) return;
@@ -3618,7 +3895,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       window.removeEventListener("cut", handleNativeCut, { capture: true });
       window.removeEventListener("paste", handleNativePaste, { capture: true });
     };
-  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool]);
+  }, [handleUndo, handleRedo, copySelection, cutSelection, pasteSelection, deleteSelectedFrame, duplicateFrame, handleDeleteElement, handleDuplicateElement, handleElementNudge, handleWrapSelectionInFrame, handlePathfinder, selectedElement, selectedFrameId, selectedFrameIds, selectedOrphanIds, frames.length, contentFrameId, handleFrameMove, frames, handleZoomIn, handleZoomOut, handleZoomToFit, handleSaveVersion, openCodeTab, looksLikeRenderableCode, isPasteImagePromptSnoozed, handlePasteTextAsBlock, showRightPanel, rightPanelTab, activeTool]);
 
   // ── Export ──
   /// Serialize a frame to SVG for vector export
@@ -6096,7 +6373,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const updated = frames.map(frame => {
       const pasted = pasteLayerFromHtml(frame.html, clipboard.html, clipboard.layerId, createLayerId, 0);
       if (!pasted) return frame;
-      const pastedCss = cloneLayerTreeCss(clipboard.css, sourceLayer.layerHtml, sourceLayer.layerIds, pasted.idMap, 0);
+      const pastedCss = cloneLayerTreeCss(clipboard.css, sourceLayer.layerHtml, sourceLayer.layerIds, pasted.idMap, 0, pasted.referenceIdMap);
       pastedInto++;
       return { ...frame, html: pasted.html, css: mergeCssRules(frame.css, pastedCss) };
     });
@@ -7552,6 +7829,9 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
             onSelectOrphan={handleSelectOrphan}
             onOrphanShiftClick={handleOrphanShiftClick}
             onOrphanMove={handleOrphanMove}
+            onOrphanResize={handleOrphanResize}
+            onOrphanRotate={handleOrphanRotate}
+            onOrphanRadiusChange={handleOrphanRadiusChange}
             onOrphanDropToFrame={handleOrphanDropToFrame}
             onDeleteOrphan={handleDeleteOrphan}
             onOrphanHtmlChange={handleOrphanHtmlChange}

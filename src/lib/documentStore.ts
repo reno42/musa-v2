@@ -8,7 +8,7 @@
  * mirrors the store into React state without useState/useReducer.
  */
 
-import type { FrameData } from "../components/DesignFrame";
+import type { FrameData, HtmlCanvasObject } from "../components/DesignFrame";
 
 // ── Types ──
 
@@ -38,6 +38,7 @@ export interface Transaction {
   label: string;
   timestamp: number;
   patches: Map<string, TxEntry>;
+  canvasObjects?: { before: HtmlCanvasObject[]; after: HtmlCanvasObject[] };
 }
 
 export type Snapshot = readonly FrameData[];
@@ -48,6 +49,7 @@ const MAX_UNDO = 80;
 
 export class DocumentStore {
   private _frames: FrameData[];
+  private _canvasObjects: HtmlCanvasObject[] = [];
   private _undoStack: Transaction[] = [];
   private _redoStack: Transaction[] = [];
   private _listeners = new Set<() => void>();
@@ -64,6 +66,10 @@ export class DocumentStore {
 
   get frames(): Snapshot {
     return this._frames;
+  }
+
+  get canvasObjects(): readonly HtmlCanvasObject[] {
+    return this._canvasObjects;
   }
 
   get canUndo(): boolean {
@@ -139,7 +145,7 @@ export class DocumentStore {
     if (!this._currentTx) {
       throw new Error("No transaction in progress. Call begin() first.");
     }
-    if (this._currentTx.patches.size === 0) {
+    if (this._currentTx.patches.size === 0 && !this._currentTx.canvasObjects) {
       this._currentTx = null;
       return;
     }
@@ -169,6 +175,9 @@ export class DocumentStore {
         }
       }
     }
+    if (this._currentTx.canvasObjects) {
+      this._canvasObjects = this._currentTx.canvasObjects.before.map(object => ({ ...object }));
+    }
     this._currentTx = null;
     this._notify();
   }
@@ -194,6 +203,7 @@ export class DocumentStore {
         }
       }
     }
+    if (tx.canvasObjects) this._canvasObjects = tx.canvasObjects.before.map(object => ({ ...object }));
     this._redoStack.push(tx);
     this._notify();
     return true;
@@ -218,6 +228,7 @@ export class DocumentStore {
         }
       }
     }
+    if (tx.canvasObjects) this._canvasObjects = tx.canvasObjects.after.map(object => ({ ...object }));
     this._undoStack.push(tx);
     this._notify();
     return true;
@@ -230,6 +241,12 @@ export class DocumentStore {
     this._frames = frames.map(f => ({ ...f }));
     this._undoStack = [];
     this._redoStack = [];
+    this._notify();
+  }
+
+  /** Replace root objects as a non-user baseline (initial load / remote sync). */
+  replaceCanvasObjects(objects: HtmlCanvasObject[]): void {
+    this._canvasObjects = objects.map(object => ({ ...object }));
     this._notify();
   }
 
@@ -341,6 +358,36 @@ export class DocumentStore {
     }
 
     this._frames = newFrames.map(f => ({ ...f }));
+    this.commit();
+  }
+
+  /**
+   * Atomically records frames and root objects in one undo entry. This keeps
+   * a transfer between a frame and the infinite canvas from undoing only one
+   * half and never rolls back unrelated frames.
+   */
+  replaceDocumentWithUndo(newFrames: FrameData[], newObjects: HtmlCanvasObject[], label: string): void {
+    this.begin(label);
+    const oldMap = new Map(this._frames.map(frame => [frame.id, frame]));
+    const newMap = new Map(newFrames.map(frame => [frame.id, frame]));
+    for (const [id, frame] of oldMap) {
+      if (!newMap.has(id)) this._currentTx!.patches.set(id, { type: "delete", before: { ...frame }, after: null! });
+    }
+    for (const [id, frame] of newMap) {
+      const old = oldMap.get(id);
+      if (!old) this._currentTx!.patches.set(id, { type: "insert", before: { ...frame }, after: { ...frame } });
+      else if (JSON.stringify(old) !== JSON.stringify(frame)) {
+        this._currentTx!.patches.set(id, { type: "update", before: { ...old }, after: { ...frame } });
+      }
+    }
+    if (JSON.stringify(this._canvasObjects) !== JSON.stringify(newObjects)) {
+      this._currentTx!.canvasObjects = {
+        before: this._canvasObjects.map(object => ({ ...object })),
+        after: newObjects.map(object => ({ ...object })),
+      };
+    }
+    this._frames = newFrames.map(frame => ({ ...frame }));
+    this._canvasObjects = newObjects.map(object => ({ ...object }));
     this.commit();
   }
 

@@ -9,6 +9,8 @@ import {
   getCssPropertyValue,
   mergeCssRules,
   remapLayerCss,
+  remapCssReferences,
+  remapFragmentReferences,
   removeLayerCss,
   removeLayersCss,
   removeCssOverride,
@@ -131,6 +133,43 @@ test("clones an extracted layer stylesheet and offsets positioned roots", () => 
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "left"), "30px");
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "top"), "35px");
   assert.equal(getCssPropertyValue(cloned, `[data-layer-id="copy"]`, "color"), "red");
+});
+
+test("pasting a composed object moves only its root and preserves child geometry", () => {
+  const source = `[data-layer-id="group"] { position: absolute; left: 10px; top: 15px; }
+[data-layer-id="child"] { position: absolute; left: 35px; top: 40px; }`;
+  const idMap = new Map([["group", "group_copy"], ["child", "child_copy"]]);
+  let cloned = cloneLayerTreeCss(
+    source,
+    '<div data-layer-id="group"><span data-layer-id="child"></span></div>',
+    ["group", "child"],
+    idMap,
+    0,
+  );
+  cloned = updateCssProperty(cloned, '[data-layer-id="group_copy"]', "left", "20px");
+  cloned = updateCssProperty(cloned, '[data-layer-id="group_copy"]', "top", "20px");
+
+  assert.equal(getCssPropertyValue(cloned, '[data-layer-id="group_copy"]', "left"), "20px");
+  assert.equal(getCssPropertyValue(cloned, '[data-layer-id="child_copy"]', "left"), "35px");
+  assert.equal(getCssPropertyValue(cloned, '[data-layer-id="child_copy"]', "top"), "40px");
+});
+
+test("remaps SVG paint-server references and id selectors without touching colors", () => {
+  const updated = remapCssReferences(
+    '#clip { clip-path: url(#clip); fill: #ffffff; } .shape { filter: url("#shadow"); }',
+    new Map([["clip", "clip_copy"], ["shadow", "shadow_copy"]]),
+  );
+  assert.match(updated, /#clip_copy\s*\{/);
+  assert.match(updated, /url\(#clip_copy\)/);
+  assert.match(updated, /url\("#shadow_copy"\)/);
+  assert.match(updated, /#ffffff/);
+});
+
+test("remaps local SVG href fragments without rewriting external URL fragments", () => {
+  const references = new Map([["gradient", "gradient_copy"], ["clip", "clip_copy"]]);
+  assert.equal(remapFragmentReferences("url(#gradient)", references), "url(#gradient_copy)");
+  assert.equal(remapFragmentReferences("#clip", references), "#clip_copy");
+  assert.equal(remapFragmentReferences("https://example.com/#clip", references), "https://example.com/#clip");
 });
 
 test("persists a copied frame so another editor project can read it", () => {
