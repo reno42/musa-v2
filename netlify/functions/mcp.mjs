@@ -1666,6 +1666,8 @@ const MCP_TOOLS = [
         imageBase64: { type: "string", description: "Optional reference image (data URI or raw base64). With it the model edits that image; without it a new image is generated from scratch" },
         model: { type: "string", description: "Nano Banana model: gemini-3.1-flash-image (default), gemini-3.1-flash-lite-image, gemini-3-pro-image, gemini-2.5-flash-image" },
         aspectRatio: { type: "string", description: "Optional output aspect ratio. Gemini only accepts: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9 — any other size (A4, 1350x1080…) must snap to the nearest of these. Omit for the model's default" },
+        strict: { type: "boolean", description: "Edit mode only (default true). Prepends an anti-hallucination charter: reproduce the reference faithfully, apply ONLY the requested change, never add elements or text, extend the background on aspect-ratio changes. Set false for creative edits" },
+        temperature: { type: "number", description: "Sampling temperature 0-1. Default: 0.25 in edit mode (fewer invented elements), model default when generating from scratch" },
         geminiApiKey: { type: "string", description: "Optional caller-supplied Google Gemini API key (used for this request only, never stored)" },
       },
       required: ["prompt"],
@@ -6681,6 +6683,11 @@ async function handleMethod(method, params, userId, auth) {
     }
 
     case "ai_generate_image": {
+      // Anti-hallucination charter for edit mode. Image models re-render the
+      // whole frame, so without hard constraints they add elements/text and
+      // invent content to fill new aspect-ratio space. Prepending it into the
+      // text part (vs systemInstruction) works across every Nano Banana gen.
+      const EDIT_FIDELITY_CHARTER = "You are EDITING an existing image, not illustrating. Reproduce the reference faithfully: same composition, same elements, same colors, same typography and the exact same text. Apply ONLY the change the user requests. Do NOT add any element, object, text, lettering, logo, watermark or decoration that is not already in the reference. If the requested aspect ratio differs from the reference, extend the existing background and re-compose the existing elements to fit — never crop away required elements and never invent new content to fill the space. The output must read as the same design, only adjusted.";
       // Google Nano Banana (Gemini native image generation). Same Google
       // Gemini key as image_to_design — resolution chain: caller-supplied →
       // user's BYOK key (DB, encrypted) → deployment env.
@@ -6711,6 +6718,7 @@ async function handleMethod(method, params, userId, auth) {
 
       // Optional reference image → edit mode (image as visual base + prompt
       // as instructions); without it the model generates from scratch.
+      const isEdit = Boolean(params.imageBase64);
       const parts = [];
       if (params.imageBase64) {
         const raw = String(params.imageBase64);
@@ -6721,10 +6729,17 @@ async function handleMethod(method, params, userId, auth) {
             : { mimeType: "image/png", data: raw },
         });
       }
-      parts.push({ text: prompt });
+      // Charter rides inside the text part (edit mode, strict !== false):
+      // bulletproof across all Nano Banana versions, no extra API field.
+      parts.push({ text: isEdit && params.strict !== false ? `${EDIT_FIDELITY_CHARTER}\n\nUser request: ${prompt}` : prompt });
 
-      // IMAGE output requires the multimodal response config.
+      // IMAGE output requires the multimodal response config. Temperature:
+      // explicit param wins (clamped 0-1); edits default low (0.25 — fewer
+      // invented elements) and from-scratch keeps the model default.
       const generationConfig = { responseModalities: ["TEXT", "IMAGE"] };
+      const reqTemp = Number(params.temperature);
+      if (Number.isFinite(reqTemp)) generationConfig.temperature = Math.min(1, Math.max(0, reqTemp));
+      else if (isEdit) generationConfig.temperature = 0.25;
       if (params.aspectRatio && /^\d{1,2}:\d{1,2}$/.test(String(params.aspectRatio))) {
         generationConfig.imageConfig = { aspectRatio: String(params.aspectRatio) };
       }

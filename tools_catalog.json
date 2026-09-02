@@ -982,6 +982,14 @@
           "type": "string",
           "description": "Optional output aspect ratio. Gemini only accepts: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9 — any other size (A4, 1350x1080…) must snap to the nearest of these. Omit for the model's default"
         },
+        "strict": {
+          "type": "boolean",
+          "description": "Edit mode only (default true). Prepends an anti-hallucination charter: reproduce the reference faithfully, apply ONLY the requested change, never add elements or text, extend the background on aspect-ratio changes. Set false for creative edits"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Sampling temperature 0-1. Default: 0.25 in edit mode (fewer invented elements), model default when generating from scratch"
+        },
         "geminiApiKey": {
           "type": "string",
           "description": "Optional caller-supplied Google Gemini API key (used for this request only, never stored)"

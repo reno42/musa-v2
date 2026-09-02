@@ -317,6 +317,8 @@ const NANO_BANANA_ASPECTS = [
   { id: "21:9", label: "21:9 — Ultrawide" },
 ];
 const NANO_BANANA_ASPECT_SLOT = "futuraria-nanobanana-aspect";
+const NANO_BANANA_STRICT_SLOT = "futuraria-nanobanana-strict";
+const NANO_BANANA_TEMP_SLOT = "futuraria-nanobanana-temp";
 
 /** Nearest Gemini-supported ratio for an arbitrary pixel size (e.g. A4 → 2:3). */
 function nearestNanoBananaAspect(w: number, h: number): string {
@@ -4840,6 +4842,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   });
   const [nbCustomW, setNbCustomW] = useState("1920");
   const [nbCustomH, setNbCustomH] = useState("1080");
+  // Fidelity controls: strict toggles the server-side anti-hallucination
+  // charter (default on, edit mode only); "" temperature = Auto → the server
+  // applies 0.25 on edits and the model default from scratch.
+  const [nbStrict, setNbStrict] = useState<string>(() => {
+    try { return localStorage.getItem(NANO_BANANA_STRICT_SLOT) ?? "1"; } catch { return "1"; }
+  });
+  const [nbTemp, setNbTemp] = useState<string>(() => {
+    try { return localStorage.getItem(NANO_BANANA_TEMP_SLOT) || ""; } catch { return ""; }
+  });
   // v36: the 🍌 model follows the account (same pref the Dashboard saves).
   // localStorage stays the fast path — the server only fills a blank device.
   useEffect(() => {
@@ -4877,6 +4888,8 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     const aspect = nbAspect === "custom"
       ? (cw > 0 && ch > 0 ? nearestNanoBananaAspect(cw, ch) : undefined)
       : (nbAspect || undefined);
+    const useStrict = nbStrict !== "0";
+    const tempNum = nbTemp === "" ? undefined : Number(nbTemp);
     try {
       const src = resolveSelectedImage();
       let imageBase64: string | undefined;
@@ -4898,7 +4911,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "ai_generate_image",
-          params: { prompt, model: nbModel, ...(aspect ? { aspectRatio: aspect } : {}), ...(imageBase64 ? { imageBase64 } : {}) },
+          params: { prompt, model: nbModel, ...(aspect ? { aspectRatio: aspect } : {}), ...(useStrict ? {} : { strict: false }), ...(tempNum !== undefined && Number.isFinite(tempNum) ? { temperature: tempNum } : {}), ...(imageBase64 ? { imageBase64 } : {}) },
           id: 0,
         }),
       });
@@ -4980,7 +4993,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
     setMcpLoading(null);
-  }, [nbPrompt, nbModel, nbAspect, nbCustomW, nbCustomH, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
+  }, [nbPrompt, nbModel, nbAspect, nbCustomW, nbCustomH, nbStrict, nbTemp, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
 
   // ── Layer separation (Seedream 5.0 Pro via WaveSpeedAI, topbar 🧅) ──
   const [splitPrompt, setSplitPrompt] = useState("");
@@ -8391,6 +8404,46 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                   })()}
                   <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>
                     Gemini genera en 10 formatos; un tamaño custom (ej. 1350×1080, A4) usa el más cercano.
+                  </div>
+                </div>
+
+                {/* Fidelity: strict charter toggle + temperature */}
+                <div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#d6d0c0", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={nbStrict !== "0"}
+                      onChange={e => {
+                        const v = e.target.checked ? "1" : "0";
+                        setNbStrict(v);
+                        try { localStorage.setItem(NANO_BANANA_STRICT_SLOT, v); } catch { /* modo privado */ }
+                      }}
+                      style={{ accentColor: "#f59e0b" }}
+                    />
+                    <span>Modo estricto — no inventar elementos</span>
+                  </label>
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>
+                    Al editar: reproduce la referencia fielmente y aplica solo tu cambio; si cambia el formato, extiende el fondo. Desactivalo solo para ediciones creativas.
+                  </div>
+
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", margin: "10px 0 4px" }}>Temperatura</label>
+                  <select
+                    value={nbTemp}
+                    onChange={e => {
+                      setNbTemp(e.target.value);
+                      try { localStorage.setItem(NANO_BANANA_TEMP_SLOT, e.target.value); } catch { /* modo privado */ }
+                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                  >
+                    <option value="">Auto — estándar (recomendado)</option>
+                    <option value="0">0 — Quirúrgico</option>
+                    <option value="0.25">0.25 — Estándar de ediciones</option>
+                    <option value="0.5">0.5 — Equilibrado</option>
+                    <option value="0.75">0.75 — Creativo</option>
+                    <option value="1">1 — Muy creativo</option>
+                  </select>
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>
+                    Estándar: Auto = 0.25 al editar (menos alucinaciones) y el default del modelo al crear. Menor = respeta más la imagen; mayor = más creatividad.
                   </div>
                 </div>
 
