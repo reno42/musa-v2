@@ -300,6 +300,38 @@ const NANO_BANANA_MODELS = [
 const NANO_BANANA_MODEL_SLOT = "futuraria-nanobanana-model";
 
 /**
+ * Output formats for the 🍌 panel. Gemini native image generation only
+ * accepts these 10 aspect ratios — an arbitrary size (1350×1080, A4…)
+ * snaps to the nearest one at request time.
+ */
+const NANO_BANANA_ASPECTS = [
+  { id: "1:1", label: "1:1 — Cuadrado (1080×1080)" },
+  { id: "16:9", label: "16:9 — Horizontal (1920×1080)" },
+  { id: "9:16", label: "9:16 — Vertical (1080×1920)" },
+  { id: "4:3", label: "4:3 — Horizontal clásico" },
+  { id: "3:4", label: "3:4 — Vertical clásico" },
+  { id: "3:2", label: "3:2 — Foto horizontal" },
+  { id: "2:3", label: "2:3 — Foto vertical" },
+  { id: "5:4", label: "5:4" },
+  { id: "4:5", label: "4:5 — Retrato IG" },
+  { id: "21:9", label: "21:9 — Ultrawide" },
+];
+const NANO_BANANA_ASPECT_SLOT = "futuraria-nanobanana-aspect";
+
+/** Nearest Gemini-supported ratio for an arbitrary pixel size (e.g. A4 → 2:3). */
+function nearestNanoBananaAspect(w: number, h: number): string {
+  const target = w / h;
+  let best = NANO_BANANA_ASPECTS[0].id;
+  let bestDiff = Infinity;
+  for (const a of NANO_BANANA_ASPECTS) {
+    const [aw, ah] = a.id.split(":").map(Number);
+    const diff = Math.abs(aw / ah - target);
+    if (diff < bestDiff) { bestDiff = diff; best = a.id; }
+  }
+  return best;
+}
+
+/**
  * Layer separation (Seedream 5.0 Pro via WaveSpeedAI). The async job runs on
  * WaveSpeed's GPUs (median ~77s), so the flow is submit + browser-side
  * polling: each status check is a sub-second server call and the ETA below
@@ -4800,6 +4832,14 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
   const [nbModel, setNbModel] = useState<string>(
     () => localStorage.getItem(NANO_BANANA_MODEL_SLOT) || NANO_BANANA_MODELS[0].id,
   );
+  // Output format: "" = auto (the model decides), a preset id from
+  // NANO_BANANA_ASPECTS, or "custom" whose W×H inputs snap to the nearest
+  // supported ratio. Device-level only (localStorage), like the model slot.
+  const [nbAspect, setNbAspect] = useState<string>(() => {
+    try { return localStorage.getItem(NANO_BANANA_ASPECT_SLOT) || ""; } catch { return ""; }
+  });
+  const [nbCustomW, setNbCustomW] = useState("1920");
+  const [nbCustomH, setNbCustomH] = useState("1080");
   // v36: the 🍌 model follows the account (same pref the Dashboard saves).
   // localStorage stays the fast path — the server only fills a blank device.
   useEffect(() => {
@@ -4830,6 +4870,13 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     if (!prompt) { addToast("Escribí primero qué querés generar.", "error"); return; }
     if (!geminiConfigured) { addToast("Guardá tu API key de Gemini en el panel para generar.", "info"); return; }
     setMcpLoading("genImage");
+    // Output format: custom W×H snaps to the nearest Gemini-supported ratio
+    // (1350×1080 → 5:4, A4 → 2:3); "" sends no aspectRatio (model default).
+    const cw = parseInt(nbCustomW, 10);
+    const ch = parseInt(nbCustomH, 10);
+    const aspect = nbAspect === "custom"
+      ? (cw > 0 && ch > 0 ? nearestNanoBananaAspect(cw, ch) : undefined)
+      : (nbAspect || undefined);
     try {
       const src = resolveSelectedImage();
       let imageBase64: string | undefined;
@@ -4851,7 +4898,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "ai_generate_image",
-          params: { prompt, model: nbModel, ...(imageBase64 ? { imageBase64 } : {}) },
+          params: { prompt, model: nbModel, ...(aspect ? { aspectRatio: aspect } : {}), ...(imageBase64 ? { imageBase64 } : {}) },
           id: 0,
         }),
       });
@@ -4872,22 +4919,18 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
         }),
       });
 
-      // Display size: next to a reference image it matches the source so the
-      // pair reads side by side; from scratch it uses the natural size capped
-      // at 800px like any other upload.
-      let width = src ? Math.max(1, Math.round(src.width)) : 512;
-      let height = src ? Math.max(1, Math.round(src.height)) : 512;
-      if (!src) {
-        const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-          const probe = new Image();
-          probe.onload = () => resolve({ w: probe.naturalWidth || 512, h: probe.naturalHeight || 512 });
-          probe.onerror = () => resolve({ w: 512, h: 512 });
-          probe.src = uploaded.url;
-        });
-        const scale = Math.min(1, 800 / dims.w, 800 / dims.h);
-        width = Math.max(1, Math.round(dims.w * scale));
-        height = Math.max(1, Math.round(dims.h * scale));
-      }
+      // Display size: always probe the generated natural size — the format
+      // selector can change it vs the reference (1:1 source → 16:9 result)
+      // — capped at 800px like any other upload.
+      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+        const probe = new Image();
+        probe.onload = () => resolve({ w: probe.naturalWidth || 512, h: probe.naturalHeight || 512 });
+        probe.onerror = () => resolve({ w: 512, h: 512 });
+        probe.src = uploaded.url;
+      });
+      const scale = Math.min(1, 800 / dims.w, 800 / dims.h);
+      const width = Math.max(1, Math.round(dims.w * scale));
+      const height = Math.max(1, Math.round(dims.h * scale));
 
       // Place NEXT TO the reference image when there is one — never on top;
       // otherwise the standard auto-position for new canvas objects.
@@ -4937,7 +4980,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       }
     }
     setMcpLoading(null);
-  }, [nbPrompt, nbModel, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
+  }, [nbPrompt, nbModel, nbAspect, nbCustomW, nbCustomH, geminiConfigured, resolveSelectedImage, frames, commitCanvasObjects, handleSelectOrphan, addToast, templateWorkspaceId]);
 
   // ── Layer separation (Seedream 5.0 Pro via WaveSpeedAI, topbar 🧅) ──
   const [splitPrompt, setSplitPrompt] = useState("");
@@ -8307,6 +8350,48 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                     rows={4}
                     style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "inherit", background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", resize: "vertical" }}
                   />
+                </div>
+
+                {/* Output format: Gemini presets + custom size snapping */}
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>Formato de salida</label>
+                  <select
+                    value={nbAspect}
+                    onChange={e => {
+                      setNbAspect(e.target.value);
+                      try { localStorage.setItem(NANO_BANANA_ASPECT_SLOT, e.target.value); } catch { /* modo privado */ }
+                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none", cursor: "pointer" }}
+                  >
+                    <option value="">Auto — el modelo decide</option>
+                    {NANO_BANANA_ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+                    <option value="custom">Personalizado…</option>
+                  </select>
+                  {nbAspect === "custom" && (() => {
+                    const cw = parseInt(nbCustomW, 10);
+                    const ch = parseInt(nbCustomH, 10);
+                    const valid = cw > 0 && ch > 0;
+                    const snap = valid ? nearestNanoBananaAspect(cw, ch) : "";
+                    const inputStyle = { width: 72, padding: "5px 8px", fontSize: 12, background: "rgba(15,15,15,0.5)", border: "1px solid rgba(255,255,255,0.08)", color: "#f0ebe0", borderRadius: 4, outline: "none" } as const;
+                    const chipStyle = { padding: "3px 8px", fontSize: 10, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", background: "rgba(255,255,255,0.05)", color: "#c8b898", fontFamily: "inherit" } as const;
+                    return (
+                      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                        <input type="number" min={16} max={4096} value={nbCustomW} onChange={e => setNbCustomW(e.target.value)} placeholder="Ancho" style={inputStyle} />
+                        <span style={{ color: "rgba(255,255,255,0.3)" }}>×</span>
+                        <input type="number" min={16} max={4096} value={nbCustomH} onChange={e => setNbCustomH(e.target.value)} placeholder="Alto" style={inputStyle} />
+                        <span style={{ fontSize: 10, color: valid ? "#7a7668" : "#fbbf24" }}>
+                          {valid ? `px → se genera en ${snap}` : "Ingresá ancho y alto en px"}
+                        </span>
+                        <div style={{ display: "flex", gap: 4, width: "100%" }}>
+                          <button type="button" onClick={() => { setNbCustomW("2480"); setNbCustomH("3508"); }} style={chipStyle}>A4 vertical</button>
+                          <button type="button" onClick={() => { setNbCustomW("3508"); setNbCustomH("2480"); }} style={chipStyle}>A4 horizontal</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <div style={{ fontSize: 10, color: "#7a7668", marginTop: 4 }}>
+                    Gemini genera en 10 formatos; un tamaño custom (ej. 1350×1080, A4) usa el más cercano.
+                  </div>
                 </div>
 
                 {/* Nano Banana version */}

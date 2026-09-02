@@ -980,7 +980,7 @@
         },
         "aspectRatio": {
           "type": "string",
-          "description": "Optional output aspect ratio like 1:1, 4:3, 9:16, 16:9 (from-scratch generations; default is the model's own)"
+          "description": "Optional output aspect ratio. Gemini only accepts: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9 — any other size (A4, 1350x1080…) must snap to the nearest of these. Omit for the model's default"
         },
         "geminiApiKey": {
           "type": "string",

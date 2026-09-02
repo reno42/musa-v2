@@ -1665,7 +1665,7 @@ const MCP_TOOLS = [
         prompt: { type: "string", description: "What to generate, or how to edit the reference image" },
         imageBase64: { type: "string", description: "Optional reference image (data URI or raw base64). With it the model edits that image; without it a new image is generated from scratch" },
         model: { type: "string", description: "Nano Banana model: gemini-3.1-flash-image (default), gemini-3.1-flash-lite-image, gemini-3-pro-image, gemini-2.5-flash-image" },
-        aspectRatio: { type: "string", description: "Optional output aspect ratio like 1:1, 4:3, 9:16, 16:9 (from-scratch generations; default is the model's own)" },
+        aspectRatio: { type: "string", description: "Optional output aspect ratio. Gemini only accepts: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9 — any other size (A4, 1350x1080…) must snap to the nearest of these. Omit for the model's default" },
         geminiApiKey: { type: "string", description: "Optional caller-supplied Google Gemini API key (used for this request only, never stored)" },
       },
       required: ["prompt"],
