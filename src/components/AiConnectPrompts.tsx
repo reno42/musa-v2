@@ -51,7 +51,7 @@ Guárdala permanente, confirma con tools/list (255 herramientas), lee https://de
     id: "chatgpt-desktop-codex",
     name: "ChatGPT Desktop + Codex",
     badge: "Desktop · config.toml",
-    how: "En el mismo equipo comparten ~/.codex/config.toml. La IA instala, verifica por capas y te pide reiniciar antes de validar las herramientas nativas. No aplica a ChatGPT web.",
+    how: "Guía unificada con dos rutas: configuración manual en Complementos o instalación automática en config.toml. Incluye cada casilla, reinicio y verificación MCP por capas. No aplica a ChatGPT web.",
     prompt: `Configura y verifica Futuraria exclusivamente en ChatGPT Desktop o Codex Desktop. No estoy hablando de ChatGPT web.
 
 DATOS CANÓNICOS
@@ -67,7 +67,65 @@ REGLAS FAIL-CLOSED
 - No afirmes que estás conectado por completar tools/list mediante una llamada HTTP directa si las herramientas no aparecen en el catálogo nativo de una tarea nueva.
 - Éxito significa ejecutar realmente harness_healthcheck mediante el MCP nativo y recibir ok: true.
 
-INSTALACIÓN PERMANENTE
+ELIGE UNA SOLA RUTA: MANUAL O AUTOMÁTICA
+- Ambas rutas configuran el mismo servidor MCP en el equipo. No completes las dos ni dejes conexiones duplicadas activas.
+- Usa la RUTA MANUAL si vas a llenar el formulario de la aplicación.
+- Usa la RUTA AUTOMÁTICA si esta IA puede editar el archivo global ~/.codex/config.toml.
+
+RUTA MANUAL — CONFIGURACIÓN EN LA APLICACIÓN
+1. Abre ChatGPT Desktop o Codex Desktop en el equipo donde usarás Futuraria. No abras ChatGPT web.
+2. Ve a Configuración → Complementos → pestaña MCP → Añadir → Añadir MCP personalizado.
+   - Según la versión, el último botón puede decir "Agregar servidor" o "MCP personalizado". Es el formulario MCP de la aplicación de escritorio; no busques ni abras una página web.
+3. Completa el formulario exactamente así:
+   - Nombre: futuraria
+     Para una sola cuenta usa futuraria. Si administras varias cuentas, usa nombres distintos y genéricos, por ejemplo futuraria_personal y futuraria_cliente, y deja habilitada únicamente la cuenta que quieras usar.
+   - Tipo: HTTP secuenciable o Streamable HTTP, según el idioma de la aplicación. NO selecciones STDIO.
+   - URL: https://design.futuraria.com/mcp
+     Escríbela exactamente como texto plano: sin Markdown, espacios, barra final ni dominio alternativo.
+   - Variable de entorno del token portador: DEJAR VACÍO.
+   - Encabezados: agrega una sola fila con:
+     Clave: x-api-key
+     Valor: TU_CLAVE_AQUI
+   - Encabezados desde variables de entorno: DEJAR VACÍO.
+4. Para esta ruta x-api-key:
+   - No pegues la clave en "Variable de entorno del token portador", URL, comando, argumentos ni variables de entorno.
+   - No uses Node.js, npm, npx, STDIO, OAuth ni el botón Autenticar.
+5. Pulsa Guardar.
+6. Vuelve a Configuración → Complementos → MCP y comprueba que futuraria esté habilitado.
+   - Si ya existía un servidor de Futuraria con otra clave, edítalo y reemplaza la clave, o deshabilítalo antes de habilitar la cuenta nueva.
+   - No dejes activas dos conexiones de Futuraria pertenecientes a cuentas distintas.
+   - No borres ni modifiques otras integraciones.
+7. Reinicia completamente la aplicación:
+   - Si aparece un botón Reiniciar, úsalo.
+   - Si no aparece, cierra todas las ventanas de ChatGPT Desktop y Codex Desktop, asegúrate de que no queden procesos de esas aplicaciones en segundo plano y vuelve a abrir únicamente la aplicación que usarás.
+8. Crea una tarea o conversación nueva. No intentes validar la carga nativa en el chat donde agregaste el MCP.
+9. Continúa en VERIFICACIÓN POR CAPAS, empezando por confirmar la configuración manual y luego el endpoint, handshake y carga nativa.
+
+RESUMEN DE CASILLAS
+Campo → Valor
+Nombre → futuraria
+Tipo → HTTP secuenciable / Streamable HTTP
+URL → https://design.futuraria.com/mcp
+Variable de entorno del token portador → VACÍO
+Encabezados · Clave → x-api-key
+Encabezados · Valor → TU_CLAVE_AQUI
+Encabezados desde variables de entorno → VACÍO
+STDIO / comando / argumentos → NO USAR
+OAuth / Autenticar → NO USAR
+
+ERRORES COMUNES QUE DEBES EVITAR
+- Seleccionar STDIO en lugar de HTTP secuenciable / Streamable HTTP.
+- Usar futuraria.io o cualquier dominio que no sea design.futuraria.com.
+- Poner la clave en la variable de entorno del token portador en vez del encabezado x-api-key.
+- Omitir el encabezado x-api-key o escribir otro nombre de encabezado.
+- Pegar la URL como Markdown, por ejemplo [https://design.futuraria.com/mcp](https://design.futuraria.com/mcp), en vez de texto plano.
+- Agregar una barra final, espacios o un error tipográfico a https://design.futuraria.com/mcp.
+- Probar en una conversación antigua en vez de reiniciar y crear una tarea nueva.
+- Confundir una URL accesible, documentación o tools/list por HTTP directo con herramientas MCP cargadas nativamente.
+- Pulsar Autenticar o intentar OAuth para esta ruta x-api-key.
+- Dejar activas simultáneamente conexiones de Futuraria de cuentas distintas.
+
+RUTA AUTOMÁTICA — CONFIGURACIÓN MEDIANTE CONFIG.TOML
 1. Lee el archivo global ~/.codex/config.toml. En Windows es C:\\Users\\<USUARIO>\\.codex\\config.toml.
 2. Preserva intactos todos los demás servidores, plugins y preferencias.
 3. Busca cualquier bloque existente de Futuraria, aunque tenga otro nombre. Actualiza o reemplaza solo ese bloque; no crees duplicados.
@@ -98,7 +156,8 @@ VERIFICACIÓN POR CAPAS
 Reporta cada capa por separado; no conviertas una capa parcial en éxito total.
 
 A. CONFIGURADO
-- Confirma que config.toml conserva lo anterior y contiene una sola conexión activa para la cuenta elegida, con la URL exacta.
+- Si elegiste la ruta manual, confirma en Configuración → Complementos → MCP que existe una sola conexión activa para la cuenta elegida, con tipo HTTP secuenciable / Streamable HTTP, la URL exacta y el encabezado x-api-key.
+- Si elegiste la ruta automática, confirma que config.toml conserva lo anterior y contiene una sola conexión activa para la cuenta elegida, con la URL exacta.
 
 B. ENDPOINT ACCESIBLE
 - GET https://design.futuraria.com/.well-known/mcp.json debe responder HTTP 200.
@@ -112,7 +171,7 @@ C. AUTENTICADO Y HANDSHAKE VÁLIDO
 - Esto prueba endpoint, clave y protocolo; todavía no prueba que esta conversación haya cargado las herramientas nativamente.
 
 D. CARGADO NATIVAMENTE
-- Editar config.toml no recarga una conversación abierta.
+- Agregar el servidor desde Complementos o editar config.toml no recarga una conversación abierta.
 - Indícame que cierre completamente ChatGPT Desktop y Codex Desktop, incluidos procesos en segundo plano, vuelva a abrir la aplicación que usaré y cree una tarea nueva.
 - No declares esta capa completa desde la conversación donde editaste el archivo.
 
