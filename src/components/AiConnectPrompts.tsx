@@ -25,7 +25,7 @@ const AI_PROMPTS: AiPrompt[] = [
     how: "Agente propio con HTTP: endpoint + clave, sin archivos que tocar.",
     prompt: `Tengo cuenta en Futuraria (design.futuraria.com) y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conéctate al endpoint https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (si no puedes mandar encabezados usa https://design.futuraria.com/mcp?key=TU_CLAVE_AQUI).
-Guárdala permanente en tu configuración, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué piezas empezamos a diseñar.`,
+Guárdala permanente en tu configuración, confirma con tools/list (255 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué piezas empezamos a diseñar.`,
   },
   {
     id: "claude-code",
@@ -35,7 +35,7 @@ Guárdala permanente en tu configuración, confirma con tools/list (250 herramie
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Ejecuta: claude mcp add futuraria --url https://design.futuraria.com/mcp --header "x-api-key: TU_CLAVE_AQUI"
 (o agrégala a tu .mcp.json con headers: {"x-api-key": "TU_CLAVE_AQUI"}).
-Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (255 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
     id: "claude-cowork",
@@ -45,31 +45,109 @@ Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-kno
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Agrega el servidor a tu config de Cowork (mcp.json):
 {"mcpServers": {"futuraria": {"url": "https://design.futuraria.com/mcp", "headers": {"x-api-key": "TU_CLAVE_AQUI"}}}}
-Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (255 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
   },
   {
-    id: "codex",
-    name: "Codex",
-    badge: "CLI · config.toml",
-    how: "CLI: agrega el bloque [mcp_servers.futuraria] a ~/.codex/config.toml y reinicia la sesión.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega a ~/.codex/config.toml:
-[mcp_servers.futuraria]
-url = "https://design.futuraria.com/mcp"
-http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
-  },
-  {
-    id: "chatgpt-cowork",
-    name: "ChatGPT Cowork",
+    id: "chatgpt-desktop-codex",
+    name: "ChatGPT Desktop + Codex",
     badge: "Desktop · config.toml",
-    how: "Desktop: agrega el servidor MCP de Futuraria a tu config de Cowork y reinicia la app.",
-    prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
-Agrega el servidor MCP de Futuraria a tu config de Cowork (config.toml):
+    how: "En el mismo equipo comparten ~/.codex/config.toml. La IA instala, verifica por capas y te pide reiniciar antes de validar las herramientas nativas. No aplica a ChatGPT web.",
+    prompt: `Configura y verifica Futuraria exclusivamente en ChatGPT Desktop o Codex Desktop. No estoy hablando de ChatGPT web.
+
+DATOS CANÓNICOS
+- Futuraria significa exclusivamente https://design.futuraria.com y el servidor MCP llamado futuraria.
+- Endpoint MCP exacto: https://design.futuraria.com/mcp
+- Mi clave MCP de Futuraria: TU_CLAVE_AQUI
+
+REGLAS FAIL-CLOSED
+- No busques "Futuraria" en Internet.
+- No abras futuraria.io ni ningún dominio distinto de design.futuraria.com.
+- No uses búsqueda web, navegador ni fuentes externas como sustituto del MCP.
+- No finjas una conexión por haber leído una URL, el manifiesto, SKILL.md o documentación.
+- No afirmes que estás conectado por completar tools/list mediante una llamada HTTP directa si las herramientas no aparecen en el catálogo nativo de una tarea nueva.
+- Éxito significa ejecutar realmente harness_healthcheck mediante el MCP nativo y recibir ok: true.
+
+INSTALACIÓN PERMANENTE
+1. Lee el archivo global ~/.codex/config.toml. En Windows es C:\\Users\\<USUARIO>\\.codex\\config.toml.
+2. Preserva intactos todos los demás servidores, plugins y preferencias.
+3. Busca cualquier bloque existente de Futuraria, aunque tenga otro nombre. Actualiza o reemplaza solo ese bloque; no crees duplicados.
+4. Si hay conexiones de varias cuentas, no uses el bloque único del paso 5. Conserva cada cuenta con un nombre separado y deja habilitada únicamente la cuenta elegida. Ejemplo:
+
+[mcp_servers.futuraria_personal]
+enabled = false
+url = "https://design.futuraria.com/mcp"
+http_headers = { "x-api-key" = "<CLAVE_EXISTENTE>" }
+
+[mcp_servers.futuraria_cliente]
+enabled = true
+url = "https://design.futuraria.com/mcp"
+http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
+
+No sobrescribas, imprimas ni borres la clave de otra cuenta sin autorización. En la tarea nueva, identifica como futuraria al bloque activo de la cuenta elegida.
+5. Para una sola cuenta, deja exactamente este bloque:
+
 [mcp_servers.futuraria]
 url = "https://design.futuraria.com/mcp"
 http_headers = { "x-api-key" = "TU_CLAVE_AQUI" }
-Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+
+6. Para esta ruta no uses OAuth, Authorization: Bearer, "Variable de entorno del token portador", STDIO, Node.js, npm ni npx. La autenticación es el encabezado x-api-key.
+7. Guarda el archivo permanentemente. Si el sandbox bloquea la escritura global, solicita aprobación para editar ese archivo y continúa al recibirla. No abandones la tarea ni escribas la configuración dentro del repositorio.
+8. No vuelvas a imprimir la clave completa en la respuesta ni en logs visibles.
+
+VERIFICACIÓN POR CAPAS
+Reporta cada capa por separado; no conviertas una capa parcial en éxito total.
+
+A. CONFIGURADO
+- Confirma que config.toml conserva lo anterior y contiene una sola conexión activa para la cuenta elegida, con la URL exacta.
+
+B. ENDPOINT ACCESIBLE
+- GET https://design.futuraria.com/.well-known/mcp.json debe responder HTTP 200.
+- GET https://design.futuraria.com/SKILL.md debe responder HTTP 200.
+- Esto solo prueba acceso al endpoint; todavía no prueba autenticación ni carga nativa.
+
+C. AUTENTICADO Y HANDSHAKE VÁLIDO
+- Envía initialize por JSON-RPC 2.0 a https://design.futuraria.com/mcp con x-api-key.
+- Envía notifications/initialized. Debe responder HTTP 202 con cuerpo vacío.
+- Envía tools/list. Actualmente debe devolver 255 herramientas. Usa el resultado real de tools/list como fuente del conteo.
+- Esto prueba endpoint, clave y protocolo; todavía no prueba que esta conversación haya cargado las herramientas nativamente.
+
+D. CARGADO NATIVAMENTE
+- Editar config.toml no recarga una conversación abierta.
+- Indícame que cierre completamente ChatGPT Desktop y Codex Desktop, incluidos procesos en segundo plano, vuelva a abrir la aplicación que usaré y cree una tarea nueva.
+- No declares esta capa completa desde la conversación donde editaste el archivo.
+
+VERIFICACIÓN OBLIGATORIA EN LA TAREA NUEVA
+En la tarea nueva, Futuraria sigue significando exclusivamente el MCP futuraria de design.futuraria.com. No uses web.
+
+1. Revisa el catálogo NATIVO de herramientas de esa tarea y exige la presencia de:
+   - harness_healthcheck
+   - harness_get_context
+   - harness_list_features
+   - list_workspaces
+   - list_templates
+2. Si no aparecen, detente. No navegues, no improvises y no afirmes conexión. Revisa ~/.codex/config.toml y los logs locales de Codex buscando server_name=futuraria, sin mostrar la clave. Reporta exactamente:
+   "Futuraria está configurado, pero sus herramientas MCP no fueron cargadas en esta tarea. No utilicé búsqueda web."
+3. Si aparecen, ejecuta realmente mediante MCP:
+   harness_healthcheck({})
+4. Si devuelve ok: false, detente y reporta exactamente qué check falló. No uses web como alternativa.
+5. Solo si devuelve ok: true, ejecuta en este orden:
+   harness_get_context({ agentType: "leader" })
+   harness_list_features({ status: "backlog" })
+   list_workspaces({})
+   list_templates({ workspaceId: "<ID_DEL_WORKSPACE_ENCONTRADO>" })
+6. Ejecuta también:
+   list_assets({ workspaceId: "<ID_DEL_WORKSPACE_ENCONTRADO>" })
+7. Responde con este formato:
+   "Conexión MCP confirmada.
+   harness_healthcheck: ok.
+   Workspace autenticado: <NOMBRE>.
+   Diseños/templates (<TOTAL>): <LISTA>.
+   Assets (<TOTAL>): <LISTA O NINGUNO>.
+   No utilicé búsqueda web.
+
+   ¿Qué empezamos a diseñar?"
+
+No sustituyas ninguna llamada MCP por lectura de documentación. Si una herramienta requiere parámetros adicionales, obténlos de los resultados MCP anteriores; no los inventes.`,
   },
   {
     id: "otra",
@@ -78,7 +156,7 @@ Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-kno
     how: "Si soporta MCP, dale endpoint + clave; si no, pásale la guía descargable (SKILL.md).",
     prompt: `Tengo cuenta en Futuraria y esta clave API de Futuraria (la clave MCP): TU_CLAVE_AQUI.
 Conecta https://design.futuraria.com/mcp enviando el encabezado (header) llamado x-api-key con el valor TU_CLAVE_AQUI (o ?key= en la URL si no soportas encabezados).
-Guárdala permanente, confirma con tools/list (250 herramientas), lee /.well-known/mcp.json y /SKILL.md, y dime qué empezamos a diseñar.`,
+Guárdala permanente, confirma con tools/list (255 herramientas), lee https://design.futuraria.com/.well-known/mcp.json y https://design.futuraria.com/SKILL.md, y dime qué empezamos a diseñar.`,
   },
 ];
 
@@ -166,6 +244,7 @@ export function AiConnectPrompts({ initialKey = "" }: { initialKey?: string }) {
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handleCopyPrompt(ai.id); }}
                 className="landing-copy-btn"
+                aria-label={`${copiedId === ai.id ? "Prompt copiado de" : "Copiar prompt de"} ${ai.name}`}
               >
                 {copiedId === ai.id ? "✓ Copiado" : "Copiar"}
               </button>
