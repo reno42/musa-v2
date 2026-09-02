@@ -77,6 +77,116 @@ function applyMaskServer($, frame, pathLayerId, imageLayerId, mode) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Shape corner geometry — server-side port of src/lib/shapePaths.ts
+// (same M/L/Q/Z grammar, same data-vr persistence) so MCP agents
+// round trapezoid/polygon corners exactly like the editor UI does.
+// ═══════════════════════════════════════════════════════════════
+
+/** Tokenize the restricted M/L/Q/Z grammar shapePaths produces; null otherwise. */
+function tokenizeShapePathServer(d) {
+  const tokens = [];
+  const regex = /([MLQZ])\s*((?:-?\d+(?:\.\d+)?(?:[\s,]+-?\d+(?:\.\d+)?)?[\s,]*)*)/gi;
+  let match;
+  while ((match = regex.exec(d)) !== null) {
+    const command = match[1].toUpperCase();
+    if (command === "Z") continue;
+    const numbers = (match[2].match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    if (command === "M" || command === "L") {
+      if (numbers.length < 2) return null;
+      tokens.push({ command: "L", points: [{ x: numbers[0], y: numbers[1] }] });
+      if (command === "M" && tokens.length === 1) tokens[0].command = "M";
+    } else {
+      if (numbers.length < 4) return null;
+      tokens.push({ command: "Q", points: [{ x: numbers[0], y: numbers[1] }, { x: numbers[2], y: numbers[3] }] });
+    }
+  }
+  // Every coordinate must have been consumed — leftover text means curves/arcs.
+  const stripped = d.replace(regex, "").replace(/[\s,]/g, "");
+  return stripped.length === 0 && tokens.length >= 3 ? tokens : null;
+}
+
+/**
+ * Recover the corner vertices of a shape path produced by verticesToPathServer
+ * — both the sharp form (M/L chain) and the rounded form (each rounded vertex
+ * emits an entry L followed by a Q whose control IS the original corner).
+ */
+function cornersFromShapePathServer(d) {
+  const tokens = tokenizeShapePathServer(d);
+  if (!tokens || tokens[0]?.command !== "M") return null;
+  const corners = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token.command === "Q") continue; // handled by the L that opened the vertex
+    if (token.command === "M" && index > 0) return null;
+    const next = tokens[index + 1];
+    if (next?.command === "Q") {
+      corners.push(next.points[0]); // quadratic control = original corner
+    } else {
+      corners.push(token.points[0]); // sharp vertex: the point IS the corner
+    }
+  }
+  return corners.length >= 3 ? corners : null;
+}
+
+/** One radius per vertex, or a single uniform radius (missing → 0 = sharp). */
+function normalizeRadiiServer(radii, count) {
+  if (!Array.isArray(radii)) return new Array(count).fill(Math.max(0, radii || 0));
+  return Array.from({ length: count }, (_, index) => Math.max(0, radii[index] || 0));
+}
+
+/**
+ * Serialize a closed vertex loop to a path, optionally rounding corners.
+ * Rounding trims each edge by the radius (clamped to half the shorter edge)
+ * and bridges the gap with a quadratic curve through the original vertex.
+ */
+function verticesToPathServer(vertices, cornerRadius = 0) {
+  if (vertices.length < 3) return "";
+  const rounded = (value) => Math.round(value * 100) / 100;
+  const radii = normalizeRadiiServer(cornerRadius, vertices.length);
+  if (radii.every(radius => radius <= 0)) {
+    return `M${vertices.map(v => `${rounded(v.x)},${rounded(v.y)}`).join(" L")} Z`;
+  }
+  const count = vertices.length;
+  const commands = [];
+  for (let index = 0; index < count; index++) {
+    const cornerRadiusAtIndex = radii[index];
+    const previous = vertices[(index - 1 + count) % count];
+    const vertex = vertices[index];
+    const next = vertices[(index + 1) % count];
+    if (cornerRadiusAtIndex <= 0) {
+      commands.push(index === 0 ? `M${rounded(vertex.x)},${rounded(vertex.y)}` : `L${rounded(vertex.x)},${rounded(vertex.y)}`);
+      continue;
+    }
+    const inLength = Math.hypot(vertex.x - previous.x, vertex.y - previous.y);
+    const outLength = Math.hypot(next.x - vertex.x, next.y - vertex.y);
+    const trim = Math.min(cornerRadiusAtIndex, inLength / 2, outLength / 2);
+    const entry = {
+      x: vertex.x - ((vertex.x - previous.x) / (inLength || 1)) * trim,
+      y: vertex.y - ((vertex.y - previous.y) / (inLength || 1)) * trim,
+    };
+    const exit = {
+      x: vertex.x + ((next.x - vertex.x) / (outLength || 1)) * trim,
+      y: vertex.y + ((next.y - vertex.y) / (outLength || 1)) * trim,
+    };
+    commands.push(index === 0 ? `M${rounded(entry.x)},${rounded(entry.y)}` : `L${rounded(entry.x)},${rounded(entry.y)}`);
+    commands.push(`Q${rounded(vertex.x)},${rounded(vertex.y)} ${rounded(exit.x)},${rounded(exit.y)}`);
+  }
+  return `${commands.join(" ")} Z`;
+}
+
+/** Effective per-vertex radii: the data-vr overrides when present, else uniform. */
+function parseVertexRadiiAttrServer(raw, uniform, count) {
+  if (!raw) return new Array(count).fill(Math.max(0, uniform || 0));
+  const overrides = raw.split(",").map(value => Math.max(0, Number(value.trim()) || 0));
+  return Array.from({ length: count }, (_, index) => overrides[index] ?? Math.max(0, uniform || 0));
+}
+
+/** Serialize per-vertex radii for the data-vr attribute ("0,8,0,12"). */
+function serializeVertexRadiiAttrServer(radii) {
+  return radii.map(radius => Math.round(radius * 10) / 10).join(",");
+}
+
+// ═══════════════════════════════════════════════════════════════
 // F3 segmentation helpers — job plumbing lives in
 // api/src/services/segmentation.ts (shared with the REST route).
 // ═══════════════════════════════════════════════════════════════
@@ -2783,13 +2893,13 @@ const MCP_TOOLS = [
   },
   {
     name: "draw_path",
-    description: "Create an SVG path element (pen/line drawing). Accepts SVG path data string and bounding box dimensions.",
+    description: "Create an SVG path element (pen/line drawing). Accepts SVG path data string and bounding box dimensions. This is also the tool for custom polygons like trapezoids: pass the corner points as M/L data and include Z to close the shape, then style it with set_paint (fill 'none' + stroke for an outline-only look) and round its corners with set_corner_radius.",
     inputSchema: {
       type: "object",
       properties: {
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Frame ID to draw in" },
-        pathData: { type: "string", description: "SVG path data (e.g. 'M 10 10 L 50 50 L 90 10')" },
+        pathData: { type: "string", description: "SVG path data (e.g. 'M 10 10 L 50 50 L 90 10'); end with Z for closed shapes like trapezoids" },
         x: { type: "number", description: "X position of bounding box" },
         y: { type: "number", description: "Y position of bounding box" },
         width: { type: "number", description: "Width of bounding box" },
@@ -2870,7 +2980,7 @@ const MCP_TOOLS = [
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Frame ID" },
         elementId: { type: "string", description: "data-layer-id of the layer to paint" },
-        fill: { type: "string", description: "Colour for the layer's interior, e.g. '#3B82F6'. On a group, every object inside it is filled." },
+        fill: { type: "string", description: "Colour for the layer's interior, e.g. '#3B82F6'. 'none' or 'transparent' leaves the interior empty — combine with stroke for outline-only shapes. On a group, every object inside it is filled." },
         stroke: { type: "string", description: "Colour for the layer's outline" },
         strokeWidth: { type: ["string", "number"], description: "Outline thickness; a bare number is read as px. 0 removes the outline." },
       },
@@ -3096,6 +3206,23 @@ const MCP_TOOLS = [
         templateId: { type: "string", description: "Template ID" },
         frameId: { type: "string", description: "Frame ID" },
         elementId: { type: "string", description: "data-layer-id of the CSS shape to convert" },
+      },
+      required: ["templateId", "frameId", "elementId"],
+    },
+  },
+  // ── Trapezoid workflow: corner rounding on straight-edged SVG paths ──
+  {
+    name: "set_corner_radius",
+    description: "Round the corners of an SVG shape path (trapezoid, rectangle, polygon, star). The path stays a fully editable SVG shape — corners become quadratic curves exactly like the editor's own corner-radius feature, and the per-vertex values persist on the layer so the editor UI can keep editing them. The typical stroke-only trapezoid workflow: draw_path the 4 corner points (M ... L ... L ... L ... Z), set_paint with fill 'none' + a stroke colour, then set_corner_radius. Pass radius for a uniform round-over, radii for per-vertex values (in path point order, 0 = sharp), or vertexIndex + radius to round a single corner.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID" },
+        frameId: { type: "string", description: "Frame ID containing the path" },
+        elementId: { type: "string", description: "data-layer-id of the SVG element" },
+        radius: { type: "number", description: "Uniform corner radius in px applied to every vertex (ignored when radii or vertexIndex is given)" },
+        radii: { type: "array", items: { type: "number" }, description: "Per-vertex radii in px, in path point order; 0 = sharp corner. Padded/truncated to the vertex count." },
+        vertexIndex: { type: "number", description: "0-based index of a single vertex to round (requires radius)" },
       },
       required: ["templateId", "frameId", "elementId"],
     },
@@ -10523,6 +10650,54 @@ async function handleMethod(method, params, userId, auth) {
         return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: d, changed, maskRebaked };
       }
       return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, newPathData: d, changed };
+    }
+
+    // ── set_corner_radius: round the corners of a straight-edged SVG path ──
+    case "set_corner_radius": {
+      const tpl = await templates.getTemplate(params.templateId);
+      if (!tpl) throw { code: -32000, message: `Template not found: ${params.templateId}` };
+      if (tpl.engine && tpl.engine !== "html") throw { code: -32000, message: "Template is not an HTML template" };
+      if (!tpl.frames || !Array.isArray(tpl.frames)) throw { code: -32000, message: "Template has no frames" };
+      const frame = tpl.frames.find(f => f.id === params.frameId);
+      if (!frame) throw { code: -32000, message: `Frame not found: ${params.frameId}` };
+
+      const $c = cheerio.load(frame.html || "");
+      const $layer = $c(`[data-layer-id="${params.elementId}"]`);
+      if (!$layer.length) throw { code: -32000, message: `Element not found: ${params.elementId}` };
+      // The layer is usually an <svg data-layer-id> wrapping the path, but a
+      // bare path[data-layer-id] is accepted too (same as the editor overlay).
+      const layerNode = $layer.get(0);
+      const isPathItself = layerNode && (layerNode.tagName === "path" || layerNode.name === "path");
+      const $pathEl = isPathItself ? $layer : $layer.find("path").first();
+      if (!$pathEl.length) throw { code: -32000, message: "Element has no <path>; run shape_to_path on a CSS shape or draw_path a new one" };
+
+      const corners = cornersFromShapePathServer($pathEl.attr("d") || "");
+      if (!corners) throw { code: -32000, message: "Path is not a straight-edged closed shape (M/L/Q/Z grammar). Corner rounding needs line-only geometry — draw the trapezoid with draw_path (include Z) first." };
+
+      const count = corners.length;
+      // data-vr (per-vertex overrides) wins over data-shape-corner-radius
+      // (uniform) — the same precedence the editor's Appearance panel uses.
+      const current = parseVertexRadiiAttrServer($layer.attr("data-vr"), Number($layer.attr("data-shape-corner-radius")) || 0, count);
+      let next;
+      if (typeof params.vertexIndex === "number") {
+        if (typeof params.radius !== "number") throw { code: -32000, message: "vertexIndex requires radius" };
+        if (params.vertexIndex < 0 || params.vertexIndex >= count) throw { code: -32000, message: `vertexIndex ${params.vertexIndex} out of range (path has ${count} vertices)` };
+        next = current.slice();
+        next[params.vertexIndex] = Math.max(0, params.radius);
+      } else if (Array.isArray(params.radii) && params.radii.length > 0) {
+        next = normalizeRadiiServer(params.radii, count);
+      } else if (typeof params.radius === "number") {
+        next = new Array(count).fill(Math.max(0, params.radius));
+      } else {
+        throw { code: -32000, message: "Provide radius (uniform), radii (per-vertex array), or vertexIndex + radius" };
+      }
+
+      const newD = verticesToPathServer(corners, next);
+      $pathEl.attr("d", newD);
+      $layer.attr("data-vr", serializeVertexRadiiAttrServer(next));
+      frame.html = $c.html();
+      await templates.updateTemplate(params.templateId, { html: tpl.html, css: tpl.css, frames: tpl.frames });
+      return { success: true, templateId: params.templateId, frameId: params.frameId, elementId: params.elementId, vertices: count, radii: next, newPathData: newD };
     }
 
     // ── Phase D: shape_to_path ──

@@ -489,7 +489,7 @@ update_frame_content({ templateId, frameId, patches: [
 | `INSTALL.md` | ← This file. AI + human zero-to-deploy. |
 | `supabase_schema_complete.sql` | Complete DB schema — 7 tables, indexes, storage, RLS. Read with `fs.readFileSync` for Management API. |
 | `QA/healthcheck_mcp.mjs` | Post-deploy smoke test — full CRUD pipeline. |
-| `SKILL.md` | AI agent skill reference — 255 tools, components, patterns. Auto-synced with `npm run sync:skill`. |
+| `SKILL.md` | AI agent skill reference — 256 tools, components, patterns. Auto-synced with `npm run sync:skill`. |
 | `SETUP.md` | Quickstart (shorter, human-only). |
 | `.env.example` | Template for Supabase credentials. |
 | `netlify.toml` | Build command, function bundler, redirects. |

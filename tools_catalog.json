@@ -3884,7 +3884,7 @@
   },
   {
     "name": "draw_path",
-    "description": "Create an SVG path element (pen/line drawing). Accepts SVG path data string and bounding box dimensions.",
+    "description": "Create an SVG path element (pen/line drawing). Accepts SVG path data string and bounding box dimensions. This is also the tool for custom polygons like trapezoids: pass the corner points as M/L data and include Z to close the shape, then style it with set_paint (fill 'none' + stroke for an outline-only look) and round its corners with set_corner_radius.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3898,7 +3898,7 @@
         },
         "pathData": {
           "type": "string",
-          "description": "SVG path data (e.g. 'M 10 10 L 50 50 L 90 10')"
+          "description": "SVG path data (e.g. 'M 10 10 L 50 50 L 90 10'); end with Z for closed shapes like trapezoids"
         },
         "x": {
           "type": "number",
@@ -4116,7 +4116,7 @@
         },
         "fill": {
           "type": "string",
-          "description": "Colour for the layer's interior, e.g. '#3B82F6'. On a group, every object inside it is filled."
+          "description": "Colour for the layer's interior, e.g. '#3B82F6'. 'none' or 'transparent' leaves the interior empty — combine with stroke for outline-only shapes. On a group, every object inside it is filled."
         },
         "stroke": {
           "type": "string",
@@ -4655,6 +4655,47 @@
         "elementId": {
           "type": "string",
           "description": "data-layer-id of the CSS shape to convert"
+        }
+      },
+      "required": [
+        "templateId",
+        "frameId",
+        "elementId"
+      ]
+    }
+  },
+  {
+    "name": "set_corner_radius",
+    "description": "Round the corners of an SVG shape path (trapezoid, rectangle, polygon, star). The path stays a fully editable SVG shape — corners become quadratic curves exactly like the editor's own corner-radius feature, and the per-vertex values persist on the layer so the editor UI can keep editing them. The typical stroke-only trapezoid workflow: draw_path the 4 corner points (M ... L ... L ... L ... Z), set_paint with fill 'none' + a stroke colour, then set_corner_radius. Pass radius for a uniform round-over, radii for per-vertex values (in path point order, 0 = sharp), or vertexIndex + radius to round a single corner.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "description": "Template ID"
+        },
+        "frameId": {
+          "type": "string",
+          "description": "Frame ID containing the path"
+        },
+        "elementId": {
+          "type": "string",
+          "description": "data-layer-id of the SVG element"
+        },
+        "radius": {
+          "type": "number",
+          "description": "Uniform corner radius in px applied to every vertex (ignored when radii or vertexIndex is given)"
+        },
+        "radii": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Per-vertex radii in px, in path point order; 0 = sharp corner. Padded/truncated to the vertex count."
+        },
+        "vertexIndex": {
+          "type": "number",
+          "description": "0-based index of a single vertex to round (requires radius)"
         }
       },
       "required": [
