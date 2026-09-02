@@ -55,7 +55,10 @@ export function readDesignClipboard(): DesignClipboard | null {
     if (raw) {
       const stored = JSON.parse(raw) as Partial<StoredDesignClipboard>;
       if (stored.version === 1 && typeof stored.updatedAt === "number" && isDesignClipboard(stored.clipboard)) {
-        if (!latest || stored.updatedAt > latest.updatedAt) latest = stored as StoredDesignClipboard;
+        // localStorage is shared by every editor tab on this origin, so its
+        // valid value is canonical. Comparing timestamps left a race when two
+        // tabs copied different selections inside the same millisecond.
+        latest = stored as StoredDesignClipboard;
       }
     }
   } catch {

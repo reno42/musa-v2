@@ -170,6 +170,46 @@ test("persists a copied frame so another editor project can read it", () => {
   }
 });
 
+test("reads the newest shared-tab clipboard even when copies share a timestamp", () => {
+  const values = new Map();
+  const previousStorage = globalThis.localStorage;
+  const previousNow = Date.now;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    },
+  });
+  Date.now = () => 9_999_999_999_999;
+
+  const firstClipboard = {
+    kind: "frames",
+    frames: [{ id: "frame_a", name: "A", x: 0, y: 0, width: 100, height: 100, html: "<div>A</div>", css: "", background: "#fff" }],
+    pasteCount: 0,
+  };
+  const secondClipboard = {
+    kind: "frames",
+    frames: [{ id: "frame_b", name: "B", x: 0, y: 0, width: 100, height: 100, html: "<div>B</div>", css: "", background: "#fff" }],
+    pasteCount: 0,
+  };
+
+  try {
+    persistDesignClipboard(firstClipboard);
+    values.set(DESIGN_CLIPBOARD_KEY, JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      clipboard: secondClipboard,
+    }));
+
+    assert.deepEqual(readDesignClipboard(), secondClipboard);
+  } finally {
+    Date.now = previousNow;
+    if (previousStorage === undefined) delete globalThis.localStorage;
+    else Object.defineProperty(globalThis, "localStorage", { configurable: true, value: previousStorage });
+  }
+});
+
 test("raster import inserts into the active design without creating a template", () => {
   const source = readFileSync(new URL("../src/components/SvgImportDialog.tsx", import.meta.url), "utf8");
   const rasterStart = source.indexOf('if (importMode === "raster" && rasterDataUrl)');
