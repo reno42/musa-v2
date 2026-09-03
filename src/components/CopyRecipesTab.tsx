@@ -10,6 +10,10 @@
  * REQ-020 (v33): the library mixes 10 factory-default frameworks (is_default,
  * read-only, shared by every account) with personal recipes. A NAME is enough
  * to add a row (Enter submits); the content can be filled in later, inline.
+ *
+ * Brand scope (v44): a recipe with a Marca applies to that brand only; the
+ * default «General» covers every brand of the workspace. Optional by design —
+ * the human decides the scope, nothing infers it.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -23,6 +27,7 @@ export interface CopyRecipeRow {
   content: string;
   tags: string[];
   source: string;
+  brand_id?: string | null;
   is_default?: boolean;
   owner_id?: string | null;
   created_at: string | null;
@@ -75,8 +80,12 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  // Marca scope: the same list the calendar filters by, so both panes name
+  // the brands identically.
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
 
   const [newType, setNewType] = useState("framework");
+  const [newBrandId, setNewBrandId] = useState("");
   const [newName, setNewName] = useState("");
   const [newContent, setNewContent] = useState("");
   const [newTags, setNewTags] = useState("");
@@ -99,11 +108,22 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
 
   useEffect(() => { void load(); }, [load]);
 
-  /** Optimistic write, same contract as the ContentTab sheet. */
-  const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
+  // Brands drive the Marca column — a recipe scoped to a deleted brand would
+  // be uneditable, so the list must be live, not stale.
+  useEffect(() => {
+    if (!workspaceId) return;
+    void apiFetch<{ data?: Array<{ id: string; name: string }> }>(`/api/workspaces/${workspaceId}/brands`)
+      .then(res => setBrands(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => { /* the pane still works with General-only scope */ });
+  }, [workspaceId]);
+
+  /** Optimistic write, same contract as the ContentTab sheet. `optimistic`
+   *  overlays the row when the wire shape differs from the stored shape —
+   *  the Marca select edits brand_id but sends brandId, as the API expects. */
+  const patch = useCallback(async (id: string, body: Record<string, unknown>, optimistic?: Record<string, unknown>) => {
     setError("");
     const before = rows.find(r => r.id === id);
-    setRows(cur => cur.map(r => (r.id === id ? { ...r, ...body } as CopyRecipeRow : r)));
+    setRows(cur => cur.map(r => (r.id === id ? { ...r, ...(optimistic || body) } as CopyRecipeRow : r)));
     try {
       const res = await apiFetch<{ success?: boolean; error?: string }>(`/api/copy-recipes/${id}`, {
         method: "PATCH", body: JSON.stringify(body),
@@ -139,17 +159,18 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
           name: newName.trim(),
           content: newContent.trim(),
           tags: parseTags(newTags),
+          brandId: newBrandId || null,
           source: "humano",
         }),
       });
       if (res?.data) {
         setRows(cur => [res.data!, ...cur]);
-        setNewName(""); setNewContent(""); setNewTags("");
+        setNewName(""); setNewContent(""); setNewTags(""); setNewBrandId("");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo crear la receta");
     }
-  }, [workspaceId, newType, newName, newContent, newTags]);
+  }, [workspaceId, newType, newBrandId, newName, newContent, newTags]);
 
   const submitNew = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") { e.preventDefault(); void add(); }
@@ -184,7 +205,8 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
         Tus IAs leen y escriben estas recetas vía MCP (list_copy_recipes / create_copy_recipe).
         Las marcadas como «Default» vienen de fábrica para todas las cuentas y son de solo
         lectura; las que agregues —o guarde tu IA— son exclusivamente tuyas. Con un nombre
-        basta para agregar, y Enter la crea de una. Pídele a tu IA que redacte los copys del
+        basta para agregar, y Enter la crea de una. Con Marca acotas la receta a una marca;
+        «General» aplica a todas. Pídele a tu IA que redacte los copys del
         calendario siguiendo tu tono.
       </div>
 
@@ -212,7 +234,7 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
           <table className="ct" style={{ borderCollapse: "collapse", width: "100%", marginTop: 8 }}>
             <thead>
               <tr>
-                {["Tipo", "Nombre", "Receta", "Tags", "Origen", "Actualizada", ""].map(h => (
+                {["Tipo", "Marca", "Nombre", "Receta", "Tags", "Origen", "Actualizada", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
                     fontWeight: 600, color: "rgba(255,255,255,0.65)", fontSize: 11.5,
@@ -235,6 +257,25 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                         <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
                       ))}
                     </select>
+                  </td>
+                  {/* Factory defaults are shared by every account, so their
+                      only honest scope is «General» — no select on locked rows. */}
+                  <td style={{ ...CELL, minWidth: 110 }}>
+                    {locked ? (
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}
+                        title="Receta default: aplica a todas las marcas">General</span>
+                    ) : (
+                      <select value={r.brand_id || ""} style={{ ...control, width: "100%" }}
+                        aria-label={`Marca de ${r.name}`}
+                        onChange={e => {
+                          const next = e.target.value || null;
+                          // The wire says brandId; the row stores brand_id.
+                          void patch(r.id, { brandId: next }, { brand_id: next });
+                        }}>
+                        <option value="" style={{ background: "#000" }}>General</option>
+                        {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
+                      </select>
+                    )}
                   </td>
                   <td style={{ ...CELL, minWidth: 160 }}>
                     <input value={r.name} placeholder="Nombre" style={field} disabled={locked}
@@ -289,6 +330,13 @@ export function CopyRecipesTab({ workspaceId }: { workspaceId: string | null }) 
                   {NEW_TYPES.map(([value, label]) => (
                     <option key={value} value={value} style={{ background: "#000" }}>{label}</option>
                   ))}
+                </select>
+              </td>
+              <td style={{ ...CELL, minWidth: 110 }}>
+                <select value={newBrandId} style={{ ...control, width: "100%" }}
+                  onChange={e => setNewBrandId(e.target.value)} aria-label="Marca de la nueva receta">
+                  <option value="" style={{ background: "#000" }}>General</option>
+                  {brands.map(b => <option key={b.id} value={b.id} style={{ background: "#000" }}>{b.name}</option>)}
                 </select>
               </td>
               <td style={{ ...CELL, minWidth: 160 }}>

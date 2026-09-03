@@ -25,6 +25,8 @@ export type Channel = typeof CHANNELS[number];
 /** The states a piece moves through. Mirrors the kanban's columns. */
 export const CONTENT_STATUSES = ["idea", "diseño", "aprobación", "programado", "publicado"] as const;
 export type ContentStatus = typeof CONTENT_STATUSES[number];
+export type PublishingStatus = "borrador" | "programado" | "publicando" | "publicado" | "error";
+export { zonedDateTimeToIso, zernioScheduledFor } from "../../shared/socialSchedule.ts";
 
 export interface ContentRow {
   id: string;
@@ -47,6 +49,14 @@ export interface ContentRow {
   asset_id?: string | null;
   external_url?: string | null;
   permalink?: string | null;
+  publishing_status?: PublishingStatus;
+  publishing_provider?: string | null;
+  publishing_channels?: string[];
+  publishing_scheduled_for?: string | null;
+  publishing_timezone?: string | null;
+  publishing_external_id?: string | null;
+  publishing_error?: string | null;
+  publishing_platform_urls?: Record<string, string>;
   // ── Display-only, resolved at render time ─────────────────────────────
   // The sheet and the exports show NAMES ("Archivo", "Diseño"), not ids — a
   // client-facing grid that says "tpl_a83f…" is not a grid anyone can read.
@@ -359,4 +369,192 @@ export function summarizeMetaRows(rows: Record<string, unknown>[]): MetricTotals
     // seen by more than one ad. Frequency from the sum is therefore a floor.
     frequency: reach > 0 ? impressions / reach : 0,
   };
+}
+
+// ── Import: the template, its parser, and the row mapper ──────────────────
+
+const stripAccents = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const norm = (v: unknown) => stripAccents(String(v ?? "").trim().toLowerCase());
+
+/** RFC-4180 enough: quoted fields, "" escapes, CRLF, Excel's BOM. Pure, so
+ *  QA can hammer it without a DOM — a broken parser here eats someone's work. */
+export function parseCsv(text: string): string[][] {
+  const src = text.replace(/^\uFEFF/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  const endRow = () => {
+    row.push(field);
+    field = "";
+    // A line of pure emptiness is a blank line, not a row of one empty cell.
+    if (row.length > 1 || row[0] !== "") rows.push(row);
+    row = [];
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; }
+        else quoted = false;
+      } else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && src[i + 1] === "\n") i++;
+      endRow();
+    } else field += ch;
+  }
+  if (field !== "" || row.length > 0) endRow();
+  return rows;
+}
+
+/** Planning columns a fresh template carries. Deliberately narrower than
+ *  EXPORT_COLUMNS — a human filling new content should not face the report
+ *  columns — while the importer still accepts full exports, ignoring extras. */
+export const IMPORT_COLUMNS = [
+  "Fecha", "Hora", "Tipo", "Marca", "Campaña",
+  "Conjunto de anuncios", "Tema", "Copy", "Canales", "Estado",
+] as const;
+
+/** Header row + one worked example — a template without an example invites
+ *  wrong formats, and a wrong format becomes a silent empty calendar. */
+export function toImportTemplate(): string {
+  const example = [
+    "2026-09-10", "09:00", "Orgánico", "Mi marca", "Lanzamiento",
+    "", "Idea del post", "Aquí va el copy completo…", "Instagram, LinkedIn", "idea",
+  ];
+  return [IMPORT_COLUMNS as readonly string[], example]
+    .map(line => line.map(csvQuote).join(",")).join("\n") + "\n";
+}
+
+const KIND_ALIASES: Record<string, ContentKind> = {
+  "organico": "organic", "organic": "organic",
+  "ad": "ad", "anuncio": "ad", "pauta": "ad",
+};
+
+const STATUS_ALIASES: Record<string, ContentStatus> = {};
+for (const status of CONTENT_STATUSES) STATUS_ALIASES[norm(status)] = status;
+
+/** Spanish header (or alias) → the field the import API accepts. The export's
+ *  own labels are aliases by construction, so export → edit → import
+ *  round-trips without anyone retyping a header. */
+const IMPORT_ALIASES: Record<string, string> = {
+  "fecha": "scheduled_date", "dia": "scheduled_date",
+  "hora": "scheduled_time",
+  "tipo": "kind",
+  "marca": "brand",
+  "campana": "campaign",
+  "conjunto de anuncios": "ad_set",
+  "tema": "topic",
+  "copy": "copy",
+  "canales": "channels",
+  "estado": "status",
+  "proy inversion": "plan_spend",
+  "proy impresiones": "plan_impressions",
+  "proy alcance": "plan_reach",
+  "proy clics": "plan_clicks",
+  "proy views": "plan_views",
+};
+
+export interface ContentImportResult {
+  /** Bodies ready for POST /api/content/import. */
+  rows: Array<Record<string, unknown>>;
+  /** Recovered judgment calls: unknown brands and channels, unknown labels. */
+  warnings: string[];
+  /** Unrecoverable rows, with their file line so the human can fix them. */
+  errors: string[];
+}
+
+const IMPORT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Turns a CSV — the template or a real export, extras ignored — into import
+ * bodies. Matching is accent- and case-insensitive because the export itself
+ * writes "Orgánico" and "Diseño"; a round trip must not depend on the user
+ * retyping accents correctly.
+ */
+export function mapContentImport(text: string, brands: Array<{ id: string; name: string }>): ContentImportResult {
+  const table = parseCsv(text);
+  if (table.length === 0) return { rows: [], warnings: [], errors: ["El archivo está vacío"] };
+  const columns = table[0].map(cellValue => IMPORT_ALIASES[norm(cellValue)] || null);
+  if (!columns.some(Boolean)) {
+    return {
+      rows: [], warnings: [],
+      errors: ["Encabezados no reconocidos — descarga la plantilla (⇩ Plantilla) y respeta sus columnas"],
+    };
+  }
+  const brandByName = new Map(brands.map(b => [norm(b.name), b.id]));
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const rows: Array<Record<string, unknown>> = [];
+  const number = (raw: string): number | null => {
+    if (raw.trim() === "") return null;
+    const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  for (let i = 1; i < table.length; i++) {
+    const line = table[i];
+    const lineNo = i + 1; // header is line 1
+    const body: Record<string, unknown> = {};
+    let hasContent = false;
+    let validDate: string | null = null;
+    columns.forEach((field, col) => {
+      const raw = (line[col] ?? "").trim();
+      if (!field || raw === "") return;
+      hasContent = true;
+      if (field === "scheduled_date") {
+        if (IMPORT_DATE_RE.test(raw) && !Number.isNaN(new Date(`${raw}T12:00:00`).getTime())) {
+          validDate = raw;
+        }
+        return;
+      }
+      if (field === "scheduled_time") {
+        const match = raw.match(/^(\d{1,2}):(\d{2})/);
+        if (match) body.scheduled_time = `${match[1].padStart(2, "0")}:${match[2]}`;
+        return;
+      }
+      if (field === "kind") {
+        const kind = KIND_ALIASES[norm(raw)];
+        if (kind) body.kind = kind;
+        else warnings.push(`Fila ${lineNo}: tipo «${raw}» no reconocido, se importó como Orgánico`);
+        return;
+      }
+      if (field === "status") {
+        const status = STATUS_ALIASES[norm(raw)];
+        if (status) body.status = status;
+        else warnings.push(`Fila ${lineNo}: estado «${raw}» no reconocido, quedó como idea`);
+        return;
+      }
+      if (field === "brand") {
+        const id = brandByName.get(norm(raw)) || null;
+        if (id) body.brand_id = id;
+        else warnings.push(`Fila ${lineNo}: la marca «${raw}» no existe en este workspace, quedó sin marca`);
+        return;
+      }
+      if (field === "channels") {
+        const list: string[] = [];
+        for (const part of raw.split(/[,;]/).map(p => p.trim()).filter(Boolean)) {
+          const channel = CHANNELS.find(c => norm(c) === norm(part));
+          if (channel) list.push(channel);
+          else warnings.push(`Fila ${lineNo}: canal «${part}» no reconocido, se omitió`);
+        }
+        if (list.length) body.channels = [...new Set(list)];
+        return;
+      }
+      if (field.startsWith("plan_")) {
+        const value = number(raw);
+        if (value !== null) body[field] = value;
+        return;
+      }
+      body[field] = raw;
+    });
+    if (!hasContent) continue; // blank padding line
+    if (!validDate) {
+      errors.push(`Fila ${lineNo}: fecha inválida o faltante (usa AAAA-MM-DD), la fila se omitió`);
+      continue;
+    }
+    rows.push({ scheduled_date: validDate, ...body });
+  }
+  return { rows, warnings, errors };
 }

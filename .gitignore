@@ -34,3 +34,7 @@ api/public/assets/
 # ONNX weights cache for scripts/fetch-segment-models.mjs (uploaded to
 # the ml-models Supabase bucket, never committed).
 /models-cache/
+
+# Local package stores and scratch dirs — never part of the codebase.
+/.pnpm-store/
+/.tmp/

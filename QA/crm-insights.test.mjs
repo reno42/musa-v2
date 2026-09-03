@@ -83,8 +83,12 @@ test("CRM stays focused while workspace administration lives in settings", () =>
   assert.doesNotMatch(workspaceConsole, /\["team", "Equipo"\]/);
   assert.match(workspaceConsole, /section === "general" && <>\{children\}<\/>/);
   assert.doesNotMatch(workspaceConsole, /\['crm', 'CRM'\]/);
-  assert.match(crmWorkspace, />Pipeline<\/button>/);
-  assert.match(crmWorkspace, />Marcas y Personas<\/button>/);
+  assert.match(crmWorkspace, />Ventas<\/button>/);
+  assert.match(crmWorkspace, />Personas<\/button>/);
+  assert.match(crmWorkspace, />Marcas<\/button>/);
+  assert.match(crmWorkspace, />Embudo<\/button>/);
+  assert.match(crmWorkspace, /function ContactsView/);
+  assert.match(crmWorkspace, /function FunnelView/);
 });
 
 test("the fdr_ key surface is gone and CRM omits the workspace title", () => {

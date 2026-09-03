@@ -623,11 +623,13 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
           </>
         ) : view === "brands" ? (
           <>
-            {/* Sub-tab: Pipeline / Marcas y Personas
-                (Grafo, Tabla and Papelera moved to the Diseño tab) */}
+            {/* Sub-tabs: the four CRM views (Ventas, Personas, Marcas, Embudo) —
+                Grafo, Tabla and Papelera moved to the Diseño tab */}
             <div style={{ display: "flex", gap: 4, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,14,20,0.9)", flexShrink: 0, zIndex: 3 }}>
-              <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Pipeline</TabBtn>
-              <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas y Personas</TabBtn>
+              <TabBtn active={brandView === "pipeline"} onClick={() => setBrandView("pipeline")}>Ventas</TabBtn>
+              <TabBtn active={brandView === "personas"} onClick={() => setBrandView("personas")}>Personas</TabBtn>
+              <TabBtn active={brandView === "accounts"} onClick={() => setBrandView("accounts")}>Marcas</TabBtn>
+              <TabBtn active={brandView === "embudo"} onClick={() => setBrandView("embudo")}>Embudo</TabBtn>
               <div style={{ flex: 1 }} />
             </div>
             <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
@@ -635,7 +637,7 @@ export function GraphTab({ workspaceId, onOpenTemplate, pane, onPaneChange }: Pr
                 <CrmWorkspace
                   workspaceId={workspaceId || ""}
                   onOpenTemplate={onOpenTemplate}
-                  view={brandView === "pipeline" ? "pipeline" : "accounts"}
+                  view={brandView}
                   setError={setError}
                   setNotice={() => {}}
                 />

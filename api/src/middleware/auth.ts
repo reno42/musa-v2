@@ -34,7 +34,8 @@ export async function auth(req: Request, res: Response, next: NextFunction) {
   // no API key. Writes stay protected by the global rateLimit plus the
   // route's own per-IP POST cap.
   const publicCommentShare = req.path.startsWith("/api/comments-share/");
-  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare) {
+  const signedZernioWebhook = req.method === "POST" && req.path.startsWith("/api/content/webhooks/zernio/");
+  if (req.method === "OPTIONS" || publicInvitationPreview || req.path === "/api/health" || req.path === "/api/health/storage" || req.path === "/api/auth/config" || req.path === "/api/fonts/catalog" || publicCommentShare || signedZernioWebhook) {
     return proceed({ userId: "anonymous", authType: "dev" });
   }
 

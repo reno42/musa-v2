@@ -18,14 +18,15 @@ import { extractFrameTextBlocks, rasterizeFrame, rasterizeFrameWithoutText, type
 import { useAuth } from "../lib/auth";
 import {
   CHANNELS, CONTENT_KINDS, CONTENT_STATUSES, KIND_LABEL,
-  applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, pacing,
-  toCSVExport, toExcelXml, type ContentFilters, type ContentRow,
+  applyFilters, buildMonthGrid, describeFilters, groupByPlan, isoDate, mapContentImport, pacing,
+  toCSVExport, toExcelXml, toImportTemplate, zernioScheduledFor, type ContentFilters, type ContentRow,
 } from "../lib/contentCalendar";
 import { TextsTab } from "./TextsTab";
 import { CopyRecipesTab } from "./CopyRecipesTab";
+import { SOCIAL_CAPABILITIES, type SocialCapabilities, type SocialProviderId } from "../../shared/socialProviders.ts";
 
-type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes";
-const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes"];
+type Pane = "calendar" | "sheet" | "reports" | "copies" | "recipes" | "inbox";
+const PANES: readonly Pane[] = ["calendar", "sheet", "reports", "copies", "recipes", "inbox"];
 
 interface Props {
   workspaceId: string | null;
@@ -34,6 +35,9 @@ interface Props {
    *  URL hash name it, but the dashboard can only hand it down as a prop
    *  because these sub-tabs are this component's own state. */
   paneHint?: string;
+  /** The Configuración tab's own route — the Conexiones popover fixes a
+   *  missing key inline and hands off here for accounts and webhook secret. */
+  onOpenSettings?: () => void;
 }
 
 const CELL: React.CSSProperties = {
@@ -70,11 +74,73 @@ const CSS = `
 .cal-day:hover .cal-add { opacity: 1; }
 `;
 
-export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
+/** A conversation row exactly as social_inbox stores it (v43 migration). */
+interface InboxRow {
+  id: string;
+  kind: string;
+  platform: string | null;
+  author_name: string | null;
+  author_handle: string | null;
+  author_email: string | null;
+  content: string | null;
+  occurred_at: string | null;
+  status: string;
+  crm_contact_id: string | null;
+}
+
+interface SocialConn {
+  id: string;
+  provider: SocialProviderId;
+  enabled: boolean;
+  hasCredentials: boolean;
+  capabilities: SocialCapabilities | null;
+}
+
+const CAPABILITY_LABEL: Record<keyof SocialCapabilities, string> = {
+  publish: "Publicar", schedule: "Programar", inbox: "Bandeja", crmCapture: "Captura CRM",
+};
+
+const PROVIDER_META: Record<SocialProviderId, { name: string; blurb: string }> = {
+  buffer: {
+    name: "Buffer",
+    blurb: "Publica y programa posts. Con ambas llaves los posts salen por Buffer y no gastan créditos Zernio.",
+  },
+  zernio: {
+    name: "Zernio",
+    blurb: "Publica, programa y además trae la bandeja: responde mensajes y comentarios, y captura al CRM.",
+  },
+};
+
+function inboxDate(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
+}
+
+export function ContentTab({ workspaceId, onOpenTemplate, paneHint, onOpenSettings }: Props) {
   const [pane, setPane] = useState<Pane>("calendar");
   const [rows, setRows] = useState<ContentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [publishMenuId, setPublishMenuId] = useState<string | null>(null);
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
+  const [scheduleDraft, setScheduleDraft] = useState({ date: "", time: "", timezone: "America/Lima", channels: [] as string[], contentType: "post" as "post" | "story" | "reel" });
+
+  // Social: who is connected (the Conexiones popover badges it) and the
+  // Bandeja pane's own data. Connections load once per workspace; the inbox
+  // syncs on demand because each sync is a real call to Zernio.
+  const [connections, setConnections] = useState<SocialConn[]>([]);
+  const [publishProvider, setPublishProvider] = useState<SocialProviderId | null>(null);
+  const [connOpen, setConnOpen] = useState(false);
+  const [connBusy, setConnBusy] = useState<string | null>(null);
+  const [connMsg, setConnMsg] = useState("");
+  const [keyDraft, setKeyDraft] = useState<Partial<Record<SocialProviderId, string>>>({});
+  const [inboxRows, setInboxRows] = useState<InboxRow[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [inboxFilter, setInboxFilter] = useState<"todos" | "message" | "comment">("todos");
+  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
+  const [inboxBusy, setInboxBusy] = useState<string | null>(null);
 
   // Follow an outside landing request (editor menu → "Recetas"). Runs only
   // when the hint changes, so the user's own tab clicks are never undone.
@@ -109,6 +175,9 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
   // into the raster — the user picks per export, both are first-class.
   const [pptTextMode, setPptTextMode] = useState<"native" | "flat">("native");
   const [pptBusy, setPptBusy] = useState("");
+  // CSV import: the file input stays hidden — the ⇧ Importar button clicks it.
+  const [importing, setImporting] = useState("");
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -389,6 +458,41 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
     }
   }, [workspaceId, rows, pptFrom, pptTo, pptBrandId, pptTextMode, brands, user, templateNameById, framesByFile]);
 
+  /** Template + import: the calendar round-trips through CSV, so content
+   *  prepared outside Futuraria lands here without retyping. The template is
+   *  the export's own vocabulary — headers match on purpose. */
+  const downloadTemplate = useCallback(() => {
+    // Excel still misdetects UTF-8 without the BOM: accents would garble.
+    downloadBlob(new Blob(["\uFEFF" + toImportTemplate()], { type: "text/csv;charset=utf-8" }), "plantilla-contenido.csv");
+  }, []);
+
+  const importFile = useCallback(async (file: File) => {
+    if (!workspaceId || importing) return;
+    setImporting("Leyendo archivo…");
+    setError("");
+    try {
+      const parsed = mapContentImport(await file.text(), brands);
+      if (parsed.rows.length === 0) {
+        throw new Error(parsed.errors[0] || "El archivo no tiene filas importables");
+      }
+      setImporting(`Importando 0/${parsed.rows.length}…`);
+      const res = await apiFetch<{ success?: boolean; error?: string; data?: ContentRow[]; imported?: number }>(
+        "/api/content/import", { method: "POST", body: JSON.stringify({ workspaceId, rows: parsed.rows }) });
+      if (res && res.success === false) throw new Error(res.error || "La importación fue rechazada");
+      if (res?.data?.length) setRows(cur => [...cur, ...res.data!]);
+      // Pure success needs no banner — the rows just appear. Judgment calls
+      // (unknown brands, dropped rows) surface through the existing alert bar.
+      const notes = [...parsed.warnings, ...parsed.errors];
+      if (notes.length > 0) {
+        setError(`Importadas ${res?.data?.length ?? 0} piezas — ${notes.slice(0, 4).join(" · ")}`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting("");
+    }
+  }, [workspaceId, brands, importing]);
+
   /** Optimistic write: the cell changes before the request leaves. */
   const patch = useCallback(async (id: string, body: Record<string, unknown>) => {
     setError("");
@@ -436,6 +540,222 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
     }
   }, [rows]);
 
+  const publishContent = useCallback(async (
+    row: ContentRow,
+    mode: "now" | "schedule",
+    schedule?: typeof scheduleDraft,
+  ) => {
+    if (publishingId) return;
+    setPublishingId(row.id);
+    setError("");
+    try {
+      const channels = schedule?.channels || row.channels || [];
+      let scheduledFor: string | undefined;
+      if (mode === "schedule") {
+        if (!schedule?.date || !schedule.time) throw new Error("Elige fecha y hora para programar");
+        scheduledFor = zernioScheduledFor(schedule.date, schedule.time, schedule.timezone);
+      }
+      const res = await apiFetch<{ data?: ContentRow }>(`/api/content/${row.id}/publish`, {
+        method: "POST",
+        body: JSON.stringify({
+          mode,
+          channels,
+          contentType: schedule?.contentType || "post",
+          timezone: schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          scheduledFor,
+        }),
+      });
+      if (res?.data) setRows(current => current.map(item => item.id === row.id ? res.data! : item));
+      setScheduleId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      await load();
+    } finally {
+      setPublishingId(null);
+    }
+  }, [publishingId, load]);
+
+  const openSchedule = useCallback((row: ContentRow) => {
+    setPublishMenuId(null);
+    setScheduleId(current => current === row.id ? null : row.id);
+    setScheduleDraft({
+      date: row.scheduled_date || isoDate(new Date()),
+      time: (row.scheduled_time || "09:00").slice(0, 5),
+      timezone: row.publishing_timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Lima",
+      channels: row.channels || [],
+      contentType: "post",
+    });
+  }, []);
+
+  const publishControls = (row: ContentRow) => {
+    const disabled = publishingId === row.id || ["programado", "publicando", "publicado"].includes(row.publishing_status || "");
+    const runNow = (contentType: "post" | "story" | "reel") => {
+      setPublishMenuId(null);
+      void publishContent(row, "now", {
+        date: "", time: "", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        channels: row.channels || [], contentType,
+      });
+    };
+    return (
+      <div style={{ position: "relative", display: "inline-block" }} onKeyDown={event => {
+        if (event.key === "Escape") {
+          setPublishMenuId(null);
+          event.currentTarget.querySelector<HTMLButtonElement>("button[aria-expanded]")?.focus();
+        }
+      }}>
+        {row.publishing_provider === "buffer" && row.publishing_external_id && (
+          <button type="button" style={{ ...btn, padding: "3px 7px" }} disabled={Boolean(publishingId)} onClick={async () => {
+            setPublishingId(row.id); setError("");
+            try {
+              const result = await apiFetch<{ data?: ContentRow }>(`/api/content/${row.id}/sync`, { method: "POST" });
+              if (result.data) setRows(current => current.map(item => item.id === row.id ? result.data! : item));
+            } catch (error) { setError(error instanceof Error ? error.message : "No se pudo actualizar Buffer"); }
+            finally { setPublishingId(null); }
+          }}>Actualizar estado</button>
+        )}
+        <button type="button" style={{ ...btn, padding: "3px 7px" }} disabled={disabled}
+          aria-expanded={publishMenuId === row.id} aria-controls={`publish-menu-${row.id}`}
+          onClick={() => setPublishMenuId(current => current === row.id ? null : row.id)}>
+          {publishingId === row.id ? "Enviando…" : row.publishing_status === "error" ? "Reintentar ▾" : "Publicar ▾"}
+        </button>
+        {publishMenuId === row.id && (
+          <div id={`publish-menu-${row.id}`} aria-label="Opciones de publicación" style={{
+            position: "absolute", zIndex: 20, right: 0, top: "calc(100% + 4px)", minWidth: 170,
+            background: "#111", border: "1px solid rgba(255,255,255,0.28)", padding: 4,
+          }}>
+            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("post")}>Post ahora</button>
+            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("story")}>Story ahora</button>
+            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => runNow("reel")}>Reel ahora</button>
+            <button type="button" style={{ ...btn, width: "100%", textAlign: "left", border: 0 }} onClick={() => openSchedule(row)}>Programar…</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const scheduleControls = (row: ContentRow) => scheduleId === row.id ? (
+    <div id={`schedule-${row.id}`} style={{ marginTop: 8, padding: 8, border: "1px solid rgba(255,255,255,0.2)", display: "grid", gap: 6 }}>
+      <label style={{ fontSize: 11 }}>Tipo
+        <select value={scheduleDraft.contentType} style={{ ...control, display: "block", width: "100%", marginTop: 2 }}
+          onChange={event => setScheduleDraft(value => ({ ...value, contentType: event.target.value as "post" | "story" | "reel" }))}>
+          <option value="post">Post</option><option value="story">Story (Zernio)</option><option value="reel">Reel (Zernio)</option>
+        </select>
+      </label>
+      <label style={{ fontSize: 11 }}>Fecha
+        <input type="date" value={scheduleDraft.date} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, date: event.target.value }))} />
+      </label>
+      <label style={{ fontSize: 11 }}>Hora
+        <input type="time" value={scheduleDraft.time} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, time: event.target.value }))} />
+      </label>
+      <label style={{ fontSize: 11 }}>Zona horaria
+        <input value={scheduleDraft.timezone} style={{ ...control, display: "block", width: "100%", marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, timezone: event.target.value }))} />
+      </label>
+      <label style={{ fontSize: 11 }}>Canales
+        <select multiple value={scheduleDraft.channels} style={{ ...control, display: "block", width: "100%", height: 58, marginTop: 2 }} onChange={event => setScheduleDraft(value => ({ ...value, channels: [...event.target.selectedOptions].map(option => option.value) }))}>
+          {CHANNELS.map(channel => <option key={channel} value={channel} style={{ background: "#000" }}>{channel}</option>)}
+        </select>
+      </label>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <button type="button" style={{ ...btn, padding: "3px 7px" }} onClick={() => setScheduleId(null)}>Cancelar</button>
+        <button type="button" style={{ ...btn, padding: "3px 7px" }} disabled={publishingId === row.id} onClick={() => void publishContent(row, "schedule", scheduleDraft)}>Confirmar</button>
+      </div>
+    </div>
+  ) : null;
+
+  // ── Social connections and the Zernio inbox ─────────────────────────
+  const loadConnections = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const res = await apiFetch<{ publishProvider?: SocialProviderId | null; data?: SocialConn[] }>(
+        `/api/content/integrations/social?workspaceId=${encodeURIComponent(workspaceId)}`);
+      setConnections(res.data || []);
+      setPublishProvider(res.publishProvider ?? null);
+    } catch { /* the popover renders "sin llave" defaults; the inbox pane surfaces its own errors */ }
+  }, [workspaceId]);
+
+  useEffect(() => { void loadConnections(); }, [loadConnections]);
+
+  /** Saves the key inline. The API validates it against the provider before
+   *  encrypting, so a typo surfaces here instead of at publish time. */
+  const saveConnection = useCallback(async (provider: SocialProviderId) => {
+    const apiKey = (keyDraft[provider] || "").trim();
+    if (!apiKey || !workspaceId) return;
+    setConnBusy(provider);
+    setConnMsg("");
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string }>(`/api/content/integrations/social/${provider}`, {
+        method: "PUT", body: JSON.stringify({ workspaceId, apiKey }),
+      });
+      if (res && res.success === false) throw new Error(res.error || "No se pudo guardar la conexión");
+      setKeyDraft(cur => ({ ...cur, [provider]: "" }));
+      setConnMsg(`${PROVIDER_META[provider].name} conectado. La llave quedó cifrada en el servidor.`);
+      await loadConnections();
+    } catch (e) {
+      setConnMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnBusy(null);
+    }
+  }, [keyDraft, workspaceId, loadConnections]);
+
+  const loadInbox = useCallback(async () => {
+    if (!workspaceId) return;
+    setInboxLoading(true);
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string; data?: InboxRow[] }>(
+        `/api/content/integrations/social/zernio/inbox?workspaceId=${encodeURIComponent(workspaceId)}`);
+      if (res && res.success === false) throw new Error(res.error || "No se pudo sincronizar la bandeja");
+      setInboxRows(res.data || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInboxLoading(false);
+    }
+  }, [workspaceId]);
+
+  // Entering Bandeja with Zernio connected pulls fresh conversations —
+  // once per visit, not on an interval: every sync is a real provider call.
+  useEffect(() => {
+    if (pane === "inbox" && workspaceId && connections.some(c => c.provider === "zernio" && c.hasCredentials)) {
+      void loadInbox();
+    }
+  }, [pane, workspaceId, connections, loadInbox]);
+
+  const sendReply = useCallback(async (item: InboxRow) => {
+    const content = (replyDraft[item.id] || "").trim();
+    if (!content || !workspaceId) return;
+    setInboxBusy(item.id);
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string; data?: InboxRow }>(
+        `/api/content/integrations/social/zernio/inbox/${item.id}/reply`, {
+        method: "POST", body: JSON.stringify({ workspaceId, content }),
+      });
+      if (res && res.success === false) throw new Error(res.error || "No se pudo enviar la respuesta");
+      if (res?.data) setInboxRows(cur => cur.map(r => (r.id === item.id ? res.data! : r)));
+      setReplyDraft(cur => ({ ...cur, [item.id]: "" }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInboxBusy(null);
+    }
+  }, [replyDraft, workspaceId]);
+
+  const captureContact = useCallback(async (item: InboxRow) => {
+    if (!workspaceId) return;
+    setInboxBusy(item.id);
+    try {
+      const res = await apiFetch<{ success?: boolean; error?: string; data?: InboxRow }>(
+        `/api/content/integrations/social/zernio/inbox/${item.id}/capture`, {
+        method: "POST", body: JSON.stringify({ workspaceId }),
+      });
+      if (res && res.success === false) throw new Error(res.error || "No se pudo capturar el contacto");
+      if (res?.data) setInboxRows(cur => cur.map(r => (r.id === item.id ? res.data! : r)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInboxBusy(null);
+    }
+  }, [workspaceId]);
+
   const grid = useMemo(
     () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth(), visible),
     [cursor, visible],
@@ -456,15 +776,87 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         <Tab active={pane === "reports"} onClick={() => setPane("reports")}>Reportes</Tab>
         <Tab active={pane === "copies"} onClick={() => setPane("copies")}>Copys</Tab>
         <Tab active={pane === "recipes"} onClick={() => setPane("recipes")}>Recetas</Tab>
+        <Tab active={pane === "inbox"} onClick={() => setPane("inbox")}>Bandeja</Tab>
         <div style={{ flex: 1 }} />
-        {pane !== "copies" && pane !== "recipes" && (
+        {pane !== "copies" && pane !== "recipes" && pane !== "inbox" && (
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
             {visible.length} de {rows.length} piezas · {visible.filter(r => r.kind === "ad").length} ads
           </span>
         )}
+        {/* Connections popover — present on every pane: a missing key is fixed
+            right here instead of sending the user hunting for Configuración. */}
+        <div style={{ position: "relative" }} onKeyDown={event => {
+          if (event.key === "Escape") setConnOpen(false);
+        }}>
+          <button type="button" style={{ ...btn, padding: "4px 12px" }} aria-expanded={connOpen}
+            aria-label="Conexiones sociales"
+            onClick={() => setConnOpen(v => !v)}>
+            Conexiones{publishProvider ? ` · publica ${PROVIDER_META[publishProvider].name}` : ""}
+          </button>
+          {connOpen && (
+            <div style={{
+              position: "absolute", zIndex: 30, right: 0, top: "calc(100% + 6px)", width: 320,
+              background: "#111", border: "1px solid rgba(255,255,255,0.28)", padding: 12, display: "grid", gap: 12,
+            }}>
+              {(["buffer", "zernio"] as SocialProviderId[]).map(id => {
+                const conn = connections.find(c => c.provider === id);
+                const caps = conn?.capabilities ?? SOCIAL_CAPABILITIES[id];
+                return (
+                  <div key={id} style={{ display: "grid", gap: 5 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <strong style={{ fontSize: 12.5 }}>{PROVIDER_META[id].name}</strong>
+                      <span style={{ fontSize: 11, color: conn?.hasCredentials ? "#4ade80" : "rgba(255,255,255,0.4)" }}>
+                        {conn?.hasCredentials ? "conectado" : "sin llave"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
+                      {PROVIDER_META[id].blurb}
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {(Object.keys(CAPABILITY_LABEL) as Array<keyof SocialCapabilities>)
+                        .filter(k => caps[k])
+                        .map(k => (
+                          <span key={k} style={{
+                            fontSize: 10, padding: "1px 6px",
+                            border: "1px solid rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.6)",
+                          }}>{CAPABILITY_LABEL[k]}</span>
+                        ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input type="password" autoComplete="off" value={keyDraft[id] || ""} placeholder="API key"
+                        aria-label={`API key de ${PROVIDER_META[id].name}`}
+                        style={{ ...control, flex: 1 }}
+                        onChange={e => setKeyDraft(cur => ({ ...cur, [id]: e.target.value }))} />
+                      <button type="button" style={{ ...btn, padding: "3px 10px" }}
+                        disabled={connBusy === id || !(keyDraft[id] || "").trim()}
+                        onClick={() => void saveConnection(id)}>
+                        {connBusy === id ? "Guardando…" : conn?.hasCredentials ? "Actualizar" : "Conectar"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {connMsg && (
+                <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)" }}>{connMsg}</div>
+              )}
+              <div style={{
+                fontSize: 11, color: "rgba(255,255,255,0.45)", paddingTop: 8,
+                borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", gap: 8, alignItems: "center",
+              }}>
+                <span style={{ flex: 1 }}>Cuentas por canal y webhook secreto se configuran en Configuración.</span>
+                {onOpenSettings && (
+                  <button type="button" style={{ ...btn, padding: "3px 8px" }}
+                    onClick={() => { setConnOpen(false); onOpenSettings(); }}>
+                    Abrir
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {pane !== "copies" && pane !== "recipes" && (
+      {pane !== "copies" && pane !== "recipes" && pane !== "inbox" && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
           padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,0.10)", flexShrink: 0,
@@ -510,6 +902,21 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
             setPptBrandId(filters.brandId || "");
             setPptOpen(true);
           }}>⇩ PPT</button>
+          {/* The upload path: a human fills the template elsewhere, the
+              calendar eats it — same columns, no retyping. */}
+          <button type="button" style={btn} onClick={downloadTemplate}
+            title="Descarga el formato CSV para cargar contenido hecho fuera de Futuraria">⇩ Plantilla</button>
+          <button type="button" style={btn} disabled={Boolean(importing)}
+            onClick={() => importInputRef.current?.click()}
+            title="Importa un CSV con el formato de la plantilla">
+            {importing || "⇧ Importar"}
+          </button>
+          <input ref={importInputRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
+            aria-label="Importar contenido desde CSV" onChange={e => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void importFile(file);
+            }} />
         </div>
       )}
 
@@ -524,7 +931,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         </div>
       )}
 
-      {loading && pane !== "copies" && pane !== "recipes" ? (
+      {loading && pane !== "copies" && pane !== "recipes" && pane !== "inbox" ? (
         <div style={{ padding: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando…</div>
       ) : pane === "calendar" ? (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -589,11 +996,8 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                     >+</button>
                   </div>
                   {cell.items.map(item => (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
-                      onClick={() => setPane("sheet")}
-                      title={item.copy || item.topic || ""}
                       draggable
                       onDragStart={e => {
                         e.dataTransfer.setData("text/plain", item.id);
@@ -603,18 +1007,24 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                       onDragEnd={() => { setDragId(null); setDropDate(null); }}
                       style={{
                         opacity: dragId === item.id ? 0.35 : 1,
-                        display: "block", width: "100%", textAlign: "left", marginBottom: 3,
-                        padding: "3px 5px", fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+                        display: "flex", width: "100%", textAlign: "left", marginBottom: 3, gap: 4, alignItems: "center",
+                        padding: "3px 5px", fontSize: 11, fontFamily: "inherit",
                         color: "#fff", background: "rgba(255,255,255,0.08)",
                         // An ad is money going out; it earns the heavier mark.
                         borderLeft: `2px solid ${item.kind === "ad" ? "#fff" : "rgba(255,255,255,0.3)"}`,
                         border: "none", borderLeftWidth: 2, borderLeftStyle: "solid",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        position: "relative",
                       }}
                     >
-                      {item.scheduled_time ? `${item.scheduled_time.slice(0, 5)} ` : ""}
-                      {item.topic || item.copy || "(sin tema)"}
-                    </button>
+                      <button type="button" onClick={() => setPane("sheet")} title={item.copy || item.topic || ""} style={{
+                        minWidth: 0, flex: 1, padding: 0, border: 0, background: "transparent", color: "inherit",
+                        textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer",
+                      }}>
+                        {item.scheduled_time ? `${item.scheduled_time.slice(0, 5)} ` : ""}{item.topic || item.copy || "(sin tema)"}
+                      </button>
+                      {publishControls(item)}
+                      {scheduleControls(item)}
+                    </div>
                   ))}
                 </div>
               ))}
@@ -627,7 +1037,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
             <thead>
               <tr>
                 {["Fecha", "Hora", "Tipo", "Tema", "Copy", "Canales", "Campaña", "Conjunto", "Estado",
-                  "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", ""].map(h => (
+                  "PROY $", "PROY Impr.", "REAL $", "REAL Impr.", "Avance", "Archivo", "Diseño", "Publicación", ""].map(h => (
                   <th key={h} style={{
                     ...CELL, position: "sticky", top: 0, zIndex: 1, background: "#000",
                     fontWeight: 600, color: "rgba(255,255,255,0.65)", fontSize: 11.5,
@@ -739,6 +1149,7 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                       </select>
                       <button
                         type="button"
+                        aria-label="Abrir archivo en el editor"
                         disabled={!r.template_id}
                         onClick={() => r.template_id && onOpenTemplate?.(r.template_id)}
                         title="Abrir en el editor"
@@ -785,8 +1196,23 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
                       );
                     })()}
                   </td>
+                  <td style={{ ...CELL, minWidth: 250 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ color: r.publishing_status === "error" ? "#fca5a5" : "rgba(255,255,255,0.68)", fontSize: 11 }}>
+                        {r.publishing_status || "borrador"}
+                      </span>
+                      {r.permalink && <a href={r.permalink} target="_blank" rel="noreferrer" style={{ color: "#fff", fontSize: 11 }}>Ver post</a>}
+                      {publishControls(r)}
+                    </div>
+                    {r.publishing_error && (
+                      <div role="alert" style={{ color: "#fca5a5", fontSize: 11, marginTop: 5, maxWidth: 280 }}>
+                        {r.publishing_error}
+                      </div>
+                    )}
+                    {scheduleControls(r)}
+                  </td>
                   <td style={CELL}>
-                    <button type="button" onClick={() => removeRow(r.id)} title="Eliminar"
+                    <button type="button" onClick={() => removeRow(r.id)} title="Eliminar" aria-label="Eliminar contenido"
                       style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>×</button>
                   </td>
                 </tr>
@@ -803,6 +1229,22 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           <TextsTab workspaceId={workspaceId} onOpenTemplate={onOpenTemplate} />
         </div>
+      ) : pane === "inbox" ? (
+        <InboxPane
+          workspaceId={workspaceId}
+          zernioConnected={connections.some(c => c.provider === "zernio" && c.hasCredentials)}
+          rows={inboxRows}
+          loading={inboxLoading}
+          filter={inboxFilter}
+          replyDraft={replyDraft}
+          busyId={inboxBusy}
+          onFilter={setInboxFilter}
+          onReplyDraft={(id, text) => setReplyDraft(cur => ({ ...cur, [id]: text }))}
+          onSync={() => void loadInbox()}
+          onReply={item => void sendReply(item)}
+          onCapture={item => void captureContact(item)}
+          onOpenSettings={onOpenSettings}
+        />
       ) : (
         <CopyRecipesTab workspaceId={workspaceId} />
       )}
@@ -880,6 +1322,142 @@ export function ContentTab({ workspaceId, onOpenTemplate, paneHint }: Props) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Zernio inbox: messages and comments mirrored into social_inbox, with
+ * reply and CRM capture inline. Buffer deliberately has no pane here — its
+ * capability set ends at publishing, so its absence is the honest UI.
+ */
+function InboxPane({ workspaceId, zernioConnected, rows, loading, filter, replyDraft, busyId, onFilter, onReplyDraft, onSync, onReply, onCapture, onOpenSettings }: {
+  workspaceId: string | null;
+  zernioConnected: boolean;
+  rows: InboxRow[];
+  loading: boolean;
+  filter: "todos" | "message" | "comment";
+  replyDraft: Record<string, string>;
+  busyId: string | null;
+  onFilter: (value: "todos" | "message" | "comment") => void;
+  onReplyDraft: (id: string, text: string) => void;
+  onSync: () => void;
+  onReply: (item: InboxRow) => void;
+  onCapture: (item: InboxRow) => void;
+  onOpenSettings?: () => void;
+}) {
+  const visible = filter === "todos" ? rows : rows.filter(r => r.kind === filter);
+  const statusLabel = (status: string) =>
+    status === "respondido" ? "Respondido" : status === "capturado" ? "En el CRM" : "Nuevo";
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
+      {!workspaceId ? (
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+          Abre un workspace para ver la bandeja.
+        </div>
+      ) : !zernioConnected ? (
+        <div style={{ display: "grid", gap: 10, maxWidth: 480, fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>
+          <div>
+            La bandeja de mensajes y comentarios es una capacidad de Zernio. Pega tu API key en el botón{" "}
+            <strong>Conexiones</strong> de la barra de arriba — o configúrala con más detalle (cuentas,
+            webhook) en Configuración.
+          </div>
+          {onOpenSettings && (
+            <div>
+              <button type="button" style={btn} onClick={onOpenSettings}>Abrir Configuración</button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={btn} disabled={loading} onClick={onSync}>
+              {loading ? "Sincronizando…" : "⟳ Sincronizar"}
+            </button>
+            <select value={filter} style={control} aria-label="Filtrar por tipo"
+              onChange={e => onFilter(e.target.value as "todos" | "message" | "comment")}>
+              <option value="todos" style={{ background: "#000" }}>Mensajes y comentarios</option>
+              <option value="message" style={{ background: "#000" }}>Solo mensajes</option>
+              <option value="comment" style={{ background: "#000" }}>Solo comentarios</option>
+            </select>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+              {visible.length} de {rows.length} conversaciones
+            </span>
+          </div>
+          {rows.length === 0 && !loading ? (
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+              Sincroniza para traer los mensajes y comentarios que llegaron a Zernio.
+            </div>
+          ) : (
+            <table className="ct" style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  {["Fecha", "Tipo", "Canal", "Autor", "Contenido", "Estado", "Acciones"].map(label => (
+                    <th key={label} style={{
+                      ...CELL, background: "#000", fontWeight: 600, fontSize: 11.5,
+                      color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap",
+                    }}>{label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map(item => (
+                  <tr key={item.id}>
+                    <td style={{ ...CELL, whiteSpace: "nowrap" }}>{inboxDate(item.occurred_at)}</td>
+                    <td style={CELL}>{item.kind === "comment" ? "Comentario" : "Mensaje"}</td>
+                    <td style={CELL}>{item.platform || "—"}</td>
+                    <td style={{ ...CELL, whiteSpace: "nowrap" }}>
+                      {item.author_name || item.author_handle || "Anónimo"}
+                      {item.author_email && (
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{item.author_email}</div>
+                      )}
+                    </td>
+                    <td style={{ ...CELL, whiteSpace: "normal", minWidth: 220, maxWidth: 360 }}>
+                      {item.content || "—"}
+                    </td>
+                    <td style={{
+                      ...CELL, whiteSpace: "nowrap", fontSize: 11.5,
+                      color: item.status === "capturado" ? "#4ade80" : "rgba(255,255,255,0.6)",
+                    }}>
+                      {statusLabel(item.status)}
+                    </td>
+                    <td style={CELL}>
+                      {item.status === "nuevo" ? (
+                        <div style={{ display: "grid", gap: 6, minWidth: 220 }}>
+                          <textarea
+                            value={replyDraft[item.id] || ""}
+                            rows={2}
+                            placeholder="Escribe la respuesta…"
+                            aria-label={`Responder a ${item.author_name || item.author_handle || "esta conversación"}`}
+                            style={{ ...field, border: "1px solid rgba(255,255,255,0.18)", resize: "vertical" }}
+                            onChange={e => onReplyDraft(item.id, e.target.value)}
+                          />
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button type="button" style={{ ...btn, padding: "3px 8px" }}
+                              disabled={busyId === item.id || !(replyDraft[item.id] || "").trim()}
+                              onClick={() => onReply(item)}>
+                              {busyId === item.id ? "…" : "Responder"}
+                            </button>
+                            <button type="button" style={{ ...btn, padding: "3px 8px" }}
+                              disabled={busyId === item.id}
+                              onClick={() => onCapture(item)}>
+                              Capturar al CRM
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)" }}>
+                          {item.status === "respondido" ? "Gestionada en Zernio" : "Visible en Contactos"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

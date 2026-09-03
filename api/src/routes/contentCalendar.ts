@@ -15,13 +15,63 @@
 
 import { Router } from "express";
 import { asyncRoute } from "../middleware/asyncRoute.js";
-import { getSupabase } from "../services/supabase.js";
+import { getSupabase, getSupabaseAdmin } from "../services/supabase.js";
 import { canAccessWorkspace } from "../services/tenancy.js";
+import {
+  createSocialPublisher, listBufferAccounts, listZernioAccounts, newPublishRequestId, parseZernioWebhook, verifyZernioSignature, validateSocialAccounts, syncBufferDestinations, summarizeBufferDestinations,
+  fetchZernioInbox, replyZernioInboxItem,
+  type SocialContentType, type SocialPublishMode,
+} from "../services/socialPublishing.js";
+import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "../services/secrets.js";
+import { SOCIAL_CAPABILITIES, pickPublishProvider, publishProviderOrder, type SocialProviderId } from "../../../shared/socialProviders.ts";
+import { zonedDateTimeToIso } from "../../../shared/socialSchedule.ts";
 
 export const contentRoutes = Router();
 
 const KINDS = new Set(["organic", "ad"]);
 const STATUSES = new Set(["idea", "diseño", "aprobación", "programado", "publicado"]);
+const TIME_ZONES = new Set(["UTC", ...Intl.supportedValuesOf("timeZone")]);
+const SOCIAL_PROVIDERS = new Set(["buffer", "zernio"]);
+const SOCIAL_CONTENT_TYPES = new Set<SocialContentType>(["post", "story", "reel"]);
+
+type SocialConnectionSecret = { apiKey: string; webhookSecret?: string };
+type SocialConnectionConfig = { accounts?: Record<string, string>; isDefault?: boolean };
+
+async function socialConnections(sb: any, workspaceId: string, provider?: string) {
+  let query = sb.from("workspace_mcp_connections")
+    .select("id, workspace_id, provider, enabled, public_config, credentials_encrypted")
+    .eq("workspace_id", workspaceId).eq("enabled", true);
+  if (provider) query = query.eq("provider", provider);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+async function resolveSocialConnection(
+  sb: any,
+  workspaceId: string,
+  requestedProvider?: string,
+  fallbackOrder: SocialProviderId[] = ["buffer", "zernio"],
+) {
+  const rows = await socialConnections(sb, workspaceId);
+  const connected = rows.filter((item: any) => SOCIAL_PROVIDERS.has(item.provider) && item.credentials_encrypted);
+  const row = requestedProvider
+    ? connected.find((item: any) => item.provider === requestedProvider)
+    // No explicit provider: the capability order decides. Buffer first so a
+    // routine post spends Buffer's quota, not Zernio credits (freemium rule);
+    // stories/reels arrive with a Zernio-only order.
+    : fallbackOrder
+      .map(id => connected.find((item: any) => item.provider === id))
+      .find(Boolean);
+  if (!row) {
+    throw new Error(requestedProvider
+      ? `Conecta ${requestedProvider === "buffer" ? "Buffer" : "Zernio"} en Configuración antes de publicar`
+      : "Conecta Buffer o Zernio en Configuración antes de publicar");
+  }
+  const credentials = decryptWorkspaceSecret<SocialConnectionSecret>(row.credentials_encrypted);
+  if (!credentials.apiKey) throw new Error(`La conexión de ${row.provider} no tiene API key`);
+  return { row, credentials, config: (row.public_config || {}) as SocialConnectionConfig };
+}
 
 /** Only these can be written, and each is normalised on the way in. */
 function buildPatch(body: Record<string, any>): Record<string, any> {
@@ -113,12 +163,12 @@ export function isMissingColumn(error: unknown): boolean {
   const err = error as { code?: string; message?: string } | null;
   if (err?.code === "42703") return true;
   const message = String(err?.message ?? "").toLowerCase();
-  return message.includes("frame_id")
+  return (message.includes("frame_id") || message.includes("publishing_"))
     && (message.includes("does not exist") || message.includes("no existe"));
 }
 
 const COLUMN_SETUP_MESSAGE =
-  "Falta la columna frame_id en content_calendar. Ejecuta supabase_migrations_v34.sql "
+  "Faltan columnas en content_calendar. Ejecuta las migraciones pendientes (v34 y v42) "
   + "en el proyecto de Supabase que usa producción (es idempotente, se puede "
   + "re-ejecutar) y recarga el esquema (Settings → API → Reload schema cache).";
 
@@ -138,6 +188,278 @@ function withSetupCheck(fn: (req: any, res: any) => Promise<unknown>) {
     }
   });
 }
+
+contentRoutes.get("/integrations/social", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) return res.status(403).json({ success: false, error: "Workspace access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const rows = await socialConnections(sb, workspaceId);
+  const social = rows.filter((row: any) => SOCIAL_PROVIDERS.has(row.provider));
+  const connected = social.filter((row: any) => row.credentials_encrypted).map((row: any) => row.provider);
+  res.json({
+    success: true,
+    // The provider the routing policy would pick right now — the UI badges it.
+    publishProvider: pickPublishProvider(connected),
+    data: social.map((row: any) => ({
+      id: row.id, provider: row.provider, enabled: row.enabled, hasCredentials: Boolean(row.credentials_encrypted),
+      accounts: row.public_config?.accounts || {}, isDefault: Boolean(row.public_config?.isDefault),
+      webhookUrl: row.provider === "zernio" ? `/api/content/webhooks/zernio/${row.id}` : null,
+      capabilities: SOCIAL_CAPABILITIES[row.provider as SocialProviderId] ?? null,
+    })),
+  });
+}));
+
+contentRoutes.put("/integrations/social/:provider", asyncRoute(async (req, res) => {
+  const provider = String(req.params.provider || "").toLowerCase();
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!SOCIAL_PROVIDERS.has(provider)) return res.status(400).json({ success: false, error: "Proveedor inválido" });
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const apiKey = String(req.body.apiKey || "").trim();
+  const webhookSecret = String(req.body.webhookSecret || "").trim();
+  let accounts = req.body.accounts && typeof req.body.accounts === "object" && !Array.isArray(req.body.accounts) ? req.body.accounts : {};
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const existing = (await socialConnections(sb, workspaceId, provider))[0];
+  let credentials: SocialConnectionSecret;
+  if (apiKey) credentials = { apiKey, ...(webhookSecret ? { webhookSecret } : {}) };
+  else if (existing?.credentials_encrypted) {
+    credentials = decryptWorkspaceSecret<SocialConnectionSecret>(existing.credentials_encrypted);
+    if (webhookSecret) credentials.webhookSecret = webhookSecret;
+  } else return res.status(400).json({ success: false, error: "Ingresa la API key" });
+  try {
+    const available = provider === "buffer" ? await listBufferAccounts(credentials.apiKey) : await listZernioAccounts(credentials.apiKey);
+    accounts = validateSocialAccounts(accounts, available);
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Cuentas inválidas" });
+  }
+  const isDefault = req.body.isDefault !== false;
+  if (isDefault) {
+    const others = await socialConnections(sb, workspaceId);
+    for (const other of others.filter((row: any) => SOCIAL_PROVIDERS.has(row.provider))) {
+      const { error } = await sb.from("workspace_mcp_connections").update({ public_config: { ...(other.public_config || {}), isDefault: false } }).eq("id", other.id).eq("workspace_id", workspaceId);
+      if (error) throw error;
+    }
+  }
+  const record = {
+    workspace_id: workspaceId, name: provider === "zernio" ? "Zernio" : "Buffer", kind: "mcp", provider,
+    endpoint_url: provider === "zernio" ? "https://zernio.com/api/v1" : "https://api.buffer.com", enabled: true,
+    public_config: { accounts, isDefault }, credentials_encrypted: encryptWorkspaceSecret(credentials), updated_at: new Date().toISOString(),
+  };
+  const result = existing
+    ? await sb.from("workspace_mcp_connections").update(record).eq("id", existing.id).eq("workspace_id", workspaceId).select("id").single()
+    : await sb.from("workspace_mcp_connections").insert({ ...record, created_by: req.auth.userId }).select("id").single();
+  if (result.error) throw result.error;
+  res.json({ success: true, data: { id: result.data.id, provider, accounts, isDefault, hasCredentials: true } });
+}));
+
+contentRoutes.delete("/integrations/social/:provider", asyncRoute(async (req, res) => {
+  const provider = String(req.params.provider || "").toLowerCase();
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!workspaceId || !SOCIAL_PROVIDERS.has(provider)) return res.status(400).json({ success: false, error: "Workspace o proveedor inválido" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const { error } = await sb.from("workspace_mcp_connections")
+    .update({ enabled: false, credentials_encrypted: null, public_config: {}, updated_at: new Date().toISOString() })
+    .eq("workspace_id", workspaceId).eq("provider", provider);
+  if (error) throw error;
+  res.json({ success: true });
+}));
+
+contentRoutes.post("/integrations/social/:provider/test", asyncRoute(async (req, res) => {
+  const provider = String(req.params.provider || "").toLowerCase();
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!SOCIAL_PROVIDERS.has(provider)) return res.status(400).json({ success: false, error: "Proveedor inválido" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "admin"))) return res.status(403).json({ success: false, error: "Admin access is required" });
+  const sb = getSupabaseAdmin() || getSupabase();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase no está configurado" });
+  const enteredKey = String(req.body.apiKey || "").trim();
+  const apiKey = enteredKey || (await resolveSocialConnection(sb, workspaceId, provider)).credentials.apiKey;
+  const accounts = provider === "buffer" ? await listBufferAccounts(apiKey) : await listZernioAccounts(apiKey);
+  res.json({ success: true, data: { accounts } });
+}));
+
+// ── Zernio inbox: messages and comments. Buffer has no conversation surface,
+// so every route here resolves the Zernio connection only. State (respondido /
+// capturado) lives in social_inbox (v43) and survives reloads. ──
+
+function isInboxMissingTable(error: unknown): boolean {
+  const message = String((error as any)?.message ?? "").toLowerCase();
+  return message.includes("social_inbox")
+    && (message.includes("schema cache") || message.includes("does not exist") || message.includes("no existe"));
+}
+
+const INBOX_SETUP_MESSAGE =
+  "Falta la tabla del inbox. Ejecuta supabase_migrations_v43.sql en el proyecto de Supabase "
+  + "de producción (idempotente) y recarga el esquema (Settings → API → Reload schema cache).";
+
+contentRoutes.get("/integrations/social/zernio/inbox", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.query.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "viewer"))) return res.status(403).json({ success: false, error: "Workspace access is required" });
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  let connection;
+  try { connection = await resolveSocialConnection(admin, workspaceId, "zernio"); }
+  catch (error) { return res.status(409).json({ success: false, error: error instanceof Error ? error.message : "Conecta Zernio" }); }
+  try {
+    const remote = await fetchZernioInbox(connection.credentials.apiKey);
+    if (remote.length > 0) {
+      // ignoreDuplicates: a re-sync never rewrites what the team already
+      // answered or captured — only genuinely new items become rows.
+      const { error: upsertError } = await admin.from("social_inbox").upsert(
+        remote.map(item => ({
+          workspace_id: workspaceId,
+          connection_id: connection.row.id,
+          provider: "zernio",
+          external_id: item.externalId,
+          kind: item.kind,
+          platform: item.platform || null,
+          author_name: item.authorName || null,
+          author_handle: item.authorHandle || null,
+          author_email: item.authorEmail || null,
+          content: item.content || null,
+          occurred_at: item.occurredAt,
+          raw: item as unknown as Record<string, unknown>,
+        })),
+        { onConflict: "provider,external_id", ignoreDuplicates: true },
+      );
+      if (upsertError) throw upsertError;
+    }
+  } catch (error) {
+    if (isInboxMissingTable(error)) {
+      return res.status(503).json({ success: false, error: INBOX_SETUP_MESSAGE, setupRequired: true });
+    }
+    throw error;
+  }
+  const { data, error: readError } = await admin.from("social_inbox")
+    .select("*").eq("workspace_id", workspaceId).eq("provider", "zernio")
+    .order("occurred_at", { ascending: false, nullsFirst: false }).limit(200);
+  if (readError) {
+    if (isInboxMissingTable(readError)) {
+      return res.status(503).json({ success: false, error: INBOX_SETUP_MESSAGE, setupRequired: true });
+    }
+    throw readError;
+  }
+  res.json({ success: true, data: data || [] });
+}));
+
+contentRoutes.post("/integrations/social/zernio/inbox/:itemId/reply", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  const itemId = String(req.params.itemId || "");
+  if (!workspaceId || !itemId) return res.status(400).json({ success: false, error: "workspaceId e itemId son obligatorios" });
+  const content = String(req.body.content || "").trim();
+  if (!content) return res.status(400).json({ success: false, error: "Escribe la respuesta antes de enviarla" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  const { data: item, error: readError } = await admin.from("social_inbox")
+    .select("id, external_id").eq("id", itemId).eq("workspace_id", workspaceId).maybeSingle();
+  if (readError) throw readError;
+  if (!item) return res.status(404).json({ success: false, error: "Conversación no encontrada" });
+  const connection = await resolveSocialConnection(admin, workspaceId, "zernio");
+  await replyZernioInboxItem(connection.credentials.apiKey, item.external_id, content);
+  const { data, error } = await admin.from("social_inbox").update({
+    status: "respondido", reply_text: content, replied_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }).eq("id", item.id).select("*").single();
+  if (error) throw error;
+  res.json({ success: true, data });
+}));
+
+contentRoutes.post("/integrations/social/zernio/inbox/:itemId/capture", asyncRoute(async (req, res) => {
+  const workspaceId = String(req.body.workspaceId || "");
+  const itemId = String(req.params.itemId || "");
+  if (!workspaceId || !itemId) return res.status(400).json({ success: false, error: "workspaceId e itemId son obligatorios" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) return res.status(403).json({ success: false, error: "Editor access is required" });
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  const { data: item, error: readError } = await admin.from("social_inbox")
+    .select("*").eq("id", itemId).eq("workspace_id", workspaceId).maybeSingle();
+  if (readError) throw readError;
+  if (!item) return res.status(404).json({ success: false, error: "Conversación no encontrada" });
+  if (item.status === "capturado") return res.status(409).json({ success: false, error: "Este contacto ya fue capturado" });
+  // Same columns the CRM's own contact route writes — a captured lead must be
+  // indistinguishable from a hand-typed one once it lands in Contactos.
+  const name = String(item.author_name || "").trim();
+  const parts = name.split(/\s+/).filter(Boolean);
+  const email = typeof item.author_email === "string" && /.+@.+\..+/.test(item.author_email) ? item.author_email : null;
+  const handle = item.author_handle ? ` (@${item.author_handle})` : "";
+  const { data: contact, error: contactError } = await admin.from("crm_contacts").insert({
+    workspace_id: workspaceId,
+    first_name: parts[0] || "Sin nombre",
+    last_name: parts.slice(1).join(" ") || null,
+    email,
+    status: "lead",
+    tags: ["zernio", item.platform || "social"].filter(Boolean),
+    notes: `Capturado desde Zernio — ${item.kind === "comment" ? "comentario" : "mensaje"}`
+      + `${item.platform ? ` en ${item.platform}` : ""}${handle}: ${String(item.content || "").slice(0, 300)}`,
+    created_by: req.auth.userId,
+  }).select("*").single();
+  if (contactError) throw contactError;
+  const { data, error } = await admin.from("social_inbox").update({
+    status: "capturado", crm_contact_id: contact.id, updated_at: new Date().toISOString(),
+  }).eq("id", item.id).select("*").single();
+  if (error) throw error;
+  res.json({ success: true, data, contact });
+}));
+
+contentRoutes.post("/webhooks/zernio/:connectionId", asyncRoute(async (req, res) => {
+  const sb = getSupabaseAdmin();
+  if (!sb) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  const { data: connection, error: connectionError } = await sb.from("workspace_mcp_connections")
+    .select("id, workspace_id, credentials_encrypted").eq("id", req.params.connectionId).eq("provider", "zernio").eq("enabled", true).maybeSingle();
+  if (connectionError) throw connectionError;
+  if (!connection?.credentials_encrypted) return res.status(404).json({ success: false, error: "Conexión Zernio no encontrada" });
+  const secret = decryptWorkspaceSecret<SocialConnectionSecret>(connection.credentials_encrypted).webhookSecret?.trim();
+  if (!secret) return res.status(503).json({ success: false, error: "Configura el secreto webhook de esta conexión" });
+  const rawBody = (req as any).rawBody as Buffer | undefined;
+  const signature = req.header("x-zernio-signature") || req.header("x-late-signature") || undefined;
+  if (!rawBody || !verifyZernioSignature(rawBody, signature, secret)) {
+    return res.status(401).json({ success: false, error: "Firma de Zernio inválida" });
+  }
+  const update = parseZernioWebhook(req.body);
+  if (!update) return res.json({ success: true, ignored: true });
+  const { data: existing, error: readError } = await sb.from("content_calendar")
+    .select("id, permalink, published_at, publishing_event_at, publishing_platform_urls")
+    .eq("publishing_provider", "zernio")
+    .eq("workspace_id", connection.workspace_id)
+    .eq("publishing_connection_id", connection.id)
+    .eq("publishing_external_id", update.externalId)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!existing) return res.status(202).json({ success: true, ignored: true });
+
+  if (existing.publishing_event_at && Date.parse(existing.publishing_event_at) >= Date.parse(update.eventAt)) {
+    const { error: staleEventError } = await sb.from("social_publish_events")
+      .insert({ provider: "zernio", event_id: update.eventId });
+    if (staleEventError && staleEventError.code !== "23505") throw staleEventError;
+    return res.json({ success: true, ignored: true, duplicate: staleEventError?.code === "23505" });
+  }
+
+  const failed = update.status === "failed" || update.status === "partial";
+  const publishingError = failed
+    ? update.error || (update.status === "partial" ? "Zernio publicó solo algunos canales" : "Zernio no pudo publicar el contenido")
+    : null;
+  const { error } = await sb.from("content_calendar").update({
+    publishing_status: failed ? "error" : "publicado",
+    publishing_error: publishingError,
+    publishing_retry_pending: false,
+    publishing_event_at: update.eventAt,
+    publishing_platform_urls: { ...(existing.publishing_platform_urls || {}), ...update.platformUrls },
+    permalink: update.permalink || existing.permalink || null,
+    published_at: failed ? null : existing.published_at || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq("id", existing.id)
+    .or(`publishing_event_at.is.null,publishing_event_at.lt.${update.eventAt}`);
+  if (error) throw error;
+  const { error: eventError } = await sb.from("social_publish_events")
+    .insert({ provider: "zernio", event_id: update.eventId });
+  if (eventError && eventError.code !== "23505") throw eventError;
+  return res.json({ success: true, duplicate: eventError?.code === "23505" });
+}));
 
 contentRoutes.get("/", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
@@ -179,6 +501,66 @@ contentRoutes.post("/", withSetupCheck(async (req, res) => {
   res.status(201).json({ success: true, data });
 }));
 
+/** One import, 500 rows — beyond that the UI should batch by month. */
+const IMPORT_MAX_ROWS = 500;
+
+contentRoutes.post("/import", withSetupCheck(async (req, res) => {
+  const sb = dbOr503(res);
+  if (!sb) return;
+  const workspaceId = String(req.body.workspaceId || "");
+  if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, workspaceId, "editor"))) {
+    return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+  }
+  const incoming = Array.isArray(req.body.rows) ? req.body.rows : [];
+  if (incoming.length === 0) return res.status(400).json({ success: false, error: "No hay filas para importar" });
+  if (incoming.length > IMPORT_MAX_ROWS) {
+    return res.status(400).json({ success: false, error: `Máximo ${IMPORT_MAX_ROWS} filas por importación` });
+  }
+
+  // The import must never be a second, looser way in: every row goes through
+  // the same buildPatch validation the manual create uses, invalid dates
+  // included — the client already told the human about those.
+  const inserts = incoming
+    .map((row: Record<string, unknown>) => {
+      const item = buildPatch(row);
+      item.workspace_id = workspaceId;
+      item.kind ??= "organic";
+      item.status ??= "idea";
+      item.channels ??= [];
+      return item;
+    })
+    .filter((item: Record<string, unknown>) => Boolean(item.scheduled_date));
+
+  // Brand ids arrive as names resolved client-side; re-verify against this
+  // workspace so a crafted file cannot attach rows to someone else's brand.
+  const brandIds = [...new Set(inserts.map((item: any) => item.brand_id).filter(Boolean))];
+  if (brandIds.length > 0) {
+    const { data: validBrands, error: brandError } = await sb.from("brands")
+      .select("id").eq("workspace_id", workspaceId).in("id", brandIds);
+    if (brandError) throw brandError;
+    const valid = new Set((validBrands || []).map((b: any) => b.id));
+    for (const item of inserts) {
+      if (item.brand_id && !valid.has(item.brand_id)) item.brand_id = null;
+    }
+  }
+
+  // Chunked so a full-year import never builds one giant statement.
+  const created: Record<string, unknown>[] = [];
+  for (let i = 0; i < inserts.length; i += 200) {
+    const { data, error } = await sb.from("content_calendar")
+      .insert(inserts.slice(i, i + 200)).select("*");
+    if (error) throw error;
+    created.push(...(data || []));
+  }
+  res.status(201).json({
+    success: true,
+    data: created,
+    imported: created.length,
+    rejected: incoming.length - inserts.length,
+  });
+}));
+
 contentRoutes.patch("/:id", withSetupCheck(async (req, res) => {
   const sb = dbOr503(res);
   if (!sb) return;
@@ -201,6 +583,182 @@ contentRoutes.patch("/:id", withSetupCheck(async (req, res) => {
     .update(patch).eq("id", req.params.id).select("*").single();
   if (error) throw error;
   res.json({ success: true, data });
+}));
+
+contentRoutes.post("/:id/sync", withSetupCheck(async (req, res) => {
+  const sb = dbOr503(res);
+  if (!sb) return;
+  const { data: existing, error: readError } = await sb.from("content_calendar").select("*").eq("id", req.params.id).maybeSingle();
+  if (readError) throw readError;
+  if (!existing) return res.status(404).json({ success: false, error: "Contenido no encontrado" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, existing.workspace_id, "editor"))) return res.status(403).json({ success: false, error: "Editor access is required" });
+  if (existing.publishing_provider !== "buffer") return res.status(400).json({ success: false, error: "La actualización manual es para Buffer" });
+  if (!Object.keys(existing.publishing_destinations || {}).length) return res.status(409).json({ success: false, error: "Publicación sin registro por destino; consulta Buffer" });
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  const connection = await resolveSocialConnection(admin, existing.workspace_id, "buffer");
+  if (connection.row.id !== existing.publishing_connection_id) return res.status(409).json({ success: false, error: "Reconecta la cuenta original" });
+  const destinations = await syncBufferDestinations(connection.credentials.apiKey, existing.publishing_destinations);
+  const result = summarizeBufferDestinations(destinations);
+  const status = result.status === "published" ? "publicado" : result.status === "scheduled" ? "programado" : result.status === "publishing" ? "publicando" : "error";
+  const { data, error } = await sb.from("content_calendar").update({
+    publishing_destinations: destinations, publishing_status: status, publishing_platform_urls: result.platformUrls,
+    publishing_error: result.error, permalink: result.permalink || existing.permalink,
+    published_at: status === "publicado" ? existing.published_at || new Date().toISOString() : existing.published_at,
+    updated_at: new Date().toISOString(),
+  }).eq("id", existing.id).eq("workspace_id", existing.workspace_id).eq("updated_at", existing.updated_at).select("*").maybeSingle();
+  if (error) throw error;
+  if (!data) return res.status(409).json({ success: false, error: "El contenido cambió mientras se actualizaba. Recarga e intenta nuevamente." });
+  res.json({ success: true, data });
+}));
+
+contentRoutes.post("/:id/publish", withSetupCheck(async (req, res) => {
+  const sb = dbOr503(res);
+  if (!sb) return;
+  const { data: existing, error: readError } = await sb.from("content_calendar")
+    .select("*")
+    .eq("id", req.params.id).maybeSingle();
+  if (readError) throw readError;
+  if (!existing) return res.status(404).json({ success: false, error: "Contenido no encontrado" });
+  if (!req.auth || !(await canAccessWorkspace(req.auth, existing.workspace_id, "editor"))) {
+    return res.status(403).json({ success: false, error: "Editor access to the workspace is required" });
+  }
+
+  const mode = String(req.body.mode || "") as SocialPublishMode;
+  if (mode !== "now" && mode !== "schedule") {
+    return res.status(400).json({ success: false, error: "mode debe ser now o schedule" });
+  }
+  const channels = Array.isArray(req.body.channels)
+    ? [...new Set<string>(req.body.channels.reduce((list: string[], value: unknown) => {
+      const channel = String(value).trim();
+      if (channel) list.push(channel);
+      return list;
+    }, []))]
+    : existing.channels || [];
+  if (channels.length === 0) {
+    return res.status(400).json({ success: false, error: "Elige al menos un canal" });
+  }
+  const timezone = String(req.body.timezone || "UTC").trim();
+  if (!TIME_ZONES.has(timezone)) {
+    return res.status(400).json({ success: false, error: "Zona horaria inválida" });
+  }
+  const scheduledFor = mode === "schedule" ? String(req.body.scheduledFor || "") : undefined;
+  let scheduledInstant: string | undefined;
+  if (mode === "schedule") {
+    const match = scheduledFor?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}):00$/);
+    if (!match) return res.status(400).json({ success: false, error: "Fecha y hora de programación inválidas" });
+    try { scheduledInstant = zonedDateTimeToIso(match[1], match[2], timezone); } catch (error) {
+      return res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Programación inválida" });
+    }
+    if (Date.parse(scheduledInstant) <= Date.now()) {
+      return res.status(400).json({ success: false, error: "La programación debe quedar en el futuro" });
+    }
+  }
+  const content = String(existing.copy || existing.topic || "").trim();
+  if (!content) return res.status(400).json({ success: false, error: "Agrega un copy antes de publicar" });
+  const contentType = String(req.body.contentType || "post") as SocialContentType;
+  if (!SOCIAL_CONTENT_TYPES.has(contentType)) return res.status(400).json({ success: false, error: "Tipo de contenido inválido" });
+  const mediaUrl = String(req.body.mediaUrl || existing.external_url || "").trim() || undefined;
+  if ((contentType === "story" || contentType === "reel") && !mediaUrl) {
+    return res.status(400).json({ success: false, error: `${contentType === "story" ? "La Story" : "El Reel"} necesita una URL de imagen o video` });
+  }
+
+  const requestedProvider = String(req.body.provider || "").trim().toLowerCase() || undefined;
+  if (requestedProvider && !SOCIAL_PROVIDERS.has(requestedProvider)) return res.status(400).json({ success: false, error: "Proveedor inválido" });
+  let connection;
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(503).json({ success: false, error: "Supabase admin no está configurado" });
+  try {
+    connection = await resolveSocialConnection(
+      admin,
+      existing.workspace_id,
+      existing.publishing_request_id ? existing.publishing_provider : requestedProvider,
+      publishProviderOrder(contentType),
+    );
+  } catch (error) {
+    // Buffer-only workspace asking for a story gets the fix, not the policy text.
+    const base = error instanceof Error ? error.message : "Conecta un proveedor social";
+    const message = contentType !== "post" && !requestedProvider && !existing.publishing_request_id
+      ? "Stories y Reels requieren una conexión Zernio"
+      : base;
+    return res.status(409).json({ success: false, error: message });
+  }
+  if (contentType !== "post" && connection.row.provider !== "zernio") {
+    return res.status(400).json({ success: false, error: "Stories y Reels requieren una conexión Zernio" });
+  }
+  if (existing.publishing_request_id && existing.publishing_connection_id !== connection.row.id) {
+    return res.status(409).json({ success: false, error: "Reconecta la cuenta original antes de reintentar esta publicación" });
+  }
+  if (existing.publishing_request_id && existing.publishing_provider === "buffer" && !existing.publishing_payload) {
+    return res.status(409).json({ success: false, error: "Publicación antigua sin registro por destino. Revisa Buffer para evitar duplicados." });
+  }
+  const provider = createSocialPublisher(connection.credentials.apiKey, connection.config.accounts || {}, connection.row.provider);
+  const retriesExternalPost = provider.name === "zernio" && existing.publishing_status === "error" && existing.publishing_provider === "zernio" && Boolean(existing.publishing_external_id);
+  const requestId = retriesExternalPost
+    ? (existing.publishing_retry_pending ? existing.publishing_request_id : newPublishRequestId())
+    : existing.publishing_request_id || newPublishRequestId();
+  const publishPayload = existing.publishing_payload || { requestId, content, channels, mode, scheduledFor: provider.name === "zernio" ? scheduledFor : scheduledInstant, timezone, contentType, mediaUrl };
+  const { data: locked, error: lockError } = await sb.from("content_calendar")
+    .update({
+      publishing_status: "publicando",
+      publishing_provider: provider.name,
+      publishing_connection_id: connection.row.id,
+      publishing_channels: publishPayload.channels,
+      publishing_payload: publishPayload,
+      publishing_scheduled_for: existing.publishing_payload ? existing.publishing_scheduled_for : scheduledInstant || null,
+      publishing_timezone: publishPayload.timezone,
+      publishing_request_id: requestId,
+      publishing_retry_pending: retriesExternalPost,
+      publishing_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", existing.id)
+    .in("publishing_status", ["borrador", "error"])
+    .select("*").maybeSingle();
+  if (lockError) throw lockError;
+  if (!locked) {
+    return res.status(409).json({ success: false, error: "Esta publicación ya está en proceso o programada" });
+  }
+
+  try {
+    const result = retriesExternalPost
+      ? await provider.retry(existing.publishing_external_id, requestId)
+      : await provider.publish({ ...publishPayload, requestId, destinations: existing.publishing_destinations || {},
+        saveDestinations: async destinations => {
+          const { data, error } = await sb.from("content_calendar").update({ publishing_destinations: destinations })
+            .eq("id", existing.id).eq("workspace_id", existing.workspace_id).eq("publishing_request_id", requestId).select("id").single();
+          if (error || !data) throw error || new Error("No se pudo guardar el progreso de publicación");
+        },
+      });
+    const terminalError = result.status === "failed" || result.status === "partial";
+    const publishingStatus = result.status === "published"
+      ? "publicado"
+      : result.status === "scheduled" ? "programado" : terminalError ? "error" : "publicando";
+    const { data, error } = await sb.from("content_calendar").update({
+      publishing_status: publishingStatus,
+      publishing_external_id: result.externalId,
+      permalink: result.permalink,
+      publishing_platform_urls: result.platformUrls,
+      published_at: publishingStatus === "publicado" ? new Date().toISOString() : null,
+      publishing_error: terminalError
+        ? result.error || (result.status === "partial" ? "Se publicaron solo algunos canales" : "No se pudo publicar el contenido")
+        : null,
+      publishing_retry_pending: false,
+      updated_at: new Date().toISOString(),
+    }).eq("id", existing.id).eq("publishing_request_id", requestId).select("*").single();
+    if (error) throw error;
+    return terminalError
+      ? res.status(502).json({ success: false, error: data.publishing_error, data })
+      : res.json({ success: true, data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo enviar a Zernio";
+    const { data } = await sb.from("content_calendar").update({
+      publishing_status: "error",
+      publishing_error: message,
+      updated_at: new Date().toISOString(),
+    }).eq("id", existing.id).eq("publishing_request_id", requestId).select("*").maybeSingle();
+    return res.status(502).json({ success: false, error: message, data });
+  }
 }));
 
 contentRoutes.delete("/:id", withSetupCheck(async (req, res) => {

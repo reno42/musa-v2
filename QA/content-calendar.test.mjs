@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isoDate, buildMonthGrid, groupByPlan, summarizeMetaRows, pacing, META_COLUMNS,
+  zonedDateTimeToIso, zernioScheduledFor,
 } from "../src/lib/contentCalendar.ts";
 
 const row = (over = {}) => ({
@@ -36,6 +37,26 @@ test("a post lands on its own date, in local time", () => {
 test("isoDate does not drift a day across timezones", () => {
   assert.equal(isoDate(new Date(2026, 0, 1)), "2026-01-01");
   assert.equal(isoDate(new Date(2026, 11, 31)), "2026-12-31");
+});
+
+test("scheduled wall time is converted from Lima rather than the browser zone", () => {
+  assert.equal(zonedDateTimeToIso("2026-09-01", "15:30", "America/Lima"), "2026-09-01T20:30:00.000Z");
+});
+
+test("scheduled wall time follows New York daylight saving offset", () => {
+  assert.equal(zonedDateTimeToIso("2026-09-01", "15:30", "America/New_York"), "2026-09-01T19:30:00.000Z");
+});
+
+test("scheduled UTC wall time remains unchanged", () => {
+  assert.equal(zonedDateTimeToIso("2026-09-01", "15:30", "UTC"), "2026-09-01T15:30:00.000Z");
+});
+
+test("Zernio receives wall-clock text without offset plus the separate timezone", () => {
+  assert.equal(zernioScheduledFor("2026-09-01", "15:30", "America/Lima"), "2026-09-01T15:30:00");
+});
+
+test("non-existent daylight-saving wall time is rejected", () => {
+  assert.throws(() => zonedDateTimeToIso("2026-03-08", "02:30", "America/New_York"), /no existe/);
 });
 
 test("same-day posts are ordered by time, unscheduled ones last", () => {

@@ -65,6 +65,7 @@ import {
   updateCssProperty,
 } from "../lib/cssMutations";
 import {
+  applyLayerSvgFill,
   changeLayerTag,
   createLayerId,
   dedupeLayerIds,
@@ -92,6 +93,7 @@ import {
   type LayerStackDirection,
   type LayerStackEdge,
   type LayerStackPlacement,
+  type SvgFillMedia,
 } from "../lib/htmlMutations";
 import { ensureGoogleFontImport, injectGoogleFontIntoFrames, sanitizeGoogleFontUrl } from "../lib/googleFonts";
 import { cssFontFamily, needsWebfont, primaryFamily } from "../lib/fontFamily";
@@ -1585,18 +1587,41 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
     autoSave(updated);
   }, [selectedFrameId, frames, autoSave]);
 
+  // Sequential frame writes inside one burst must compose: the contextual
+  // panel commits a css write and an svg-defs html write back to back, and
+  // each maps over the same render-time `frames`, so the last one used to
+  // erase its sibling (same clobber class the panel fixed with cssChainRef).
+  // The chain holds the accumulated array until React delivers the new one.
+  const framesChainRef = useRef<FrameData[] | null>(null);
+  useEffect(() => { framesChainRef.current = null; }, [frames]);
+  const commitFrames = useCallback((next: FrameData[], label: string) => {
+    framesChainRef.current = next;
+    store.replaceAllWithUndo(next, label);
+    autoSave(next);
+  }, [autoSave]);
+
   const handleCssChange = useCallback((newCss: string) => {
     if (!selectedFrameId) return;
-    const updated = frames.map(f =>
+    const updated = (framesChainRef.current ?? frames).map(f =>
       f.id === selectedFrameId ? { ...f, css: newCss } : f
     );
     const now = Date.now();
     if (now - lastPushTimeRef.current > 300) {
             lastPushTimeRef.current = now;
     }
-    store.replaceAllWithUndo(updated, "code edit");
-    autoSave(updated);
-  }, [selectedFrameId, frames, autoSave]);
+    commitFrames(updated, "code edit");
+  }, [selectedFrameId, frames, commitFrames]);
+
+  // ── Svg paint-server fills (F2): gradients/photos become <defs> on the
+  // shape's own <svg> — a css background can't tint a <path>. ──
+  const handleSvgFillMedia = useCallback((frameId: string, layerId: string, media: SvgFillMedia) => {
+    const base = framesChainRef.current ?? frames;
+    const target = base.find(f => f.id === frameId);
+    if (!target) return;
+    const nextHtml = applyLayerSvgFill(target.html, layerId, media);
+    if (!nextHtml) return;
+    commitFrames(base.map(f => f.id === frameId ? { ...f, html: nextHtml } : f), "svg fill");
+  }, [frames, commitFrames]);
 
   // ── Frame CSS (+ optional HTML) change from DesignFrame (drag/resize) ──
   const handleFrameCssChange = useCallback((frameId: string, newCss: string, newHtml?: string) => {
@@ -1780,6 +1805,15 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
       ...(Number.isFinite(cssHeight) && cssHeight > 0 ? { height: Math.round(cssHeight) } : {}),
       ...(newHtml !== undefined ? { html: newHtml } : {}),
     } : object));
+  }, [commitCanvasObjects]);
+
+  /** Svg paint-server fill (gradient/photo defs) for orphan shapes. */
+  const handleOrphanSvgFillMedia = useCallback((orphanId: string, _layerId: string, media: SvgFillMedia) => {
+    const orphan = canvasObjectsRef.current.find(o => o.id === orphanId);
+    if (!orphan) return;
+    const nextHtml = applyLayerSvgFill(orphan.html, orphanId, media);
+    if (!nextHtml) return;
+    commitCanvasObjects(canvasObjectsRef.current.map(o => o.id === orphanId ? { ...o, html: nextHtml } : o));
   }, [commitCanvasObjects]);
 
   /** Resize a root object with the same CSS-backed dimensions as an in-frame layer. */
@@ -8102,6 +8136,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
               html={activeHtml}
               css={activeCss}
               onCssChange={handleContextualCssChange}
+              onSvgFillMedia={handleSvgFillMedia}
               onImageMaskRemove={handleImageMaskRemove}
               onChangeTag={handleChangeTag}
               onCopyStyle={handleCopyStyle}
@@ -8263,6 +8298,7 @@ export function EditorV2({ templateId, onBack, onOpenTemplate }: EditorV2Props) 
                 html={orphan.html}
                 css={orphan.css}
                 onCssChange={(newCss) => handleOrphanCssChange(orphan.id, newCss)}
+                onSvgFillMedia={handleOrphanSvgFillMedia}
                 onChangeTag={(newTag) => handleOrphanTagChange(orphan.id, newTag)}
                 frameWidth={orphan.width}
                 frameHeight={orphan.height}

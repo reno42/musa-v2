@@ -141,15 +141,28 @@ copyRecipeRoutes.post("/", withSetupCheck(async (req, res) => {
   const tags = Array.isArray(req.body.tags)
     ? [...new Set(req.body.tags.map((t: unknown) => String(t).trim()).filter(Boolean))]
     : [];
+  // Brand scope (v44): empty = «General» (every brand). The id must be a
+  // brand of THIS workspace — the same trust-no-body rule the calendar's
+  // brand column follows.
+  const brandId = String(req.body.brandId || "").trim() || null;
+  if (brandId) {
+    const { data: brand } = await sb.from("brands").select("id")
+      .eq("id", brandId).eq("workspace_id", workspaceId).maybeSingle();
+    if (!brand) return res.status(400).json({ success: false, error: "La marca no pertenece a este workspace" });
+  }
   // Personal by design (REQ-020): stamp the creating user so only they see it.
   const uid = String(req.auth.userId || "");
-  const { data, error } = await sb.from("copy_recipes").insert({
+  const insert: Record<string, unknown> = {
     workspace_id: workspaceId,
     type: normalizeType(req.body.type),
     name, content, tags,
     source: normalizeSource(req.body.source),
     owner_id: UUID_RE.test(uid) ? uid : null,
-  }).select("*").single();
+  };
+  // «General» recipes omit the key entirely: the insert keeps working on a
+  // database that has not received v44 yet (the deploy can land first).
+  if (brandId) insert.brand_id = brandId;
+  const { data, error } = await sb.from("copy_recipes").insert(insert).select("*").single();
   if (error) throw error;
   res.status(201).json({ success: true, data });
 }));
@@ -172,6 +185,16 @@ copyRecipeRoutes.patch("/:id", withSetupCheck(async (req, res) => {
     patch.tags = Array.isArray(req.body.tags)
       ? [...new Set(req.body.tags.map((t: unknown) => String(t).trim()).filter(Boolean))]
       : [];
+  }
+  if (req.body.brandId !== undefined) {
+    // The UI sends camelCase; null clears the scope back to «General».
+    const next = String(req.body.brandId || "").trim() || null;
+    if (next) {
+      const { data: brand } = await sb.from("brands").select("id")
+        .eq("id", next).eq("workspace_id", existing.workspace_id).maybeSingle();
+      if (!brand) return res.status(400).json({ success: false, error: "La marca no pertenece a este workspace" });
+    }
+    patch.brand_id = next;
   }
   if (Object.keys(patch).length === 0) {
     return res.status(400).json({ success: false, error: "Nada que actualizar" });

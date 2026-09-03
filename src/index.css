@@ -3637,6 +3637,39 @@ html, body, #root { height: 100%; width: 100%; }
 .crm-design-grid button span { color: #a1a1aa; font-size: 10px; }
 .crm-design-grid button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crm-shell button:disabled { opacity: .45; cursor: not-allowed; }
+.crm-contact-list { display: grid; align-content: start; padding: 8px; border: 1px solid #27272a; border-radius: 14px; background: rgba(9,9,11,.52); }
+.crm-contact-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.crm-contact-table th { padding: 8px 10px; border-bottom: 1px solid #27272a; color: #a1a1aa; font-size: 10px; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
+.crm-contact-table td { padding: 0 10px; border-bottom: 1px solid rgba(39,39,42,.55); }
+.crm-contact-table tbody tr { cursor: pointer; }
+.crm-contact-table tbody tr:hover, .crm-contact-table tbody tr.selected { background: #18181b; }
+.crm-contact-pick { display: grid; gap: 3px; width: 100%; min-height: 46px; border: 0; background: transparent; color: #fafafa; padding: 8px 0; text-align: left; cursor: pointer; font: inherit; }
+.crm-contact-pick strong { font-size: 12px; }
+.crm-contact-pick small { color: #a1a1aa; font-size: 10px; }
+.crm-contact-count { color: #a1a1aa; font-variant-numeric: tabular-nums; text-align: center; }
+.crm-person-detail { display: grid; gap: 16px; }
+.crm-person-detail header h3 { margin: 0 0 4px; font-size: 17px; }
+.crm-person-links { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
+.crm-person-links a { color: #93c5fd; }
+.crm-person-deals h4, .crm-funnel-detail h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: #d4d4d8; font-size: 12px; }
+.crm-person-deals h4 span, .crm-funnel-detail h4 span { color: #71717a; font-variant-numeric: tabular-nums; }
+.crm-person-form { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid #27272a; }
+.crm-funnel { display: grid; gap: 14px; }
+.crm-funnel-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.crm-funnel-head p { margin: 0; font-size: 12px; max-width: 560px; text-wrap: pretty; }
+.crm-funnel-chart { display: grid; gap: 7px; }
+.crm-funnel-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 34px 48px; align-items: center; gap: 10px; }
+.crm-funnel-label { min-height: 30px; border: 0; background: transparent; color: #a1a1aa; padding: 4px 2px; text-align: right; cursor: pointer; font: inherit; font-size: 11px; letter-spacing: .02em; }
+.crm-funnel-label.active, .crm-funnel-label:hover { color: #fafafa; }
+.crm-funnel-bar { display: flex; min-height: 26px; border: 0; border-radius: 6px; background: transparent; padding: 0; overflow: hidden; cursor: pointer; transition: width .25s ease; }
+.crm-funnel-bar > span { display: block; min-width: 3px; background: #60a5fa; }
+.crm-funnel-bar:disabled { cursor: default; }
+.crm-funnel-count { color: #fafafa; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.crm-funnel-conv { color: #a1a1aa; font-size: 11px; font-variant-numeric: tabular-nums; }
+.crm-funnel-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: #d4d4d8; }
+.crm-funnel-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.crm-funnel-legend i { width: 10px; height: 10px; border-radius: 3px; }
+.crm-funnel-lost { margin: 0; padding: 9px 12px; border: 1px solid rgba(239,68,68,.3); border-radius: 9px; background: rgba(127,29,29,.16); color: #fecaca; font-size: 12px; text-wrap: pretty; }
 
 @media (max-width: 1000px) {
   .crm-summary, .crm-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3653,6 +3686,7 @@ html, body, #root { height: 100%; width: 100%; }
   .workspace-subnav button, .crm-view-switch button { flex: 1; }
   .crm-filter-group button { flex: 0 0 auto; }
   .crm-deliverable-row, .crm-add-deliverable, .crm-brand-settings { grid-template-columns: 1fr; }
+  .crm-funnel-row { grid-template-columns: 78px minmax(0, 1fr) 26px 40px; }
   .crm-detail-actions { justify-content: space-between; }
 }
 

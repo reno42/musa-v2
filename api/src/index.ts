@@ -43,7 +43,12 @@ import { handler as mcpHandler } from "../../netlify/functions/mcp.mjs";
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({
+  limit: "50mb",
+  verify: (req, _res, buffer) => {
+    if ((req as any).originalUrl?.startsWith("/api/content/webhooks/zernio/")) (req as any).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use(rateLimit);
 app.use(auth);
 app.use(enforceWorkspaceKeyScope);

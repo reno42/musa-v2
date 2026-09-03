@@ -1440,7 +1440,9 @@ export function HtmlContextualPanel({
 
   // Svg shapes paint fills with real defs (a CSS background can't tint a
   // <path>) — every fill write for them routes through onSvgFillMedia.
-  const svgFillSupported = Boolean((isSvgShape || isSvgText) && onSvgFillMedia);
+  // Shapes only: applyLayerSvgFill paints a <path>; svg <text> keeps the css
+  // fill branch it has always used.
+  const svgFillSupported = Boolean(isSvgShape && onSvgFillMedia);
 
   // ── Position category: align-to-frame ──
   const alignTo = (key: typeof ALIGN_BUTTONS[number]["key"]) => {
@@ -1474,7 +1476,9 @@ export function HtmlContextualPanel({
 
       if (svgFillSupported) {
         onSvgFillMedia!(element.frameId, element.layerId, { kind: "image", url: result.url });
-        onCssChange(updateElementCssProperty(css, element.selector, "--fill-image", result.url));
+        let readback = updateElementCssProperty(css, element.selector, "--fill-image", result.url);
+        readback = updateElementCssProperty(readback, element.selector, "--fill-gradient", "0");
+        onCssChange(readback);
       } else {
         const bgValue = `url(${result.url}) center/cover no-repeat`;
         let updated = updateElementCssProperty(css, element.selector, "background-image", bgValue);
@@ -1575,10 +1579,26 @@ export function HtmlContextualPanel({
   const fillMemRaw = getCssPropertyValue(css, selector, "--fill-mem");
   const fillMemActive = Boolean(fillMemRaw && fillMemRaw !== "0" && fillMemRaw !== "none");
   const bgImageValue = s["background-image"] || "";
-  const svgFillRaw = s["fill"] || "";
+  // The computed `fill` of the <svg> wrapper never shows what a path paints:
+  // gradient/image live in <defs> and the solid sits on the path's own
+  // attribute. Read the painted element back from the frame html instead.
+  const svgPaintedFill = useMemo(() => {
+    if (!svgFillSupported || !element) return s["fill"] || "";
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const layerNode = doc.querySelector(selector);
+      if (!layerNode) return "";
+      const painted = layerNode.matches("path") ? layerNode : layerNode.querySelector("path");
+      return painted?.getAttribute("fill") || "";
+    } catch { return ""; }
+  }, [html, selector, svgFillSupported, element, s["fill"]]);
+  const svgFillRaw = svgFillSupported ? svgPaintedFill : (s["fill"] || "");
   const svgFillIsRef = svgFillRaw.startsWith("url(");
-  const svgGradientMem = getCssPropertyValue(css, selector, "--fill-gradient") || "";
-  const svgImageMem = getCssPropertyValue(css, selector, "--fill-image") || "";
+  const svgGradientMemRaw = getCssPropertyValue(css, selector, "--fill-gradient") || "";
+  const svgImageMemRaw = getCssPropertyValue(css, selector, "--fill-image") || "";
+  // "0" is the cleared marker written when another medium takes over the fill.
+  const svgGradientMem = svgGradientMemRaw && svgGradientMemRaw !== "0" ? svgGradientMemRaw : "";
+  const svgImageMem = svgImageMemRaw && svgImageMemRaw !== "0" ? svgImageMemRaw : "";
   const fillVideoUrl = getCssPropertyValue(css, selector, "--fill-video") || "";
   const fillGradientCss = svgFillSupported ? svgGradientMem : bgImageValue;
   const fillGradientParsed = fillGradientCss ? parseGradientValue(fillGradientCss) : null;
@@ -1605,6 +1625,8 @@ export function HtmlContextualPanel({
     if (svgFillSupported && element) {
       onSvgFillMedia!(element.frameId, element.layerId, { kind: "solid", color: hex });
       update(selector, "fill-opacity", String(alpha));
+      update(selector, "--fill-gradient", "0");
+      update(selector, "--fill-image", "0");
       return;
     }
     const color = alpha < 1 ? hexToRgba(hex, alpha) : hex;
@@ -1618,6 +1640,10 @@ export function HtmlContextualPanel({
     const gradientCss = buildGradientCss(g);
     if (svgFillSupported && element) {
       onSvgFillMedia!(element.frameId, element.layerId, { kind: "gradient", css: gradientCss });
+      // The gradient lives in svg defs; this memory prop is what the picker
+      // reads back to show/reopen the same degradado.
+      update(selector, "--fill-gradient", gradientCss);
+      update(selector, "--fill-image", "0");
       return;
     }
     update(selector, "background-image", gradientCss);
@@ -1627,6 +1653,8 @@ export function HtmlContextualPanel({
   const writeFillImage = useCallback((url: string) => {
     if (svgFillSupported && element) {
       onSvgFillMedia!(element.frameId, element.layerId, url ? { kind: "image", url } : { kind: "solid", color: fillSolidHex });
+      update(selector, "--fill-image", url || "0");
+      update(selector, "--fill-gradient", "0");
       return;
     }
     update(selector, "background-image", url ? `url(${url}) center/cover no-repeat` : "none");

@@ -71,6 +71,10 @@ interface Brand {
   relationship_status?: string;
 }
 
+type SocialProvider = "buffer" | "zernio";
+type SocialAccount = { id: string; platform: string; username: string; displayName: string; isActive: boolean };
+type SocialConnection = { id: string; provider: SocialProvider; hasCredentials: boolean; accounts: Record<string, string>; isDefault: boolean; webhookUrl?: string | null };
+
 interface DashboardProps {
   onSelectTemplate: (id: string, slugInfo?: { wsSlug?: string; tplSlug?: string }) => void;
   /** REQ-022: opts carries the first frame's dimensions, or initialFrame:false
@@ -138,6 +142,14 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
   // Previously this was a hardcoded id (renzo's), which broke multi-tenancy:
   // every user landed in the same workspace and new accounts hit 403s.
   const activeWorkspaceId = selectedWs ?? personalWorkspaceId ?? workspaces[0]?.id ?? null;
+  const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([]);
+  const [socialProvider, setSocialProvider] = useState<SocialProvider>("zernio");
+  const [socialApiKey, setSocialApiKey] = useState("");
+  const [socialWebhookSecret, setSocialWebhookSecret] = useState("");
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [socialSelected, setSocialSelected] = useState<Record<string, string>>({});
+  const [socialBusy, setSocialBusy] = useState(false);
+  const [socialMessage, setSocialMessage] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandCounts, setBrandCounts] = useState<Map<string, number>>(new Map());
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
@@ -577,6 +589,76 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
       addToast(`Error: ${err.message}`, "error");
     }
     setKeySaving(false);
+  };
+
+  const loadSocialConnections = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+    try {
+      const res = await apiFetch<{ data?: SocialConnection[] }>(`/api/content/integrations/social?workspaceId=${encodeURIComponent(activeWorkspaceId)}`);
+      const connections = res.data || [];
+      setSocialConnections(connections);
+      const current = connections.find(item => item.provider === socialProvider);
+      setSocialSelected(current?.accounts || {});
+    } catch { setSocialConnections([]); }
+  }, [activeWorkspaceId, socialProvider]);
+
+  useEffect(() => {
+    if (activeTab === "configuracion") void loadSocialConnections();
+  }, [activeTab, loadSocialConnections]);
+
+  useEffect(() => {
+    const current = socialConnections.find(item => item.provider === socialProvider);
+    setSocialSelected(current?.accounts || {});
+    setSocialAccounts([]);
+    setSocialApiKey("");
+    setSocialWebhookSecret("");
+    setSocialMessage("");
+  }, [activeWorkspaceId, socialProvider, socialConnections]);
+
+  const testSocialConnection = async () => {
+    if (!activeWorkspaceId) return;
+    setSocialBusy(true); setSocialMessage("");
+    try {
+      const res = await apiFetch<{ data?: { accounts?: SocialAccount[] } }>(`/api/content/integrations/social/${socialProvider}/test`, {
+        method: "POST", body: JSON.stringify({ workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim() }),
+      });
+      const accounts = res.data?.accounts || [];
+      setSocialAccounts(accounts);
+      setSocialMessage(accounts.length ? `✓ Conexión válida · ${accounts.length} ${accounts.length === 1 ? "cuenta" : "cuentas"}` : "✓ Conexión válida, sin cuentas conectadas");
+    } catch (error) { setSocialMessage(error instanceof Error ? error.message : "No se pudo conectar"); }
+    finally { setSocialBusy(false); }
+  };
+
+  const saveSocialConnection = async () => {
+    if (!activeWorkspaceId) return;
+    setSocialBusy(true); setSocialMessage("");
+    try {
+      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+        method: "PUT", body: JSON.stringify({
+          workspaceId: activeWorkspaceId, apiKey: socialApiKey.trim(), webhookSecret: socialWebhookSecret.trim(),
+          accounts: socialSelected, isDefault: true,
+        }),
+      });
+      setSocialApiKey(""); setSocialWebhookSecret("");
+      setSocialMessage("✓ Conexión guardada y cifrada para este workspace");
+      await loadSocialConnections();
+    } catch (error) { setSocialMessage(error instanceof Error ? error.message : "No se pudo guardar"); }
+    finally { setSocialBusy(false); }
+  };
+
+  const disconnectSocialConnection = async () => {
+    if (!activeWorkspaceId) return;
+    setSocialBusy(true);
+    setSocialMessage("");
+    try {
+      await apiFetch(`/api/content/integrations/social/${socialProvider}`, {
+        method: "DELETE", body: JSON.stringify({ workspaceId: activeWorkspaceId }),
+      });
+      await loadSocialConnections();
+      setSocialApiKey(""); setSocialWebhookSecret(""); setSocialAccounts([]); setSocialSelected({});
+      setSocialMessage("✓ Credenciales eliminadas. Lo ya programado continúa en el proveedor; cancélalo allí si corresponde.");
+    } catch (error) { setSocialMessage(error instanceof Error ? error.message : "No se pudo desconectar"); }
+    finally { setSocialBusy(false); }
   };
 
   /** Model-only update — keeps the stored key untouched. */
@@ -1921,7 +2003,7 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
 
       {/* ── Copywriting Tab ── */}
       {activeTab === "copywriting" && (
-        <ContentTab workspaceId={activeWorkspaceId} paneHint={activePane} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} />
+        <ContentTab workspaceId={activeWorkspaceId} paneHint={activePane} onOpenTemplate={(id) => window.open(`/?template=${id}&v=2`, "_blank")} onOpenSettings={() => setActiveTab("configuracion")} />
       )}
 
       {/* ── Agentes Tab (sub-tabs: Kanban / Tabla / Agentes) ── */}
@@ -2322,6 +2404,78 @@ export function Dashboard({ onSelectTemplate, onCreateHtmlTemplate }: DashboardP
             Una sola caja fuerte: todas tus claves van cifradas al servidor y se usan en el editor, el chat y los iconos. Nunca se vuelven a mostrar.
           </p>
           <div className="bento-grid">
+
+            <div className="bento-card bento-12">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div className="bento-title">📣 Publicación social</div>
+                <span className={`bento-pill ${socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "bento-pill--ok" : "bento-pill--warn"}`}>
+                  {socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "Conectado" : "Sin conectar"}
+                </span>
+              </div>
+              <div className="bento-sub">
+                La clave pertenece solo a este workspace, se cifra en el servidor y nunca vuelve al navegador. El proveedor predeterminado se usa en Calendario y Contenidos.
+              </div>
+              <div className="bento-seg" style={{ alignSelf: "flex-start" }} aria-label="Proveedor de publicación">
+                <button type="button" disabled={socialBusy} data-active={socialProvider === "zernio"} onClick={() => setSocialProvider("zernio")}>Zernio</button>
+                <button type="button" disabled={socialBusy} data-active={socialProvider === "buffer"} onClick={() => setSocialProvider("buffer")}>Buffer</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                <div className="bento-field">
+                  <label htmlFor="social-api-key">API key de {socialProvider === "zernio" ? "Zernio" : "Buffer"}</label>
+                  <input id="social-api-key" type="password" autoComplete="off" className="bento-input" value={socialApiKey}
+                    onChange={event => setSocialApiKey(event.target.value)}
+                    placeholder={socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) ? "Guardada · escribe para reemplazar" : "Pega tu API key"} />
+                </div>
+                {socialProvider === "zernio" && (
+                  <div className="bento-field">
+                    <label htmlFor="social-webhook-secret">Secreto del webhook</label>
+                    <input id="social-webhook-secret" type="password" autoComplete="off" className="bento-input" value={socialWebhookSecret}
+                      onChange={event => setSocialWebhookSecret(event.target.value)} placeholder="Opcional para estados en tiempo real" />
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button type="button" className="bento-btn" onClick={() => void testSocialConnection()} disabled={socialBusy || (!socialApiKey.trim() && !socialConnections.some(item => item.provider === socialProvider && item.hasCredentials))}>
+                  {socialBusy ? "Probando…" : "Probar y listar cuentas"}
+                </button>
+                <button type="button" className="bento-btn bento-btn--primary" onClick={() => void saveSocialConnection()} disabled={socialBusy || (!socialApiKey.trim() && !socialConnections.some(item => item.provider === socialProvider && item.hasCredentials))}>
+                  Guardar como predeterminado
+                </button>
+              </div>
+              {socialMessage && <div role="status" className="bento-sub" style={{ color: socialMessage.startsWith("✓") ? "#4ade80" : "#fca5a5" }}>{socialMessage}</div>}
+              {socialConnections.some(item => item.provider === socialProvider && item.hasCredentials) && (
+                <details className="bento-sub">
+                  <summary>Desconectar {socialProvider === "zernio" ? "Zernio" : "Buffer"}</summary>
+                  <p>Se eliminará la clave de este workspace. Las publicaciones ya programadas no se cancelan; gestiónalas en el proveedor. Puedes volver a conectar tu cuenta.</p>
+                  <button type="button" className="bento-btn" disabled={socialBusy} onClick={() => void disconnectSocialConnection()}>Confirmar desconexión</button>
+                </details>
+              )}
+              {socialAccounts.length > 0 && (
+                <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+                  <legend className="bento-row-label" style={{ marginBottom: 6 }}>Cuentas que podrá usar Copywriting</legend>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 6 }}>
+                    {socialAccounts.map(account => (
+                      <label key={account.id} className="bento-row" style={{ justifyContent: "flex-start", gap: 8, cursor: "pointer" }}>
+                        <input type="checkbox" checked={socialSelected[account.platform] === account.id}
+                          onChange={event => setSocialSelected(current => {
+                            const next = { ...current };
+                            if (event.target.checked) next[account.platform] = account.id;
+                            else if (next[account.platform] === account.id) delete next[account.platform];
+                            return next;
+                          })} />
+                        <span><strong>{account.displayName}</strong><br /><span className="bento-sub">{account.platform} {account.username}</span></span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+              {socialProvider === "zernio" && socialConnections.find(item => item.provider === "zernio")?.webhookUrl && (
+                <div className="bento-sub">Webhook: <code>{window.location.origin}{socialConnections.find(item => item.provider === "zernio")?.webhookUrl}</code></div>
+              )}
+              <div className="bento-sub">
+                {socialProvider === "zernio" ? "Zernio permite Posts, Stories y Reels según la red y el medio adjunto." : "Buffer usa su API GraphQL para Posts; Stories y Reels requieren Zernio."}
+              </div>
+            </div>
 
             {/* Chat — una fila por proveedor */}
             <div className="bento-card bento-7">

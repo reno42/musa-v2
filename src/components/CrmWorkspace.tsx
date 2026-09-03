@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { getApiHeaders } from "../lib/apiKey";
+import { ALL_DEAL_STAGES as DEAL_STAGES, buildFunnel, contactName, type DealStage, type FunnelMode } from "../lib/crmFunnel";
 import { ASSET_TYPE_OPTIONS, type DesignAssetType } from "../lib/designGraph";
 
 type Brand = {
@@ -23,11 +24,15 @@ type Brand = {
 type Contact = {
   id: string;
   brand_id?: string | null;
+  brand_name?: string | null;
   first_name: string;
   last_name?: string | null;
   email?: string | null;
   phone?: string | null;
   job_title?: string | null;
+  company?: string | null;
+  status?: string | null;
+  tags?: string[] | null;
   notes?: string | null;
 };
 
@@ -84,20 +89,9 @@ type CrmData = {
   designs: DesignFile[];
   summary: { pipelineValue: number; weightedValue: number; openDeals: number; pendingDeliverables: number };
 };
-type DealStage = "discovery" | "proposal" | "negotiation" | "approved" | "in_production" | "review" | "ready" | "delivered" | "lost";
 type AccountFilter = "all" | "lead" | "client" | "at_risk" | "churned";
-
-const DEAL_STAGES: Array<{ value: DealStage; label: string }> = [
-  { value: "discovery", label: "Discovery" },
-  { value: "proposal", label: "Propuesta" },
-  { value: "negotiation", label: "Negociación" },
-  { value: "approved", label: "Aprobado" },
-  { value: "in_production", label: "En producción" },
-  { value: "review", label: "Revisión" },
-  { value: "ready", label: "Listo" },
-  { value: "delivered", label: "Entregado" },
-  { value: "lost", label: "Perdido" },
-];
+/** The four CRM views: Ventas kanban, Personas table, Marcas accounts, Embudo. */
+type CrmView = "pipeline" | "personas" | "accounts" | "embudo";
 
 const assetLabel = new Map(ASSET_TYPE_OPTIONS.map((option) => [option.value, option.label]));
 
@@ -134,13 +128,14 @@ export function CrmWorkspace({
   setNotice: (message: string) => void;
   /**
    * When set, the parent owns which view shows and renders the switch itself
-   * -- the Red de Marcas tab bar hosts Pipeline and Marcas y Personas next to
-   * Grafo and Tabla, so the internal switch would be a second, stale copy.
+   * -- the Red de Marcas tab bar hosts the four CRM views (Ventas, Personas,
+   * Marcas, Embudo) next to Grafo and Tabla, so the internal switch would be
+   * a second, stale copy.
    */
-  view?: "pipeline" | "accounts";
+  view?: CrmView;
 }) {
   const [data, setData] = useState<CrmData | null>(null);
-  const [ownView, setView] = useState<"pipeline" | "accounts">("pipeline");
+  const [ownView, setView] = useState<CrmView>("pipeline");
   const view = controlledView ?? ownView;
   const [loading, setLoading] = useState(true);
   const [selectedDealId, setSelectedDealId] = useState("");
@@ -174,8 +169,10 @@ export function CrmWorkspace({
       <div className="crm-toolbar">
         {!controlledView && (
           <div className="crm-view-switch" role="group" aria-label="Vista del CRM">
-            <button type="button" className={view === "pipeline" ? "active" : ""} aria-pressed={view === "pipeline"} onClick={() => setView("pipeline")}>Pipeline</button>
-            <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas y Personas</button>
+            <button type="button" className={view === "pipeline" ? "active" : ""} aria-pressed={view === "pipeline"} onClick={() => setView("pipeline")}>Ventas</button>
+            <button type="button" className={view === "personas" ? "active" : ""} aria-pressed={view === "personas"} onClick={() => setView("personas")}>Personas</button>
+            <button type="button" className={view === "accounts" ? "active" : ""} aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>Marcas</button>
+            <button type="button" className={view === "embudo" ? "active" : ""} aria-pressed={view === "embudo"} onClick={() => setView("embudo")}>Embudo</button>
           </div>
         )}
         {view === "pipeline" && <button type="button" className="workspace-button" onClick={() => setShowDealForm((current) => !current)}>{showDealForm ? "Cerrar formulario" : "Nuevo deal"}</button>}
@@ -220,7 +217,15 @@ export function CrmWorkspace({
             />
           )}
         </>
-      ) : (
+      ) : view === "personas" ? (
+        <ContactsView
+          workspaceId={workspaceId}
+          data={data}
+          reload={load}
+          setError={setError}
+          setNotice={setNotice}
+        />
+      ) : view === "accounts" ? (
         <AccountsView
           workspaceId={workspaceId}
           data={data}
@@ -231,6 +236,8 @@ export function CrmWorkspace({
           setError={setError}
           setNotice={setNotice}
         />
+      ) : (
+        <FunnelView data={data} />
       )}
     </div>
   );
@@ -742,6 +749,385 @@ function BrandDetail({
         <section><h4>Deals <span>{deals.length}</span></h4><div className="crm-compact-list">{deals.map((deal) => <article key={deal.id}><strong>{deal.title}</strong><span>{DEAL_STAGES.find((stage) => stage.value === deal.stage)?.label} · {deal.progress.percentage}%</span></article>)}</div></section>
         <section><h4>Diseños vinculados <span>{designs.length}</span></h4><div className="crm-design-grid">{designs.map((design) => <button type="button" key={design.template_id} onClick={() => onOpenTemplate?.(design.template_id)}><span>{assetLabel.get(design.asset_type as any) || design.asset_type}</span><strong>{design.name}</strong></button>)}</div></section>
       </div>
+    </section>
+  );
+}
+
+function contactStatusLabel(status?: string | null) {
+  return status === "lead" ? "Lead" : status === "inactive" ? "Inactiva" : "Activa";
+}
+
+/**
+ * Vista tabla de personas (pestaña 2): master-detail — cada fila abre la
+ * ficha de la persona con sus datos, su marca y los deals donde es el
+ * contacto principal. El influencer con el que hablas y el decisor conviven
+ * aquí como filas distintas de la misma marca.
+ */
+function ContactsView({
+  workspaceId,
+  data,
+  reload,
+  setError,
+  setNotice,
+}: {
+  workspaceId: string;
+  data: CrmData;
+  reload: () => Promise<void>;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedContactId, setSelectedContactId] = useState("");
+  const query = search.trim().toLocaleLowerCase();
+  const visibleContacts = useMemo(() => data.contacts.filter((contact) => {
+    if (!query) return true;
+    const brandName = data.brands.find((brand) => brand.id === contact.brand_id)?.name;
+    return [contact.first_name, contact.last_name, contact.email, contact.phone, contact.job_title, contact.brand_name, brandName]
+      .some((value) => (value || "").toLocaleLowerCase().includes(query));
+  }), [data.brands, data.contacts, query]);
+  const selectedContact = data.contacts.find((contact) => contact.id === selectedContactId) || null;
+  const dealsAsPrimary = (contactId: string) => data.deals.filter((deal) => deal.primary_contact_id === contactId);
+
+  return (
+    <>
+      <div className="crm-account-tools">
+        <input type="search" aria-label="Buscar personas" placeholder="Buscar por nombre, marca, cargo o correo…" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <span className="workspace-muted">{visibleContacts.length} de {data.contacts.length}</span>
+      </div>
+      <div className="crm-accounts-layout">
+        <section className="crm-contact-list" aria-label="Personas">
+          <table className="crm-contact-table">
+            <thead>
+              <tr><th scope="col">Persona</th><th scope="col">Marca</th><th scope="col">Deals</th></tr>
+            </thead>
+            <tbody>
+              {visibleContacts.map((contact) => {
+                const brand = data.brands.find((brand) => brand.id === contact.brand_id);
+                return (
+                  <tr key={contact.id} className={contact.id === selectedContactId ? "selected" : ""} onClick={() => setSelectedContactId(contact.id)}>
+                    <td>
+                      <button type="button" className="crm-contact-pick" aria-pressed={contact.id === selectedContactId} onClick={() => setSelectedContactId(contact.id)}>
+                        <strong>{contact.first_name} {contact.last_name}</strong>
+                        <small>{[contact.job_title, contactStatusLabel(contact.status)].filter(Boolean).join(" · ") || "Sin datos"}</small>
+                      </button>
+                    </td>
+                    <td>{brand?.name || contact.brand_name || "Sin marca"}</td>
+                    <td className="crm-contact-count">{dealsAsPrimary(contact.id).length}</td>
+                  </tr>
+                );
+              })}
+              {visibleContacts.length === 0 && (
+                <tr><td colSpan={3} className="workspace-muted">{data.contacts.length === 0 ? "Aún no hay personas — agrega la primera aquí abajo." : "Nadie coincide con la búsqueda."}</td></tr>
+              )}
+            </tbody>
+          </table>
+          <NewContactForm workspaceId={workspaceId} data={data} reload={reload} setError={setError} setNotice={setNotice} onCreated={setSelectedContactId} />
+        </section>
+        {selectedContact ? (
+          <PersonDetail
+            workspaceId={workspaceId}
+            contact={selectedContact}
+            data={data}
+            deals={dealsAsPrimary(selectedContact.id)}
+            reload={reload}
+            setError={setError}
+            setNotice={setNotice}
+          />
+        ) : (
+          <div className="crm-empty">
+            <h3>Selecciona una persona</h3>
+            <p>Click en una fila para abrir su ficha: datos de contacto, marca y deals donde es el contacto principal.</p>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function NewContactForm({
+  workspaceId,
+  data,
+  reload,
+  setError,
+  setNotice,
+  onCreated,
+}: {
+  workspaceId: string;
+  data: CrmData;
+  reload: () => Promise<void>;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+  onCreated: (contactId: string) => void;
+}) {
+  const [brandId, setBrandId] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [status, setStatus] = useState("lead");
+
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const result = await crmFetch<{ data?: { id?: string } }>(`/api/workspaces/${workspaceId}/contacts`, {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: brandId || null,
+          firstName,
+          lastName,
+          email: email || undefined,
+          phone: phone || undefined,
+          jobTitle: jobTitle || undefined,
+          status,
+          tags: [],
+        }),
+      });
+      setFirstName(""); setLastName(""); setJobTitle(""); setEmail(""); setPhone("");
+      setNotice("Persona agregada.");
+      await reload();
+      if (result.data?.id) onCreated(result.data.id);
+    } catch (cause: any) { setError(cause.message); }
+  };
+
+  return (
+    <details className="crm-inline-form">
+      <summary>+ Nueva persona</summary>
+      <form onSubmit={create}>
+        <Field label="Marca">
+          <select value={brandId} onChange={(event) => setBrandId(event.target.value)}>
+            <option value="">Sin marca</option>
+            {data.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+          </select>
+        </Field>
+        <div className="workspace-form-row">
+          <Field label="Nombre"><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></Field>
+          <Field label="Apellido"><input value={lastName} onChange={(event) => setLastName(event.target.value)} /></Field>
+        </div>
+        <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} placeholder="Decisor, influencer, marketing…" /></Field>
+        <Field label="Estado">
+          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="lead">Lead</option>
+            <option value="active">Activa</option>
+            <option value="inactive">Inactiva</option>
+          </select>
+        </Field>
+        <div className="workspace-form-row">
+          <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+          <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+        </div>
+        <button className="workspace-button">Agregar</button>
+      </form>
+    </details>
+  );
+}
+
+function PersonDetail({
+  workspaceId,
+  contact,
+  data,
+  deals,
+  reload,
+  setError,
+  setNotice,
+}: {
+  workspaceId: string;
+  contact: Contact;
+  data: CrmData;
+  deals: Deal[];
+  reload: () => Promise<void>;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [jobTitle, setJobTitle] = useState(contact.job_title || "");
+  const [email, setEmail] = useState(contact.email || "");
+  const [phone, setPhone] = useState(contact.phone || "");
+  const [status, setStatus] = useState(contact.status || "lead");
+  const [notes, setNotes] = useState(contact.notes || "");
+
+  useEffect(() => {
+    setJobTitle(contact.job_title || "");
+    setEmail(contact.email || "");
+    setPhone(contact.phone || "");
+    setStatus(contact.status || "lead");
+    setNotes(contact.notes || "");
+  }, [contact]);
+
+  const brand = data.brands.find((brand) => brand.id === contact.brand_id);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      await crmFetch(`/api/workspaces/${workspaceId}/contacts/${contact.id}`, {
+        method: "PATCH",
+        // Empty strings are deliberate: the API maps them to null, so the
+        // user can actually clear an email, a phone or the notes.
+        body: JSON.stringify({ jobTitle, email, phone, status, notes }),
+      });
+      setNotice("Persona actualizada.");
+      await reload();
+    } catch (cause: any) { setError(cause.message); }
+  };
+
+  return (
+    <section className="workspace-panel crm-person-detail" aria-label={`Ficha de ${contact.first_name} ${contact.last_name || ""}`}>
+      <header>
+        <div>
+          <p className="workspace-eyebrow">{brand?.name || contact.brand_name || "Sin marca"}</p>
+          <h3>{contact.first_name} {contact.last_name}</h3>
+          <p className="workspace-muted">{[contact.job_title, contact.company].filter(Boolean).join(" · ") || "Sin cargo registrado"}</p>
+        </div>
+        <span className={`crm-health ${status === "inactive" ? "at_risk" : "active"}`}>{contactStatusLabel(status)}</span>
+      </header>
+      {(contact.email || contact.phone) && (
+        <div className="crm-person-links">
+          {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
+          {contact.phone && <a href={`tel:${contact.phone}`}>{contact.phone}</a>}
+        </div>
+      )}
+      <section className="crm-person-deals">
+        <h4>Deals donde es contacto principal <span>{deals.length}</span></h4>
+        {deals.length ? (
+          <div className="crm-compact-list">
+            {deals.map((deal) => {
+              const dealBrand = data.brands.find((brand) => brand.id === deal.brand_id);
+              return (
+                <article key={deal.id}>
+                  <strong>{deal.title}</strong>
+                  <span>{dealBrand?.name || "Marca"} · {DEAL_STAGES.find((stage) => stage.value === deal.stage)?.label || deal.stage} · {Number(deal.value || 0) > 0 ? money(Number(deal.value), deal.currency) : "Sin valor"} · {deal.progress.percentage}%</span>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="workspace-muted">Ninguno todavía — asígnale un deal desde «Ventas» (campo Contacto principal) para que esta persona cuente en el embudo.</p>
+        )}
+      </section>
+      <form className="crm-person-form" onSubmit={save}>
+        <Field label="Cargo"><input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} /></Field>
+        <Field label="Estado">
+          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="lead">Lead</option>
+            <option value="active">Activa</option>
+            <option value="inactive">Inactiva</option>
+          </select>
+        </Field>
+        <div className="workspace-form-row">
+          <Field label="Correo"><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+          <Field label="Teléfono"><input value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+        </div>
+        <Field label="Notas"><textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
+        <button className="workspace-button">Guardar</button>
+      </form>
+    </section>
+  );
+}
+
+const FUNNEL_BRAND_COLORS = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#fb923c", "#4ade80", "#22d3ee", "#f87171", "#e879f9"];
+
+/**
+ * Vista embudo (pestaña 4): las mismas etapas del kanban, apiladas. El switch
+ * cambia la unidad que fluye — deals por marca (barras segmentadas) o personas
+ * distintas (contacto principal de cada deal). «Perdido» queda fuera del
+ * embudo y se muestra aparte como fuga.
+ */
+function FunnelView({ data }: { data: CrmData }) {
+  const [mode, setMode] = useState<FunnelMode>("brands");
+  const [openStage, setOpenStage] = useState<DealStage | null>("discovery");
+  const funnel = useMemo(() => buildFunnel(data.deals, data.brands, data.contacts, mode), [data, mode]);
+  const maxCount = Math.max(1, ...funnel.rows.map((row) => row.count));
+  const openDeals = data.deals.filter((deal) => deal.stage !== "lost").length;
+  const peopleInDeals = new Set(data.deals.flatMap((deal) => (deal.primary_contact_id ? [deal.primary_contact_id] : []))).size;
+  const brandColors = new Map(data.brands.map((brand, index): [string, string] => [brand.id, FUNNEL_BRAND_COLORS[index % FUNNEL_BRAND_COLORS.length]]));
+  const legendBrands = new Map<string, string>();
+  for (const row of funnel.rows) for (const entry of row.byBrand) if (entry.count > 0) legendBrands.set(entry.brandId, entry.name);
+  const openRow = openStage ? funnel.rows.find((row) => row.stage === openStage) || null : null;
+  const contactById = new Map(data.contacts.map((contact): [string, Contact] => [contact.id, contact]));
+  const unit = mode === "brands" ? "deals" : "personas";
+
+  return (
+    <section className="crm-funnel" aria-label="Embudo de ventas">
+      <div className="crm-funnel-head">
+        <div className="crm-view-switch" role="group" aria-label="Unidad del embudo">
+          <button type="button" className={mode === "brands" ? "active" : ""} aria-pressed={mode === "brands"} onClick={() => setMode("brands")}>Por marcas</button>
+          <button type="button" className={mode === "personas" ? "active" : ""} aria-pressed={mode === "personas"} onClick={() => setMode("personas")}>Por personas</button>
+        </div>
+        <p className="workspace-muted">Mismas etapas que el kanban. {mode === "brands" ? "Cada barra segmenta deals por marca." : "Cuenta personas distintas — el contacto principal de cada deal."} «Perdido» queda fuera, como fuga.</p>
+      </div>
+      <div className="crm-summary" aria-label="Resumen del embudo">
+        <article><strong>{openDeals}</strong><span>Deals abiertos</span></article>
+        <article><strong>{peopleInDeals}</strong><span>Personas en deals</span></article>
+        <article><strong>{money(data.summary.pipelineValue)}</strong><span>Pipeline abierto</span></article>
+        <article><strong>{funnel.endToEnd === null ? "—" : `${Math.round(funnel.endToEnd * 100)}%`}</strong><span>Conversión total</span></article>
+      </div>
+      <div className="crm-funnel-chart">
+        {funnel.rows.map((row) => {
+          const width = row.count === 0 ? 0 : Math.max(9, Math.round((row.count / maxCount) * 100));
+          const open = openStage === row.stage;
+          return (
+            <div className="crm-funnel-row" key={row.stage}>
+              <button type="button" className={`crm-funnel-label${open ? " active" : ""}`} aria-expanded={open} onClick={() => setOpenStage(open ? null : row.stage)}>{row.label}</button>
+              <button type="button" className="crm-funnel-bar" style={{ width: `${width}%` }} disabled={row.deals.length === 0}
+                aria-expanded={open}
+                title={`${row.label}: ${row.count} ${unit}`}
+                onClick={() => setOpenStage(open ? null : row.stage)}>
+                {mode === "brands"
+                  ? row.byBrand.map((entry) => <span key={entry.brandId} style={{ flexGrow: entry.count, background: brandColors.get(entry.brandId) }} title={`${entry.name}: ${entry.count}`} />)
+                  : <span style={{ flexGrow: 1 }} />}
+              </button>
+              <span className="crm-funnel-count" aria-label={`${row.count} ${unit} en ${row.label}`}>{row.count}</span>
+              <span className="crm-funnel-conv" title="Conversión desde la etapa anterior">{row.conversionFromPrev === null ? "—" : `${Math.round(row.conversionFromPrev * 100)}%`}</span>
+            </div>
+          );
+        })}
+      </div>
+      {mode === "brands" && legendBrands.size > 0 && (
+        <div className="crm-funnel-legend" aria-label="Marcas del embudo">
+          {[...legendBrands.entries()].map(([brandId, name]) => (
+            <span key={brandId}><i style={{ background: brandColors.get(brandId) }} aria-hidden="true" />{name}</span>
+          ))}
+        </div>
+      )}
+      {funnel.lost.count > 0 && (
+        <p className="crm-funnel-lost">Fuga: {funnel.lost.count} deal(s) perdidos{funnel.lost.value ? ` · ${money(funnel.lost.value)}` : ""} — quedan fuera del embudo.</p>
+      )}
+      {openRow && (
+        <div className="workspace-panel crm-funnel-detail">
+          <h4>{openRow.label} — {openRow.count} {unit}{mode === "personas" && openRow.unassignedDeals > 0 ? ` (+${openRow.unassignedDeals} deal sin contacto)` : ""}</h4>
+          {mode === "brands" ? (
+            openRow.deals.length ? (
+              <div className="crm-compact-list">
+                {openRow.deals.map((deal) => {
+                  const dealBrand = data.brands.find((brand) => brand.id === deal.brand_id);
+                  const dealContact = deal.primary_contact_id ? contactById.get(deal.primary_contact_id) : null;
+                  return (
+                    <article key={deal.id}>
+                      <strong>{deal.title}</strong>
+                      <span>{dealBrand?.name || "Marca"} · {[dealContact && contactName(dealContact), Number(deal.value || 0) > 0 ? money(Number(deal.value), deal.currency) : null].filter(Boolean).join(" · ") || "Sin contacto ni valor"}</span>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <p className="workspace-muted">Sin deals en esta etapa.</p>
+          ) : (
+            openRow.people.length ? (
+              <div className="crm-compact-list">
+                {openRow.people.map((person) => {
+                  const personContact = contactById.get(person.contactId);
+                  const personBrand = personContact ? data.brands.find((brand) => brand.id === personContact.brand_id) : null;
+                  const personDeals = openRow.deals.filter((deal) => deal.primary_contact_id === person.contactId);
+                  return (
+                    <article key={person.contactId}>
+                      <strong>{person.name}</strong>
+                      <span>{personBrand?.name || personContact?.brand_name || "Sin marca"} · {[personContact?.job_title, `${personDeals.length} deal(s)`].filter(Boolean).join(" · ")}</span>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <p className="workspace-muted">Sin personas asignadas en esta etapa.</p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
